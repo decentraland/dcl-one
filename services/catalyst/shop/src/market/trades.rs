@@ -171,15 +171,27 @@ fn parse_asset(v: &Value, direction: &'static str) -> Result<UpstreamTradeAsset,
         .get("assetType")
         .and_then(|x| x.as_i64())
         .ok_or("asset missing assetType")?;
+    // The readers cast and compare these as text, so a number in any other
+    // spelling is not stored (`listings::is_canonical_uint`).
+    let uint_field = |key: &str| {
+        let value = str_field(v, key)?;
+        if super::listings::is_canonical_uint(&value) {
+            Ok(value)
+        } else {
+            Err(format!(
+                "{key} {value:?} is not a canonical decimal uint256"
+            ))
+        }
+    };
     let value = match asset_type {
         1 | 2 => AssetValue::Erc20 {
-            amount: str_field(v, "amount")?,
+            amount: uint_field("amount")?,
         },
         3 => AssetValue::Erc721 {
-            token_id: str_field(v, "tokenId")?,
+            token_id: uint_field("tokenId")?,
         },
         4 => AssetValue::Item {
-            item_id: str_field(v, "itemId")?,
+            item_id: uint_field("itemId")?,
         },
         other => return Err(format!("unsupported assetType {other}")),
     };
