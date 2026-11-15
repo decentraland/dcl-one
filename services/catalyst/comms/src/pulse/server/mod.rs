@@ -520,10 +520,17 @@ impl PulseServer {
             }));
         }
 
-        match self
-            .replay_policy
-            .try_admit(now_ms, &user_address, &timestamp)
-        {
+        let source = self
+            .peers
+            .get(&peer)
+            .and_then(|state| state.ip.as_deref())
+            .map(crate::shared::client_ip::source_key);
+        match self.replay_policy.try_admit(
+            now_ms,
+            source.as_deref(),
+            &user_address,
+            &timestamp,
+        ) {
             Ok(()) => {}
             Err(ReplayRejection::Forgotten) => {
                 return Admission::Deny(Box::new(Action::Reply(handshake_response(
@@ -552,6 +559,7 @@ impl PulseServer {
                         ReplayRejection::Capacity | ReplayRejection::Storage => {
                             DisconnectReason::ServerFull
                         }
+                        ReplayRejection::SourceQuota => DisconnectReason::PreAuthIpLimitExhausted,
                         _ => DisconnectReason::HandshakeReplayRejected,
                     },
                 }));
