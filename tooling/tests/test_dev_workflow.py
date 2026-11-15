@@ -74,6 +74,18 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         self.assertEqual(log.read_text(), 'rm -rf /usr/local/lib/android /usr/share/dotnet '
                                          '/usr/share/swift /opt/ghc /usr/local/.ghcup\n')
 
+    def test_every_workflow_deletes_the_sdk_folders_only_below_a_free_space_limit(self):
+        delete = 'sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup'
+        seen = 0
+        for path in sorted(WORKFLOW.parent.glob('*.y*ml')):
+            lines = [line.strip() for line in path.read_text().splitlines()]
+            for number, line in enumerate(lines):
+                if line == delete:
+                    seen += 1
+                    with self.subTest(workflow=path.name, line=number + 1):
+                        self.assertRegex(lines[number - 1], r'^if \[ "\$(\{avail:-0\}|available)" -l[te] \S.* \]; then$')
+        self.assertGreaterEqual(seen, 12)
+
     def test_rust_caches_dependencies_only_and_smoke_keeps_a_snapshot_on_both_platforms(self):
         rust, smoke = jobs()['rust'], jobs()['smoke']
         for job in (rust, smoke):
