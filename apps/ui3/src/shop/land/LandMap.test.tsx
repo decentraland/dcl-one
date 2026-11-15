@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import LandMap from "./LandMap";
@@ -419,6 +419,32 @@ describe("LandMap props", () => {
     rerender(<LandMap tiles={tiles} initialZoom={10} onOpen={onOpen} center={{ x: -6, y: 9 }} />);
     clickMiddle();
     expect(onOpen.mock.calls.map(([, tile]) => tile.id)).toEqual(["12,-4", "-6,9"]);
+  });
+
+  it("keeps the view on a resize, and does not go back to `center`", () => {
+    stubBrowser();
+    let resized = () => {};
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(run: () => void) {
+          resized = run;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const onViewChange = vi.fn();
+    const { target } = renderMap({ onViewChange, center: { x: 0, y: 0 } });
+    fireEvent.pointerDown(target, { pointerId: 1, button: 0, ...parcel(8, -4) });
+    fireEvent.pointerMove(target, { pointerId: 1, ...parcel(4, -4) });
+    fireEvent.pointerUp(target, { pointerId: 1, button: 0, ...parcel(4, -4) });
+    const before = onViewChange.mock.calls.at(-1)![0];
+    vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(() => ({ ...SHELL, width: 400, height: 300, right: SHELL.left + 400, bottom: SHELL.top + 300, x: SHELL.left, y: SHELL.top, toJSON: () => ({}) }) as DOMRect);
+    act(() => resized());
+    const after = onViewChange.mock.calls.at(-1)![0];
+    expect(after.nw).not.toEqual(before.nw);
+    expect(after.center).toEqual({ x: 4, y: 0 });
   });
 
   it("zooms with the buttons up to the limit", () => {
