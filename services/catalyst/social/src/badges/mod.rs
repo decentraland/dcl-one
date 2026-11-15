@@ -6,9 +6,9 @@
 //! `PATCH /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
 //! `/assets/{path}`. Revoke answers 200 with a body in every environment;
 //! upstream registers it in dev and test only, with a bare 204. A missing,
-//! wrong or unconfigured bearer is 403 on every admin route (the shared
-//! `RequireAdmin`); upstream answers backfill 401 and does not register it
-//! without a token. Tables: `social.badge_definitions`, `badge_tiers`
+//! wrong or unconfigured bearer is 401 with upstream's `@dcl/http-commons`
+//! body on every admin route; upstream does not register them without a
+//! token. Tables: `social.badge_definitions`, `badge_tiers`
 //! (upstream's catalog, seeded by the schema), `user_badge_progress`,
 //! `user_achieved_tiers`, `badge_admin_audit`, `badge_catalog_audit`,
 //! `presence_badges`, `badge_cursors`. Every progress write goes through
@@ -39,11 +39,15 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde_json::json;
 use sqlx::PgPool;
 
+use crate::identity::AuthorityNotEstablished;
 use crate::notifications::admin::AdminSecretSource;
 
 pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
@@ -109,10 +113,26 @@ impl State {
 
 impl AdminSecretSource for SharedState {
     const ENVIRONMENT_VARIABLE: &'static str = ADMIN_TOKEN_ENV;
-    const UNSET_MESSAGE: &'static str = "admin token not configured";
-    const MISMATCH_MESSAGE: &'static str = "missing or invalid bearer token";
+    const UNSET_MESSAGE: &'static str = "Invalid authorization header";
+    const MISMATCH_MESSAGE: &'static str = "Invalid authorization header";
     fn admin_token(&self) -> Option<&str> {
         self.settings.admin_token.as_deref()
+    }
+    /// Upstream's `bearerTokenMiddleware`: 401 with the `@dcl/http-commons`
+    /// body; an unset token refuses like a wrong one.
+    fn refuse(refusal: AuthorityNotEstablished) -> Response {
+        tracing::warn!(refusal = %refusal, "badges admin bearer refused");
+        let message = match refusal {
+            AuthorityNotEstablished::AuthenticationMissingOrInvalid { .. } => {
+                "Authorization header is missing"
+            }
+            _ => Self::MISMATCH_MESSAGE,
+        };
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Not Authorized", "message": message })),
+        )
+            .into_response()
     }
 }
 

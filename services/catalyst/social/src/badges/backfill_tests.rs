@@ -127,13 +127,13 @@ async fn the_route_is_bearer_gated() {
     let unset: SharedState = Arc::new(State::new(unset, Settings::default()));
     let body = json!({ "registries": [] }).to_string();
     let (status, body_json) = backfill(&unset, "halloweeks_2026", Some("Bearer x"), &body).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body_json["error"], json!("admin token not configured"));
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json["error"], json!("Not Authorized"));
 
     let state = state().await.unwrap();
     for presented in [None, Some("Bearer wrong")] {
         let (status, _) = backfill(&state, "halloweeks_2026", presented, &body).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{presented:?}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{presented:?}");
     }
 }
 

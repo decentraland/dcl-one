@@ -986,8 +986,11 @@ async fn the_admin_routes_are_bearer_gated() {
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
-        assert_eq!(body["error"], json!("admin token not configured"));
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}");
+        assert_eq!(
+            body,
+            json!({"error": "Not Authorized", "message": "Invalid authorization header"})
+        );
     }
 
     let state = state(Settings {
@@ -996,14 +999,18 @@ async fn the_admin_routes_are_bearer_gated() {
     })
     .await
     .unwrap();
-    for presented in [None, Some("Bearer wrong"), Some("Basic s3cret")] {
+    for (presented, message) in [
+        (None, "Authorization header is missing"),
+        (Some("Basic s3cret"), "Authorization header is missing"),
+        (Some("Bearer wrong"), "Invalid authorization header"),
+    ] {
         let (status, _, body) = send(
             app(state.clone()),
             request("DELETE", &path("open_for_business"), presented, None),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["error"], json!("missing or invalid bearer token"));
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body, json!({"error": "Not Authorized", "message": message}));
     }
     let bearer = Some("Bearer s3cret");
     let (status, _, body) = send(
@@ -1210,7 +1217,7 @@ async fn the_catalog_routes_are_bearer_gated_and_validate() {
             admin_request(method, &uri, Some("anything"), Some(body.clone())),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}");
     }
     let state = admin_state().await.unwrap();
     for bearer in [None, Some("wrong")] {
@@ -1219,7 +1226,7 @@ async fn the_catalog_routes_are_bearer_gated_and_validate() {
             admin_request("PUT", &uri, bearer, Some(body.clone())),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
     let pool = state.badges.pool();
     let exists: bool =

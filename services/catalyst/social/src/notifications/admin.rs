@@ -4,13 +4,15 @@
 //! secret is unset) onto the shared
 //! [`AuthorityNotEstablished`] vocabulary; [`RequireAdmin`] is the axum
 //! extractor a mutation handler must *name in its signature*, so the check
-//! cannot be deleted from a handler body. Both services collapsed every
-//! refusal to **403** with a fixed message on the wire; that contract is kept
-//! by [`to_api_error`], the 401/503 distinction stays in the logs.
+//! cannot be deleted from a handler body. The notifications service collapsed
+//! every refusal to **403** with a fixed message on the wire; that contract is
+//! kept by [`to_api_error`], the 401/503 distinction stays in the logs.
+//! Badges overrides [`AdminSecretSource::refuse`] with upstream's 401.
 
 use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
+use axum::response::{IntoResponse, Response};
 
 use super::errors::ApiError;
 use crate::auth::admin_bearer::Refusal;
@@ -78,6 +80,11 @@ pub trait AdminSecretSource: Send + Sync {
     /// The message a missing or wrong bearer gets.
     const MISMATCH_MESSAGE: &'static str;
     fn admin_token(&self) -> Option<&str>;
+    /// The answer to a refused request: the old 403 wire unless a surface
+    /// keeps another.
+    fn refuse(refusal: AuthorityNotEstablished) -> Response {
+        to_api_error(refusal, Self::UNSET_MESSAGE, Self::MISMATCH_MESSAGE).into_response()
+    }
 }
 
 /// Proof, in a handler's signature, that the request carried the admin
@@ -94,12 +101,12 @@ impl<S> FromRequestParts<S> for RequireAdmin
 where
     S: AdminSecretSource,
 {
-    type Rejection = ApiError;
+    type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         verify_admin_bearer(S::ENVIRONMENT_VARIABLE, state.admin_token(), &parts.headers)
             .map(RequireAdmin)
-            .map_err(|r| to_api_error(r, S::UNSET_MESSAGE, S::MISMATCH_MESSAGE))
+            .map_err(S::refuse)
     }
 }
 
