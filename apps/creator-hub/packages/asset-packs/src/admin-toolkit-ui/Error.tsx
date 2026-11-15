@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line no-unused-vars
 import ReactEcs, { UiEntity, Label, type UiTransformProps } from '@dcl/react-ecs';
 import { getContentUrl } from './constants';
 import { COLORS, TYPE } from './theme';

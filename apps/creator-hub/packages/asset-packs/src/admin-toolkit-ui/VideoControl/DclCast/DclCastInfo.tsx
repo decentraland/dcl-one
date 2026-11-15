@@ -1,6 +1,6 @@
 import type { Entity, IEngine } from '@dcl/ecs';
 import type { DeepReadonlyObject, PBVideoPlayer } from '@dcl/ecs';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
+// oxlint-disable-next-line no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { Label, UiEntity } from '@dcl/react-ecs';
 import { copyToClipboard } from '~system/RestrictedActions';
 import { Button } from '../../Button';

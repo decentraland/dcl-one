@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
+// oxlint-disable-next-line no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { Label, UiEntity, type UiTransformProps } from '@dcl/react-ecs';
 import { type Color4 } from '@dcl/sdk/math';
 import { COLORS, RADIUS, SPACING, TYPE } from './theme';

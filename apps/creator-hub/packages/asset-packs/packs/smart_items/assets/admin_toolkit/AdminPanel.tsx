@@ -1,5 +1,4 @@
 /** @jsx ReactEcs.createElement */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is required for the JSX factory
 import ReactEcs, { Label, Button as DCLButton, UiEntity } from '@dcl/sdk/react-ecs';
 import { Color4 } from '@dcl/sdk/math';
 import { isMobile } from '@dcl/sdk/platform';

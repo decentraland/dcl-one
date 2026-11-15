@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity, Label, Input } from '@dcl/react-ecs';
 import { COLORS, RADIUS, SPACING, TYPE } from '../theme';
 import { FieldLabel } from '../Primitives';

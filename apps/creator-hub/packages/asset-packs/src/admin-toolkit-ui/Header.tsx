@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line no-unused-vars
 import ReactEcs, { UiEntity } from '@dcl/react-ecs';
 import { COLORS, SPACING, TYPE } from './theme';
 

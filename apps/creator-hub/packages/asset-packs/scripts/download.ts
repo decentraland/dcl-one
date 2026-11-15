@@ -1,12 +1,12 @@
 import path from 'path';
-import { rimraf } from 'rimraf';
-import { Api } from './utils/builder/api';
-import { createDirectory, exists, writeFile } from './utils/fs';
-import { LocalFileSystem } from './utils/local';
+import { rm } from 'fs/promises';
+import { Api } from './utils/builder/api.ts';
+import { createDirectory, exists, writeFile } from './utils/fs.ts';
+import { LocalFileSystem } from './utils/local.ts';
 
 async function main() {
   console.log('Creating dist directory...');
-  const packs = path.resolve(__dirname, '..', 'packs');
+  const packs = path.resolve(import.meta.dirname, '..', 'packs');
   await createDirectory(packs);
 
   const builder = new Api('https://builder-api.decentraland.org');
@@ -53,7 +53,7 @@ async function main() {
     const isValid = await exists(local.getAssetsPath(assetPack.title));
     if (!isValid) {
       console.log(`Removing empty asset pack "${assetPack.title}"`);
-      await rimraf(assetPackPath);
+      await rm(assetPackPath, { recursive: true, force: true });
     }
   }
 }

@@ -1,8 +1,11 @@
-import fetch from 'node-fetch';
-import type { BuilderApiAssetPack } from './types';
+import type { BuilderApiAssetPack } from './types.ts';
 
 export class Api {
-  constructor(public url: string) {}
+  url: string;
+
+  constructor(url: string) {
+    this.url = url;
+  }
 
   async getAssetPacks() {
     const url = `${this.url}/v1/assetPacks`;
@@ -11,7 +14,7 @@ export class Api {
       const error = await resp.text();
       throw new Error(error);
     }
-    const json: { data: BuilderApiAssetPack[] } = await resp.json();
+    const json = (await resp.json()) as { data: BuilderApiAssetPack[] };
     return json.data;
   }
 

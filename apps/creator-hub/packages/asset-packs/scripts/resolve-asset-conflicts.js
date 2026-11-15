@@ -58,7 +58,6 @@ function resolveConflictsKeep(text, prefer = 'left') {
   let output = '';
   const meta = { idsLeft: [], idsRight: [], authorsLeft: [], authorsRight: [] };
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const start = text.indexOf('<<<<<<<', idx);
     if (start === -1) {

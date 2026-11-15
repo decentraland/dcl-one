@@ -26,17 +26,16 @@ export type BuilderApiAsset = {
   legacy_id: string | null;
 };
 
-export enum ParameterType {
-  BOOLEAN = 'boolean',
-  TEXT = 'text',
-  TEXTAREA = 'textarea',
-  FLOAT = 'float',
-  INTEGER = 'integer',
-  ENTITY = 'entity',
-  ACTIONS = 'actions',
-  OPTIONS = 'options',
-  SLIDER = 'slider',
-}
+export type ParameterType =
+  | 'boolean'
+  | 'text'
+  | 'textarea'
+  | 'float'
+  | 'integer'
+  | 'entity'
+  | 'actions'
+  | 'options'
+  | 'slider';
 
 export type ParameterValue = string | number | boolean | ActionValue[];
 

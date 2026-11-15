@@ -1,5 +1,4 @@
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity, Label } from '@dcl/react-ecs';
 import { copyToClipboard, openExternalUrl } from '~system/RestrictedActions';
 import { LIVEKIT_STREAM_SRC } from '../../../definitions';

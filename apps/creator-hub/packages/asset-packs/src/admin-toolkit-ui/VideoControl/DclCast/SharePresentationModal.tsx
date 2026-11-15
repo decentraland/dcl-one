@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is required for JSX factory
 import ReactEcs, { Input, Label, UiEntity } from '@dcl/react-ecs';
 import { Modal } from '../../Modal';
 import { Button } from '../../Button';

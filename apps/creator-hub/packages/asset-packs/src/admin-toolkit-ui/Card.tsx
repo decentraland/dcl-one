@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports, @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
+// oxlint-disable-next-line typescript/consistent-type-imports -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity, type UiTransformProps } from '@dcl/react-ecs';
 import { COLORS, RADIUS, SPACING } from './theme';
 
