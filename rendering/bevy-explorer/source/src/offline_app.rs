@@ -9,6 +9,7 @@ use bevy::{
     app::{ScheduleRunnerPlugin, TaskPoolThreadAssignmentPolicy},
     log::LogPlugin,
     prelude::*,
+    render::{render_resource::PipelineCompilationMode, RenderPlugin},
     window::ExitCondition,
     winit::WinitPlugin,
 };
@@ -63,6 +64,11 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
                 bevy::gltf::GltfPlugin::default()
                     .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
             )
+            // a batch tool reads a frame back: no mesh may miss it while its pipeline compiles
+            .set(RenderPlugin {
+                pipeline_compilation_mode: PipelineCompilationMode::Sync,
+                ..Default::default()
+            })
             .disable::<WinitPlugin>()
             .set(LogPlugin {
                 filter: "wgpu=error,naga=error,bevy_animation=error,avatar=info,ipfs=warn"

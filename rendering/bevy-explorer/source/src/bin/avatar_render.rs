@@ -14,8 +14,13 @@
 //! background. The realm defaults to `DCL_PEER_BASE`, else `baseUrl` without its
 //! `/content`; the content server (where wearables resolve) defaults to that same
 //! root, not the realm's advertised public URL, so a node renders from itself even
-//! behind a proxy. Exits 0 once every file is written, 1 when the avatars never
-//! finish loading within `--max-frames`, 2 on bad arguments.
+//! behind a proxy. A picture is taken only of a complete avatar: built, with the
+//! models, textures and masks of everything it wears loaded. A wearable that the
+//! content server does not hold, or that has no model for the body, is left out
+//! and is not a failure. Exits 0 once every file is written; 1, writing none,
+//! when the body, a wearable or one of their files failed to load (stderr says
+//! which) or the avatars are not complete within `--max-frames`; 2 on bad
+//! arguments.
 
 use std::{
     path::PathBuf,
@@ -24,7 +29,7 @@ use std::{
 
 use avatar::{
     avatar_texture::{BoothInstance, PhotoBooth},
-    AvatarProcessed, AvatarShape,
+    AvatarDefinition, AvatarFiles, AvatarLoaded, AvatarProcessed, AvatarShape,
 };
 use bevy::{
     app::HierarchyPropagatePlugin,
@@ -47,6 +52,7 @@ use common::{
 };
 use comms::profile::UserProfile;
 use dcl_deno_ipc::init_runtime;
+use scene_runner::scene_spawn_slice::InstantiateWhole;
 use serde::Deserialize;
 use webgpu_build::{offline_app::offline_app, serialized_app_config};
 
@@ -211,6 +217,8 @@ fn main() -> AppExit {
     app.insert_resource(audio_settings);
     // the booth's layer reaches every wearable mesh under the avatar
     app.add_plugins(HierarchyPropagatePlugin::<RenderLayers>::default());
+    // a batch render has no frame rate to protect: scene instances are written whole
+    app.insert_resource(InstantiateWhole);
 
     let mut jobs = Vec::new();
     for (ix, entry) in payload.payload.into_iter().enumerate() {
@@ -294,7 +302,8 @@ fn drive_capture(
     mut state: ResMut<RenderState>,
     jobs: Res<Jobs>,
     frame: Res<FrameCount>,
-    processed: Query<(), With<AvatarProcessed>>,
+    avatars: Query<(&AvatarDefinition, Has<AvatarProcessed>, Has<AvatarLoaded>)>,
+    asset_server: Res<AssetServer>,
     mut exit: EventWriter<AppExit>,
 ) {
     let expected = jobs.jobs.len() * 2;
@@ -321,17 +330,43 @@ fn drive_capture(
         return;
     }
 
+    let entities = || {
+        jobs.jobs
+            .iter()
+            .map(|j| j.entity.as_str())
+            .collect::<Vec<_>>()
+    };
+    // An avatar is built without the wearables and files that failed to load, and one whose
+    // body failed is processed with nothing spawned, so none of these is complete.
+    let mut failed = None;
+    let mut complete = 0;
+    for (definition, processed, spawned) in avatars.iter() {
+        match definition.files(&asset_server) {
+            AvatarFiles::Failed(what) => failed = Some(what),
+            _ if processed && !spawned => failed = Some("the body failed to load".to_owned()),
+            AvatarFiles::Loaded if processed => complete += 1,
+            _ => (),
+        }
+    }
+    // The node serves any two pictures of a plausible size, whatever the exit code: a failure
+    // exits here, before a screenshot is requested.
+    if let Some(what) = failed {
+        eprintln!("avatar_render: {:?}: {what}", entities());
+        exit.write(AppExit::from_code(1));
+        return;
+    }
+
     if frame.0 >= jobs.max_frames {
-        let entities: Vec<&str> = jobs.jobs.iter().map(|j| j.entity.as_str()).collect();
         eprintln!(
-            "avatar_render: {entities:?} still loading after {} frames",
+            "avatar_render: {:?} still loading after {} frames",
+            entities(),
             frame.0
         );
         exit.write(AppExit::from_code(1));
         return;
     }
 
-    if processed.iter().count() < jobs.jobs.len() {
+    if complete < jobs.jobs.len() {
         state.ready_at = None;
         return;
     }
