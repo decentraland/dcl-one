@@ -44,7 +44,6 @@ allowBuilds:
   # Compiles on Linux, where it has no prebuilt binary.
   node-pty: true
   '@dcl/sdk-commands': false
-  '@sentry/cli': false
   electron-winstaller: false
   esbuild: false
   protobufjs: false
