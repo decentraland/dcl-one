@@ -6,7 +6,8 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event image links use the node's `PUBLIC_URL` plus the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
 
-Referral quotas, the `POST /entities` burst limit and daily quota, and the
+Referral quotas, the `POST /entities` burst limit and daily quota, the
+`/auth-api` pending sign-in caps and the
 `/contents` rate limit use the backend TCP peer by default. Configure
 `HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
 networks (the gateway's container network), and ensure those proxies overwrite
@@ -14,8 +15,11 @@ a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header (only a loopback peer may name the
 client to the other per-client limits and IP bindings) and therefore buckets
 traffic behind a non-loopback gateway under that gateway's peer address: every
-deployer then shares one deploy limit. The API logs one warning when an
-untrusted private or loopback peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
+deployer then shares one deploy limit. `/auth-api` instead skips its
+per-network cap for an untrusted private or loopback peer and keeps only its
+global cap. The API logs one warning when an untrusted private peer forwards
+`X-Real-IP`, and `/auth-api` one the first time it sees an untrusted private or
+loopback peer. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover:
@@ -58,7 +62,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
-- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, world storage 529,408 bytes (the service's largest body plus slack), builder 21, reports 11); 100 r/s per client with a burst of 300 (`GATEWAY_READ_RATE`, `GATEWAY_READ_BURST`; content 100, worlds writes and admin routes 30, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment uploads in flight per client, then 429; `%3F` in paths returns 400, except in a `/world-storage` path forwarded unrewritten.
+- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, world storage 529,408 bytes (the service's largest body plus slack), builder 21, report evidence 5); 100 r/s per client with a burst of 300 (`GATEWAY_READ_RATE`, `GATEWAY_READ_BURST`; content 100, worlds writes and admin routes 30, Segment webhooks under `/events-notifier` 300 with a burst of 600, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment uploads in flight per client, then 429; `%3F` in paths returns 400, except in a `/world-storage` path forwarded unrewritten.
 - World storage keys: a `storage.<domain>`, `world-storage.<domain>` or `gateway.<domain>/storage` request is forwarded from the path as the client sent it, under `/world-storage`, so `%2F` and `%3F` in a key reach the service; a path with dot or empty segments takes the normalized rewrite instead. The storage body cap answers the service's JSON 413.
 - `/world-storage` (after host rewriting): reads 100 r/s per client (burst 400), writes also 30 r/s (burst 60). Each client address in `GATEWAY_STORAGE_TRUSTED_CIDRS` gets a separate 1000 r/s budget (burst 1000); the allowance is per address, not per CIDR, and never disables limiting. Startup rejects overlaps with `GATEWAY_TRUSTED_PROXY_CIDRS`.
 

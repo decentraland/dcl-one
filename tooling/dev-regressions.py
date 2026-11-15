@@ -17,6 +17,7 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
     ("catalyst_comms", "lib", "pulse::cluster::nats::statistics_tests::statistics_live_broker_late_join_and_reconnect_recover_complete_state"),
     ("archipelago_socket_bounds", "test", "orderly_shutdown_drains_authenticated_disconnect_to_live_pulse"),
@@ -226,13 +227,15 @@ MANDATORY_ARCHIPELAGO = {
 TEST_SCRIPT = [
     'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
-    'print(artifact["executable"])',
+    'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
     '\' > "$logs/binaries"',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
     '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
-    'sort "$logs/binaries" | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
+    'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
+    '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
+    'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
     'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
@@ -386,11 +389,15 @@ def verify_external_result(name, output):
         f"provisioned test must execute exactly once with zero ignored/failed: {name}")
 
 
-def run_external(executable, name):
+def external_inventory(executable, name):
     normal = inventory(run([executable, "--list", "--format", "terse"]))
     ignored = inventory(run([executable, "--list", "--ignored", "--format", "terse"]))
     require(normal[name] == 1 and ignored[name] == 1,
             f"provisioned ignored test absent/renamed or annotation changed: {name}")
+
+
+def run_external(executable, name):
+    external_inventory(executable, name)
     command = [executable, name, "--exact", "--ignored", "--test-threads=1", "--color", "never"]
     print("provisioned Archipelago test: " + " ".join(command), flush=True)
     result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
@@ -409,8 +416,24 @@ def external_prerequisites(environ):
     return binary
 
 
+def external_shard(environ):
+    # The provisioned tests take a fixed time and do not depend on the cut of the binaries, so one
+    # shard of a run executes them. An empty value reads as unset, as in tooling/catalyst-test.sh.
+    shard = environ.get("CATALYST_TEST_SHARD") or "1/1"
+    chosen = environ.get(EXTERNAL_SHARD) or "1"
+    require(re.fullmatch(r"[1-9][0-9]*/[1-9][0-9]*", shard) is not None,
+            "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    index, total = map(int, shard.split("/"))
+    require(index <= total, "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    # A value outside 1 to n fails every shard, so no setting makes all shards skip the tests.
+    require(re.fullmatch(r"[1-9][0-9]*", chosen) is not None and int(chosen) <= total,
+            f"{EXTERNAL_SHARD} must name one shard from 1 to {total}")
+    return index == int(chosen), f"{int(chosen)}/{total}"
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
+    execute, owner = external_shard(os.environ)
     version = subprocess.run([binary, "--version"], text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
@@ -428,7 +451,12 @@ def check_external():
         check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions", **options)
     for target, kind, name in EXTERNAL:
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
-        run_external(targets[kind][target], name)
+        if execute:
+            run_external(targets[kind][target], name)
+        else:
+            # Every shard checks that the test is present and ignored by default.
+            external_inventory(targets[kind][target], name)
+            print(f"provisioned Archipelago test runs in shard {owner}: {name}", flush=True)
 
 
 def verify_resolution(root=ROOT):

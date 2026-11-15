@@ -38,11 +38,11 @@ pub fn naive_to_ms(t: NaiveDateTime) -> i64 {
 /// poll through the plan cache"). With the flags in the text, the generic
 /// plan keeps `occurred_at >= $2` in the index condition and the unread poll
 /// matches the partial `notifications_unread_idx`. Binds: `$1` address,
-/// then `from` when present, then the limit, then the broadcast horizon
+/// then `from` when present, then the limit, then the broadcast horizon when set
 /// (oldest listed broadcast `occurred_at`), then the touch time when
 /// `touch` (the reader_seen upsert rides along as a data-modifying CTE;
 /// GREATEST keeps concurrent replicas from moving the mark backwards).
-fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
+fn list_sql(with_from: bool, only_unread: bool, touch: bool, with_horizon: bool) -> String {
     let mut next = 2;
     let mut bind = || {
         let n = next;
@@ -62,7 +62,11 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
         ""
     };
     let limit = bind();
-    let horizon = bind();
+    let horizon = if with_horizon {
+        format!(" AND b.occurred_at >= {}", bind())
+    } else {
+        String::new()
+    };
     let touch_cte = if touch {
         format!(
             "WITH seen AS (
@@ -97,13 +101,40 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
                       r.read_at, b.created_at, b.metadata
                FROM social.broadcast_notifications b
                LEFT JOIN social.broadcast_reads r ON r.broadcast_id = b.id AND r.address = $1
-               WHERE b.occurred_at >= {horizon}{bc_from}{bc_unread}
+               WHERE TRUE{horizon}{bc_from}{bc_unread}
                ORDER BY b.occurred_at DESC, b.id DESC
                LIMIT {limit})
             ) n
             ORDER BY occurred_at DESC, id DESC
             LIMIT {limit}"
     )
+}
+
+/// The subquery, for `EXISTS`, of an opt-out row `o` of `address` from the
+/// community whose id is the uuid expression `community`. Stored ids are
+/// compared as uuids: `create_opt_out` keeps the canonical spelling, so a
+/// producer's or a legacy row's other spelling of the same id still matches;
+/// a stored id that is not a uuid matches no community.
+pub(super) fn community_opt_out(address: &str, community: &str) -> String {
+    format!(
+        "SELECT 1 FROM social.subscription_opt_outs o \
+         WHERE o.address = {address} AND {}",
+        community_opt_out_row(community)
+    )
+}
+
+/// Whether the opt-out row `o` is a community opt-out from the community whose
+/// id is the uuid expression `community`, compared as uuids.
+fn community_opt_out_row(community: &str) -> String {
+    format!(
+        "o.scope = 'community' AND {} = {community}",
+        uuid_or_null("o.scope_id")
+    )
+}
+
+/// The uuid the text expression `text` spells, else NULL.
+pub(super) fn uuid_or_null(text: &str) -> String {
+    format!("CASE WHEN pg_input_is_valid({text}, 'uuid') THEN ({text})::uuid END")
 }
 
 /// The `details` flag at `path` (a `->` chain on `s.details`) when it is a JSON
@@ -331,31 +362,31 @@ pub enum SetEmailOutcome {
 pub struct NotificationsStore {
     pool: PgPool,
     seen: Arc<SeenDebounce>,
-    broadcast_horizon: Duration,
+    /// Broadcasts older are neither listed nor kept; `None` keeps them forever, as upstream.
+    broadcast_horizon: Option<Duration>,
 }
-
-/// Broadcasts older than this are neither listed nor kept (upstream kept them forever).
-pub const DEFAULT_BROADCAST_HORIZON: Duration = Duration::from_secs(90 * 24 * 3600);
 
 impl NotificationsStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
             seen: Arc::new(SeenDebounce::default()),
-            broadcast_horizon: DEFAULT_BROADCAST_HORIZON,
+            broadcast_horizon: None,
         }
     }
 
-    pub fn with_broadcast_horizon(mut self, horizon: Duration) -> Self {
+    pub fn with_broadcast_horizon(mut self, horizon: Option<Duration>) -> Self {
         self.broadcast_horizon = horizon;
         self
     }
 
-    fn broadcast_cutoff(&self, now: NaiveDateTime) -> NaiveDateTime {
-        chrono::Duration::from_std(self.broadcast_horizon)
-            .ok()
-            .and_then(|h| now.checked_sub_signed(h))
-            .unwrap_or(NaiveDateTime::MIN)
+    fn broadcast_cutoff(&self, now: NaiveDateTime) -> Option<NaiveDateTime> {
+        self.broadcast_horizon.map(|horizon| {
+            chrono::Duration::from_std(horizon)
+                .ok()
+                .and_then(|h| now.checked_sub_signed(h))
+                .unwrap_or(NaiveDateTime::MIN)
+        })
     }
 
     /// Deletes up to `limit` broadcasts past the horizon (their reads cascade).
@@ -364,6 +395,9 @@ impl NotificationsStore {
         now: NaiveDateTime,
         limit: i64,
     ) -> Result<u64, sqlx::Error> {
+        let Some(cutoff) = self.broadcast_cutoff(now) else {
+            return Ok(0);
+        };
         let res = sqlx::query(
             r#"
             DELETE FROM social.broadcast_notifications
@@ -375,7 +409,7 @@ impl NotificationsStore {
             )
             "#,
         )
-        .bind(self.broadcast_cutoff(now))
+        .bind(cutoff)
         .bind(limit)
         .execute(&self.pool)
         .await?;
@@ -433,12 +467,21 @@ impl NotificationsStore {
     ) -> Result<Vec<NotificationItem>, sqlx::Error> {
         // Past chrono's range only `>= MAX` is faithful: no row, not every row.
         let from = from_ms.map(|ms| ms_to_naive(ms).unwrap_or(NaiveDateTime::MAX));
-        let sql = list_sql(from.is_some(), only_unread, touch_at.is_some());
+        let cutoff = self.broadcast_cutoff(now_utc());
+        let sql = list_sql(
+            from.is_some(),
+            only_unread,
+            touch_at.is_some(),
+            cutoff.is_some(),
+        );
         let mut query = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(sql)).bind(address);
         if let Some(from) = from {
             query = query.bind(from);
         }
-        query = query.bind(limit).bind(self.broadcast_cutoff(now_utc()));
+        query = query.bind(limit);
+        if let Some(cutoff) = cutoff {
+            query = query.bind(cutoff);
+        }
         if let Some(at) = touch_at {
             query = query.bind(at);
         }
@@ -556,29 +599,29 @@ impl NotificationsStore {
         Ok(updated as u64)
     }
 
-    pub async fn get_subscription(
-        &self,
-        address: &Address,
-    ) -> Result<Option<Subscription>, ApiError> {
-        let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, Json)>(
-            r#"
-            SELECT s.address, s.email, u.email, s.details
-            FROM social.subscriptions s
-            LEFT JOIN social.unconfirmed_emails u ON u.address = s.address
-            WHERE s.address = $1
-            "#,
-        )
-        .bind(address)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(
-            |(address, email, unconfirmed_email, details)| Subscription {
-                address,
-                email,
-                unconfirmed_email,
-                details: normalize_details(&details),
-            },
-        ))
+    /// The subscription row (the defaults without one) and, read on its own,
+    /// the pending email, as upstream's two lookups. A row set-email wrote only to
+    /// track its workflow (empty details, no email) counts as none: upstream had no row.
+    pub async fn get_subscription(&self, address: &Address) -> Result<Subscription, ApiError> {
+        let (has_row, email, details, unconfirmed_email) =
+            sqlx::query_as::<_, (bool, Option<String>, Option<Json>, Option<String>)>(
+                r#"
+                SELECT COALESCE(s.email IS NOT NULL OR s.details <> '{}'::jsonb, FALSE),
+                       s.email, s.details,
+                       (SELECT u.email FROM social.unconfirmed_emails u WHERE u.address = $1)
+                FROM (SELECT 1) one
+                LEFT JOIN social.subscriptions s ON s.address = $1
+                "#,
+            )
+            .bind(address)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(Subscription {
+            address: address.as_str().to_string(),
+            email: has_row.then_some(email),
+            unconfirmed_email,
+            details: normalize_details(&details.unwrap_or_else(|| serde_json::json!({}))),
+        })
     }
 
     /// Writes the flags; `message_type` entries the body omits keep their
@@ -654,7 +697,6 @@ impl NotificationsStore {
         is_credits_workflow: bool,
         blacklisted: bool,
     ) -> Result<SetEmailOutcome, ApiError> {
-        let email = email.trim();
         let now = now_utc();
 
         if email.is_empty() {
@@ -698,10 +740,7 @@ impl NotificationsStore {
                 "Email already registered to another account. Please use a different email to proceed",
             ));
         }
-        if current_email
-            .as_deref()
-            .is_some_and(|e| e.eq_ignore_ascii_case(email))
-        {
+        if current_email.as_deref() == Some(email) {
             sqlx::query("DELETE FROM social.unconfirmed_emails WHERE address = $1")
                 .bind(address)
                 .execute(&self.pool)
@@ -794,16 +833,16 @@ impl NotificationsStore {
         scope: &str,
         scope_id: &str,
     ) -> Result<bool, ApiError> {
-        let exists = sqlx::query_scalar::<_, bool>(
+        let exists = sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT EXISTS (
-              SELECT 1 FROM social.subscription_opt_outs
-              WHERE address = $1 AND scope = $2 AND (scope_id = $3
-                OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
-                    THEN scope_id::uuid END = $4))
+              SELECT 1 FROM social.subscription_opt_outs o
+              WHERE o.address = $1 AND o.scope = $2
+                AND (o.scope_id = $3 OR ({matches}))
             )
             "#,
-        )
+            matches = community_opt_out_row("$4::uuid"),
+        )))
         .bind(address)
         .bind(scope)
         .bind(scope_id)
@@ -847,14 +886,14 @@ impl NotificationsStore {
         scope: &str,
         scope_id: &str,
     ) -> Result<bool, ApiError> {
-        let res = sqlx::query(
+        let res = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
-            DELETE FROM social.subscription_opt_outs
-            WHERE address = $1 AND scope = $2 AND (scope_id = $3
-                OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
-                    THEN scope_id::uuid END = $4))
+            DELETE FROM social.subscription_opt_outs o
+            WHERE o.address = $1 AND o.scope = $2
+              AND (o.scope_id = $3 OR ({matches}))
             "#,
-        )
+            matches = community_opt_out_row("$4::uuid"),
+        )))
         .bind(address)
         .bind(scope)
         .bind(scope_id)
@@ -874,27 +913,28 @@ mod sql_shape_tests {
     /// index (the review's 3,166-buffer poll).
     #[test]
     fn the_list_statement_spells_only_the_set_flags_and_numbers_its_binds() {
-        let plain = list_sql(false, false, false);
+        let plain = list_sql(false, false, false, false);
         assert!(
             plain.contains("WHERE address = $1\n") && plain.contains("LIMIT $2"),
             "{plain}"
         );
         assert!(!plain.contains("IS NULL OR") && !plain.contains("NOT read"));
-        let from = list_sql(true, false, false);
+        assert!(plain.contains("WHERE TRUE\n"), "no horizon: {plain}");
+        let from = list_sql(true, false, false, false);
         assert!(
             from.contains("WHERE address = $1 AND occurred_at >= $2") && from.contains("LIMIT $3"),
             "{from}"
         );
-        let unread = list_sql(false, true, false);
+        let unread = list_sql(false, true, false, false);
         assert!(
             unread.contains("WHERE address = $1 AND NOT read") && unread.contains("LIMIT $2"),
             "{unread}"
         );
-        let both = list_sql(true, true, true);
+        let both = list_sql(true, true, true, true);
         assert!(both.starts_with("WITH seen AS"), "{both}");
         assert!(both.contains("VALUES ($1, $5::timestamp)"), "{both}");
         assert!(
-            both.contains("WHERE b.occurred_at >= $4 AND b.occurred_at >= $2"),
+            both.contains("WHERE TRUE AND b.occurred_at >= $4 AND b.occurred_at >= $2"),
             "{both}"
         );
         assert!(
@@ -926,38 +966,8 @@ pub(crate) mod test_support {
     /// tests whose subject is a whole-table pass: the outbox claim takes
     /// every due row it can see, so two such tests on one database race.
     pub async fn private_pool(tag: &str) -> Option<PgPool> {
-        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-        let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
-        let opts: PgConnectOptions = base
-            .parse()
-            .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .expect("admin connect");
-        let name = format!(
-            "catalyst_test_lib_{}_{tag}_{}",
-            std::process::id(),
-            &Uuid::new_v4().simple().to_string()[..8]
-        );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .expect("create database");
-        let mut url = url::Url::parse(&base).expect("URL");
-        url.set_path(&format!("/{name}"));
-        let pool = crate::db::connect_pool(
-            url.as_str(),
-            &crate::db::PoolSettings {
-                max_connections: 4,
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("connect private database");
-        crate::db::apply_schema(&pool).await.expect("apply schema");
-        Some(pool)
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        Some(OwnedDatabase::new(tag, Schema::Full, 4).await?.pool)
     }
 
     pub async fn seed_notification(
@@ -1130,14 +1140,20 @@ mod pg_tests {
                 .await
                 .unwrap();
         assert_eq!(pending, 1, "a wrong code must not consume the pending row");
-        assert!(c.get_subscription(&a).await.unwrap().is_none());
+        let sub = c.get_subscription(&a).await.unwrap();
+        assert_eq!(sub.email, None, "no row: email absent");
+        assert_eq!(
+            sub.unconfirmed_email.as_deref(),
+            Some("Me@Example.com"),
+            "read without a subscription row"
+        );
 
         assert_eq!(
             c.confirm_email(&a, "right-code").await.unwrap(),
             Some(EmailSource::Credits)
         );
-        let sub = c.get_subscription(&a).await.unwrap().expect("promoted");
-        assert_eq!(sub.email.as_deref(), Some("Me@Example.com"));
+        let sub = c.get_subscription(&a).await.unwrap();
+        assert_eq!(sub.email, Some(Some("Me@Example.com".into())));
         assert_eq!(sub.unconfirmed_email, None);
         let pending: i64 =
             sqlx::query_scalar("SELECT count(*) FROM social.unconfirmed_emails WHERE address = $1")
@@ -1156,10 +1172,8 @@ mod pg_tests {
         let (a, b) = (fresh_address(), fresh_address());
         let unique = format!("Foo-{}@Example.com", Uuid::new_v4().simple());
 
-        let SetEmailOutcome::SendConfirmation { source, code } = c
-            .set_email(&a, &format!(" {unique} "), true, false)
-            .await
-            .unwrap()
+        let SetEmailOutcome::SendConfirmation { source, code } =
+            c.set_email(&a, &unique, true, false).await.unwrap()
         else {
             panic!("a new email must send a confirmation")
         };
@@ -1180,14 +1194,11 @@ mod pg_tests {
             ),
             (unique.as_str(), code.as_str(), "credits")
         );
-        let sub = c
-            .get_subscription(&a)
-            .await
-            .unwrap()
-            .expect("the subscription row exists while pending");
+        let sub = c.get_subscription(&a).await.unwrap();
         assert_eq!(
-            (sub.email.as_deref(), sub.unconfirmed_email.as_deref()),
-            (None, Some(unique.as_str()))
+            (sub.email, sub.unconfirmed_email.as_deref()),
+            (None, Some(unique.as_str())),
+            "set-email's own row is not a subscription: email absent"
         );
         let credits: bool = sqlx::query_scalar(
             "SELECT is_credits_workflow FROM social.subscriptions WHERE address = $1",
@@ -1203,18 +1214,29 @@ mod pg_tests {
             Some(EmailSource::Credits)
         );
         assert!(matches!(
+            c.set_email(&a, &unique, false, true).await.unwrap(),
+            SetEmailOutcome::NoEmailSent
+        ));
+        assert!(
             c.set_email(&a, &unique.to_lowercase(), false, true)
                 .await
+                .is_err(),
+            "another case is not the same email: it reaches the blacklist check"
+        );
+        assert!(matches!(
+            c.set_email(&a, &unique.to_lowercase(), false, false)
+                .await
                 .unwrap(),
-            SetEmailOutcome::NoEmailSent
+            SetEmailOutcome::SendConfirmation { .. }
         ));
         let err = c
             .set_email(&b, &unique.to_uppercase(), false, false)
             .await
             .expect_err("taken by another address");
         assert_eq!(err.status(), 400);
-        assert!(
-            c.get_subscription(&b).await.unwrap().is_none(),
+        assert_eq!(
+            c.get_subscription(&b).await.unwrap().email,
+            None,
             "a refused set-email writes nothing"
         );
 
@@ -1222,8 +1244,8 @@ mod pg_tests {
             c.set_email(&a, "", false, false).await.unwrap(),
             SetEmailOutcome::NoEmailSent
         ));
-        let sub = c.get_subscription(&a).await.unwrap().unwrap();
-        assert_eq!(sub.email, None);
+        let sub = c.get_subscription(&a).await.unwrap();
+        assert_eq!(sub.email, Some(None));
         assert_eq!(sub.details["ignore_all_email"], serde_json::json!(true));
         let pending: i64 =
             sqlx::query_scalar("SELECT count(*) FROM social.unconfirmed_emails WHERE address = $1")

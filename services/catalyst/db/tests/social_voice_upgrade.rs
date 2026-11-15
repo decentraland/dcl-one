@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 24] = [
+const PREPARED_PENDING_STEPS: [&str; 25] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -33,6 +33,7 @@ const PREPARED_PENDING_STEPS: [&str; 24] = [
     "0043_credits_captcha_generated_at",
     "0044_camera_reel_image_content_type",
     "0045_camera_reel_original_filename",
+    "0046_player_report_evidence_source_key",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -88,8 +89,9 @@ impl Database {
             .await
             .unwrap();
         let name = format!(
-            "catalyst_test_social_voice_{}",
-            uuid::Uuid::new_v4().simple()
+            "catalyst_test_lib_{}_social_voice_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
