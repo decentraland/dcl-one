@@ -366,7 +366,7 @@ fn snapshot_usd(
         .filter(|v| v.is_finite() && *v > 0.0)
         .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
     let age = i64::try_from(snapshot.age_at(now).as_secs()).unwrap_or(i64::MAX);
-    if is_stale(0, age, max_staleness_secs) {
+    if age > max_staleness_secs {
         return Err(ApiError::service_unavailable(format!(
             "MANA/USD oracle is stale (age {age}s exceeds {max_staleness_secs}s)"
         )));
@@ -897,10 +897,6 @@ fn json_as_i64(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
 }
 
-pub fn is_stale(last_updated_at: i64, now: i64, max_secs: i64) -> bool {
-    (now as i128 - last_updated_at as i128) > max_secs as i128
-}
-
 #[cfg(all(test, feature = "ts"))]
 mod ts_peg_export {
     use super::CREDIT_USD;
@@ -956,6 +952,7 @@ mod tests {
             "0.25"
         );
         assert!(snapshot_usd(&snapshot(100, Some(901)), now, 900).is_err());
+        assert!(snapshot_usd(&snapshot(900, None), now, 900).is_ok());
         assert!(snapshot_usd(&snapshot(901, None), now, 900).is_err());
         // A provider quote time ahead of the poll does not make the rate
         // fresher than the poll that took it.
@@ -1134,7 +1131,6 @@ mod tests {
         assert!(ensure_charge_covers_payment("10", "0").is_err());
         assert!(ensure_charge_covers_payment("0", "0").is_ok());
         assert!(ensure_charge_covers_payment("10", "3").is_ok());
-        assert!(is_stale(100, 401, 300) && !is_stale(100, 400, 300));
         assert!(is_decimal_item_id("12") && !is_decimal_item_id("0xab") && !is_decimal_item_id(""));
         let max = alloy_primitives::U256::MAX.to_string();
         assert_eq!(max.len(), 78);
