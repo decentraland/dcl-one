@@ -374,10 +374,16 @@ mod tests {
         let error = require_accepted_friend(&pool, &me, &peer)
             .await
             .expect_err("the lookup failed");
-        assert_eq!(
-            error.into_response().status(),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // The community handlers' database envelope: one `message` string.
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let fields = body.as_object().expect("a JSON object");
+        assert_eq!(fields.len(), 1, "{body}");
+        assert!(fields["message"].is_string(), "{body}");
         pool.close().await;
     }
 
