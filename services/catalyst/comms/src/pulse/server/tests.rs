@@ -1050,6 +1050,216 @@ async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
     let _ = std::fs::remove_file(path.with_extension("replay-journal.tmp"));
 }
 
+struct JournalPath(std::path::PathBuf);
+
+impl JournalPath {
+    fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "catalyrst-pulse-server-{label}-{}-{id}.tsv",
+            std::process::id()
+        )))
+    }
+}
+
+impl Drop for JournalPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("replay-journal.tmp"));
+        let _ = std::fs::remove_file(self.0.with_extension("replay-journal.lock"));
+    }
+}
+
+fn journaled_server(
+    path: &std::path::Path,
+    now_ms: i64,
+) -> (PulseServer, std::sync::mpsc::Sender<std::io::Result<()>>) {
+    let mut server = PulseServer::with_config(4, 2, &[50], false);
+    let (policy, gate) = HandshakeReplayPolicy::durable_gated(
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        path,
+        now_ms,
+    );
+    server.replay_policy = policy;
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    (server, gate)
+}
+
+async fn journal_settled(server: &mut PulseServer) -> Vec<HeldHandshake> {
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        loop {
+            let ready = server.take_journaled();
+            if !ready.is_empty() {
+                return ready;
+            }
+            server.replay_policy.journal_progressed().await;
+        }
+    })
+    .await
+    .expect("the journal writer reports progress")
+}
+
+#[tokio::test]
+async fn a_handshake_is_answered_only_after_its_journal_sync() {
+    let path = JournalPath::new("answer-after-sync");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    {
+        let (mut server, gate) = journaled_server(&path.0, timestamp);
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+                .is_none()
+        );
+        let resync = client_msg(client_message::Message::Resync(Default::default()));
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &resync, timestamp, 2)
+                .is_none(),
+            "the peer's next packet waits behind its handshake"
+        );
+        assert!(
+            server.take_journaled().is_empty(),
+            "no answer before the sync"
+        );
+        assert!(!server.is_authenticated(1));
+
+        gate.send(Ok(())).unwrap();
+        let ready = journal_settled(&mut server).await;
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].peer, 1);
+        assert_eq!(ready[0].packets.len(), 1);
+        match server.recheck_held(1, ready[0].action.clone()) {
+            Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+            other => panic!("expected the held admission, got {other:?}"),
+        }
+        assert!(
+            std::fs::read_to_string(&path.0)
+                .unwrap()
+                .contains(&format!("\t{wallet}\t{timestamp}\n"))
+        );
+    }
+
+    let mut restarted = PulseServer::with_config(4, 2, &[50], false);
+    restarted.replay_policy = HandshakeReplayPolicy::durable_after_restart(
+        true,
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        &path.0,
+        timestamp,
+    )
+    .unwrap();
+    restarted
+        .peers
+        .insert(2, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    assert!(matches!(
+        restarted.dispatch(2, channel::RELIABLE, &bytes, timestamp, 0),
+        Action::Reject {
+            reason: DisconnectReason::HandshakeReplayRejected,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn a_crash_before_the_journal_sync_answers_nothing_of_that_batch() {
+    let path = JournalPath::new("crash-before-sync");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    {
+        let (mut server, gate) = journaled_server(&path.0, timestamp);
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+                .is_none()
+        );
+        // Crash: the writer stops before the batch reaches the file.
+        drop(gate);
+        assert!(
+            server
+                .take_journaled()
+                .iter()
+                .all(|held| matches!(held.action, Action::Reject { reply: None, .. })),
+            "a batch that never synced is never answered"
+        );
+        assert!(!server.is_authenticated(1));
+    }
+
+    // The pair was never answered, so losing it with the batch admits nothing twice.
+    let mut restarted = PulseServer::with_config(4, 2, &[50], false);
+    restarted.replay_policy = HandshakeReplayPolicy::durable_after_restart(
+        true,
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        &path.0,
+        timestamp,
+    )
+    .unwrap();
+    restarted
+        .peers
+        .insert(2, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    match restarted.dispatch(2, channel::RELIABLE, &bytes, timestamp, 0) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("the unanswered pair is admitted once after restart, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_failed_journal_sync_refuses_the_held_handshake_without_an_answer() {
+    let path = JournalPath::new("failed-sync");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    gate.send(Err(std::io::Error::other("injected write failure")))
+        .unwrap();
+    let ready = journal_settled(&mut server).await;
+    assert_eq!(ready.len(), 1);
+    assert_eq!(
+        ready[0].action,
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::ServerFull
+        }
+    );
+    assert_eq!(
+        server.peers[&1].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+}
+
+#[tokio::test]
+async fn a_disconnect_drops_the_held_handshake() {
+    let path = JournalPath::new("disconnect-held");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    server.remove_peer_state(1);
+    // A new connection reusing the slot is not answered with the old outcome.
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    gate.send(Ok(())).unwrap();
+    let issued = server.replay_policy.journal_issued();
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        while server.replay_policy.journal_progress().durable_through < issued {
+            server.replay_policy.journal_progressed().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(server.take_journaled().is_empty());
+}
+
 #[tokio::test]
 async fn a_stepped_back_wall_clock_cannot_reopen_a_used_handshake() {
     let (bytes, _, timestamp) = signed_handshake_request().await;
@@ -2477,36 +2687,73 @@ fn assert_corruption_rejection_blocks_gameplay(srv: &mut PulseServer, peer: u32)
     let before = srv.board.try_read(peer).unwrap().clone();
     let profile = srv.profiles.get(peer);
     let packets = [
-        (1, client_message::Message::Input(PlayerStateInput { state: Some(valid_state(6)) })),
-        (0, client_message::Message::Teleport(teleport_request(9, "next-realm"))),
-        (0, client_message::Message::ProfileAnnouncement(ProfileVersionAnnouncement { version: 9 })),
-        (2, client_message::Message::EmoteStart(crate::protocol::pulse::decentraland::pulse::EmoteStart {
-            emote_id: "urn:decentraland:off-chain:base-emotes:wave".into(),
-            duration_ms: Some(2000), player_state: Some(valid_state(3)), mask: None,
-        })),
+        (
+            1,
+            client_message::Message::Input(PlayerStateInput {
+                state: Some(valid_state(6)),
+            }),
+        ),
+        (
+            0,
+            client_message::Message::Teleport(teleport_request(9, "next-realm")),
+        ),
+        (
+            0,
+            client_message::Message::ProfileAnnouncement(ProfileVersionAnnouncement { version: 9 }),
+        ),
+        (
+            2,
+            client_message::Message::EmoteStart(
+                crate::protocol::pulse::decentraland::pulse::EmoteStart {
+                    emote_id: "urn:decentraland:off-chain:base-emotes:wave".into(),
+                    duration_ms: Some(2000),
+                    player_state: Some(valid_state(3)),
+                    mask: None,
+                },
+            ),
+        ),
         (2, client_message::Message::EmoteStop(Default::default())),
     ];
     for (channel, message) in packets {
-        assert_eq!(srv.dispatch(peer, channel, &client_msg(message), 1000, 1100), Action::Ignore);
+        assert_eq!(
+            srv.dispatch(peer, channel, &client_msg(message), 1000, 1100),
+            Action::Ignore
+        );
         assert_eq!(srv.board.try_read(peer), Some(&before));
         assert_eq!(srv.board.last_seq(peer), before.seq);
         assert_eq!(srv.profiles.get(peer), profile);
     }
-    assert_eq!(srv.peers[&peer].connection_state, PeerConnectionState::PendingDisconnect);
+    assert_eq!(
+        srv.peers[&peer].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
 }
 
 #[test]
 fn decode_corruption_rejection_is_terminal_for_queued_gameplay() {
     let mut srv = PulseServer::new();
     authed(&mut srv, 7, "wallet");
-    let input = client_msg(client_message::Message::Input(PlayerStateInput { state: Some(valid_state(5)) }));
+    let input = client_msg(client_message::Message::Input(PlayerStateInput {
+        state: Some(valid_state(5)),
+    }));
     assert_eq!(srv.dispatch(7, 1, &input, 0, 100), Action::Applied);
     for _ in 0..5 {
-        assert_eq!(srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000), Action::Ignore);
-        assert_eq!(srv.peers[&7].connection_state, PeerConnectionState::Authenticated);
+        assert_eq!(
+            srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
+            Action::Ignore
+        );
+        assert_eq!(
+            srv.peers[&7].connection_state,
+            PeerConnectionState::Authenticated
+        );
     }
-    assert_eq!(srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
-        Action::Reject { reply: None, reason: DisconnectReason::PacketCorrupted });
+    assert_eq!(
+        srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::PacketCorrupted
+        }
+    );
     assert_corruption_rejection_blocks_gameplay(&mut srv, 7);
 }
 
@@ -2514,15 +2761,33 @@ fn decode_corruption_rejection_is_terminal_for_queued_gameplay() {
 async fn native_corruption_rejection_is_terminal_before_transport_disconnect() {
     for size in [4097, 8192] {
         let (mut server, mut transports, mut client, peer) = envelope_rig().await;
-        let input = client_msg(client_message::Message::Input(PlayerStateInput { state: Some(valid_state(5)) }));
+        let input = client_msg(client_message::Message::Input(PlayerStateInput {
+            state: Some(valid_state(5)),
+        }));
         assert_eq!(server.dispatch(peer, 1, &input, 0, 100), Action::Applied);
         // Decode failures and oversize native envelopes share one corruption budget.
         for _ in 0..5 {
-            assert_eq!(server.dispatch(peer, 0, &[0x0a, 0xff], 1000, 1000), Action::Ignore);
+            assert_eq!(
+                server.dispatch(peer, 0, &[0x0a, 0xff], 1000, 1000),
+                Action::Ignore
+            );
         }
-        server.receive(&mut transports, peer, 0, &envelope_profile(size, 9), 1000, 1000).await.unwrap();
+        server
+            .receive(
+                &mut transports,
+                peer,
+                0,
+                &envelope_profile(size, 9),
+                1000,
+                1000,
+            )
+            .await
+            .unwrap();
         assert_corruption_rejection_blocks_gameplay(&mut server, peer);
-        assert!(server.ip_limiter.contains_peer(peer), "retain IP reservation until disconnect");
+        assert!(
+            server.ip_limiter.contains_peer(peer),
+            "retain IP reservation until disconnect"
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut wire_reason = None;
         let mut disconnected = false;
