@@ -52,8 +52,7 @@ impl CommsState {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use super::*;
     use crate::interfaces::test_support::{StubPolicy, StubScenes};
@@ -245,39 +244,11 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     /// Everything logged at any level while `f` runs on this thread.
-    ///
-    /// `tracing` caches a callsite's interest when the callsite is first hit. While one dispatcher
-    /// alone is live, a first hit on another test's thread asks only that thread's subscriber
-    /// (none) and caches "never", hiding the event from this capture. A second live dispatcher
-    /// makes every first hit ask all of them.
     async fn logs_of<F: std::future::Future<Output = ()>>(f: F) -> String {
-        let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
-        let buffer = LogBuffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .without_time()
-            .with_ansi(false)
-            .with_writer(move || writer.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (logs, _capture) = crate::test_logs::LogBuffer::capture(tracing::Level::TRACE);
         f.await;
-        String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap()
+        logs.text()
     }
 
     #[tokio::test(flavor = "current_thread")]

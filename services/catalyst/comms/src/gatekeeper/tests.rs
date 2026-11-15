@@ -2902,35 +2902,11 @@ async fn world_mint_refuses_at_capacity() {
 /// exercised: this crate has no LiveKit room-service double.
 #[tokio::test(flavor = "current_thread")]
 async fn revoke_maps_each_arm_to_its_livekit_call() {
-    use std::io::Write;
-    use std::sync::Mutex;
-
     use super::RoomRevocation;
+    use crate::test_logs::LogBuffer;
     use crate::world_identity::WorldName;
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let buffer = LogBuffer::default();
-    let writer = buffer.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let (buffer, _capture) = LogBuffer::capture(tracing::Level::TRACE);
 
     let state = lazy_state(Settings {
         livekit: super::LiveKit {
@@ -2970,7 +2946,7 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             tasks,
             "{variant}: no LiveKit task is spawned while LiveKit is not configured"
         );
-        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        let logs = buffer.text();
         let line = logs.lines().last().unwrap_or_default();
         assert!(
             line.contains("LiveKit not configured; no participant evicted")
@@ -2978,7 +2954,7 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             "{variant}: {logs}"
         );
     }
-    let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    let logs = buffer.text();
     assert!(!logs.contains("comms-revocation"), "{logs}");
 }
 
