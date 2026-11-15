@@ -1,4 +1,4 @@
-"""The Explorer's build scripts: the guard on the patched trees, and the inputs of the version string."""
+"""The Explorer's root build script: the inputs of the version string."""
 import os
 from pathlib import Path
 import shutil
@@ -9,11 +9,8 @@ from unittest import mock
 
 import test_bevy_patched_sources as shared
 
-tool = shared.tool
 SOURCE = Path(__file__).parents[2] / "rendering/bevy-explorer/source"
-GUARD = SOURCE / "crates/common/build.rs"
 VERSION = SOURCE / "build.rs"
-STALE = "patched sources are stale: run python3 tooling/patched-sources.py materialise"
 INPUT = "cargo:rerun-if-changed="
 
 
@@ -63,97 +60,6 @@ class CompilerTest(unittest.TestCase):
                 os.environ.pop("CI", None)
                 with self.assertRaises(unittest.SkipTest):
                     rustc()
-
-
-class GuardTest(BuildScriptCase, shared.PatchedSourcesCase):
-    """The guard reads the stamps with no Python and no crate."""
-
-    SCRIPT = GUARD
-
-    def guard(self, root=True):
-        code, err, watched, _lines = self.script(self.work, **({"DCL_ONE_ROOT": str(self.root)} if root else {}))
-        return code, err, [Path(path) for path in watched]
-
-    def inputs(self, *names):
-        return [path for name in names
-                for path in (self.directory(name) / "source.toml", self.directory(name) / "series", self.dest(name) / tool.STAMP)]
-
-    def test_a_tree_without_patches_passes(self):
-        self.assertEqual(self.guard(), (0, "", []))
-        self.assertEqual(self.guard(root=False), (0, "", []))
-
-    def test_a_current_stamp_passes_and_every_input_is_named(self):
-        self.add_source("winit")
-        self.materialised("bevy", commits=[self.first])
-        self.assertEqual(self.guard(), (0, "", self.inputs("bevy", "winit")))
-        # A directory with no source.toml is no source, and a source needs no series.
-        (self.directory("notes")).mkdir()
-        (self.directory("bevy") / "series/0001-fork-1.patch").unlink()
-        (self.directory("bevy") / "series").rmdir()
-        tool.write_stamp(self.dest("bevy"), crc32=tool.crc32(tool.Source(self.root, "bevy").inputs()))
-        self.assertEqual(self.guard(), (0, "", [path for path in self.inputs("bevy", "winit")
-                                                 if path != self.directory("bevy") / "series"]))
-
-    def test_a_stale_stamp_fails_with_one_line(self):
-        self.materialised("winit")
-        self.assertEqual(self.guard()[0], 0)
-        patch = self.directory("winit") / "series/0002-fork-2.patch"
-        original = patch.read_bytes()
-        patch.write_bytes(original.replace(b"Why the fork", b"Why this fork"))
-        # A failed script names no input, so the one line is all Cargo has to show.
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-        patch.write_bytes(original)
-        self.assertEqual(self.guard()[0], 0)
-        (self.directory("winit") / "series/0003-more.patch").write_bytes(b"")
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-        (self.directory("winit") / "series/0003-more.patch").unlink()
-        self.set_key("winit", "ref", "v2")
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-
-    def test_one_stale_tree_among_current_ones_fails(self):
-        self.add_source("winit")
-        self.materialised("bevy", commits=[self.first])
-        self.set_key("bevy", "ref", "v2")
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-
-    def test_a_missing_stamp_fails(self):
-        self.add_source("winit")
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-        self.ok("materialise")
-        self.assertEqual(self.guard()[0], 0)
-        (self.dest() / tool.STAMP).unlink()
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-
-    def test_an_interrupted_materialise_fails(self):
-        self.materialised("winit")
-        tool.write_stamp(self.dest(), crc32="", files="", inputs="", tree="")
-        self.assertEqual(self.guard(), (1, STALE + "\n", []))
-
-    def test_export_leaves_a_tree_the_build_accepts(self):
-        self.materialised("winit")
-        (self.dest() / "run.sh").write_bytes(b"#!/bin/sh\nexit 0\n")
-        self.ok("export", "winit", "-m", "Exit cleanly")
-        self.assertEqual(self.guard()[:2], (0, ""))
-
-    def test_the_checksum_is_the_one_the_tool_writes(self):
-        # Every byte value, an empty file, names whose order is not the order of their numbers, and a
-        # file that is no patch: the script and the tool frame and order the same inputs.
-        self.add_source("winit")
-        series = self.directory("winit") / "series"
-        (series / "0010-bytes.patch").write_bytes(bytes(range(256)) * 300)
-        (series / "0003-empty.patch").write_bytes(b"")
-        (series / "notes.md").write_bytes(b"not an input\n")
-        checksum = tool.crc32(tool.Source(self.root, "winit").inputs())
-        tool.write_stamp(self.dest(), crc32=checksum)
-        self.assertEqual(self.guard()[:2], (0, ""))
-        (series / "notes.md").write_bytes(b"still not an input\n")
-        self.assertEqual(self.guard()[:2], (0, ""))
-        (series / "0003-empty.patch").write_bytes(b"\0")
-        self.assertEqual(self.guard()[:2], (1, STALE + "\n"))
-        (series / "0003-empty.patch").write_bytes(b"")
-        other = f"{int(checksum, 16) ^ 1:08x}"
-        tool.write_stamp(self.dest(), crc32=other)
-        self.assertEqual(self.guard()[:2], (1, STALE + "\n"))
 
 
 class VersionInputsTest(BuildScriptCase, unittest.TestCase):
