@@ -1602,6 +1602,19 @@ on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is up
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
 
+The `friend_first_wear` notification producer
+(`social/src/notifications/first_wear.rs`, leased `friend-first-wear`) reads
+`content.deployments` by `id` through the same id cursor and gap records,
+under source `friend_first_wear`: the signer's `entity_timestamp` is not
+storage order (a local deploy may be signed up to 15 minutes ahead, a synced
+one long before), and a cursor on it would skip every profile stored after
+one signed later and every tie past a page edge. Its first pass starts at the
+head. A batch seeds baselines and claims first wears (`social.worn_history`)
+in the transaction that advances the cursor, and notifies after it commits,
+so a restart never re-notifies a claim. A profile signed more than 24 hours
+before the pass is history a syncing node caught up on and is passed without
+effect. `social.first_wear_cursor` is no longer read.
+
 ### Presence badges flow
 
 Input is every verified LiveKit join and leave (the gatekeeper's

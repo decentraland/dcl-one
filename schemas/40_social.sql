@@ -908,7 +908,8 @@ CREATE TABLE social.badge_admin_audit (
 -- The badge processor's durable read positions, one row per source, advanced
 -- in the transaction that writes the progress the rows it passed produced:
 -- `client_events` (social.client_events.seq), `deployments`
--- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- (content.deployments.id), `friend_first_wear` (content.deployments.id, for
+-- the notification producer), `sales:<table>:<network>` (block_number,
 -- log_index of a shop log) and the recount passes (`position` counts the
 -- passes, the first of which writes no notification; `resume_after` is the
 -- last wallet the pass in progress recounted, NULL between passes).
@@ -921,8 +922,8 @@ CREATE TABLE social.badge_cursors (
     CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
 );
 
--- Ids an id cursor (`client_events`, `deployments`) passed without seeing
--- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- Ids an id cursor (`client_events`, `deployments`, `friend_first_wear`)
+-- passed without seeing their rows, `lo..=hi`: a value drawn by a transaction still open when the
 -- cursor read past it (sequence order is not commit order), or one that
 -- never commits (a rollback, an ON CONFLICT that burned it). Every batch
 -- re-reads them and processes a row that appeared; a gap is dropped once
@@ -1506,8 +1507,8 @@ CREATE TABLE social.first_wear_baseline (
     CONSTRAINT first_wear_baseline_pkey PRIMARY KEY (address)
 );
 
--- The entity_timestamp high-water mark over content.deployments profiles;
--- initialised to now on the first pass so history is never replayed.
+-- The producer's former entity_timestamp high-water mark; no longer read
+-- (the producer's cursor is social.badge_cursors source friend_first_wear).
 CREATE TABLE social.first_wear_cursor (
     id integer NOT NULL DEFAULT 1,
     last_seen timestamp without time zone NOT NULL,
