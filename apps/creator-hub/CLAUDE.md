@@ -12,7 +12,9 @@ Decentraland Creator Hub is a monorepo (a pnpm workspace) with three packages:
 
 Dependencies flow: `asset-packs` → `inspector` → `creator-hub` (each depends on the previous via `file:` links).
 
-Install, run and test with pnpm, at the version the root `package.json` pins (`corepack enable` provides it). `pnpm-workspace.yaml` holds the workspace's install settings; `packages/inspector/agents/bevy` is a separate project with its own lock and settings. The two published manifests (`packages/asset-packs`, `packages/inspector`) carry nothing pnpm-specific: no `packageManager`, no `workspace:` range, and their own scripts chain with `npm run`, so the packed `package.json` is the one in the tree.
+Install, run and test with pnpm 12; CI names the exact version in `.github/actions/setup-pnpm/action.yml`. `pnpm-workspace.yaml` holds the workspace's install settings; `packages/inspector/agents/bevy` is a separate project with its own lock and settings. The two published manifests (`packages/asset-packs`, `packages/inspector`) carry nothing pnpm-specific: no `packageManager`, no `workspace:` range, and their own scripts chain with `npm run`, so the packed `package.json` is the one in the tree.
+
+A fourth, private package `@dcl/zip-extract` (`packages/zip-extract`) unpacks and writes zip archives with `node:zlib`. An `extract-zip` override in both `pnpm-workspace.yaml` files gives its reader (`index.js`) to `@dcl/sdk-commands`, so `extract-zip` is not in either lock file. The reader makes no link and writes only below the target folder. The writer (`write.js`, `zip(entries)`) makes the scene export archive; Vite bundles it into the main process, so the package is a dev dependency of `creator-hub`. It writes no zip64 record and stops with an error above 65534 entries or 4 GiB.
 
 ## Common Commands
 
@@ -42,25 +44,27 @@ cd packages/asset-packs && pnpm run start    # Asset packs dev server (port 8001
 ### Testing
 
 ```bash
-VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 make test                                         # Unit tests for all packages (vitest)
-make test-e2e                                                                               # E2E tests (Playwright) for inspector + creator-hub
+VITEST_MAX_WORKERS=2 make test                                          # Unit tests for all packages (vitest)
+make test-e2e                                                           # E2E tests (Playwright) for inspector + creator-hub
 
 # Per-package tests
-cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:unit      # All unit tests (main, preload, renderer, shared)
-cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:main      # Main process tests only
-cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:renderer  # Renderer tests only
-cd packages/creator-hub && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:shared    # Shared tests only
-cd packages/inspector && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test             # Inspector unit tests
-cd packages/inspector && pnpm run test:e2e                                                   # Inspector E2E tests
+cd packages/creator-hub && VITEST_MAX_WORKERS=2 pnpm run test:unit      # All unit tests (main, preload, renderer, shared)
+cd packages/creator-hub && VITEST_MAX_WORKERS=2 pnpm run test:main      # Main process tests only
+cd packages/creator-hub && VITEST_MAX_WORKERS=2 pnpm run test:renderer  # Renderer tests only
+cd packages/creator-hub && VITEST_MAX_WORKERS=2 pnpm run test:shared    # Shared tests only
+cd packages/inspector && VITEST_MAX_WORKERS=2 pnpm run test             # Inspector unit tests
+cd packages/inspector && pnpm run test:e2e                              # Inspector E2E tests
 ```
 
-**Note:** run vitest with the thread cap and one run at a time, as the commands above do. The rule, the single-spec flags and how to read the result: `docs/testing-standards.md` → "Run vitest capped".
+**Note:** run vitest with the worker cap and one run at a time, as the commands above do. The rule, the single-spec flags and how to read the result: `docs/testing-standards.md` → "Run vitest capped".
 
-**Note:** run vitest from inside the package (`cd packages/<pkg> && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm exec vitest run`; Creator Hub: `VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm exec vitest run -r <layer> …`, since its vitest configs live in each layer folder). Invoking `pnpm exec vitest run` from the repo root sweeps up every workspace's specs without their per-package configs/setup and reports mass failures that are pure cwd artifacts.
+**Note:** run vitest from inside the package (`cd packages/<pkg> && VITEST_MAX_WORKERS=2 pnpm exec vitest run`; Creator Hub: `VITEST_MAX_WORKERS=2 pnpm exec vitest run -r <layer> …`, since its vitest configs live in each layer folder). Invoking `pnpm exec vitest run` from the repo root sweeps up every workspace's specs without their per-package configs/setup and reports mass failures that are pure cwd artifacts.
+
+**Note:** start Vite and Vitest through the package scripts. For a direct call use the launcher: `node ../../scripts/rolldown.js vitest run …` in place of `pnpm exec vitest run …`. The `lint` script starts oxlint the same way, for the same reason. On Linux it sets `MIMALLOC_ALLOW_THP=0` before Rolldown loads; without it a build, a test run or a cold dev-server start can spend most of its time in the kernel when the memory of the machine is under pressure (`scripts/rolldown-env.js`).
 
 **Note:** `.spec.ts` and `.test.ts` files are not type-checked, but `.spec.tsx` files are. All three creator-hub tsconfigs carry `exclude: ["**/*.spec.ts", "**/*.test.ts"]`, and vitest transpiles without checking — so `pnpm run typecheck` says nothing about a `.ts` test's own types, and a wrong cast or a stale `Partial<…>` in its fixture is caught by neither gate. The exclude does not match `.tsx`, so the renderer's component specs ARE checked: a fixture such as `mockResolvedValue(null)` against a non-null return fails `make typecheck`.
 
-**Note:** in main-process tests, setting `process.env.HOME` does not change `os.homedir()` (vitest runs them in worker threads). Mock `os` instead (`vi.mock('os', …)` returning a fake `homedir`, as in `main/tests/ai-detect.test.ts`). Any test that reaches agent detection must also set `SHELL=/usr/bin/true`: `ai.ts` asks your login shell for its PATH and would otherwise find your real CLIs.
+**Note:** in main-process tests, setting `process.env.HOME` is not a sure way to change `os.homedir()` (it has no effect in a worker thread). Mock `os` instead (`vi.mock('os', …)` returning a fake `homedir`, as in `main/tests/ai-detect.test.ts`). Any test that reaches agent detection must also set `SHELL=/usr/bin/true`: `ai.ts` asks your login shell for its PATH and would otherwise find your real CLIs.
 
 **Note:** `renderer/src/components/AnalyticsPage/atScale.spec.tsx` can time out in a full `pnpm run test:unit` run (it waits up to 15 s while every renderer suite runs in parallel). Rerun it alone before treating it as a regression.
 
@@ -73,14 +77,15 @@ cd packages/inspector && pnpm run test:e2e                                      
 ### Code Quality
 
 ```bash
-make lint          # ESLint across all packages
-make lint-fix      # ESLint autofix + syncpack
+make lint          # oxlint across all packages
+make lint-fix      # oxlint autofix
+make lint-packages # One version of each dependency across the workspace manifests
 make format        # Prettier check
 make format-fix    # Prettier write
 make typecheck     # TypeScript type checking across all workspaces
 ```
 
-**Note:** `make lint-fix` runs `make sync-deps` first, which can fail on branches that pin `@dcl/*` packages to SDK-toolchain tarball URLs (syncpack reports `UnsupportedMismatch`). When this happens, run `pnpm run lint:fix` directly to skip syncpack and still get ESLint autofixes — **from the repo ROOT**. `lint`, `lint:fix`, `format` and `format:fix` are root-only scripts; running them inside `packages/inspector` fails with a missing-script error (the package defines only `test`/`typecheck`).
+**Note:** `lint`, `lint:fix`, `format` and `format:fix` are root-only scripts: run them **from the repo ROOT**; running them inside `packages/inspector` fails with a missing-script error (the package defines only `test`/`typecheck`). `make lint-packages` runs `scripts/check-dep-versions.js`, which fails when two workspace manifests give one dependency different versions in `dependencies` or `devDependencies`; it does not compare peer ranges, and no workflow runs it.
 
 **Note:** there is no pre-commit hook, so formatting and lint run only when you run them and in CI. Before committing, run `make format-fix` and `pnpm run lint:fix` from the repo root, or the `lint` workflow fails the PR. Stage explicitly (`git add -- <paths>`, never `git add .`/`-A`) and confirm with `git show --name-only --format="" HEAD`, which matters most when two agents share one working tree. A checkout made before the hook was removed still has `.git/hooks/pre-commit` calling `npx nano-staged`; delete that file.
 
@@ -150,7 +155,7 @@ make protoc        # Regenerate TypeScript from .proto files
 ### Asset Packs
 
 - Runtime built with `@dcl/sdk-commands` (SDK7 scene).
-- **`make build-asset-packs` can run an npm install.** Its `build:js` is `sdk-commands build`, which prints "Installing dependencies..." and runs `npm install` when `packages/asset-packs/node_modules` is missing or empty (a fresh worktree is enough). That writes an npm tree over the pnpm one, and in a `git worktree` whose `node_modules` is symlinked to the main checkout it follows the links and MOVES packages out of the main checkout's `node_modules`, breaking every vitest run there. Give each worktree its own `pnpm install` before building, and never symlink `node_modules` or its entries. A symlinked tree also resolves the workspace links (`@dcl/inspector -> ../../packages/inspector`) into the main checkout's packages, so tests silently run against the wrong code.
+- **Give each `git worktree` its own `pnpm install --frozen-lockfile`; never symlink `node_modules` or its entries.** `make build-asset-packs` does not install: its `build:js` is `sdk-commands build --skip-install`. Without the flag, `sdk-commands build` runs `npm install` when `packages/asset-packs/node_modules` is missing or empty, which a clean pnpm install leaves it. A symlinked tree resolves the workspace links (`@dcl/inspector -> ../../packages/inspector`) into the main checkout's packages, so tests silently run against the wrong code.
 - TypeScript library (`dist/`) + catalog.json + binary assets (`bin/`).
 - Scripts for validating, uploading to S3, and downloading assets.
 - Public API is exported via `src/definitions.ts` (built to `dist/definitions.js`, the package `main`). Cross-package VALUE imports from `@dcl/asset-packs` in the inspector only resolve after rebuilding asset-packs (`make build-asset-packs`). This also affects the inspector's **vitest unit tests**, which import the built `@dcl/asset-packs` — a source edit in asset-packs won't be seen (in imports, typecheck, or tests) until rebuilt. `pnpm run build:lib` (in `packages/asset-packs`) is the minimal/fast rebuild to refresh `dist/`.
@@ -165,7 +170,7 @@ CI lives at the dcl-one root: `.github/workflows/creator-hub-ci.yml` is the entr
 - **Build once, reuse.** `build.yml` builds the portable artifacts (proto gen, asset-packs `dist/bin/catalog.json`, inspector `dist/public`) a single time per run, gated by a combined source-hash `actions/cache`. QA jobs (`typechecking`, `tests`) consume them via the `.github/actions/download-build` composite action instead of rebuilding. Don't reintroduce per-job `make protoc` / `make build-*` in the QA jobs. The publish chain (asset-packs → inspector → creator-hub) still builds its own tarballs on purpose.
 - **A reusable workflow's `needs:` can only reference jobs in the same file.** Cross-workflow ordering and artifact prerequisites are expressed at the `ci.yml` caller level (e.g. `tests: needs: [build]`), not inside `tests.yml`. Artifacts are run-scoped and shared across all called reusable workflows.
 - **`e2e` is decoupled from the publish chain — enforced by branch protection, not `needs`.** `tests.yml` is unit-only; the Playwright suites live in `e2e.yml` (`e2e-inspector` + `e2e-creator-hub`), wired as `e2e: needs: [build, tests]` in `ci.yml`. It is a leaf job — nothing depends on it — so the publish chain (`drop_pre_release → asset-packs → inspector → creator-hub`) starts after `unit`/`lint`/ `typechecking` instead of waiting ~12 min for e2e (that serialization was the pipeline's long pole). **Do NOT add `e2e` to `drop_pre_release`'s `needs`.** Because the DAG no longer gates on e2e, something must require it: `ci.yml`'s `result` job (check name `Creator Hub CI`, the one required status check) needs every job, e2e included, and fails if any failed. Don't drop a job from its `needs`, or that job silently becomes optional. Every pull request runs `ci.yml`, so that check always reports; its `changes` job skips the rest when nothing under `apps/creator-hub` or the creator-hub workflows changed. On `main` pushes (no branch protection) the chain publishes in parallel with e2e — safe because the merged code already passed e2e on the PR.
-- **Lint workflows with `actionlint`, not the JS toolchain.** `make format`/ `make lint`/`make test` do NOT cover `.github/**` YAML (Prettier globs `js,ts,tsx,json` and `.prettierignore` excludes `.github`; ESLint is `js,cjs,ts,tsx`).
+- **Lint workflows with `actionlint`, not the JS toolchain.** `make format`/ `make lint`/`make test` do NOT cover `.github/**` YAML (Prettier globs `js,ts,tsx,json` and `.prettierignore` excludes `.github`; oxlint reads `js,cjs,ts,tsx` and skips dot folders).
 - **`actionlint` mis-lints composite `action.yml` files** as workflows and reports bogus "jobs/on section missing" errors. Validate `.github/actions/*/action.yml` with a YAML parser instead; run `actionlint` on `.github/workflows/*.yml`.
 - **Cache whole output directories, not file lists.** The build cache once listed inspector outputs individually and missed `bundle.css`; warm-cache runs then served an unstyled app, and every e2e "flake" was really a cache hit (`build.yml`).
 - **Debugging `e2e-inspector` failures: read the `[e2e-diag]` log lines first** (plus the `inspector-e2e-diagnostics` artifact). The suite dumps DOM boxes, console/page errors, and a screenshot on readiness timeout — match those before changing any config.
@@ -179,10 +184,10 @@ CI lives at the dcl-one root: `.github/workflows/creator-hub-ci.yml` is the entr
 
 ## Code Style
 
-- **ESLint**: `@typescript-eslint/consistent-type-imports` is enforced (use `import type` for type-only imports).
-- **Lint scope**: `make lint` / `pnpm run lint` runs `eslint . --ext js,cjs,ts,tsx` — `.tsx` is covered, so no separate pass is needed before shipping. It was excluded until the gate was widened, by which point ~95 errors had accumulated behind it across 43 files; widening any gate here should be expected to surface a backlog rather than a clean run. Two traps that widening exposed are now handled in config, and both matter before you "fix" an apparent violation. Smart-item scene sources under `packages/asset-packs/packs/` compile JSX through an `@jsx ReactEcs.createElement` pragma that no loaded plugin can see, so the factory import reads as unused — an `.eslintrc.json` override scopes `varsIgnorePattern` for those files, and deleting the import breaks the build. And `eslint-plugin-react-hooks` is not installed at all, so a `react-hooks/*` disable directive suppresses nothing and is itself reported as an error.
+- **oxlint**: the rules are in `.oxlintrc.json`. `typescript/consistent-type-imports` is enforced (use `import type` for type-only imports). To turn a rule off for one line, write an `oxlint-disable-next-line <rule>` comment with the rule name that `.oxlintrc.json` uses.
+- **Lint scope**: `make lint` / `pnpm run lint` runs `oxlint --deny-warnings .` through the launcher (`scripts/rolldown.js`) over every `.js`, `.cjs`, `.ts` and `.tsx` file outside dot folders — `.tsx` is covered, so no separate pass is needed before shipping. Seven rules that oxlint turns on by default are off in `.oxlintrc.json` because the tree has findings for them; turning one on should be expected to surface a backlog rather than a clean run. Three traps matter before you "fix" an apparent violation. Smart-item scene sources under `packages/asset-packs/packs/` compile JSX through an `@jsx ReactEcs.createElement` pragma that the linter cannot see, so the factory import reads as unused — an `.oxlintrc.json` override scopes `varsIgnorePattern` for those files, and deleting the import breaks the build. The React hooks rules are not turned on, so a `react-hooks/*` disable directive suppresses nothing. And oxlint does not read `/* eslint-env */` comments: a JavaScript file that needs other globals gets an `env` override in `.oxlintrc.json`. Semicolons, quotes and trailing commas are Prettier's alone.
 - **Prettier**: `.prettierrc` is the contract — follow it, don't infer style from surrounding code. Single quotes, semicolons, trailing commas, 100 char print width, `arrowParens: "avoid"`, and an override making `**/*.{css,scss,html}` use DOUBLE quotes. Note the `pnpm run format` glob is only `**/*.{js,ts,tsx,json}`: CSS is configured but never checked, so stylesheets drift and a passing `pnpm run format` says nothing about them.
-- **Import order**: ESLint enforced. React first, then `@dcl/*`, then `decentraland-*`, then MUI/internal, then relative.
+- **Import order**: a convention that no lint rule checks. React first, then `@dcl/*`, then `decentraland-*`, then MUI/internal, then relative.
 - **Component-directory barrels**: inspector component directories use a per-directory `index.ts` barrel (`export { X } from './X'`) — ~30/31 dirs follow this. Add one when creating a component; don't strip these barrels for file-count reduction — it breaks the established convention.
 - **Unused vars**: prefix with `_` (e.g., `_unused`).
 - **Comments**: code must be self-explanatory (clear names, small functions). Do NOT write comments that only restate what the next line does — delete them. Keep only comments that add value the code can't convey: the non-obvious _why_ (rationale, trade-off, gotcha, bug/constraint reference), invariants, or warnings.
@@ -215,7 +220,7 @@ Coming back to a Redux-backed tab renders the data cached from the last visit wh
 
 ### Changing a value in `DEFAULT_CONFIG` does nothing for existing installs
 
-`mergeConfig(existingConfig, defaultConfig)` forwards to `deepmerge(defaults, stored)`, so **stored values win**, and `getConfigStorage` persists the *whole* default settings object on first launch. Every existing machine therefore already has a literal value on disk for every non-optional setting, and editing `DEFAULT_CONFIG` only reaches brand-new configs. To change a default for the installed base, add a one-time fix-up in `getConfigStorage` (`promoteAiAssistantSetting` is the worked example) plus a marker so it cannot re-run and silently revert the user's later choice — optional marker fields are declared on `AppSettings` but deliberately left **out** of `DEFAULT_CONFIG`, so "absent" means "not yet done" (`optimizerConsentAcknowledged`, `aiAssistantPromoted`).
+`mergeConfig(existingConfig, defaultConfig)` merges the stored config over the defaults, so **stored values win**, and `getConfigStorage` persists the *whole* default settings object on first launch. Every existing machine therefore already has a literal value on disk for every non-optional setting, and editing `DEFAULT_CONFIG` only reaches brand-new configs. To change a default for the installed base, add a one-time fix-up in `getConfigStorage` (`promoteAiAssistantSetting` is the worked example) plus a marker so it cannot re-run and silently revert the user's later choice — optional marker fields are declared on `AppSettings` but deliberately left **out** of `DEFAULT_CONFIG`, so "absent" means "not yet done" (`optimizerConsentAcknowledged`, `aiAssistantPromoted`).
 
 Any such fix-up must mutate **`mergedConfig.settings`**, never `existingConfig.settings` or the `storedSettings` cast above it — those are the same object, and mutating them makes both sides of the `JSON.stringify` write guard agree, so nothing reaches disk and the fix-up re-runs every launch. The `experimental`-from-`renderer` derivation in the same function has exactly that shape and is re-derived on every launch instead of being persisted. Only a test asserting `setAll` was called can catch this; one asserting the returned object passes straight through it.
 
@@ -253,7 +258,7 @@ If `git status -sb` shows `## <branch>...origin/main`, the branch's upstream is 
 
 ### The inspector's Node bundle must not `require` dev-only packages
 
-`dist/tooling-entrypoint.js` (the package `main`) is loaded by `@dcl/sdk-commands`, which installs only the inspector's `dependencies`. `build-externals.js` leaves every package in the inspector's dependency tree external — dev dependencies included — so a value import of a devDependency reachable from `src/tooling-entrypoint.ts` becomes a runtime `require` that fails downstream (js-sdk-toolchain's playground build: `ERR_MODULE_NOT_FOUND …/@dcl/ecs-math/dist/Quaternion`). Code reachable from that entrypoint (e.g. `lib/renderer/reverse-channel.ts` → `snap-manager.ts`) imports Babylon by subpath (`@babylonjs/core/Maths/math.vector`, ~68 KB) — the package root drags the whole engine (~5 MB) into the bundle — and any ESM devDependency it needs goes on `esmModulesToBundle`. `src/tooling-entrypoint.spec.ts` guards `@babylonjs/*` and `@dcl/ecs-math`; other dev-only packages (`fp-future`, `node-fetch`, `ignore`, `ajv`, `protobufjs`, `long`) are still external and resolve only because sdk-commands happens to install them.
+`dist/tooling-entrypoint.js` (the package `main`) is loaded by `@dcl/sdk-commands`, which installs only the inspector's `dependencies`. `build-externals.js` leaves every package in the inspector's dependency tree external — dev dependencies included — so a value import of a devDependency reachable from `src/tooling-entrypoint.ts` becomes a runtime `require` that fails downstream (js-sdk-toolchain's playground build: `ERR_MODULE_NOT_FOUND …/@dcl/ecs-math/dist/Quaternion`). Code reachable from that entrypoint (e.g. `lib/renderer/reverse-channel.ts` → `snap-manager.ts`) imports Babylon by subpath (`@babylonjs/core/Maths/math.vector`, ~68 KB) — the package root drags the whole engine (~5 MB) into the bundle — and any ESM devDependency it needs goes on `esmModulesToBundle`. `src/tooling-entrypoint.spec.ts` guards `@babylonjs/*` and `@dcl/ecs-math`. Every package that stays external in a published file (`dist/tooling-entrypoint.js`, `dist/ansi-entrypoint.js`) is in the inspector's `dependencies`. `src/tooling-entrypoint.spec.ts` checks this for the tooling entry: a new external import needs its `dependencies` entry, or its package in `esmModulesToBundle` (as `mitt` and `fp-future`, which the bundled `@dcl/mini-rpc` requires).
 
 ### Electron response headers must be overridden case-insensitively
 

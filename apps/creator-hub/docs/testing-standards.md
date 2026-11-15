@@ -18,7 +18,7 @@ a test that has never been red is not evidence of anything:
 
 ```bash
 git stash push -- packages/creator-hub/renderer/src/lib/land.ts
-VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:renderer src/lib/land.spec.ts   # must fail here
+VITEST_MAX_WORKERS=2 pnpm run test:renderer src/lib/land.spec.ts   # must fail here
 git stash pop
 ```
 
@@ -51,18 +51,25 @@ vi.mock('./utils', async importOriginal => ({
 Note that `importOriginal` does **not** intercept same-module calls: a function
 kept real still calls its real neighbours, not their mocked versions.
 
-A module mocked this way also loses its **default** export unless the factory
-provides one. `lib/worlds` does `import fetch from 'decentraland-crypto-fetch'`,
-so a factory without a `default` leaves every worlds request calling `undefined`
-— surfacing as `Failed to fetch worlds` with zero fetch calls recorded, and
-nothing naming the mock:
+A factory without `importOriginal` gives the module only the exports it names.
+`lib/worlds` and `lib/communities` take their fetch from `lib/signedFetch`
+(`signedFetch`) and `lib/metricsApi` takes `signedHeaders` from it, so a factory
+without one of them leaves that request calling `undefined`. A worlds request
+then fails as `Failed to fetch worlds` with zero fetch calls recorded, and
+nothing names the mock:
 
 ```ts
-vi.mock('decentraland-crypto-fetch', () => ({
-  default: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
-  signedHeaderFactory: () => () => new Map(),
+vi.mock('/@/lib/signedFetch', () => ({
+  signedFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+  signedHeaders: async () => new Headers(),
 }));
 ```
+
+`signedFetch` keeps the `fetch` that exists when its module loads. A spec that
+stubs the global `fetch` later mocks `lib/signedFetch` as above, or makes its
+own with `signedFetchFactory({ fetch })`. A spec that needs real signatures
+makes a throwaway identity with `createIdentityKeys` and `createIdentity` from
+`lib/identity`.
 
 `importOriginal<T>()` takes a namespace type import
 (`import type * as Utils from './utils'`), but only for modules that declare
@@ -92,7 +99,7 @@ vi.mock('../Navbar', async importOriginal => ({
 
 ### Type `importOriginal` with a namespace import, not `typeof import()`
 
-`@typescript-eslint/consistent-type-imports` rejects inline `import()` type
+`typescript/consistent-type-imports` rejects inline `import()` type
 annotations, so the obvious `importOriginal<typeof import('./utils')>()` fails
 lint with ``  `import()` type annotations are forbidden``. Import the namespace as
 a type instead — it is erased at runtime, so it is safe inside a hoisted
@@ -133,13 +140,12 @@ the queries are cheap.
 
 ### Run vitest capped
 
-Every vitest run takes the thread cap, and only one runs at a time on the
+Every vitest run takes the worker cap, and only one runs at a time on the
 machine, across checkouts and worktrees: several uncapped runs at once froze a
 14-core machine, since each takes every core but one. Prefix a script or `make`
-with `VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1` (vitest 1.6 reads both variables, and
-they pass through pnpm and make), and give a single spec the same cap as flags:
-`--pool=threads --poolOptions.threads.maxThreads=2 --poolOptions.threads.minThreads=1`.
-Set the minimum as well as the maximum.
+with `VITEST_MAX_WORKERS=2` (vitest 5 reads this variable, and it passes
+through pnpm and make), or give a single spec the same cap as a flag:
+`--maxWorkers=2`.
 
 `-r` is vitest's `--root`. Creator Hub's `test:*` scripts set it to the layer
 folder, so a direct spec run needs the same root and a path relative to it:
@@ -150,7 +156,7 @@ code read after a pipe (`| tail`) is the pipe's.
 
 ### happy-dom is not a browser for labels and visibility
 
-- happy-dom 14 activates a `<label>` during the bubble phase and ignores
+- happy-dom 21 activates a `<label>` during the bubble phase and ignores
   `preventDefault()`. A test can't prove "clicking this icon inside a label
   doesn't toggle the checkbox" from the checkbox state; assert the click was
   cancelled (`fireEvent.click(el)` returns `false`) and prove the toggle in a

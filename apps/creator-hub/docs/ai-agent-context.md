@@ -42,12 +42,12 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 ### Runtime & Language
 
 - **Runtime**: Node.js 22.x
-- **Language**: TypeScript 5.5.3
+- **Language**: TypeScript 7.0.2
 - **Module System**: ESM (ES Modules)
 
 ### Frameworks & Libraries
 
-- **Desktop Framework**: Electron 37.3.1
+- **Desktop Framework**: Electron 45.3.1
 - **UI Framework**: React 18.3.1
 - **State Management**: Redux Toolkit 2.2.6, Redux Saga 1.2.3
 - **3D Engine**: Babylon.js 8.7.0 (core, GUI, inspector, loaders, materials)
@@ -55,19 +55,19 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 
 ### Build & Development Tools
 
-- **Build Tool**: Vite 4.x (main, preload, renderer)
+- **Build Tool**: Vite 8.3.4 (main, preload, renderer)
 - **Bundler (Inspector)**: esbuild 0.18.17
 - **Electron Builder**: electron-builder 26.0.12
-- **TypeScript Compiler**: tsc 5.5.3
-- **Linting**: ESLint 8.57.0
+- **TypeScript Compiler**: tsc 7.0.2
+- **Linting**: oxlint 1.93.0
 - **Formatting**: Prettier 3.5.3
-- **Testing**: Vitest 1.6.0, Playwright 1.45.0
+- **Testing**: Vitest 5.0.5 with happy-dom 21.0.4, Playwright 1.45.0
 
 ### Monorepo Management
 
-- **Package Manager**: pnpm, pinned in the root `package.json`
+- **Package Manager**: pnpm 12
 - **Workspaces**: pnpm workspace (`pnpm-workspace.yaml`)
-- **Dependency Sync**: syncpack 13.0.4
+- **Dependency Check**: `scripts/check-dep-versions.js`
 
 ### Decentraland SDK Integration
 
@@ -93,7 +93,7 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 - **Ethereum Client**: viem 2.x (lightweight, tree-shakeable TypeScript interface for Ethereum)
 - **Wallet / Auth**: in-app auth library `packages/creator-hub/renderer/src/lib/auth.ts` (viem for ephemeral wallets and RPC, AuthServer provider, SSO via @dcl/single-sign-on-client)
 - **ENS**: viem/ens for name hashing and contract reads (`readContract`)
-- **Crypto**: ethereum-cryptography 2.1.2
+- **Crypto**: @noble/hashes 2.4.0 (keccak-256 for the address checksum in the inspector)
 - **Hashing**: @dcl/hashing 3.0.4
 
 ## External Dependencies
@@ -175,7 +175,7 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
   - **Renderer Process**: Chromium browser, React application, no direct Node.js access
 - **IPC Communication**: Main ↔ Preload ↔ Renderer via Electron's IPC mechanism
 - **Binary Management**: Electron binary acts as Node.js runtime, npm installed unpacked from `.asar`
-- **Auto-Expose**: `unplugin-auto-expose` automatically wires preload exports to renderer via `#preload` import
+- **Auto-Expose**: the Vite plugins in `packages/creator-hub/preload/expose-plugin.js` wire the preload exports to the renderer via the `#preload` import
 
 ### Semantic Versioning Strategy
 
@@ -207,9 +207,9 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 
 ### Dependency Synchronization
 
-- **syncpack Configuration**: `.syncpackrc.json` defines version group policies
-- **SDK Dependencies**: `@dcl/ecs`, `@dcl/sdk`, `@dcl/sdk-commands`, etc. must stay in sync across packages
-- **Inspector Exception**: `@dcl/inspector` excluded from sync checks (local file dependency)
+- **Check**: `make lint-packages` runs `scripts/check-dep-versions.js`
+- **Shared Dependencies**: a dependency that more than one package declares (`@dcl/sdk`, `react`, etc.) must carry the same version in each
+- **Local Packages**: `@dcl/inspector` and `@dcl/asset-packs` are excluded (local file dependencies)
 - **Peer Dependencies**: `@dcl/ecs` intentionally omitted from `@dcl/asset-packs` to prevent version conflicts
 
 ### Testing Strategy
@@ -329,7 +329,7 @@ This project does not use a traditional database. Instead, it uses:
 
 **Implementation**:
 
-- `scripts/fetch-devtools.js` fetches [decentraland/devtools-frontend](https://github.com/decentraland/devtools-frontend) (public) at the commit pinned in that script into `packages/creator-hub/devtools-frontend/` (gitignored), leaving out the performance panel's ~130 MB of trace fixtures
+- `scripts/fetch-devtools.js` fetches [decentraland/devtools-frontend](https://github.com/decentraland/devtools-frontend) (public) at the commit pinned in that script into `packages/creator-hub/devtools-frontend/` (gitignored), leaving out what `devtools_app.html` never loads: the performance panel's ~130 MB of trace fixtures, the Lighthouse panel and bundle, the legacy test runner, the TypeScript build configs and every UI locale but `en-US`
 - It runs from `make install-creator-hub` (`make fetch-devtools`) and from the electron-builder `beforePack` hook, so packaging has it even when CI restored `node_modules` from cache
 - Bundled via `extraResources` in electron-builder (avoids asar path length issues)
 - Loaded via `file://` protocol with WebSocket parameter
@@ -401,7 +401,7 @@ creator-hub/
 │   └── lint.yml                # Linting
 ├── Makefile                     # Build and development commands
 ├── package.json                # Root package (workspaces config)
-└── .syncpackrc.json            # Dependency sync configuration
+└── .oxlintrc.json              # Lint rules
 ```
 
 ## Common Tasks Reference
@@ -421,7 +421,7 @@ creator-hub/
 | Fix linting | `make lint-fix` | Auto-fix issues |
 | Format code | `pnpm run format:fix` | Prettier |
 | Type check | `make typecheck` | All packages |
-| Sync dependencies | `make sync-deps` | syncpack |
+| Check dependency versions | `make lint-packages` | Shared dependencies agree |
 | Generate proto files | `make protoc` | After .proto changes |
 | Validate assets | `make validate-asset-packs` | Check asset integrity |
 | Upload assets | `make upload-asset-packs` | To configured S3 |

@@ -31,7 +31,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 Before contributing, ensure you have:
 
 - **Node.js** 22.x or higher
-- **pnpm**, at the version `package.json` pins (`corepack enable` provides it)
+- **pnpm 12** (`corepack enable`; CI names the exact version in `.github/actions/setup-pnpm/action.yml`)
 - **Git** installed and configured
 - **Docker** (optional, for asset-packs development)
 - Familiarity with TypeScript, React, and Electron (depending on the package)
@@ -180,7 +180,7 @@ Our team will add appropriate labels:
 ### TypeScript/JavaScript
 
 - **Use TypeScript** for all new code
-- **Follow ESLint rules** configured in the project
+- **Follow the oxlint rules** configured in the project
 - **Use strict mode**: Avoid \`any\` types when possible
 - **Prefer functional programming**: Use \`const\`, arrow functions, immutability
 - **Use modern ES6+ features**: async/await, destructuring, spread operators

@@ -30,8 +30,8 @@ You own `packages/creator-hub`. `docs/DESIGN.md` and the `theme.css` token block
 Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
-(cd packages/creator-hub && pnpm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:unit)
-pnpm exec eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
+(cd packages/creator-hub && pnpm run typecheck && VITEST_MAX_WORKERS=2 pnpm run test:unit)
+node scripts/rolldown.js oxlint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
 ```
 
 If `atScale.spec.tsx` times out in the full run, rerun it alone before you call it a regression.

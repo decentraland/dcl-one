@@ -50,12 +50,12 @@ The monorepo packages keep version `0.1.0` in `package.json`, which npm never pu
 
 ## 1. Pack asset-packs
 
-Run this for every chain, including an inspector-only change. The inspector tarball must carry an asset-packs tarball, and packing only reads the asset-packs source. `npm pack` ships `dist`, `bin`, and `catalog.json`, so this runs the full build, not just `build:lib`.
+Run this for every chain, including an inspector-only change. The inspector tarball must carry an asset-packs tarball, and packing only reads the asset-packs source. `pnpm pack` ships `dist`, `bin`, and `catalog.json`, so this runs the full build, not just `build:lib`.
 
 ```bash
 . "$(git rev-parse --show-toplevel)/apps/creator-hub/.local-packages/env" \
   && make -C "$REPO" build-asset-packs \
-  && T=$(mktemp -d) && (cd "$REPO/packages/asset-packs" && npm pack --pack-destination "$T") \
+  && T=$(mktemp -d) && (cd "$REPO/packages/asset-packs" && pnpm pack --pack-destination "$T") \
   && mv "$T"/*.tgz "$PKGS/dcl-asset-packs-$(date +%Y%m%d%H%M%S).tgz" \
   && ls -t "$PKGS"/dcl-asset-packs-*.tgz | head -1
 ```
@@ -69,9 +69,9 @@ The inspector's `package.json` declares `@dcl/asset-packs` as `file:../asset-pac
 AP=$(ls -t "$PKGS"/dcl-asset-packs-*.tgz 2>/dev/null | head -1)
 test -n "$AP" || echo "No asset-packs tarball in $PKGS: run step 1 first."
 test -n "$AP" && make -C "$REPO" build-inspector && T=$(mktemp -d) \
-  && (cd "$REPO/packages/inspector" && npm pkg set "dependencies.@dcl/asset-packs=file:$AP" && npm pack --pack-destination "$T")
+  && (cd "$REPO/packages/inspector" && pnpm pkg set "dependencies['@dcl/asset-packs']=file:$AP" && pnpm pack --pack-destination "$T")
 PACKED=$?
-(cd "$REPO/packages/inspector" && npm pkg set "dependencies.@dcl/asset-packs=file:../asset-packs")
+(cd "$REPO/packages/inspector" && pnpm pkg set "dependencies['@dcl/asset-packs']=file:../asset-packs")
 git -C "$REPO" diff --exit-code -- packages/inspector/package.json \
   && test "$PACKED" -eq 0 \
   && mv "$T"/*.tgz "$PKGS/dcl-inspector-$(date +%Y%m%d%H%M%S).tgz" \

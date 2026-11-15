@@ -89,7 +89,7 @@ creator-hub/
 Before starting, ensure you have the following installed:
 
 - **Node.js** 22.x or higher ([Download](https://nodejs.org/))
-- **pnpm**, at the version `package.json` pins (`corepack enable` provides it)
+- **pnpm 12** (`corepack enable`; CI names the exact version in `.github/actions/setup-pnpm/action.yml`)
 - **Git** ([Download](https://git-scm.com/downloads))
 - **Docker** (optional, required for local asset-packs content server development)
 
@@ -207,8 +207,8 @@ The project uses a Makefile to manage common development tasks:
 
 | Command          | Description                           |
 | ---------------- | ------------------------------------- |
-| `make lint`      | Run ESLint across all packages        |
-| `make lint-fix`  | Fix ESLint issues automatically       |
+| `make lint`      | Run oxlint across all packages        |
+| `make lint-fix`  | Fix oxlint issues automatically       |
 | `make format`    | Format code with Prettier             |
 | `make typecheck` | Run TypeScript type checking          |
 | `make test`      | Run unit tests for all packages       |
@@ -216,10 +216,9 @@ The project uses a Makefile to manage common development tasks:
 
 ### Dependency Management
 
-| Command              | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `make sync-deps`     | Synchronize dependencies across packages using syncpack |
-| `make lint-packages` | Check for dependency mismatches                         |
+| Command              | Description                     |
+| -------------------- | ------------------------------- |
+| `make lint-packages` | Check for dependency mismatches |
 
 ### Cleanup Commands
 
@@ -368,10 +367,10 @@ packages:
 
 ### Dependency Management
 
-- **syncpack** is used to synchronize dependencies across packages
+- `make lint-packages` checks that the packages agree on the version of each dependency they share
 - Shared dependencies are defined in the root `package.json`
 - Package-specific dependencies are in each package's `package.json`
-- The `@dcl/inspector` dependency is managed specially in `.syncpackrc.json`
+- The `@dcl/inspector` and `@dcl/asset-packs` dependencies are local packages, so that check skips them
 
 ### Protocol Buffers
 
@@ -502,10 +501,9 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Code Quality
 
-- **ESLint** - Code linting with custom rules
+- **oxlint** - Code linting with custom rules
 - **Prettier** - Code formatting
 - **TypeScript** - Static type checking
-- **syncpack** - Dependency synchronization
 
 ## 📦 Publishing
 

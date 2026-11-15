@@ -142,19 +142,17 @@ Run these from the repository root after each step:
 ```bash
 make typecheck
 make test
-pnpm exec eslint "packages/inspector/src/**/*.tsx"
+make lint
 ```
 
-The last command matters because `make lint` runs
-`eslint . --ext js,cjs,ts` and does not cover `.tsx` files, which is where
-nearly all of this work lands.
+`make lint` covers `.tsx` files, which is where nearly all of this work lands.
 
 For steps 3 and 5, also run the Inspector e2e suite, which needs a dev server:
 
 ```bash
 cd packages/inspector
 node ./build.js
-pnpm exec http-server public -p 8000 --cors -a localhost &
+node ../../scripts/serve-static.js public 8000 &
 pnpm run test:e2e
 ```
 

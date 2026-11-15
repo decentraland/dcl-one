@@ -35,7 +35,7 @@ When generated output is wrong, the fix belongs in `src/` or `packs/`.
 Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
-(cd packages/asset-packs && pnpm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm test && pnpm run validate)
+(cd packages/asset-packs && pnpm run typecheck && VITEST_MAX_WORKERS=2 pnpm test && pnpm run validate)
 make build-asset-packs
 ```
 
