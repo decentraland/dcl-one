@@ -381,3 +381,68 @@ fn state_off(pool: &sqlx::PgPool) -> SharedState {
         json!({"flags":{},"variants":{}}),
     )
 }
+
+/// Five wallets due a do-not-miss-out reminder this week.
+async fn untouched_wallets(pool: &sqlx::PgPool) {
+    season(pool, 1, "2026-11-02 00:00", "2026-11-30 00:00").await;
+    for n in 1..=5 {
+        let a = wallet(pool, n).await;
+        progress(pool, &a, 1, 3, 0).await;
+    }
+}
+
+#[tokio::test]
+async fn a_failing_kind_does_not_stop_the_others() {
+    let Some(db) = OwnDatabase::create("credits_reminders_fail").await else {
+        return;
+    };
+    let pool = &db.pool;
+    untouched_wallets(pool).await;
+    let a = addr(1);
+    grant(pool, &a, 1, 3, "1", now() + TimeDelta::days(2), true).await;
+    sqlx::query("CREATE FUNCTION pg_temp_fail() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.type='credits_reminder_do_not_miss_out' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END$$")
+        .execute(pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER fail_reminder BEFORE INSERT ON social.notifications FOR EACH ROW EXECUTE FUNCTION pg_temp_fail()")
+        .execute(pool).await.unwrap();
+    let ran = Ran::default();
+    let state = enabled(pool);
+    let thursday = at("2026-11-19 09:05");
+    assert!(
+        pass(&state, &ran, thursday, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(kinds(&sent(pool).await), vec![pair("usage", &a)]);
+    assert_eq!(ran.lock().get(&Kind::DoNotMissOut), None);
+    assert_eq!(ran.lock().get(&Kind::Usage), Some(&thursday.date()));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn cancellation_stops_a_kind_between_pages() {
+    let Some(db) = OwnDatabase::create("credits_reminders_cancel").await else {
+        return;
+    };
+    let pool = &db.pool;
+    untouched_wallets(pool).await;
+    sqlx::query("CREATE FUNCTION pg_temp_slow() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_sleep(0.3); RETURN NEW; END$$")
+        .execute(pool).await.unwrap();
+    sqlx::query("CREATE TRIGGER slow_reminder BEFORE INSERT ON social.notifications FOR EACH ROW EXECUTE FUNCTION pg_temp_slow()")
+        .execute(pool).await.unwrap();
+    let ran = Ran::default();
+    let state = enabled(pool);
+    let cancel = CancellationToken::new();
+    let stop = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        stop.cancel();
+    });
+    let done = pass(&state, &ran, at("2026-11-19 09:05"), &cancel)
+        .await
+        .unwrap();
+    assert!(done.is_empty());
+    assert!(ran.lock().is_empty());
+    // At most the page in flight when cancelled (two rows under test).
+    assert!(sent(pool).await.len() <= 2);
+    db.drop().await;
+}

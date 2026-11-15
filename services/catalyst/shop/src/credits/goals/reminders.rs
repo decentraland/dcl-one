@@ -12,7 +12,8 @@ use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const PAGE: i64 = 500;
+// Small pages under test exercise paging and cancellation.
+const PAGE: i64 = if cfg!(test) { 2 } else { 500 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Kind {
@@ -276,10 +277,21 @@ pub(crate) async fn pass(
         }
         match run(state, &gate, kind, now, cancel).await {
             Ok(n) if !cancel.is_cancelled() => {
+                tracing::info!(
+                    kind = kind.notification_type(),
+                    sent = n,
+                    "credits reminders sent"
+                );
                 ran.lock().insert(kind, now.date());
                 done.push((kind, n));
             }
-            Ok(_) => {}
+            Ok(n) => {
+                tracing::info!(
+                    kind = kind.notification_type(),
+                    sent = n,
+                    "credits reminders cancelled"
+                );
+            }
             Err(error) => {
                 tracing::warn!(kind = kind.notification_type(), %error, "credits reminder failed");
                 first.get_or_insert(error);
@@ -305,9 +317,7 @@ pub fn spawn(state: &SharedState, jobs: &Jobs) {
                     return Ok(());
                 }
                 let now = crate::credits::store::now();
-                for (kind, sent) in pass(&state, &ran, now, &ctx.cancel).await? {
-                    ctx.progress(format!("{} sent {sent}", kind.notification_type()));
-                }
+                pass(&state, &ran, now, &ctx.cancel).await?;
                 Ok(())
             }
         },
