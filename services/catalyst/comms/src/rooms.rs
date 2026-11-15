@@ -741,7 +741,7 @@ fn identifier(value: &str) -> bool {
 /// Whether a room name can classify as anything but
 /// [`RoomClassification::Unrelated`]: a world scene, world lobby, upstream
 /// `scene-` or gatekeeper `scene:` name. Island and voice chat rooms cannot.
-pub fn may_classify_relevant(room: &str) -> bool {
+pub(crate) fn may_classify_relevant(room: &str) -> bool {
     [
         SCENE_ROOM_PREFIX,
         "scene-",

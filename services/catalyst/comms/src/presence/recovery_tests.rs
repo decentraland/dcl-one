@@ -428,6 +428,51 @@ async fn a_scoped_read_classifies_only_rooms_that_could_hold_its_participants() 
     server.abort();
 }
 
+#[tokio::test]
+async fn a_scenes_read_counts_its_world_scene_rooms_and_skips_other_worlds() {
+    use crate::world_identity::{RealmId, SceneId, WorldName};
+    let (mut state, source, server) = fixture().await;
+    let mut catalogue = Catalogue::default();
+    let mut rooms = vec![];
+    for (world, watcher) in [
+        ("foo.dcl.eth", "foo-scene-watch"),
+        ("bar.dcl.eth", "bar-scene-watch"),
+    ] {
+        let world = WorldName::parse(world).unwrap();
+        let scene = SceneId::parse("bafkscene").unwrap();
+        let room = crate::rooms::worlds_service_scene_room(&world, &scene);
+        rooms.push(room.clone());
+        source.rooms.lock().push((
+            room.clone(),
+            format!("RM_{watcher}"),
+            vec![(watcher.into(), format!("PA_{watcher}"))],
+        ));
+        catalogue.extra.insert(
+            room.clone(),
+            crate::rooms::ResolvedRoom {
+                realm: RealmId::World(world),
+                scene_id: Some(scene),
+                deployment: None,
+                room,
+            },
+        );
+    }
+    let catalogue = Arc::new(catalogue);
+    Arc::get_mut(&mut state).unwrap().scenes = catalogue.clone();
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", true)
+            .await
+            .unwrap(),
+        1
+    );
+    let classified = catalogue.classified.lock().clone();
+    assert!(classified.contains(&rooms[0]), "{classified:?}");
+    assert!(!classified.contains(&rooms[1]), "{classified:?}");
+    server.abort();
+}
+
 #[derive(Default)]
 struct Catalogue {
     refusal: Option<(String, RoomRefusal)>,

@@ -53,19 +53,19 @@ impl Scope {
     /// exact room, or a world room or upstream-format room name that names the
     /// scope's world. Any other room, refused or canonical, cannot hold them,
     /// since every room this node admits to a world is canonical.
-    fn may_hold(&self, refused: &str) -> bool {
+    fn may_hold(&self, room: &str) -> bool {
         let world = match self {
-            Self::Room(name) => return refused == name,
+            Self::Room(name) => return room == name,
             Self::Lobby(world) | Self::Scenes(world) => world.as_str(),
         };
-        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(refused) {
+        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(room) {
             return owner.key() == world;
         }
-        let refused = refused.to_lowercase();
+        let room = room.to_lowercase();
         ["world-scene-room-", "world-", "scene-"]
             .iter()
             .any(|prefix| {
-                refused.strip_prefix(prefix).is_some_and(|rest| {
+                room.strip_prefix(prefix).is_some_and(|rest| {
                     rest.strip_prefix(world)
                         .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
                 })
