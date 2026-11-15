@@ -34,7 +34,7 @@ pub const KIND: &str = notice_cursor::ROYALTIES_EARNED;
 pub const MARKETPLACE_V2: &str = "0x480a0f4e360e8964e68858dd231c2922f1df45ef";
 /// `royaltiesCutPerMillion()` of MarketplaceV2 and ERC721BidV2: 25000 on chain (2026-11-05, `shop.sale_venue`) and on every royalty sale the subgraph recorded since their deployment.
 pub const ROYALTIES_CUT_PER_MILLION: i64 = 25_000;
-use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
+use crate::shared::collections::{ITEM_SHIFT, item_awaited};
 const NET: ChainNet = ChainNet::Matic;
 const PAGE_SIZE: i64 = 200;
 const POLL_SECS: u64 = 60;
@@ -193,15 +193,26 @@ pub enum Pass {
 
 /// One pass: every published MarketplaceV2 sale after the cursor, a page at a time.
 pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
-    drain(pool, base, Venue::Orders).await
+    drain(pool, base, Venue::Orders, false).await
 }
 
-/// One pass over the published ERC721BidV2 acceptances.
-pub async fn run_bids_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
-    drain(pool, base, Venue::Bids).await
+/// One pass over the published ERC721BidV2 acceptances; a sale waits for
+/// its item only while the items mirror runs (`items_mirror_enabled`).
+pub async fn run_bids_once(
+    pool: &PgPool,
+    base: &str,
+    items_mirror_enabled: bool,
+) -> anyhow::Result<Pass> {
+    drain(pool, base, Venue::Bids, items_mirror_enabled).await
 }
 
-async fn drain(pool: &PgPool, base: &str, venue: Venue) -> anyhow::Result<Pass> {
+async fn drain(
+    pool: &PgPool,
+    base: &str,
+    venue: Venue,
+    items_mirror_enabled: bool,
+) -> anyhow::Result<Pass> {
+    let now = chrono::Utc::now().timestamp();
     let Some(published) = chain_walk::ready_cursor(pool, venue.indexer(), NET, chrono::Utc::now())
         .await
         .and_then(|c| c.folded_block)
@@ -226,7 +237,7 @@ async fn drain(pool: &PgPool, base: &str, venue: Venue) -> anyhow::Result<Pass> 
             .fetch_all(&mut *txn)
             .await?;
         // A bid sale of an item the mirror lacks holds the cursor, as the
-        // badge processor's do, until a complete pass ITEM_WAIT_SECS after it.
+        // badge processor's do, while `item_awaited`.
         let items_pass: Option<i64> = sqlx::query_scalar(
             "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
              WHERE mirror = 'items' AND network = $1",
@@ -238,8 +249,7 @@ async fn drain(pool: &PgPool, base: &str, venue: Venue) -> anyhow::Result<Pass> 
         let held = rows.iter().position(|row| {
             venue == Venue::Bids
                 && !row.mirrored
-                && !items_pass
-                    .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS))
+                && item_awaited(items_mirror_enabled, items_pass, row.block_time, now)
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let batch: Vec<NewNotification> = ready
@@ -288,6 +298,7 @@ pub fn spawn(
     base: String,
     nft_index_enabled: bool,
     sales_index_enabled: bool,
+    items_mirror_enabled: bool,
     jobs: &Jobs,
 ) {
     tracing::info!(
@@ -305,7 +316,7 @@ pub fn spawn(
             async move {
                 // One venue's failure never starves the other.
                 let orders = run_once(&pool, &base).await;
-                let bids = run_bids_once(&pool, &base).await;
+                let bids = run_bids_once(&pool, &base, items_mirror_enabled).await;
                 for (venue, pass) in [("orders", &orders), ("bids", &bids)] {
                     if let Err(e) = pass {
                         tracing::warn!(venue, error = %e, "royalties_earned pass failed");
@@ -560,7 +571,7 @@ mod tests {
     async fn bid_sale(pool: &PgPool, block: i64, token: &str, seller: &str, price: &str) {
         sqlx::query(
             "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, bid_id, buyer, seller, price, tx_hash) \
-             VALUES ('matic', $1, 0, 1700000000, 'bid_accepted', $2, $3, $4::numeric, $5, '0x00000000000000000000000000000000000000bb', $6, $7::numeric, $5)",
+             VALUES ('matic', $1, 0, extract(epoch FROM now())::bigint - 600, 'bid_accepted', $2, $3, $4::numeric, $5, '0x00000000000000000000000000000000000000bb', $6, $7::numeric, $5)",
         )
         .bind(block)
         .bind(super::super::sales_index::BID_V2_MATIC)
@@ -598,7 +609,10 @@ mod tests {
         item(&pool, 2, &token(2), None).await;
         let seller = "0x00000000000000000000000000000000000000aa";
         bid_sale(&pool, 100, &token(1), seller, "20000000000000000000").await;
-        assert_eq!(run_bids_once(&pool, BASE).await.unwrap(), Pass::NotReady);
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::NotReady
+        );
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
              VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
@@ -607,7 +621,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            run_bids_once(&pool, BASE).await.unwrap(),
+            run_bids_once(&pool, BASE, true).await.unwrap(),
             Pass::Emitted(0),
             "the first pass replays no history"
         );
@@ -630,7 +644,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(run_bids_once(&pool, BASE).await.unwrap(), Pass::Emitted(2));
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(2)
+        );
         let cursor = || async {
             sqlx::query_as::<_, (i64, i32)>(
                 "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
@@ -641,10 +658,33 @@ mod tests {
         };
         assert_eq!(cursor().await, (104, 0), "held at the unmirrored item");
         item(&pool, 7, &token(7), Some(BENEFICIARY)).await;
-        assert_eq!(run_bids_once(&pool, BASE).await.unwrap(), Pass::Emitted(1));
-        assert_eq!(cursor().await, (106, i32::MAX));
         assert_eq!(
-            run_bids_once(&pool, BASE).await.unwrap(),
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(1)
+        );
+        assert_eq!(cursor().await, (106, i32::MAX));
+        // With the items mirror off an unmirrored item's sale waits for nothing.
+        bid_sale(&pool, 107, &token(8), seller, "4000000000000000000").await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 107, fold_through = 107, folded_block = 107 WHERE indexer = 'sales'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        assert_eq!(
+            cursor().await,
+            (106, i32::MAX),
+            "held while the mirror runs"
+        );
+        assert_eq!(
+            run_bids_once(&pool, BASE, false).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        assert_eq!(cursor().await, (107, i32::MAX), "passed without the mirror");
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
             Pass::Emitted(0),
             "nothing twice"
         );

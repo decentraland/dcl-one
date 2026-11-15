@@ -678,6 +678,7 @@ impl MarketplaceState {
             self.settings.market.marketplace_base_url.clone(),
             self.settings.market.indexes.nft_enabled,
             self.settings.market.indexes.sales_enabled,
+            self.settings.market.mirrors_enabled,
             jobs,
         );
         transfer_notices::spawn(self, jobs);

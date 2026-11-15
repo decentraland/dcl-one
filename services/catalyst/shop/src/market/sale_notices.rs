@@ -75,7 +75,7 @@ const BID_ACCEPTED_FIELDS: &[&str] = &[
     "network",
 ];
 
-use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
+use crate::shared::collections::{ITEM_SHIFT, item_awaited};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Source {
@@ -194,6 +194,8 @@ pub fn notification_id(source: &str, network: &str, key: &str) -> Uuid {
 pub struct Links {
     pub marketplace: String,
     pub land_images: String,
+    /// Whether the items mirror runs: a sale waits for its item only then.
+    pub items_mirror_enabled: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -487,6 +489,7 @@ async fn drain(
     source: Source,
     net: ChainNet,
     published: i64,
+    now: i64,
 ) -> anyhow::Result<u64> {
     let producer = source.producer(net);
     notice_cursor::seed(pool, producer, None, published, i32::MAX).await?;
@@ -515,7 +518,7 @@ async fn drain(
         let mut done: Option<(i64, i32)> = None;
         let mut held = false;
         for row in &rows {
-            if waits_for_item(source, row, &metas, items_pass) {
+            if waits_for_item(source, row, &metas, items_pass, links, now) {
                 tracing::debug!(
                     source = source.db_name(),
                     block = row.block_number,
@@ -582,8 +585,15 @@ async fn items_pass(conn: &mut sqlx::PgConnection, net: ChainNet) -> sqlx::Resul
 }
 
 /// A sales-index row whose item the mirror lacks waits, as the badge
-/// processor's do, until a complete pass [`ITEM_WAIT_SECS`] after the sale.
-fn waits_for_item(source: Source, row: &LogRow, metas: &Metas, items_pass: Option<i64>) -> bool {
+/// processor's do, while [`item_awaited`].
+fn waits_for_item(
+    source: Source,
+    row: &LogRow,
+    metas: &Metas,
+    items_pass: Option<i64>,
+    links: &Links,
+    now: i64,
+) -> bool {
     if !matches!(source, Source::Mint | Source::BidAccepted) {
         return false;
     }
@@ -591,7 +601,7 @@ fn waits_for_item(source: Source, row: &LogRow, metas: &Metas, items_pass: Optio
         return false;
     };
     metas.get(nft, contract, value).is_none()
-        && !items_pass.is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS))
+        && item_awaited(links.items_mirror_enabled, items_pass, row.block_time, now)
 }
 
 /// One pass's result: notifications inserted and the indexes not published yet.
@@ -609,7 +619,8 @@ pub async fn run_once(pool: &PgPool, links: &Links, now: DateTime<Utc>) -> anyho
             match chain_walk::ready_cursor(pool, source.indexer(), *net, now).await {
                 Some(c) => {
                     let published = c.folded_block.unwrap_or(c.last_block);
-                    pass.emitted += drain(pool, links, source, *net, published).await?;
+                    pass.emitted +=
+                        drain(pool, links, source, *net, published, now.timestamp()).await?;
                 }
                 None => pass
                     .waiting
@@ -625,6 +636,7 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &crate::jobs::Jobs) {
     let links = Links {
         marketplace: state.settings.market.marketplace_base_url.clone(),
         land_images: state.settings.land_image_base_url.clone(),
+        items_mirror_enabled: state.settings.market.mirrors_enabled,
     };
     let ix = &state.settings.market.indexes;
     tracing::info!(
@@ -820,6 +832,7 @@ mod tests {
         let links = Links {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
+            items_mirror_enabled: true,
         };
         let mana = "0x0000000000000000000000000000000000000ffa";
         let item = || json!([asset(ASSET_TYPE_COLLECTION_ITEM, COLLECTION, "0")]);
@@ -976,6 +989,7 @@ mod tests {
         seller: Option<&'a str>,
         price: Option<&'a str>,
         tx: u8,
+        time: i64,
     }
 
     impl Default for Ev<'_> {
@@ -990,6 +1004,7 @@ mod tests {
                 seller: None,
                 price: None,
                 tx: 0,
+                time: Utc::now().timestamp() - 600,
             }
         }
     }
@@ -1039,7 +1054,7 @@ mod tests {
         };
         sqlx::query(
             "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, tx_hash) \
-             VALUES ('matic', $1, $2, 1700000000, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11::numeric, $12)",
+             VALUES ('matic', $1, $2, $13, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, $10, $11::numeric, $12)",
         )
         .bind(e.block)
         .bind(e.log)
@@ -1053,6 +1068,7 @@ mod tests {
         .bind(e.seller)
         .bind(e.price)
         .bind(format!("0x{:064x}", e.tx))
+        .bind(e.time)
         .execute(pool)
         .await
         .unwrap();
@@ -1135,6 +1151,7 @@ mod tests {
         let links = Links {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
+            items_mirror_enabled: true,
         };
         let token = |item: u32, issued: u32| {
             ((alloy_primitives::U256::from(item) << 216usize)
@@ -1271,10 +1288,12 @@ mod tests {
             sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
             (110, 0)
         );
+        let held_time = Ev::default().time;
         sqlx::query(
             "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
-             VALUES ('items', 'matic', 'https://items.example', to_timestamp(1700000000 + 3600) AT TIME ZONE 'UTC')",
+             VALUES ('items', 'matic', 'https://items.example', to_timestamp($1::bigint + 3600) AT TIME ZONE 'UTC')",
         )
+        .bind(held_time)
         .execute(&pool)
         .await
         .unwrap();
@@ -1303,6 +1322,55 @@ mod tests {
             run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
             0,
             "a replayed or reorged page inserts nothing twice"
+        );
+
+        // A stalled mirror: a sale older than ITEM_HOLD_MAX_SECS is passed.
+        let (stale, off) = (token(7, 1), token(8, 1));
+        publish_sales(&pool, 130).await;
+        let old = Utc::now().timestamp() - crate::shared::collections::ITEM_HOLD_MAX_SECS - 60;
+        sale_event(
+            &pool,
+            Ev {
+                time: old,
+                ..mint(121, 0, COLLECTION, &stale, "7", Some("7"), 10)
+            },
+        )
+        .await;
+        // A recent sale (newer than the last complete pass allows) waits.
+        let recent = held_time + 100;
+        sale_event(
+            &pool,
+            Ev {
+                time: recent,
+                ..mint(122, 0, COLLECTION, &off, "8", Some("7"), 11)
+            },
+        )
+        .await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0
+        );
+        assert_eq!(
+            sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
+            (121, 0),
+            "the stale sale is passed, the recent one held"
+        );
+        // With the items mirror off nothing waits.
+        let off_links = Links {
+            items_mirror_enabled: false,
+            ..links.clone()
+        };
+        assert_eq!(
+            run_once(&pool, &off_links, Utc::now())
+                .await
+                .unwrap()
+                .emitted,
+            0
+        );
+        assert_eq!(
+            sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
+            (122, 0),
+            "no hold without the mirror"
         );
 
         pool.close().await;
