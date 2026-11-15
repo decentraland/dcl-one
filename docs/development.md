@@ -160,7 +160,10 @@ that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
-`tooling/catalyst-test.sh`). A PR that changes a build or dev-stack input gets a
+`tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
+time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
+the other shards check that the tests are present. A run without shards runs
+them. A PR that changes a build or dev-stack input gets a
 notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and
