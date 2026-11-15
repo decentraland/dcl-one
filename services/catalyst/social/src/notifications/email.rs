@@ -2,20 +2,51 @@
 //! `email` delivery channel of the outbox worker (rendered per type by
 //! `templates`), both SendGrid dynamic templates over the ONE outbound client (SendGrid and Turnstile are fixed
 //! public hosts, so the guard costs nothing). Unconfigured means refused
-//! loudly for the confirmation (the caller answers 500) and `skipped` for a
+//! loudly for the confirmation (the caller answers 500) and held `pending` for a
 //! delivery row: never a silent success.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use parking_lot::RwLock;
 use serde_json::{Value as Json, json};
 use uuid::Uuid;
 
 use super::errors::ApiError;
 use super::{signing, templates};
+use crate::explore::api::feature_flags::Snapshot;
 use crate::http::Outbound;
+use crate::jobs::{Jobs, PeriodicCfg};
 
 pub const CODE_LEN: usize = 32;
-const SENDGRID_SEND_URL: &str = "https://api.sendgrid.com/v3/mail/send";
+/// `SENDGRID_API_URL`'s default.
+pub const SENDGRID_API_URL: &str = "https://api.sendgrid.com";
 const TURNSTILE_VERIFY_URL: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+/// Upstream's disposable-domain source, refreshed hourly.
+pub const DISPOSABLE_LIST_URL: &str = "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf";
+const DISPOSABLE_REFRESH: Duration = Duration::from_secs(3600);
+/// The `dapps` flag that turns the confirm-email challenge on.
+pub const TURNSTILE_FLAG: &str = "turnstile-verification";
+/// The `dapps` flag whose variant lists refused email domains.
+pub const BLACKLISTED_DOMAINS_FLAG: &str = "credits-blacklisted-domains";
+
+/// The node's `dapps` flags (the communities mirror); empty, every flag is off.
+#[derive(Clone)]
+pub struct DappsFlags(pub Arc<Snapshot>);
+
+impl Default for DappsFlags {
+    fn default() -> Self {
+        Self(Arc::new(Snapshot::empty()))
+    }
+}
+
+impl std::fmt::Debug for DappsFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DappsFlags")
+    }
+}
 
 /// 32 hex characters (a v4 uuid: 122 random bits); the old crate drew 32
 /// alphanumerics from `rand`, which v2 does not otherwise depend on. The
@@ -27,10 +58,12 @@ pub fn make_code() -> String {
 #[derive(Clone, Debug, Default)]
 pub struct EmailConfig {
     pub sendgrid_api_key: Option<String>,
+    /// `SENDGRID_API_URL`; empty means [`SENDGRID_API_URL`].
+    pub api_url: String,
     pub from_email: Option<String>,
     /// The generic dynamic template (old `SENDGRID_EMAIL_TEMPLATE_ID`): the
     /// outbox's `email` channel, the confirmation and the ad-hoc email; unset,
-    /// every delivery row ends `skipped`.
+    /// every delivery row stays pending.
     pub notification_template_id: Option<String>,
     /// `SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID`: the account confirmation's own template, when set.
     pub validate_email_template_id: Option<String>,
@@ -43,6 +76,8 @@ pub struct EmailConfig {
     pub sandbox_mode: bool,
     /// `ENV`: the `environment` custom arg of a notification email.
     pub environment: String,
+    /// `turnstile-verification` and `credits-blacklisted-domains`.
+    pub dapps_flags: DappsFlags,
 }
 
 impl EmailConfig {
@@ -110,6 +145,8 @@ pub struct EmailSender {
     cfg: EmailConfig,
     http: Outbound,
     unsubscribe: Option<Unsubscribe>,
+    /// The last disposable-domain list fetched; shared by every clone.
+    disposable: Arc<RwLock<HashSet<String>>>,
 }
 
 impl EmailSender {
@@ -118,6 +155,7 @@ impl EmailSender {
             cfg,
             http,
             unsubscribe: None,
+            disposable: Arc::default(),
         }
     }
 
@@ -143,7 +181,8 @@ impl EmailSender {
     }
 
     /// The old domain validator's rules: more than one dot, or a leading or
-    /// trailing dot, in the local part, or a domain in `EMAIL_DOMAIN_BLACKLIST`.
+    /// trailing dot, in the local part; a disposable domain; a domain in the
+    /// `credits-blacklisted-domains` flag variant or in `EMAIL_DOMAIN_BLACKLIST`.
     pub fn is_domain_blacklisted(&self, email: &str) -> bool {
         let Some((local, domain)) = email.split_once('@') else {
             return true;
@@ -156,27 +195,98 @@ impl EmailSender {
             return true;
         }
         let domain = domain.to_lowercase();
-        self.cfg.domain_blacklist.iter().any(|d| d == &domain)
+        if self.disposable.read().contains(&domain) {
+            return true;
+        }
+        let flagged = self
+            .cfg
+            .dapps_flags
+            .0
+            .variant_values("dapps", BLACKLISTED_DOMAINS_FLAG)
+            .unwrap_or_default();
+        flagged
+            .iter()
+            .chain(&self.cfg.domain_blacklist)
+            .any(|d| d == &domain)
     }
 
+    /// Replaces the disposable list from `url`; a failed fetch keeps the last one (empty refuses nothing).
+    pub async fn refresh_disposable_domains(&self, url: &str) -> anyhow::Result<usize> {
+        let resp = self.http.get(url).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            anyhow::bail!("disposable email domains: {status}");
+        }
+        let domains: HashSet<String> = resp
+            .text()
+            .await?
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_lowercase)
+            .collect();
+        let count = domains.len();
+        *self.disposable.write() = domains;
+        Ok(count)
+    }
+
+    /// Every process keeps its own list: fetched at start, then hourly.
+    pub fn spawn_disposable_refresh(&self, jobs: &Jobs) {
+        let sender = self.clone();
+        jobs.spawn_periodic(
+            "notification-disposable-domains",
+            PeriodicCfg::every(DISPOSABLE_REFRESH).with_jitter(Duration::from_secs(60)),
+            move |_ctx| {
+                let sender = sender.clone();
+                async move {
+                    match sender.refresh_disposable_domains(DISPOSABLE_LIST_URL).await {
+                        Ok(count) => tracing::info!(count, "disposable email domains refreshed"),
+                        Err(error) => tracing::warn!(%error, "disposable email domains refresh failed; keeping the last list"),
+                    }
+                    Ok(())
+                }
+            },
+        );
+    }
+
+    /// The challenge's secret while the `turnstile-verification` flag is on; `None` turns the check off.
     pub fn turnstile_secret(&self) -> Option<&str> {
-        self.cfg.turnstile_secret_key.as_deref()
+        self.cfg
+            .turnstile_secret_key
+            .as_deref()
+            .filter(|_| self.cfg.dapps_flags.0.enabled("dapps", TURNSTILE_FLAG))
     }
 
-    /// The account site's challenge page for both sources, as the old inbox
-    /// built it with Turnstile on.
+    /// The account site's page the confirmation links to, as the old inbox built it:
+    /// the challenge page while Turnstile is on, else the source's own confirm page.
     pub fn confirm_url(&self, source: EmailSource, address: &str, code: &str) -> String {
-        format!(
-            "{}/confirm-email-challenge/{code}?address={address}&source={}",
-            self.cfg.account_base_url.trim_end_matches('/'),
-            source.as_str()
-        )
+        let base = self.cfg.account_base_url.trim_end_matches('/');
+        match (self.turnstile_secret().is_some(), source) {
+            (true, _) => format!(
+                "{base}/confirm-email-challenge/{code}?address={address}&source={}",
+                source.as_str()
+            ),
+            (false, EmailSource::Credits) => {
+                format!("{base}/credits-email-confirmed/{code}?address={address}")
+            }
+            (false, EmailSource::Account) => {
+                format!("{base}/confirm-email/{code}?address={address}")
+            }
+        }
+    }
+
+    fn send_url(&self) -> String {
+        let base = match self.cfg.api_url.trim_end_matches('/') {
+            "" => SENDGRID_API_URL,
+            base => base,
+        };
+        format!("{base}/v3/mail/send")
     }
 
     async fn sendgrid(&self, api_key: &str, body: &Json) -> Result<Option<String>, SendFailure> {
         let resp = self
             .http
-            .post(SENDGRID_SEND_URL)
+            .post(self.send_url())
             .header(AUTHORIZATION, format!("Bearer {api_key}"))
             .json(&body)
             .send()
@@ -407,12 +517,9 @@ impl EmailSender {
                 data.insert(key.into(), v.clone());
             }
         }
-        // The user's name and the link come from metadata. The name is HTML-escaped;
-        // the link only percent-encodes attribute-breaking characters, so it reads
-        // the same under `{{ }}` and `{{{ }}}`, and a non-http(s) link drops the button.
-        if let Some(Json::String(name)) = data.get("titleHighlight").cloned() {
-            data.insert("titleHighlight".into(), json!(html_escape(&name)));
-        }
+        // `titleHighlight` goes raw, as upstream's; the link only percent-encodes
+        // attribute-breaking characters, so it reads the same under `{{ }}` and
+        // `{{{ }}}`, and a non-http(s) link drops the button.
         if let Some(Json::String(link)) = data.get("actionButtonLink").cloned() {
             if is_http_link(&link) {
                 data.insert("actionButtonLink".into(), json!(attribute_safe_link(&link)));
@@ -629,29 +736,130 @@ mod tests {
     const ADDR: &str = "0x1234567890abcdef1234567890abcdef12345678";
     const CODE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef";
 
+    fn dapps(flags: Json, variants: Json) -> DappsFlags {
+        DappsFlags(Arc::new(Snapshot::from_document(
+            json!({"flags": flags, "variants": variants}),
+        )))
+    }
+
+    fn with_turnstile(secret: Option<&str>, flag: bool) -> EmailSender {
+        EmailSender::new(
+            EmailConfig {
+                account_base_url: "https://account.decentraland.org".into(),
+                turnstile_secret_key: secret.map(String::from),
+                dapps_flags: dapps(json!({"dapps-turnstile-verification": flag}), json!({})),
+                ..Default::default()
+            },
+            Outbound::for_tests(),
+        )
+    }
+
     #[test]
-    fn account_confirm_url_uses_challenge_route() {
-        let url = sender().confirm_url(EmailSource::Account, ADDR, CODE);
+    fn turnstile_on_links_both_sources_to_the_challenge_page() {
+        let s = with_turnstile(Some("secret"), true);
+        assert_eq!(s.turnstile_secret(), Some("secret"));
         assert_eq!(
-            url,
+            s.confirm_url(EmailSource::Account, ADDR, CODE),
             format!(
                 "https://account.decentraland.org/confirm-email-challenge/{CODE}?address={ADDR}&source=account"
             )
         );
-        assert!(
-            !url.contains("/confirm-email/"),
-            "must not use legacy route"
+        assert_eq!(
+            s.confirm_url(EmailSource::Credits, ADDR, CODE),
+            format!(
+                "https://account.decentraland.org/confirm-email-challenge/{CODE}?address={ADDR}&source=credits"
+            )
         );
     }
 
     #[test]
-    fn credits_confirm_url_uses_the_account_challenge_route() {
-        let url = sender().confirm_url(EmailSource::Credits, ADDR, CODE);
-        assert_eq!(
-            url,
-            format!(
-                "https://account.decentraland.org/confirm-email-challenge/{CODE}?address={ADDR}&source=credits"
+    fn turnstile_off_links_each_source_to_its_own_page() {
+        for s in [
+            with_turnstile(Some("secret"), false),
+            with_turnstile(None, true),
+            sender(),
+        ] {
+            assert_eq!(s.turnstile_secret(), None);
+            assert_eq!(
+                s.confirm_url(EmailSource::Account, ADDR, CODE),
+                format!("https://account.decentraland.org/confirm-email/{CODE}?address={ADDR}")
+            );
+            assert_eq!(
+                s.confirm_url(EmailSource::Credits, ADDR, CODE),
+                format!(
+                    "https://account.decentraland.org/credits-email-confirmed/{CODE}?address={ADDR}"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn the_send_url_honours_the_configured_api_origin() {
+        assert_eq!(sender().send_url(), "https://api.sendgrid.com/v3/mail/send");
+        let s = EmailSender::new(
+            EmailConfig {
+                api_url: "https://sendgrid.example/".into(),
+                ..Default::default()
+            },
+            Outbound::for_tests(),
+        );
+        assert_eq!(s.send_url(), "https://sendgrid.example/v3/mail/send");
+    }
+
+    #[test]
+    fn the_flag_variant_refuses_its_domains_while_the_flag_is_on() {
+        let flagged = |on: bool| {
+            EmailSender::new(
+                EmailConfig {
+                    dapps_flags: dapps(
+                        json!({"dapps-credits-blacklisted-domains": on}),
+                        json!({"dapps-credits-blacklisted-domains": {"payload": {"value": "Spam.com,\njunk.io "}}}),
+                    ),
+                    ..Default::default()
+                },
+                Outbound::for_tests(),
             )
+        };
+        let on = flagged(true);
+        assert!(on.is_domain_blacklisted("x@SPAM.com"));
+        assert!(on.is_domain_blacklisted("x@junk.io"));
+        assert!(!on.is_domain_blacklisted("x@fine.org"));
+        assert!(!flagged(false).is_domain_blacklisted("x@spam.com"));
+    }
+
+    async fn serve_list(status: u16, body: &'static str) -> String {
+        let app = axum::Router::new().route(
+            "/list.conf",
+            axum::routing::get(move || async move {
+                (axum::http::StatusCode::from_u16(status).unwrap(), body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}/list.conf")
+    }
+
+    #[tokio::test]
+    async fn disposable_domains_are_refused_and_a_failed_refresh_keeps_the_last_list() {
+        let s = sender();
+        assert!(
+            !s.is_domain_blacklisted("x@mailinator.com"),
+            "no list yet refuses nothing"
+        );
+        let ok = serve_list(200, "# comment\n\nMailinator.com\n  yopmail.com \n").await;
+        assert_eq!(s.refresh_disposable_domains(&ok).await.unwrap(), 2);
+        assert!(s.is_domain_blacklisted("x@mailinator.com"));
+        assert!(
+            s.clone().is_domain_blacklisted("x@YOPMAIL.com"),
+            "clones share the list"
+        );
+        assert!(!s.is_domain_blacklisted("x@fine.org"));
+        let failing = serve_list(503, "").await;
+        assert!(s.refresh_disposable_domains(&failing).await.is_err());
+        assert!(
+            s.is_domain_blacklisted("x@mailinator.com"),
+            "kept on failure"
         );
     }
 
@@ -690,7 +898,7 @@ mod tests {
         assert_eq!(data["content"], "&lt;b&gt;hi&lt;/b&gt;");
         assert_eq!(data["subject"], "S&amp;P");
         assert_eq!(data["titleHighlight"], "it&#x27;s");
-        let link = sender().confirm_url(EmailSource::Credits, ADDR, CODE);
+        let link = with_turnstile(Some("s"), true).confirm_url(EmailSource::Credits, ADDR, CODE);
         let data = validate_email_data(EmailSource::Credits, &link, Some("Ann"));
         let content = data["content"].as_str().unwrap();
         assert!(content.starts_with("<p>You're almost ready"));
@@ -712,7 +920,7 @@ mod tests {
             Outbound::for_tests(),
         );
         let url = s.confirm_url(EmailSource::Account, ADDR, CODE);
-        assert!(url.starts_with("https://account.decentraland.org/confirm-email-challenge/"));
+        assert!(url.starts_with("https://account.decentraland.org/confirm-email/"));
         assert!(!url.contains(".org//"));
     }
 
@@ -847,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_data_escapes_the_name_and_keeps_only_http_links() {
+    fn notification_data_passes_the_name_raw_and_keeps_only_http_links() {
         let s = configured(false);
         let data = |metadata: Json| {
             s.notification_data("e@example.com", "0xa", "item_sold", &metadata)
@@ -855,7 +1063,7 @@ mod tests {
                 .unwrap()
         };
         let d = data(json!({"userName": "<b>x</b>", "link": "https://market.example/a?b=1&c=2"}));
-        assert_eq!(d["titleHighlight"], "&lt;b&gt;x&lt;/b&gt;");
+        assert_eq!(d["titleHighlight"], "<b>x</b>", "upstream sends it raw");
         assert_eq!(
             d["actionButtonLink"], "https://market.example/a?b=1&c=2",
             "a query string survives unchanged (no HTML escaping to double)"

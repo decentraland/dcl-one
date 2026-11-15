@@ -291,6 +291,12 @@ async fn signed_list_read_subscription_and_opt_outs_round_trip() {
         None,
     )
     .await;
+    assert_eq!(
+        body["email"],
+        Value::Null,
+        "a row without an email answers null"
+    );
+    assert!(body.as_object().unwrap().contains_key("email"), "{body}");
     assert_eq!(body["details"]["ignore_all_email"], json!(false));
     assert_eq!(
         body["details"]["message_type"]["item_sold"],
@@ -800,6 +806,8 @@ async fn set_email_and_confirm_email_validate_before_touching_the_mailer() {
         json!("a+b@x.com"),
         json!("me@Spam.com"),
         json!("a.b.c@x.com"),
+        json!(" a@x.com"),
+        json!("a@x.com "),
         Value::Null,
     ] {
         let (status, body) = send(
@@ -936,8 +944,8 @@ async fn confirm_email_answers_the_old_messages_and_rechecks_the_blacklist() {
     );
     let (status, _) = confirm(&ok, &code).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let sub = state.store.get_subscription(&ok).await.unwrap().unwrap();
-    assert_eq!(sub.email.as_deref(), Some("me@example.com"));
+    let sub = state.store.get_subscription(&ok).await.unwrap();
+    assert_eq!(sub.email, Some(Some("me@example.com".into())));
 }
 
 const SIGNING_KEY: &str = "test-signing-key";
@@ -1028,12 +1036,7 @@ async fn unsubscribe_links_verify_the_old_signature_and_update_the_subscription(
         "{page}"
     );
     assert!(page.contains("href=\"https://account.decentraland.org\""));
-    let sub = state
-        .store
-        .get_subscription(&address)
-        .await
-        .unwrap()
-        .unwrap();
+    let sub = state.store.get_subscription(&address).await.unwrap();
     assert_eq!(
         sub.details["message_type"]["bid_received"]["email"],
         json!(false)
@@ -1052,12 +1055,7 @@ async fn unsubscribe_links_verify_the_old_signature_and_update_the_subscription(
     assert_eq!((status, ct.as_str()), (StatusCode::OK, "text/html"));
     assert!(page.contains("unsubscribed from all email notifications"));
     assert!(!page.contains("{{"), "every placeholder is filled");
-    let sub = state
-        .store
-        .get_subscription(&address)
-        .await
-        .unwrap()
-        .unwrap();
+    let sub = state.store.get_subscription(&address).await.unwrap();
     assert_eq!(sub.details["ignore_all_email"], json!(true));
     assert_eq!(
         sub.details["message_type"]["bid_received"]["email"],
@@ -1137,6 +1135,7 @@ async fn unsubscribe_links_are_refused_while_social_writes_are_disabled() {
             .get_subscription(&address)
             .await
             .unwrap()
+            .email
             .is_none(),
         "nothing was written"
     );
@@ -1162,12 +1161,7 @@ async fn unsubscribe_keeps_preferences_written_concurrently() {
         .await
         .unwrap();
     state.store.unsubscribe_email(&address, None).await.unwrap();
-    let sub = state
-        .store
-        .get_subscription(&address)
-        .await
-        .unwrap()
-        .unwrap();
+    let sub = state.store.get_subscription(&address).await.unwrap();
     assert_eq!(sub.details["ignore_all_email"], json!(true));
     assert_eq!(sub.details["ignore_all_in_app"], json!(true));
     assert_eq!(
@@ -1211,6 +1205,36 @@ async fn common_email_is_bearer_gated_and_validated() {
             )
         );
     }
+    // The bearer is checked before the body is parsed.
+    let (status, body) = send_raw(
+        app(state.clone()),
+        "POST",
+        "/notifications/notifications/email",
+        HeaderMap::new(),
+        "{not json",
+        Some("application/json"),
+    )
+    .await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (
+            StatusCode::UNAUTHORIZED,
+            Some("Authorization header is missing")
+        )
+    );
+    let (status, body) = send_raw(
+        app(state.clone()),
+        "POST",
+        "/notifications/notifications/email",
+        bearer("svc"),
+        "{not json",
+        Some("application/json"),
+    )
+    .await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid body"))
+    );
     for (body, message) in [
         (json!({ "subject": "s", "content": "c" }), "Missing email"),
         (
@@ -2195,7 +2219,7 @@ mod ingest {
     }
 
     #[tokio::test]
-    async fn broadcasts_past_the_horizon_are_hidden_then_pruned_with_their_reads() {
+    async fn broadcasts_are_kept_by_default_and_past_a_set_horizon_hidden_then_pruned() {
         let Some(state) = private_state("ingest_horizon").await else {
             return;
         };
@@ -2217,9 +2241,18 @@ mod ingest {
                 .map(|i| i.metadata["title"].clone())
                 .collect::<Vec<_>>()
         };
+        // The default keeps every broadcast, as upstream.
         assert_eq!(
             titles(state.store.list(&me, 10, None, false).await.unwrap()),
-            vec![json!("new")]
+            vec![json!("new"), json!("old")]
+        );
+        assert_eq!(
+            state
+                .store
+                .prune_broadcasts(crate::shared::now_utc(), 100)
+                .await
+                .unwrap(),
+            0
         );
         let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM social.broadcast_notifications")
             .fetch_all(&pool)
@@ -2227,8 +2260,13 @@ mod ingest {
             .unwrap();
         state.store.mark_read(&me, &ids).await.unwrap();
 
-        let pruned = state
-            .store
+        let ninety = crate::notifications::store::NotificationsStore::new(pool.clone())
+            .with_broadcast_horizon(Some(std::time::Duration::from_secs(90 * 86_400)));
+        assert_eq!(
+            titles(ninety.list(&me, 10, None, false).await.unwrap()),
+            vec![json!("new")]
+        );
+        let pruned = ninety
             .prune_broadcasts(crate::shared::now_utc(), 100)
             .await
             .unwrap();
@@ -2242,7 +2280,7 @@ mod ingest {
 
         // A shorter horizon hides and prunes the rest.
         let short = crate::notifications::store::NotificationsStore::new(pool.clone())
-            .with_broadcast_horizon(std::time::Duration::from_secs(30 * 86_400));
+            .with_broadcast_horizon(Some(std::time::Duration::from_secs(30 * 86_400)));
         assert!(short.list(&me, 10, None, false).await.unwrap().is_empty());
         assert_eq!(
             short

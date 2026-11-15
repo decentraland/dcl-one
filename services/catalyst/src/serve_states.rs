@@ -698,10 +698,9 @@ pub(super) fn social_states(
                     .is_some_and(|endpoint| !endpoint.trim().is_empty()),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
-                from_email: non_empty(&config.social.sendgrid_from_email),
-                notification_template_id: non_empty(
-                    &config.social.sendgrid_notification_template_id,
-                ),
+                api_url: config.social.sendgrid_api_url.clone(),
+                from_email: config.social.sendgrid_sender().map(str::to_string),
+                notification_template_id: config.social.sendgrid_template_id().map(str::to_string),
                 validate_email_template_id: non_empty(
                     &config.social.sendgrid_validate_email_template_id,
                 ),
@@ -715,6 +714,7 @@ pub(super) fn social_states(
                 ),
                 sandbox_mode: config.social.sendgrid_sandbox_mode,
                 environment: non_empty(&config.social.social_environment).unwrap_or_default(),
+                dapps_flags: notifications::email::DappsFlags(communities.flags.clone()),
             },
             notification_service_token: non_empty(&config.social.notification_service_token),
             governance_token: non_empty(&config.social.notifications_governance_token),
@@ -727,13 +727,10 @@ pub(super) fn social_states(
             delivery_interval: Duration::from_secs(
                 config.social.notification_delivery_interval_secs,
             ),
-            broadcast_horizon: Duration::from_secs(
-                config
-                    .social
-                    .notifications_broadcast_horizon_days
-                    .max(1)
-                    .saturating_mul(86_400),
-            ),
+            broadcast_horizon: match config.social.notifications_broadcast_horizon_days {
+                0 => None,
+                days => Some(Duration::from_secs(days.saturating_mul(86_400))),
+            },
             delivery_max_age: notifications::delivery::max_age_from_secs(
                 config.social.notification_delivery_max_age_secs,
             ),
