@@ -143,21 +143,10 @@ pub fn extract_auth_chain_from_fields(
         return Ok(Some(chain));
     }
 
-    let mut biggest_index: i64 = -1;
-    for key in fields.keys() {
-        if let Some(rest) = key.strip_prefix("authChain[")
-            && let Some(idx_str) = rest.split(']').next()
-            && let Ok(idx) = idx_str.parse::<i64>()
-            && idx > biggest_index
-        {
-            biggest_index = idx;
-        }
-    }
-
-    if biggest_index == -1 {
+    let Some(biggest_index) = auth_chain_field_max_index(fields.keys()) else {
         return Ok(None);
-    }
-    if biggest_index >= MAX_AUTH_CHAIN_LINKS as i64 {
+    };
+    if biggest_index >= MAX_AUTH_CHAIN_LINKS as u64 {
         return Err(too_long_message());
     }
 
@@ -175,9 +164,28 @@ pub fn extract_auth_chain_from_fields(
     Ok(Some(Value::Array(chain)))
 }
 
+/// The largest link index the indexed form fields name: the first
+/// `authChain[<digits>]` in each field name (`/authChain\[(\d+)\]/`),
+/// saturating; `None` when no name carries one.
+pub fn auth_chain_field_max_index<'a>(keys: impl IntoIterator<Item = &'a String>) -> Option<u64> {
+    keys.into_iter()
+        .filter_map(|key| auth_chain_field_index(key))
+        .max()
+}
+
+fn auth_chain_field_index(key: &str) -> Option<u64> {
+    const OPEN: &str = "authChain[";
+    key.match_indices(OPEN).find_map(|(at, _)| {
+        let rest = &key[at + OPEN.len()..];
+        let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
+        (!digits.is_empty() && rest[digits.len()..].starts_with(']'))
+            .then(|| digits.parse::<u64>().unwrap_or(u64::MAX))
+    })
+}
+
 fn indexed_field<'a>(
     fields: &'a BTreeMap<String, String>,
-    i: i64,
+    i: u64,
     part: &str,
 ) -> Result<&'a String, String> {
     fields
@@ -459,9 +467,9 @@ fn access_calls_of(entity: &Value) -> usize {
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
-    let unavailable = !matches!(failure, DeployFailure::Rejected(_));
+    let unavailable = !matches!(failure, DeployFailure::Rejected(_, _));
     let (status, errors) = match failure {
-        DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
+        DeployFailure::Rejected(_, errors) => (StatusCode::BAD_REQUEST, errors),
         DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
             (StatusCode::SERVICE_UNAVAILABLE, errors)
         }
@@ -858,10 +866,13 @@ async fn deploy_regular(
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
             return Ok(Answer::Decided(deployment_failure_response(
-                DeployFailure::Rejected(vec![
-                    "The entity file was not part of the uploaded files or has no type."
-                        .to_string(),
-                ]),
+                DeployFailure::Rejected(
+                    crate::write_deployer::RejectionKind::Validation,
+                    vec![
+                        "The entity file was not part of the uploaded files or has no type."
+                            .to_string(),
+                    ],
+                ),
             )));
         };
         if !state.sync.takes_deploys_of(&entity_type) {
@@ -1139,6 +1150,39 @@ mod tests {
         );
     }
 
+    /// `/authChain\[(\d+)\]/` anywhere in a field name, digits only.
+    #[test]
+    fn indexed_auth_chain_keys_are_scanned_as_upstream() {
+        let mut f = link_fields(1);
+        f.insert("authChain[+1][type]".into(), "SIGNER".into());
+        let chain = extract_auth_chain_from_fields(&f).unwrap().unwrap();
+        assert_eq!(chain.as_array().unwrap().len(), 1);
+
+        let mut f = link_fields(1);
+        f.insert("xauthChain[2][payload]".into(), "0x".into());
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            "Missing auth chain element at index 1"
+        );
+
+        let mut f = link_fields(1);
+        f.insert("authChain[x]authChain[1][type]".into(), "SIGNER".into());
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            "Missing auth chain element at index 1"
+        );
+
+        let mut f = link_fields(1);
+        f.insert(
+            "authChain[99999999999999999999][type]".into(),
+            "SIGNER".into(),
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            too_long_message()
+        );
+    }
+
     #[test]
     fn extract_auth_chain_caps_at_max_links() {
         let err = extract_auth_chain_from_fields(&link_fields(MAX_AUTH_CHAIN_LINKS + 1))
@@ -1245,16 +1289,25 @@ mod tests {
 
     #[tokio::test]
     async fn a_failure_keeps_its_kind_and_an_undecidable_one_carries_retry_after() {
-        let rejected = deployment_failure_response(DeployFailure::Rejected(vec!["no".into()]));
-        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
-        assert!(rejected.headers().get(header::RETRY_AFTER).is_none());
-        let body = axum::body::to_bytes(rejected.into_body(), 4096)
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({ "errors": ["no"] })
-        );
+        use crate::write_deployer::RejectionKind;
+        for kind in [
+            RejectionKind::Validation,
+            RejectionKind::PointerContention,
+            RejectionKind::RateLimited,
+            RejectionKind::Superseded,
+        ] {
+            let rejected =
+                deployment_failure_response(DeployFailure::Rejected(kind, vec!["no".into()]));
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+            assert!(rejected.headers().get(header::RETRY_AFTER).is_none());
+            let body = axum::body::to_bytes(rejected.into_body(), 4096)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                json!({ "errors": ["no"] })
+            );
+        }
         let unavailable =
             deployment_failure_response(DeployFailure::Unavailable(vec!["down".into()]));
         assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);

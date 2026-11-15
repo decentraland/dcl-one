@@ -744,7 +744,7 @@ impl MarketplaceState {
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
 pub(crate) async fn ensure_chain(
-    rpc: &crate::land_authz::indexer::Rpc<'_>,
+    rpc: &crate::chain_index::rpc::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {
     let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
@@ -822,7 +822,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                         let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
                         async move {
                             let Some(url) = rpc_url(state, *net) else { return Ok(()) };
-                            let rpc = crate::land_authz::indexer::Rpc::at(&state.http, &url);
+                            let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
                             let progress = |m: String| ctx.progress(m);
                             let outcome = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {
@@ -922,13 +922,8 @@ impl AssetKey {
 
     /// Parses `<contract>-<id>`; the network is the caller's (a URN or a query parameter).
     pub fn parse(network: &str, wire: &str) -> Option<Self> {
-        let (contract, id) = wire.trim().split_once('-')?;
-        let contract = contract.to_ascii_lowercase();
-        let is_addr = contract
-            .strip_prefix("0x")
-            .is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-        let is_id = !id.is_empty() && id.len() <= 78 && id.bytes().all(|b| b.is_ascii_digit());
-        (is_addr && is_id).then(|| Self::new(network, &contract, id))
+        let (contract, id) = self::wire::split_item_wire_id(wire)?;
+        Some(Self::new(network, &contract, &id))
     }
 }
 
