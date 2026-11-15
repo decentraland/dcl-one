@@ -49,9 +49,7 @@ pub fn number_from_str(raw: &str) -> f64 {
             if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
                 return f64::NAN;
             }
-            return digits.chars().fold(0.0, |acc, c| {
-                acc * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64
-            });
+            return radix_integer_to_f64(digits, radix);
         }
     }
     match s {
@@ -63,6 +61,53 @@ pub fn number_from_str(raw: &str) -> f64 {
         return f64::NAN;
     }
     s.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// The value of a `0x`/`0o`/`0b` digit string, rounded once to the nearest
+/// double (ties to even) as ECMAScript's `MV` rounding requires. `digits`
+/// holds only valid digits of `radix`, a power of two.
+fn radix_integer_to_f64(digits: &str, radix: u32) -> f64 {
+    let bits_per_digit = radix.trailing_zeros();
+    // The first 64 significant bits, how many significant bits there are in
+    // total, and whether any bit past the first 64 is set.
+    let mut top: u64 = 0;
+    let mut len: u64 = 0;
+    let mut sticky = false;
+    for c in digits.chars() {
+        let d = c.to_digit(radix).unwrap_or(0);
+        for i in (0..bits_per_digit).rev() {
+            let bit = (d >> i) & 1 == 1;
+            if len == 0 && !bit {
+                continue;
+            }
+            if len < 64 {
+                top = (top << 1) | u64::from(bit);
+            } else {
+                sticky |= bit;
+            }
+            len += 1;
+        }
+    }
+    if len <= 53 {
+        return top as f64;
+    }
+    let kept = len.min(64);
+    let shift = kept - 53;
+    let mut mantissa = top >> shift;
+    let rest = top & ((1 << shift) - 1);
+    let half = 1 << (shift - 1);
+    if rest & half != 0 && (sticky || rest & (half - 1) != 0 || mantissa & 1 == 1) {
+        mantissa += 1;
+    }
+    // mantissa <= 2^53 is exact; the scale is an exact power of two, or
+    // infinity once the value passes the largest double.
+    let exponent = len - 53;
+    let scale = if exponent <= 1023 {
+        f64::from_bits((1023 + exponent) << 52)
+    } else {
+        f64::INFINITY
+    };
+    mantissa as f64 * scale
 }
 
 /// `[+-]? (digits [. digits?] | . digits) ([eE] [+-]? digits)?`
@@ -169,5 +214,46 @@ mod tests {
             number_from_str("0xfffffffffffffffff"),
             295_147_905_179_352_830_000.0
         );
+    }
+
+    #[test]
+    fn number_from_str_rounds_non_decimal_literals_once() {
+        // Expected strings are `String(Number(raw))` from Node.
+        let f255 = format!("0x{}", "f".repeat(255));
+        let one_then_zeros = format!("0x1{}", "0".repeat(255));
+        let f256 = format!("0x{}", "f".repeat(256));
+        for (raw, js) in [
+            ("0x1fffffffffffff", "9007199254740991"),
+            // Above 2^53: ties go to even, anything past the tie rounds up.
+            ("0x20000000000001", "9007199254740992"),
+            ("0x20000000000003", "9007199254740996"),
+            ("0x200000000000018", "144115188075855900"),
+            ("0x0000020000000000001", "9007199254740992"),
+            ("0o4000000000000000001", "72057594037927940"),
+            (
+                "0b100000000000000000000000000000000000000000000000000001",
+                "9007199254740992",
+            ),
+            (
+                "0b1000000000000000000000000000000000000000000000000000011",
+                "18014398509481988",
+            ),
+            // Past 64 and 128 bits, where a set bit far below the tie
+            // decides the rounding.
+            ("0x20000000000002800001", "1.5111572745182868e+23"),
+            (
+                "0xffffffffffffffffffffffffffffffffff",
+                "8.711228593176025e+40",
+            ),
+            (
+                "0x10000000000000080000000000000000000001",
+                "3.5681192317649e+44",
+            ),
+            (f255.as_str(), "1.1235582092889474e+307"),
+            (one_then_zeros.as_str(), "1.1235582092889474e+307"),
+            (f256.as_str(), "Infinity"),
+        ] {
+            assert_eq!(number_to_string(number_from_str(raw)), js, "{raw}");
+        }
     }
 }
