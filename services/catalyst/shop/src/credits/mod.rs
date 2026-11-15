@@ -82,6 +82,7 @@ pub mod dto;
 pub mod errors;
 pub mod escrow;
 pub mod feed;
+pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
@@ -781,7 +782,7 @@ impl State {
     /// ledger, so it runs beside the other credits writers, under the
     /// restore stamps `serve` installs before its jobs start.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
-        checkout::OutboxWorker {
+        fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
             broker: self.broker.clone(),
@@ -907,8 +908,8 @@ impl State {
     }
 
     /// The fulfilment worker as a value, for a test driving `run_once` by hand.
-    pub fn outbox_worker(&self) -> checkout::OutboxWorker {
-        checkout::OutboxWorker {
+    pub fn outbox_worker(&self) -> fulfillment::OutboxWorker {
+        fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
             broker: self.broker.clone(),
