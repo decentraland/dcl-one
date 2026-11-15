@@ -546,10 +546,12 @@ impl PulseServer {
             }));
         }
 
+        // Trusted infrastructure is not held to the per-source share of the replay table.
         let source = self
             .peers
             .get(&peer)
             .and_then(|state| state.ip.as_deref())
+            .filter(|ip| !self.ip_limiter_options.whitelist.contains(ip))
             .map(crate::shared::client_ip::source_key);
         match self.replay_policy.try_admit(
             now_ms,
@@ -585,7 +587,14 @@ impl PulseServer {
                         ReplayRejection::Capacity | ReplayRejection::Storage => {
                             DisconnectReason::ServerFull
                         }
-                        ReplayRejection::SourceQuota => DisconnectReason::PreAuthIpLimitExhausted,
+                        ReplayRejection::SourceQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_source_quota");
+                            tracing::debug!(
+                                source = source.as_deref().unwrap_or_default(),
+                                "Pulse handshake refused: source holds its replay-table quota"
+                            );
+                            DisconnectReason::PreAuthIpLimitExhausted
+                        }
                         _ => DisconnectReason::HandshakeReplayRejected,
                     },
                 }));

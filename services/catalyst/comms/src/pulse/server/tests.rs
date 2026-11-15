@@ -1378,6 +1378,32 @@ async fn replay_table_is_bounded_per_source() {
     }
 }
 
+#[tokio::test]
+async fn whitelisted_source_is_not_held_to_the_replay_quota() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_source(1);
+    server.ip_limiter_options.whitelist =
+        crate::pulse::hardening::IpWhitelist::parse("192.0.2.1").unwrap();
+    assert_eq!(
+        server.replay_policy.try_admit(
+            timestamp,
+            Some("192.0.2.1"),
+            "0x1",
+            &timestamp.to_string()
+        ),
+        Ok(())
+    );
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.1".into());
+    server.peers.insert(1, state);
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("a whitelisted source should authenticate, got {other:?}"),
+    }
+}
+
 #[test]
 fn excessive_emote_duration_is_rejected() {
     let mut srv = PulseServer::new();
