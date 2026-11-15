@@ -33,7 +33,7 @@ use super::wire::ApiError;
 use super::{MarketplaceState, SharedState};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 
-pub use crate::types::{
+use crate::types::{
     ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
 };
 

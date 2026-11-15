@@ -12,7 +12,7 @@
 //! subgraphs (a reader, 10 min, at most 1,000 sales per network) and
 //! hydrates the winners through the items query.
 
-use crate::types::ManaUsdRate;
+use crate::types::{ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::HashMap;
 
 use axum::Json;
@@ -41,7 +41,6 @@ use super::{MarketplaceState, SharedState};
 pub const DEFAULT_LIMIT: i64 = 100;
 pub const USD_WEI_PER_CREDIT: u128 = 100_000_000_000_000_000;
 const USD_WEI_PER_CREDIT_SQL: &str = "100000000000000000::numeric";
-use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
 
 pub fn item_types_for(category: NftCategory) -> Vec<&'static str> {
     match category {
