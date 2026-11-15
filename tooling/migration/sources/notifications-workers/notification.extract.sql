@@ -1,6 +1,8 @@
--- Addressed rows; ids are preserved. `timestamp` is epoch ms; values below
--- 1e11 can only be epoch seconds and are scaled.
+-- Addressed rows; the load keeps upstream ids except for ingest-keyed types.
+-- `timestamp` is epoch ms; values below 1e11 can only be epoch seconds and
+-- are scaled.
 SELECT n.id,
+       n.event_key,
        lower(n.address) AS address,
        n.type,
        n.metadata,

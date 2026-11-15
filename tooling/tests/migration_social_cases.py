@@ -1,6 +1,31 @@
 """Social, referral and global notification imports against the actual target schema."""
+import json
 import os
+import re
+import uuid
+from pathlib import Path
 from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[2]
+NW_SOURCE = ROOT / 'tooling/migration/sources/notifications-workers'
+
+
+def ingest_namespace():
+    """INGEST_NS as the node's ingest endpoint declares it."""
+    rust = (ROOT / 'services/catalyst/social/src/notifications/ingest.rs').read_text()
+    body = re.search(r'const INGEST_NS: Uuid = Uuid::from_bytes\(\[(.*?)\]\);', rust, re.S).group(1)
+    return uuid.UUID(bytes=bytes(int(b, 16) for b in re.findall(r'0x([0-9a-fA-F]{2})', body)))
+
+
+def ingest_id(kind, address, event_key):
+    """`Ingested::id`: v5 over serde_json's compact `[type, address, eventKey]`."""
+    identity = json.dumps([kind, address, event_key], ensure_ascii=False, separators=(',', ':'))
+    return str(uuid.uuid5(ingest_namespace(), identity))
+
+
+def ingest_id_block():
+    return re.search(r'-- ── ingest id .*?-- ── end ingest id ──', (NW_SOURCE / 'notification.load.sql').read_text(),
+                     re.S).group(0)
 
 
 class SocialMigrationCases:
@@ -96,6 +121,55 @@ class SocialMigrationCases:
         self.assertEqual(self.sql(tgt, 'SELECT address, read_at FROM social.broadcast_reads;').strip(),
                          f'{wallet}\t2026-01-02 00:00:00')
         self.assertEqual(self.count(tgt, 'social.broadcast_notifications'), 1)
+        self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
+
+    INGEST_SAMPLES = [
+        ('governance_proposal_enacted', '0x' + 'b' * 40, 'prop-1'),
+        ('governance_announcement', None, 'ann-1'),
+        ('reward_assignment', '0x' + 'c' * 40, 'k "\u00e9"\\\n\x01/\u2028'),
+    ]
+
+    def test_when_deriving_an_ingest_id_in_sql_it_should_match_the_ingest_endpoint(self):
+        tgt = self.catalyst_db('nw_ingest_id')
+        values = ', '.join(f"({self.text(k)}, {self.text(a)}, {self.text(e)})" for k, a, e in self.INGEST_SAMPLES)
+        out = self.sql(tgt, ingest_id_block() + f"""
+            SELECT pg_temp.nw_ingest_id(k, a, e, NULL) FROM (VALUES {values}) v(k, a, e);
+            SELECT pg_temp.nw_ingest_id('item_sold', '{'0x' + 'c' * 40}', 'k', '00000000-0000-4000-8000-000000000001'),
+                   pg_temp.nw_ingest_id('governance_whale_vote', NULL, '', '00000000-0000-4000-8000-000000000002');""")
+        rows = [line for line in out.splitlines() if not line.startswith('CREATE')]
+        self.assertEqual(rows, [ingest_id(*s) for s in self.INGEST_SAMPLES]
+                         + ['00000000-0000-4000-8000-000000000001\t00000000-0000-4000-8000-000000000002'])
+
+    @staticmethod
+    def text(value):
+        return 'NULL' if value is None else "U&'" + ''.join(
+            c if c.isalnum() or c in ' _-' else f'\\{ord(c):04x}' if ord(c) < 0x10000 else f'\\+{ord(c):06x}'
+            for c in value) + "'"
+
+    def test_when_importing_ingest_typed_rows_it_should_key_them_as_a_repost_would(self):
+        from tooling.tests import migration_harness as harness
+        src, tgt = self.notifications_dbs()
+        t, gov, ann = 1767225600000, '00000000-0000-4000-8000-0000000000a2', '00000000-0000-4000-8000-0000000000b2'
+        self.sql(src, f"""INSERT INTO notifications VALUES
+              ('{gov}', 'prop-1', 'governance_proposal_enacted', '{'0x' + 'B' * 40}', '{{}}', {t}, {t + 5000}, {t}, {t}),
+              ('{ann}', 'ann-1', 'governance_announcement', NULL, '{{}}', {t}, NULL, {t}, {t});
+            INSERT INTO broadcast_read VALUES ('{ann}', '{self.wallet("1")}', {t + 1000});""")
+        # An earlier import kept the upstream ids; the node marked both read before this one.
+        self.sql(tgt, f"""INSERT INTO social.notifications (id, address, type, metadata, occurred_at, read, read_at)
+              VALUES ('{gov}', '{self.wallet('b')}', 'governance_proposal_enacted', '{{}}', '2026-01-01', true, '2026-01-01 00:00:01');
+            INSERT INTO social.broadcast_notifications (id, type, occurred_at) VALUES ('{ann}', 'governance_announcement', '2026-01-01');
+            INSERT INTO social.broadcast_reads VALUES ('{ann}', '{self.wallet('2')}', '2026-01-01 00:00:02');""")
+        gov_id = ingest_id('governance_proposal_enacted', self.wallet('b'), 'prop-1')
+        ann_id = ingest_id('governance_announcement', None, 'ann-1')
+        for flags in [(), ('--restart',)]:
+            code, out = self.migrate('run', 'notifications-workers', *flags, sources_dir=harness.migrate.SOURCES)
+            self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT id, read_at FROM social.notifications ORDER BY id;').splitlines(),
+                         ['00000000-0000-4000-8000-0000000000a1\t', f'{gov_id}\t2026-01-01 00:00:01'])
+        self.assertEqual(self.sql(tgt, 'SELECT id FROM social.broadcast_notifications ORDER BY id;').split(),
+                         sorted([self.BROADCAST, ann_id]))
+        self.assertEqual(self.sql(tgt, f"SELECT address FROM social.broadcast_reads WHERE broadcast_id = '{ann_id}'"
+                                       ' ORDER BY 1;').split(), [self.wallet('1'), self.wallet('2')])
         self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
 
     # ── social-service-ea: node writes survive re-runs, upstream deletions reach the node ──

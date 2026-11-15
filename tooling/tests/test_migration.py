@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tooling.tests.migration_comms_cases import CommsMigrationCases
-from tooling.tests.migration_social_cases import SocialMigrationCases
+from tooling.tests.migration_social_cases import SocialMigrationCases, ingest_id, ingest_namespace, NW_SOURCE
 from tooling.tests.migration_worlds_cases import WorldsMigrationCases
 from tooling.tests.migration_financial_cases import FinancialMigrationCases
 from tooling.tests.migration_content_cases import ContentMigrationCases
@@ -251,6 +251,23 @@ class WorldStorageScope(unittest.TestCase):
                   for f in sorted(folder.glob('*_storage.load.sql')) + [folder / 'env_variable.load.sql']}
         self.assertTrue(all(blocks.values()), blocks)
         self.assertEqual(len({b.group(0) for b in blocks.values()}), 1)
+
+
+class IngestIds(unittest.TestCase):
+    def test_every_notification_load_should_derive_ingest_ids_the_same_way(self):
+        blocks = {name: re.search(r'-- ── ingest id .*?-- ── end ingest id ──', (NW_SOURCE / name).read_text(), re.S)
+                  for name in ('notification.load.sql', 'broadcast_read.load.sql', 'broadcast.load.sql')}
+        self.assertTrue(all(blocks.values()), blocks)
+        self.assertEqual(len({b.group(0) for b in blocks.values()}), 1)
+
+    def test_the_loads_should_hash_in_the_ingest_endpoint_namespace(self):
+        sql = (NW_SOURCE / 'notification.load.sql').read_text()
+        self.assertIn(f"'\\x{ingest_namespace().hex}'::bytea", sql)
+
+    def test_the_reference_ids_should_stay_pinned(self):
+        self.assertEqual(ingest_id('governance_proposal_enacted', '0x' + 'b' * 40, 'prop-1'),
+                         '919ae02f-94a8-5a7e-892a-a08fce1d56fa')
+        self.assertEqual(ingest_id('governance_announcement', None, 'ann-1'), 'f7f21e31-00d8-505f-8435-7d054405305c')
 
 
 class Connections(unittest.TestCase):

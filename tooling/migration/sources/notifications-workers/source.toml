@@ -95,6 +95,7 @@ key = ["id"]
 watermark = "updated_at"
 columns = [
   { name = "id", type = "uuid" },
+  { name = "event_key", type = "text" },
   { name = "address", type = "text" },
   { name = "type", type = "text" },
   { name = "metadata", type = "jsonb" },
@@ -116,6 +117,7 @@ columns = [
   { name = "source_address", type = "text" },
   { name = "address", type = "text" },
   { name = "type", type = "text" },
+  { name = "event_key", type = "text" },
   { name = "metadata", type = "jsonb" },
   { name = "occurred_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
@@ -133,6 +135,7 @@ watermark = "updated_at"
 columns = [
   { name = "id", type = "uuid" },
   { name = "type", type = "text" },
+  { name = "event_key", type = "text" },
   { name = "metadata", type = "jsonb" },
   { name = "occurred_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
