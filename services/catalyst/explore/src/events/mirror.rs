@@ -249,7 +249,8 @@ pub struct PassOutcome {
     pub cancelled: bool,
     /// True only when every page fetched and every row upserted cleanly; the
     /// delete sweep is gated on it so a flaky cycle can never wipe rows it
-    /// merely failed to see.
+    /// merely failed to see. A resumed events or worlds pass is never
+    /// complete: what it skipped before the interruption is not persisted.
     pub complete: bool,
     /// The catalogue was adopted as this node's ([`adopt_upstream`], on any
     /// replica): the pass fetched and wrote nothing.
@@ -280,7 +281,9 @@ pub async fn run_pass(
     }
     let start = mirror_state::begin_pass(pool, EVENTS_MIRROR, base).await?;
     let mut out = PassOutcome {
-        complete: true,
+        // The cursor does not record the pages or rows skipped before the
+        // interruption, so a resumed pass never counts as complete.
+        complete: !start.resumed,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -362,10 +365,14 @@ pub async fn run_pass(
             rows: out.upserted as i64,
             swept: out.swept as i64,
             error: (!out.complete).then(|| {
-                format!(
+                let mut reason = format!(
                     "{} failed pages, {} failed rows",
                     out.failed_pages, out.failed_rows
-                )
+                );
+                if let Some(offset) = out.resumed_from {
+                    reason.push_str(&format!("; resumed at offset {offset}"));
+                }
+                reason
             }),
         },
     )
