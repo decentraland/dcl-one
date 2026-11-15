@@ -887,7 +887,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         v["rate"].as_str().and_then(ManaUsdRate::parse_usd_per_mana),
         v["taken_at"].as_i64(),
     ) {
-        (Some(rate), Some(taken_at)) if Utc::now().timestamp() - taken_at <= budget => Ok(rate),
+        (Some(rate), Some(taken_at))
+            if crate::mana::quote::spot_is_fresh(taken_at, Utc::now().timestamp()) =>
+        {
+            Ok(rate)
+        }
         (Some(_), Some(taken_at)) => Err(crate::price::unavailable(&format!(
             "the newest MANA spot on this node is {} s old, past the {budget} s freshness budget (the mana-price-poll job is off or failing); credit prices need a live spot",
             Utc::now().timestamp() - taken_at
