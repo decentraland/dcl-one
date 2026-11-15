@@ -22,15 +22,20 @@ const STREAM_READ_BUF: usize = 16 * 1024;
 const STREAM_SEND_WINDOW: u64 = 64 * 1024;
 
 /// Bidirectional streams a client may hold open: the HTTP/3 CONNECT stream that carries the
-/// session, plus the one reliable stream Pulse reads. The host never accepts a second one.
-const MAX_CONCURRENT_BIDI_STREAMS: u32 = 2;
+/// session and the one reliable stream Pulse reads, with headroom for a client that opens
+/// another. The host never accepts a second Pulse stream; [`CONNECTION_RECEIVE_WINDOW`] caps
+/// what unread ones hold.
+const MAX_CONCURRENT_BIDI_STREAMS: u32 = 4;
 /// Unidirectional streams a client may hold open: the HTTP/3 control stream and the two QPACK
-/// streams, the minimum RFC 9114 section 6.2 requires. Pulse itself uses none.
-const MAX_CONCURRENT_UNI_STREAMS: u32 = 3;
+/// streams (RFC 9114 section 6.2), plus room for reserved stream types a browser may open
+/// first, in any order. Pulse itself uses none; [`CONNECTION_RECEIVE_WINDOW`] caps what they
+/// hold.
+const MAX_CONCURRENT_UNI_STREAMS: u32 = 16;
 /// Per-stream receive window: sixteen default-size (4 KiB) Pulse messages in flight. The
 /// reliable stream is drained as it arrives, so this bounds what an unread stream can hold.
 const STREAM_RECEIVE_WINDOW: u32 = 64 * 1024;
-/// Receive window shared by every stream of one connection.
+/// Receive window shared by every stream of one connection: the cap on stream data a
+/// connection buffers, however many streams it opens.
 const CONNECTION_RECEIVE_WINDOW: u32 = 4 * STREAM_RECEIVE_WINDOW;
 /// Inbound datagrams buffered before the oldest is dropped: about fifty 1200-byte Pulse
 /// datagrams. The maximum datagram frame size it advertises stays at its 65535-byte cap.
@@ -455,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_gets_its_reliable_stream_and_no_second_one() {
+    fn a_session_gets_its_reliable_stream_and_no_more_than_the_stream_limit() {
         let (mut host, hash) = listen();
         let address = host.local_addr();
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -463,13 +468,18 @@ mod tests {
             let session = connect(address, hash).await;
             let (mut send, _recv) = session.open_bi().await.unwrap();
             send.write_all(b"pulse").await.unwrap();
+            // The CONNECT stream and the Pulse stream hold two of the limit.
+            let mut extra = vec![];
+            for _ in 2..MAX_CONCURRENT_BIDI_STREAMS {
+                extra.push(session.open_bi().await.unwrap());
+            }
             assert!(
                 tokio::time::timeout(HELD_BACK, session.open_bi())
                     .await
                     .is_err(),
-                "a second bidirectional stream must wait for stream credit"
+                "a bidirectional stream past the limit must wait for stream credit"
             );
-            (session, send)
+            (session, (send, extra))
         });
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -486,25 +496,27 @@ mod tests {
     }
 
     #[test]
-    fn unread_unidirectional_streams_buffer_at_most_their_window() {
+    fn unread_unidirectional_streams_buffer_at_most_the_connection_window() {
         let (host, hash) = listen();
         let address = host.local_addr();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async move {
             let session = connect(address, hash).await;
-            // The client's HTTP/3 control stream already holds one of the three.
-            let mut streams = vec![
-                session.open_uni().await.unwrap(),
-                session.open_uni().await.unwrap(),
-            ];
+            // The client's HTTP/3 control stream already holds one of the limit.
+            let mut streams = vec![];
+            for _ in 1..MAX_CONCURRENT_UNI_STREAMS {
+                streams.push(session.open_uni().await.unwrap());
+            }
             assert!(
                 tokio::time::timeout(HELD_BACK, session.open_uni())
                     .await
                     .is_err(),
-                "a fourth unidirectional stream must wait for stream credit"
+                "a unidirectional stream past the limit must wait for stream credit"
             );
+            // Enough streams that their windows together exceed the connection window.
+            let filled = (CONNECTION_RECEIVE_WINDOW / STREAM_RECEIVE_WINDOW + 1) as usize;
             let mut total = 0;
-            for send in &mut streams {
+            for send in &mut streams[..filled] {
                 let accepted = fill(send).await;
                 assert!(
                     accepted <= STREAM_RECEIVE_WINDOW as usize,
