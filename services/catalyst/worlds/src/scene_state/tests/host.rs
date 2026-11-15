@@ -1486,4 +1486,17 @@ async fn a_stopped_runtime_closes_its_clients_and_is_reloaded_on_join() {
         !Arc::ptr_eq(&reloaded, &stopped),
         "the stopped scene is replaced"
     );
+
+    // The reloaded runtime stops too; within the cooldown it is not
+    // reloaded again.
+    assert!(crate::shared::test_wait::until(async || !reloaded.runtime.is_running()).await);
+    let err = h
+        .state
+        .join(&reloaded.identity, |_| ())
+        .await
+        .err()
+        .expect("a second reload within the cooldown is refused");
+    assert!(err.to_string().contains("not reloaded again yet"), "{err}");
+    let hosted = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(Arc::ptr_eq(&hosted, &reloaded), "nothing was reloaded");
 }

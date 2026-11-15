@@ -210,8 +210,9 @@ pub async fn load_or_reload(state: &SceneHostState, key: &SceneKey) -> Result<()
 
 /// [`load_or_reload`]; with `require_opt_in` a scene that does not set
 /// `authoritativeMultiplayer` is refused. Whatever was hosted under the key
-/// is stopped first either way, so callers that require opt-in only load
-/// keys that are not hosted.
+/// is stopped first either way. Callers that require opt-in load only keys
+/// that are not hosted or whose hosted runtime stopped, so a refused opt-in
+/// unloads only a scene that was already dead.
 pub(super) async fn load_scene(
     state: &SceneHostState,
     key: &SceneKey,

@@ -1551,13 +1551,15 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let (a, _) = scene.add_client("0x1".into(), tx.clone());
 
+        // `finish` clears `running` before it cancels the tokens: wait on
+        // the token itself.
         assert!(
-            crate::shared::test_wait::until_blocking(|| !rt.is_running()),
-            "the runtime stops after the failure cap"
+            crate::shared::test_wait::until_blocking(|| a.cancel.is_cancelled()),
+            "every client of a stopped runtime is asked to close"
         );
         assert!(
-            a.cancel.is_cancelled(),
-            "every client of a stopped runtime is asked to close"
+            !rt.is_running(),
+            "the runtime stopped after the failure cap"
         );
         assert_eq!(rt.handle.shared.slots.live(), 1, "the index stays held");
 
