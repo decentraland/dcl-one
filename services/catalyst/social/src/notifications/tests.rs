@@ -1989,6 +1989,41 @@ mod ingest {
     }
 
     #[tokio::test]
+    async fn a_failing_chunk_leaves_the_earlier_chunks_committed() {
+        use crate::notifications::ingest::upsert;
+        let Some(pool) = crate::notifications::store::test_support::private_pool("ing-chunk").await
+        else {
+            return;
+        };
+        let to = fresh_address();
+        let kind = "governance_proposal_enacted";
+        let body: Vec<Value> = (0..1_500)
+            .map(|i| entry(kind, &to, &format!("c{i}"), 1_700_000_000_000))
+            .collect();
+        let mut batch = validate(&json!(body), Producer::Governance, NOW).unwrap();
+        // Chunks follow id order, so the largest id is in the second chunk.
+        let last = batch.iter_mut().max_by_key(|n| n.id()).unwrap();
+        last.metadata = json!({ "title": "boom" });
+        sqlx::query("ALTER TABLE social.notifications ADD CONSTRAINT ingest_chunk_test CHECK (metadata->>'title' IS DISTINCT FROM 'boom')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(upsert(&pool, batch).await.is_err());
+        let (rows, deliveries): (i64, i64) = sqlx::query_as(
+            "SELECT count(*), count(d.notification_id) FROM social.notifications n LEFT JOIN social.notification_deliveries d ON d.notification_id = n.id WHERE n.address = $1",
+        )
+        .bind(&to)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (rows, deliveries),
+            (1_000, 1_000),
+            "the first chunk committed alone"
+        );
+    }
+
+    #[tokio::test]
     async fn upsert_counts_new_and_updated_notifications() {
         use crate::notifications::ingest::{Upserted, upsert};
         let Some(state) = producers().await else {

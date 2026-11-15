@@ -297,6 +297,7 @@ where
                     AND {in_app}
                 ) AS visible
             ) v
+            ORDER BY n.id
             ON CONFLICT (id) DO UPDATE
                 SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
                 WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
@@ -510,6 +511,7 @@ impl NotificationsStore {
             WITH ups AS (
                 INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
                 SELECT u.id, u.address, $3, $4, $5, $6 FROM UNNEST($1::uuid[], $2::text[]) AS u(id, address)
+                ORDER BY u.address
                 {BROADCAST_REFRESH}
             ),
             {tail}
@@ -1293,9 +1295,23 @@ mod pg_tests {
         // the lib tests share one scratch database, so a sibling test can add
         // a subscription between the two calls and the re-run legitimately
         // inserts one row for that new subscriber.
-        c.broadcast(&key_all, "bid_received", &meta, None)
+        let refreshed = serde_json::json!({"title": "again"});
+        c.broadcast(&key_all, "bid_received", &refreshed, None)
             .await
             .unwrap();
+        let metas: Vec<Json> = sqlx::query_scalar(
+            "SELECT metadata FROM social.notifications WHERE broadcast_key = $1 AND address = ANY($2)",
+        )
+        .bind(&key_all)
+        .bind(vec![a.as_str(), b.as_str()])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            metas,
+            vec![refreshed.clone(), refreshed],
+            "a re-run refreshes the payload"
+        );
         let again: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id = n.id
              WHERE n.broadcast_key = $1 AND n.address = ANY($2)",
@@ -1493,6 +1509,15 @@ mod pg_tests {
             1
         );
         c.mark_read(&a, &[first.id]).await.unwrap();
+        let read_at = || {
+            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
+                "SELECT read_at FROM social.notifications WHERE id = $1",
+            )
+            .bind(first.id)
+            .fetch_one(&pool)
+        };
+        let read_before = read_at().await.unwrap();
+        assert!(read_before.is_some());
         sqlx::query("DELETE FROM social.notification_deliveries WHERE notification_id = $1")
             .bind(first.id)
             .execute(&pool)
@@ -1519,6 +1544,7 @@ mod pg_tests {
             row,
             (serde_json::json!({ "v": 2 }), 1_700_000_500_000, true)
         );
+        assert_eq!(read_at().await.unwrap(), read_before);
         assert_eq!(delivery_state(&pool, first.id).await, None);
         let mut other_type = first.clone();
         other_type.kind = "bid_accepted".into();

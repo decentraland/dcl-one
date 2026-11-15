@@ -301,18 +301,46 @@ pub async fn upsert(pool: &PgPool, batch: Vec<Ingested>) -> Result<Upserted, sql
     let batch = dedup(batch);
     let (addressed, broadcast): (Vec<_>, Vec<_>) =
         batch.into_iter().partition(|n| n.address.is_some());
+    let chunks = addressed.len().div_ceil(WRITE_CHUNK) + broadcast.len().div_ceil(WRITE_CHUNK);
     let mut written = Upserted::default();
+    let mut committed = 0;
+    let outcome = write_chunks(pool, &addressed, &broadcast, &mut written, &mut committed).await;
+    if let Err(error) = &outcome {
+        // The committed chunks stay; a retry counts their rows as updated.
+        tracing::warn!(
+            %error,
+            inserted = written.inserted,
+            updated = written.updated,
+            committed_chunks = committed,
+            total_chunks = chunks,
+            "notification ingest stopped part-way"
+        );
+    }
+    outcome.map(|()| written)
+}
+
+async fn write_chunks(
+    pool: &PgPool,
+    addressed: &[Ingested],
+    broadcast: &[Ingested],
+    written: &mut Upserted,
+    committed: &mut usize,
+) -> Result<(), sqlx::Error> {
     for chunk in addressed.chunks(WRITE_CHUNK) {
         let mut tx = pool.begin().await?;
-        written += upsert_addressed(&mut tx, chunk).await?;
+        let chunk_written = upsert_addressed(&mut tx, chunk).await?;
         tx.commit().await?;
+        *written += chunk_written;
+        *committed += 1;
     }
     for chunk in broadcast.chunks(WRITE_CHUNK) {
         let mut tx = pool.begin().await?;
-        written += upsert_broadcasts(&mut tx, chunk).await?;
+        let chunk_written = upsert_broadcasts(&mut tx, chunk).await?;
         tx.commit().await?;
+        *written += chunk_written;
+        *committed += 1;
     }
-    Ok(written)
+    Ok(())
 }
 
 async fn upsert_addressed(
@@ -332,7 +360,7 @@ async fn upsert_addressed(
         ),
         ups AS (
             INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at)
-            SELECT id, address, type, metadata, occurred_at FROM src
+            SELECT id, address, type, metadata, occurred_at FROM src ORDER BY id
             ON CONFLICT (id) DO UPDATE
                 SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
                 WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
@@ -390,6 +418,8 @@ async fn upsert_broadcasts(
         WITH ups AS (
             INSERT INTO social.broadcast_notifications AS t (id, type, metadata, occurred_at)
             SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::jsonb[], $4::timestamp[])
+                AS b(id, type, metadata, occurred_at)
+            ORDER BY id
             ON CONFLICT (id) DO UPDATE
                 SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
                 WHERE t.type = EXCLUDED.type
