@@ -51,7 +51,9 @@ prints names them. Each other entry of `node_modules` stays. The vendored `@dcl/
 editor UI and the vendored `protobufjs` is a minimal build. Thus, if a package manager wrote the
 full packages into a folder that has a record, install them again after a replacement. A package
 that is a link is replaced, the link itself. A `@<scope>` folder that is a link stops the command
-with exit code 1 before it writes a file, and the error names the link. With `--json` the command
+with exit code 1 before it writes a file, and the error names the link. So does a `node_modules`
+or a `node_modules/.dcl-one-archive` that is a link: the command does not write the record through
+a link. With `--json` the command
 gives the document of `--missing-only` ([Reference](#reference)): `installed` has the packages it
 wrote and `kept` is `[]`.
 
@@ -70,7 +72,9 @@ does not have, for a scene that has its own `@dcl/sdk`:
   command with exit code 1 before it writes a file. The error names the link. A link that leads
   to a package is a package that is there.
 - Each added package is complete when it comes into `node_modules`. A run that stops leaves no
-  part of a package, and the next run adds the packages that are still absent.
+  part of a package, and the next run adds the packages that are still absent. The command
+  prepares the packages in `node_modules/.dcl-one-missing` and removes that folder at its end. A
+  run also removes the folder that a stopped run left, with or without a package to install.
 - For each kept package whose `package.json` version is not the vendored version, the command
   prints one line on stderr:
   `warning: node_modules keeps @dcl/sdk 7.0.0; the vendored SDK has @dcl/sdk <version>`.
@@ -190,11 +194,16 @@ with no terminal, or under `--ci`, it stops unless `--yes` is given.
 
 The scene's code runs with node's full privileges: it can read and write whatever your user can.
 Convert a scene you did not write only if you would run its code. The run has no time limit: it
-ends when `main()` and the first frame return. If the scene fails under node, `src/` is unchanged
-and files already copied to `assets/scene/` stay. If the scene does not build from its composite,
-`src/` is restored and the composite stays. A referenced file or glTF dependency that is not on
-disk is reported and its path left as it is. The run loads `@dcl/inspector` and `@dcl/ecs` from the
-scene's `node_modules`; the vendored ones are enough.
+ends when `main()` and the first frame return, and a timer or a socket that the scene leaves open
+does not keep the command. `--verbose` shows what the scene printed through `console`. If the
+scene fails under node, `src/` is unchanged and files already copied to `assets/scene/` stay. The
+command reads each file under `src/` before it changes one; if it cannot write a file, the files
+that it changed get their content back. If the scene does not build from its composite, `src/` is
+restored and the composite stays; a warning names each file that could not be restored. A
+referenced file or glTF dependency that is not a file on disk is reported and its path left as it
+is. A model whose glTF `images` or `buffers` is not a list of objects is copied alone: its
+dependencies cannot be read. The run loads `@dcl/inspector` and `@dcl/ecs` from the scene's
+`node_modules`; the vendored ones are enough.
 
 ## Preview it
 
@@ -333,7 +342,7 @@ Errors stay visible until dismissed; successful saves are announced briefly.
 `start --json` is the run a parent program reads (the Creator Hub, a script): stdout carries one
 JSON object on each line and nothing else, each with an `event` field. The text of the terminal
 form (the join block, notes, warnings, the output of a custom `scripts.build`) goes to stderr.
-Without `--json` no line changes. Keys are camelCase and paths are absolute.
+Keys are camelCase and paths are absolute.
 
 `ready`, once, when the preview serves and its links are known:
 
@@ -524,8 +533,11 @@ the address. The printed URLs name `localhost` for `127.0.0.1` and `0.0.0.0`, an
 itself for another address. Under the signing URL the CLI prints how another device can sign: set
 `DCL_SCENE_CLI_LINKER_HOST=0.0.0.0` and run the command again. A run with `--host` on a loopback
 address does not print that note, because the flag wins and the variable does not open that run.
+With remote signing on, a server on `0.0.0.0` prints the note to replace `localhost` with the
+address of this machine. A server on one address prints no note: the URL names that address.
 The signing page of the `world` commands reads `DCL_SCENE_CLI_LINKER_HOST` by the same rule: the
-value is an IP address, and a value that is not one stops the command. The name `localhost` is the
+value is an IP address, and a value that is not one stops the command. Its URL and its note follow
+the same rules. The name `localhost` is the
 one exception: `deploy` and the `world` commands read it as `127.0.0.1`. These commands have no
 `--host`.
 
@@ -564,7 +576,8 @@ There is no `error` event for a stop that the caller requests: a cancel through
 `DELETE /api/deploy` (the `state` line says `cancelled`), or SIGINT and SIGTERM (the exit code is
 then 1 or 130, and a programmatic run that waited for the signature prints its `state` line). A
 command line that the CLI cannot parse prints no event and exits with code 2, and so does a
-`--host` that needs remote signing. Without `--json` and `--programmatic` no line changes.
+`--host` that needs remote signing. A run without `--json` and without `--programmatic` prints no
+event.
 
 The resource is upstream's `/api/deploy` contract:
 
@@ -602,7 +615,9 @@ The resource is upstream's `/api/deploy` contract:
   server that gives no readable answer is not in the list. The route does not end the run.
 - The four `GET` routes answer this machine only: `403` to another peer, to the tunnel, and to a
   request whose `Host` is not a loopback name. Remote signing (`DCL_SCENE_CLI_LINKER_HOST`, as
-  above, or `start --allow-remote-deploy`) opens them with the rest.
+  above, or `start --allow-remote-deploy`) opens them with the rest. `GET /api/catalyst-pointers`
+  makes this machine ask other servers, so it also has the same-origin gate of the signing page:
+  `403` to a page of another origin, with remote signing too.
 
 Differences from upstream: `/api/catalyst-pointers` asks the servers of this run, not the catalyst
 list of a chain, `chainId` is ignored, and the same routes serve the preview's own signing
@@ -643,7 +658,8 @@ JSON lines instead ([Driving a preview from a program](#driving-a-preview-from-a
   is the content hash); and
   `aboutFile`, the realm file `--realmName` wrote, else `null`. Each content file is at
   `<destination>/<hash>`, beside the entity files. The list has each file of the scene, also
-  a file that an earlier export wrote and this run kept.
+  a file that an earlier export wrote and this run kept. A path that is not UTF-8 is written as
+  the CLI shows it, with `�` in the place of each part that is not.
 
   ```json
   { "scenesUrn": ["urn:decentraland:entity:bafkrei…?=&baseUrl=https://static.example/scenes/"],

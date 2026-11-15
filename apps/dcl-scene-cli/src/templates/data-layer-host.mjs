@@ -200,9 +200,18 @@ async function serve() {
     rpcServer.attachTransport(transport, { fs: fsInterface, engine: host.engine })
     ws.on('error', () => ws.close())
   })
+  // An error before the server listens fails the start; one after it ends
+  // the host with exit code 1.
   const port = await new Promise((resolve, reject) => {
-    wss.on('listening', () => resolve(wss.address().port))
-    wss.on('error', reject)
+    wss.once('error', reject)
+    wss.once('listening', () => {
+      wss.off('error', reject)
+      wss.on('error', (e) => {
+        console.error('the data-layer server failed:', e && e.stack ? e.stack : String(e))
+        process.exit(1)
+      })
+      resolve(wss.address().port)
+    })
   })
   await refusesWithoutSecret(port)
   process.stdout.write(JSON.stringify({ ready: true, port }) + '\n')

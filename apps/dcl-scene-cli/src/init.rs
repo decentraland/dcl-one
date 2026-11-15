@@ -648,12 +648,16 @@ fn vendored_archive_sha256() -> String {
 /// everything else in node_modules. Gives the packages written, sorted.
 ///
 /// A package that is a link is replaced, the link itself. A scope folder
-/// that is a link is never written through: it ends the extraction with an
-/// error before any write.
+/// that is a link is never written through, and neither is a `node_modules`
+/// or a record that is a link: each ends the extraction with an error before
+/// any write.
 fn extract_vendored_archive(root: &Path, mut archive: VendoredArchive) -> Result<Vec<String>> {
     let modules = root.join("node_modules");
     let marker = root.join(ARCHIVE_MARKER);
     let packages = archive_packages(&archive);
+    for entry in ["node_modules", ARCHIVE_MARKER] {
+        refuse_link(&root.join(entry), entry, ARCHIVE_MARKER)?;
+    }
     for package in &packages {
         refuse_scope_link(&modules, package)?;
     }
@@ -763,7 +767,8 @@ pub struct NodeModulesInstall {
 
 /// Where [`install_missing_node_modules`] prepares the packages it adds. Each
 /// package then moves to its place in one rename, so node_modules never
-/// holds a part of one.
+/// holds a part of one. Each run that is not a dry run removes the folder,
+/// the one that a stopped run left too.
 const MISSING_STAGING: &str = ".dcl-one-missing";
 
 /// `init --node-modules-only --missing-only`: writes each package of the
@@ -822,9 +827,12 @@ pub fn install_missing_node_modules(dir: &Path, dry_run: bool) -> Result<NodeMod
             version,
         });
     }
-    if !installed.is_empty() && !dry_run {
+    if !dry_run {
         let staging = modules.join(MISSING_STAGING);
-        let written = stage_missing_packages(&modules, &staging, archive, &installed);
+        let written = match installed.is_empty() {
+            true => Ok(()),
+            false => stage_missing_packages(&modules, &staging, archive, &installed),
+        };
         let cleared = remove_entry(&staging).context("removing the staging folder");
         written.and(cleared)?;
     }
@@ -970,19 +978,26 @@ fn refuse_scope_link(modules: &Path, name: &str) -> Result<()> {
     let Some((scope, _)) = name.split_once('/') else {
         return Ok(());
     };
-    let is_link = std::fs::symlink_metadata(modules.join(scope))
-        .is_ok_and(|meta| meta.file_type().is_symlink());
+    refuse_link(
+        &modules.join(scope),
+        &format!("node_modules/{scope}"),
+        &format!("node_modules/{name}"),
+    )
+}
+
+/// `path` that is a link, at or above `target`, which the command has to
+/// write. `shown` and `target` are the paths as the error names them.
+fn refuse_link(path: &Path, shown: &str, target: &str) -> Result<()> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
     if !is_link {
         return Ok(());
     }
     Err(UserError::new(
-        format!("node_modules/{scope} is a link, and this command does not replace a link"),
-        TrySteps::one(format!(
-            "remove node_modules/{scope}, then run the command again"
-        )),
+        format!("{shown} is a link, and this command does not replace a link"),
+        TrySteps::one(format!("remove {shown}, then run the command again")),
     )
     .why(format!(
-        "the command has to write node_modules/{name}, and it does not write through a link"
+        "the command has to write {target}, and it does not write through a link"
     ))
     .into())
 }
@@ -1642,6 +1657,55 @@ mod tests {
         target_is_as_it_was();
     }
 
+    /// The record is not written through a link: a `node_modules` or a record
+    /// that is a link stops the install before a write and the error names
+    /// it. What the link leads to stays as it was.
+    #[cfg(unix)]
+    #[test]
+    fn node_modules_only_refuses_a_record_or_a_node_modules_that_is_a_link() {
+        use std::os::unix::fs::symlink as link;
+        let other = "0".repeat(64);
+        let elsewhere = crate::scene::Tmp::new("init-record-link-target");
+        elsewhere.write("record", &other);
+        elsewhere.write("modules/.dcl-one-archive", &other);
+        let refused = |root: &Path, name: &str| {
+            let err = refresh_vendored_node_modules(root).err().unwrap();
+            let text = ux::render(&err, false, false);
+            assert!(text.contains(&format!("{name} is a link")), "{text}");
+            assert!(text.contains(&format!("remove {name}")), "{text}");
+            assert_eq!(
+                Vec::from_iter(tree(&elsewhere.0)),
+                [
+                    (
+                        "modules/.dcl-one-archive".to_string(),
+                        other.clone().into_bytes()
+                    ),
+                    ("record".to_string(), other.clone().into_bytes()),
+                ],
+                "the target of the link is as it was"
+            );
+        };
+
+        // The record of another archive behind a link: there are packages
+        // to replace, and the record would be the first write.
+        let t = crate::scene::Tmp::new("init-record-link");
+        std::fs::create_dir_all(t.0.join("node_modules")).unwrap();
+        link(elsewhere.0.join("record"), t.0.join(ARCHIVE_MARKER)).unwrap();
+        refused(&t.0, ARCHIVE_MARKER);
+        assert!(!t.0.join("node_modules/typescript").exists());
+
+        // node_modules itself is a link, to a folder and to nothing.
+        let t = crate::scene::Tmp::new("init-modules-link");
+        link(elsewhere.0.join("modules"), t.0.join("node_modules")).unwrap();
+        refused(&t.0, "node_modules");
+        std::fs::remove_file(t.0.join("node_modules")).unwrap();
+        link(elsewhere.0.join("absent"), t.0.join("node_modules")).unwrap();
+        refused(&t.0, "node_modules");
+        assert!(!elsewhere.0.join("absent").exists());
+        let err = restore_missing_node_modules(&t.0).unwrap_err();
+        assert!(ux::render(&err, false, false).contains("node_modules is a link"));
+    }
+
     /// Every file below `dir`, by its path from there, with its bytes.
     fn tree(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
         let mut files = std::collections::BTreeMap::new();
@@ -1927,11 +1991,28 @@ mod tests {
         restore_missing_node_modules(&t.0).unwrap();
         assert!(own.exists(), "a build leaves a folder without a record");
 
-        t.write(
-            &format!("node_modules/{MISSING_STAGING}/node_modules/@dcl/ecs/part.js"),
-            "",
+        // A stopped run left its staging folder. A dry run keeps it; a run
+        // removes it, with a package to install and with none.
+        let staging = t.0.join("node_modules").join(MISSING_STAGING);
+        let leave_staging = || {
+            t.write(
+                &format!("node_modules/{MISSING_STAGING}/node_modules/@dcl/ecs/part.js"),
+                "",
+            )
+        };
+        leave_staging();
+        let report = install_missing_node_modules(&t.0, true).unwrap();
+        assert!(report.installed.is_empty(), "{:?}", report.installed);
+        assert!(staging.exists(), "a dry run removes nothing");
+        let made = install_missing_node_modules(&t.0, false).unwrap();
+        assert!(made.installed.is_empty(), "{:?}", made.installed);
+        assert!(
+            !staging.exists(),
+            "a run with nothing to install removes it"
         );
+        assert!(own.exists());
         for record in ["another archive".to_string(), vendored_archive_sha256()] {
+            leave_staging();
             std::fs::write(&marker, &record).unwrap();
             std::fs::remove_dir_all(t.0.join("node_modules/@dcl/ecs")).unwrap();
             let made = install_missing_node_modules(&t.0, false).unwrap();

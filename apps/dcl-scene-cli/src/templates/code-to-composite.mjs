@@ -10,8 +10,10 @@
 //
 // The scene's @dcl/inspector and @dcl/ecs are used (the vendored ones, or a
 // real install): the editor engine is createEngineContext()'s, so the
-// component set written is exactly what the editor reads back. The last
-// stdout line is a JSON summary; scene console output goes to stderr.
+// component set written is exactly what the editor reads back. The one
+// stdout line is a JSON summary; scene console output goes to stderr. The
+// process exits when the summary is written, so a timer or a socket that the
+// scene left open does not keep it.
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -199,7 +201,8 @@ function hostRequire(spec) {
   return modules.get(spec)
 }
 
-// scene console output goes to stderr so the summary line owns stdout
+// scene console output goes to stderr so the summary line owns stdout:
+// loadCjs gives this object to the bundle as `console` and `globalThis.console`
 const sceneConsole = {}
 for (const k of ['log', 'info', 'debug', 'warn', 'error', 'trace']) {
   sceneConsole[k] = (...a) => console.error(...a)
@@ -307,9 +310,11 @@ function fileDependency(uri) {
 // fileDependency), which are left as they are.
 function gltfDependencies(file) {
   const none = { deps: [], rejected: [] }
-  let json
+  const deps = []
+  const rejected = []
   try {
     const bytes = fs.readFileSync(file)
+    let json
     if (bytes.length >= 20 && bytes.readUInt32LE(0) === 0x46546c67) {
       const len = bytes.readUInt32LE(12)
       if (bytes.readUInt32LE(16) !== 0x4e4f534a) return none
@@ -317,19 +322,21 @@ function gltfDependencies(file) {
     } else {
       json = JSON.parse(bytes.toString('utf8'))
     }
+    const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    if (!isObject(json)) throw new Error('the glTF is not an object')
+    for (const key of ['images', 'buffers']) {
+      const list = json[key] ?? []
+      if (!Array.isArray(list) || !list.every(isObject)) throw new Error(`${key} is not a list of objects`)
+      for (const item of list) {
+        if (typeof item.uri !== 'string' || !item.uri || item.uri.startsWith('data:')) continue
+        const dep = fileDependency(item.uri)
+        if (dep === null) rejected.push(item.uri)
+        else deps.push(dep)
+      }
+    }
   } catch (e) {
     console.error(`  could not read the dependencies of ${path.relative(root, file)}: ${e.message}`)
     return none
-  }
-  const deps = []
-  const rejected = []
-  for (const list of [json.images, json.buffers]) {
-    for (const item of list ?? []) {
-      if (typeof item.uri !== 'string' || !item.uri || item.uri.startsWith('data:')) continue
-      const dep = fileDependency(item.uri)
-      if (dep === null) rejected.push(item.uri)
-      else deps.push(dep)
-    }
   }
   return { deps, rejected }
 }
@@ -426,7 +433,7 @@ function migrateAssets() {
     const model = assetType(rel) === 'Models'
     const { deps, rejected } = model ? gltfDependencies(abs) : { deps: [], rejected: [] }
     for (const uri of rejected) skipped.push(`${posixRel}: ${uri}`)
-    const beside = deps.filter((dep) => fs.existsSync(path.join(from, dep)))
+    const beside = deps.filter((dep) => fs.statSync(path.join(from, dep), { throwIfNoEntry: false })?.isFile())
     for (const dep of deps) {
       if (!beside.includes(dep)) missing.push(path.posix.join(path.posix.dirname(posixRel), dep))
     }
@@ -443,17 +450,15 @@ function migrateAssets() {
       mapping.set(depFrom, depTo)
     }
   }
-  let rewritten = 0
   for (const component of engine.componentsIter()) {
     if (!('createOrReplace' in component)) continue
     for (const [entity, value] of Array.from(engine.getEntitiesWith(component))) {
       const r = replaceAssetPaths(value, mapping)
       if (!r.changed) continue
       component.createOrReplace(entity, r.data)
-      rewritten++
     }
   }
-  return { moved: Array.from(mapping, ([from, to]) => ({ from, to })), missing, skipped, rewritten }
+  return { moved: Array.from(mapping, ([from, to]) => ({ from, to })), missing, skipped }
 }
 
 // upstream generateEntityNames: first matching component names the entity
@@ -528,15 +533,14 @@ const entities = new Set()
 for (const component of engine.componentsIter()) {
   for (const [entity] of engine.getEntitiesWith(component)) entities.add(entity)
 }
-console.log(
-  JSON.stringify({
-    ok: true,
-    entities: entities.size,
-    components: composite.components.length,
-    uiEntities,
-    assets: assets.moved,
-    missingAssets: assets.missing,
-    skippedDependencies: assets.skipped,
-    rewritten: assets.rewritten
-  })
-)
+const summary = JSON.stringify({
+  ok: true,
+  entities: entities.size,
+  components: composite.components.length,
+  uiEntities,
+  assets: assets.moved,
+  missingAssets: assets.missing,
+  skippedDependencies: assets.skipped
+})
+// The run ends here, whatever the scene left running: a timer, a socket.
+process.stdout.write(summary + '\n', () => process.exit(0))

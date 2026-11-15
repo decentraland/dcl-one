@@ -1330,7 +1330,7 @@ fn programmatic_ready(
 
 /// The origin the signing URLs name. A listener on IPv4 loopback or on every
 /// address answers `localhost`; one on another address is named by it.
-fn signing_origin(bound: SocketAddr) -> String {
+pub(crate) fn signing_origin(bound: SocketAddr) -> String {
     if bound.ip() == Ipv4Addr::LOCALHOST || bound.ip().is_unspecified() {
         return format!("http://localhost:{}", bound.port());
     }

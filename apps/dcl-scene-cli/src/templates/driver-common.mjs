@@ -28,13 +28,20 @@ export function readSceneFile(root, fileName) {
   return fs.readFileSync(file)
 }
 
-// Runs a built CommonJS bundle with `sandbox` as its globalThis and returns
-// its exports. The sandbox hides names only: the code keeps node's privileges.
+// Runs a built CommonJS bundle with `sandbox` as its globalThis and
+// `sandbox.console` as its `console`, and returns its exports. The sandbox
+// hides names only: the code keeps node's privileges.
 export function loadCjs(root, rel, sandbox) {
   const code = fs.readFileSync(path.join(root, rel), 'utf8')
   const mod = { exports: {} }
-  const wrapper = new Function('globalThis', 'module', 'exports', 'const require = globalThis.require;\n' + code)
-  wrapper.call(sandbox, sandbox, mod, mod.exports)
+  const wrapper = new Function(
+    'globalThis',
+    'module',
+    'exports',
+    'console',
+    'const require = globalThis.require;\n' + code
+  )
+  wrapper.call(sandbox, sandbox, mod, mod.exports, sandbox.console)
   return mod.exports
 }
 

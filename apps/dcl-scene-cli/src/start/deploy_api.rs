@@ -186,7 +186,8 @@ fn pointer_servers(target_content: &str, rotation: &[String]) -> Vec<(String, St
 /// parcel, in the shape upstream answers, so a program can see the
 /// deployment reach the servers. A server that gives no readable answer is
 /// left out; one that answers with a failure, or has no entity there, has an
-/// empty `entityId` and no `timestamp`.
+/// empty `entityId` and no `timestamp`. The route makes this machine ask
+/// other servers, so a page of another origin is refused.
 pub(super) async fn catalyst_pointers(
     State(st): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -194,6 +195,9 @@ pub(super) async fn catalyst_pointers(
 ) -> Response {
     if let Some(blocked) = reading_blocked(&st, peer, &headers) {
         return blocked;
+    }
+    if let Some(why) = super::cross_origin_refusal(&headers) {
+        return message(StatusCode::FORBIDDEN, why);
     }
     let Some(signer) = cli_signer(&st) else {
         return no_pending();
@@ -601,6 +605,34 @@ mod tests {
         let lan = with(&[("host", "10.0.0.5:8000")]);
         let resp = info(State(open), ConnectInfo(LAN), lan).await;
         assert_eq!(resp.status(), StatusCode::OK, "remote deploys are open");
+    }
+
+    /// The pointers route makes this machine ask other servers, so it has
+    /// the same-origin rule of the signing routes: a page of another site
+    /// gets a 403, the preview's own page an answer.
+    #[tokio::test]
+    async fn the_pointers_route_refuses_a_page_of_another_origin() {
+        let (target, _requests) = pointer_server(StatusCode::OK, json!([])).await;
+        let (_tmp, st) = app("api-pointers-origin");
+        adopt_cli_signing(&st, signer_to(None, &target));
+        let ask = |name: &'static str, value: &str| {
+            let headers = with(&[("host", "localhost:8000"), (name, value)]);
+            catalyst_pointers(State(st.clone()), ConnectInfo(LOCAL), headers)
+        };
+        for (name, value) in [
+            ("origin", "http://evil.example"),
+            ("origin", "http://localhost:9000"),
+            ("sec-fetch-site", "cross-site"),
+        ] {
+            let resp = ask(name, value).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{name}: {value}");
+            assert_eq!(
+                json_of(resp).await["message"],
+                "this request did not come from the preview's own page"
+            );
+        }
+        let own = ask("origin", "http://localhost:8000").await;
+        assert_eq!(own.status(), StatusCode::OK);
     }
 
     #[tokio::test]

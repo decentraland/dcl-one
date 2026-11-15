@@ -1062,10 +1062,14 @@ impl SigningBind {
 
     /// The note under the signing URL on a signature from another device.
     /// `None` when the command line keeps the listener on a loopback
-    /// address: no value of the variable opens that run.
+    /// address: no value of the variable opens that run. `None` too with
+    /// remote signing on one address: the URL names that address.
     pub(crate) fn other_device_note(self) -> Option<&'static str> {
         match (self.remote, self.openable) {
-            (true, _) => Some("from another device, replace localhost with this machine's address"),
+            (true, _) if self.addr.is_unspecified() => {
+                Some("from another device, replace localhost with this machine's address")
+            }
+            (true, _) => None,
             (false, true) => {
                 Some("to sign from another device, re-run with DCL_SCENE_CLI_LINKER_HOST=0.0.0.0")
             }
@@ -1077,7 +1081,7 @@ impl SigningBind {
 /// [`SigningBind`] of this run, from `--host` and the environment.
 pub fn signing_bind(flag: Option<IpAddr>) -> Result<SigningBind> {
     let variable = match std::env::var("DCL_SCENE_CLI_LINKER_HOST") {
-        // The one name: earlier versions of the `world` commands took it.
+        // The one name that is not an address.
         Ok(host) if host.trim().eq_ignore_ascii_case("localhost") => Some(SigningBind::LOCAL.addr),
         Ok(host) if !host.trim().is_empty() => Some(host.trim().parse().map_err(|_| {
             UserError::new(
@@ -1337,7 +1341,8 @@ mod tests {
     /// The note on a signature from another device is true for the run. The
     /// note that names the variable is there only when the variable, on the
     /// same command line, turns remote signing on: `--host` with a loopback
-    /// address wins over the variable, so that run has no note.
+    /// address wins over the variable, so that run has no note. The note on
+    /// `localhost` is there only when the listener is on every address.
     #[test]
     fn the_note_on_another_device_is_true_for_the_run() {
         const RERUN: &str =
@@ -1361,13 +1366,20 @@ mod tests {
             assert_eq!(run.other_device_note(), None, "{variable:?}");
             assert!(!bind(Some(local), Some(every)).remote);
         }
-        for (flag, variable) in [(None, every), (Some(every), every), (Some(lan), every)] {
-            let note = bind(flag, Some(variable)).other_device_note();
+        for flag in [None, Some(every)] {
+            let note = bind(flag, Some(every)).other_device_note();
             assert_eq!(
                 note,
                 Some("from another device, replace localhost with this machine's address"),
                 "{flag:?}"
             );
+        }
+        // Remote signing on one address: the URL names it, so there is no
+        // `localhost` to replace.
+        for (flag, variable) in [(Some(lan), every), (None, lan), (Some(lan), lan)] {
+            let run = bind(flag, Some(variable));
+            assert!(run.remote, "{flag:?} {variable}");
+            assert_eq!(run.other_device_note(), None, "{flag:?} {variable}");
         }
     }
 

@@ -27,17 +27,24 @@ pub const COMMENT_MARKER: &str = "COMMENTED BY \"@dcl/sdk-commands code-to-compo
 const DRIVER_TEMPLATE: &str = include_str!("templates/code-to-composite.mjs");
 
 /// The driver's summary line.
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Converted {
+    /// The one required key: a line without it is not the summary.
     ok: bool,
+    #[serde(default)]
     pub entities: u64,
+    #[serde(default)]
     pub components: u64,
+    #[serde(default)]
     pub ui_entities: u64,
+    #[serde(default)]
     pub assets: Vec<Moved>,
+    #[serde(default)]
     pub missing_assets: Vec<String>,
     /// `<model>: <uri>` for a glTF dependency that is not a relative path
     /// inside the model's folder (a URL, an absolute path, `..`): left as is.
+    #[serde(default)]
     pub skipped_dependencies: Vec<String>,
 }
 
@@ -59,7 +66,7 @@ pub async fn code_to_composite(opts: &CodeToCompositeOptions) -> Result<()> {
     }
     for (i, project) in ws.projects.iter().enumerate() {
         if let Some(header) = ws.member_header(i) {
-            println!("{header}");
+            ux::note(header);
         }
         if project.root.join("wearable.json").is_file() {
             tracing::warn!(
@@ -149,12 +156,14 @@ async fn convert(project: &Project) -> Result<()> {
     ));
 
     if let Err(e) = build::build(&build_options(root, false)).await {
-        for (path, content) in &originals {
-            std::fs::write(path, content).map_err(|e| ux::write_error(path, e))?;
+        match restore_sources(&originals) {
+            true => tracing::warn!(
+                "the scene does not build from its composite: src/ is restored, assets/scene/main.composite and main.crdt are kept"
+            ),
+            false => tracing::warn!(
+                "the scene does not build from its composite: assets/scene/main.composite and main.crdt are kept"
+            ),
         }
-        tracing::warn!(
-            "the scene does not build from its composite: src/ is restored, assets/scene/main.composite and main.crdt are kept"
-        );
         return Err(e);
     }
     steps.done("Scene rebuilt from assets/scene/main.composite");
@@ -294,18 +303,52 @@ fn comment_out(content: &str) -> Option<String> {
 }
 
 /// Comments out the sources; returns each file it changed with the content
-/// the file had.
+/// the file had. Every file is read before the first write, so a file that
+/// cannot be read leaves `src/` as it was.
 fn comment_sources(root: &Path) -> Result<Vec<(PathBuf, String)>> {
     let mut originals = Vec::new();
+    let mut commented = Vec::new();
     for path in source_files(&root.join("src")) {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         if let Some(out) = comment_out(&content) {
-            std::fs::write(&path, out).map_err(|e| ux::write_error(&path, e))?;
             originals.push((path, content));
+            commented.push(out);
         }
     }
+    write_sources(&originals, &commented)?;
     Ok(originals)
+}
+
+/// Writes `commented` over the files of `originals`, one for one. A write
+/// that fails ends the run with its error, after the files written so far
+/// get the content they had.
+fn write_sources(originals: &[(PathBuf, String)], commented: &[String]) -> Result<()> {
+    for (i, ((path, _), out)) in originals.iter().zip(commented).enumerate() {
+        if let Err(e) = std::fs::write(path, out) {
+            restore_sources(&originals[..=i]);
+            return Err(ux::write_error(path, e));
+        }
+    }
+    Ok(())
+}
+
+/// Gives each file the content it had. Every file is tried; false when a
+/// file does not have that content afterwards, with a warning that names
+/// each such file.
+fn restore_sources(originals: &[(PathBuf, String)]) -> bool {
+    let lost: Vec<String> = originals
+        .iter()
+        .filter(|(path, content)| {
+            std::fs::write(path, content).is_err()
+                && std::fs::read_to_string(path).ok().as_ref() != Some(content)
+        })
+        .map(|(path, _)| path.display().to_string())
+        .collect();
+    if !lost.is_empty() {
+        tracing::warn!("could not restore these source files: {}", lost.join(", "));
+    }
+    lost.is_empty()
 }
 
 #[cfg(test)]
@@ -378,8 +421,7 @@ mod tests {
         let c: Converted = serde_json::from_str(
             r#"{"ok":true,"entities":3,"components":4,"uiEntities":1,
                 "assets":[{"from":"models/a.glb","to":"assets/scene/Models/a/a.glb"}],
-                "missingAssets":["sounds/x.mp3"],"skippedDependencies":["models/a.glb: ../x.bin"],
-                "rewritten":1}"#,
+                "missingAssets":["sounds/x.mp3"],"skippedDependencies":["models/a.glb: ../x.bin"]}"#,
         )
         .unwrap();
         assert_eq!((c.entities, c.components, c.ui_entities), (3, 4, 1));
@@ -395,5 +437,36 @@ mod tests {
         let empty: Converted = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert_eq!(empty.entities, 0);
         assert!(empty.assets.is_empty());
+        // A JSON line that the scene printed has no `ok`: it is not the summary.
+        for line in ["{}", r#"{"entities":3}"#, r#"{"ok":"yes"}"#] {
+            assert!(serde_json::from_str::<Converted>(line).is_err(), "{line}");
+        }
+    }
+
+    /// A source that cannot be read stops the command before a write, and a
+    /// write that fails gives the files written before it their content back.
+    #[test]
+    fn a_failed_read_or_write_leaves_the_sources_as_they_were() {
+        let t = TestDir::new("c2c-comment");
+        t.write("src/a.ts", "export const a = 1\n");
+        t.write("src/z.ts", [0xff_u8, 0xfe]);
+        let a = t.0.join("src/a.ts");
+        let err = comment_sources(&t.0).unwrap_err();
+        assert!(format!("{err:#}").contains("z.ts"), "{err:#}");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "export const a = 1\n");
+
+        let originals = [
+            (a.clone(), "export const a = 1\n".to_string()),
+            (t.0.join("src/absent/b.ts"), "b\n".to_string()),
+        ];
+        let commented = ["// a\n".to_string(), "// b\n".to_string()];
+        let err = write_sources(&originals, &commented).unwrap_err();
+        assert!(format!("{err:#}").contains("b.ts"), "{err:#}");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "export const a = 1\n");
+        assert!(
+            !restore_sources(&originals),
+            "b.ts has no content to get back"
+        );
+        assert!(restore_sources(&originals[..1]));
     }
 }

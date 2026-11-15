@@ -503,9 +503,10 @@ fn code_to_composite_restores_the_sources_when_the_rebuild_fails() {
 }
 
 /// A model whose glTF names one dependency plainly, one that is not there,
-/// one with `..` and one by URL: the sibling moves with the model, the other
-/// three are left as they are and reported, and nothing lands where the `..`
-/// path would point.
+/// one that is a folder, one with `..` and one by URL: the sibling moves with
+/// the model, the other four are left as they are and reported, and nothing
+/// lands where the `..` path would point. A model whose glTF lists are not
+/// lists of objects moves alone: its dependencies cannot be read.
 #[cfg(unix)]
 #[test]
 fn code_to_composite_copies_only_gltf_dependencies_inside_the_model_folder() {
@@ -515,18 +516,26 @@ fn code_to_composite_copies_only_gltf_dependencies_inside_the_model_folder() {
         &[
             (
                 "models/evil.gltf",
-                r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"evil.bin","byteLength":4},{"uri":"gone.bin","byteLength":4},{"uri":"../secret.bin","byteLength":4},{"uri":"https://cdn.example/far.bin","byteLength":4}]}"#,
+                r#"{"asset":{"version":"2.0"},"buffers":[{"uri":"evil.bin","byteLength":4},{"uri":"gone.bin","byteLength":4},{"uri":"folder.bin","byteLength":4},{"uri":"../secret.bin","byteLength":4},{"uri":"https://cdn.example/far.bin","byteLength":4}]}"#,
             ),
             ("models/evil.bin", "next"),
+            ("models/folder.bin/inner", "inner"),
             ("secret.bin", "keep"),
+            (
+                "models/odd.gltf",
+                r#"{"asset":{"version":"2.0"},"images":[null],"buffers":[{"uri":"odd.bin","byteLength":4}]}"#,
+            ),
+            ("models/odd.bin", "odd"),
         ],
         r#"import { engine, GltfContainer, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math'
 
 export function main() {
-  const model = engine.addEntity()
-  Transform.create(model, { position: Vector3.create(8, 0, 8) })
-  GltfContainer.create(model, { src: 'models/evil.gltf' })
+  for (const src of ['models/evil.gltf', 'models/odd.gltf']) {
+    const model = engine.addEntity()
+    Transform.create(model, { position: Vector3.create(8, 0, 8) })
+    GltfContainer.create(model, { src })
+  }
 }
 "#,
     );
@@ -548,8 +557,23 @@ export function main() {
         "a .. dependency is not copied to where its path lands"
     );
     assert!(f.path().join("secret.bin").is_file());
+    assert!(
+        !f.path()
+            .join("assets/scene/Models/evil/folder.bin")
+            .exists(),
+        "a dependency that is a folder is not copied"
+    );
+    assert!(
+        stdout.contains("models/odd.gltf -> assets/scene/Models/odd/odd.gltf"),
+        "{stdout}"
+    );
+    assert!(
+        !f.path().join("assets/scene/Models/odd/odd.bin").exists(),
+        "no dependency is read from lists that are not lists of objects"
+    );
     for left in [
         "asset not found, its path is left as is: models/gone.bin",
+        "asset not found, its path is left as is: models/folder.bin",
         "models/evil.gltf: ../secret.bin",
         "models/evil.gltf: https://cdn.example/far.bin",
     ] {
@@ -560,6 +584,37 @@ export function main() {
             .contains("assets/scene/Models/evil/evil.gltf"),
         "the component path follows the model"
     );
+}
+
+/// A scene that leaves a timer running does not keep the conversion: the run
+/// ends after the first frame. What the scene prints through `console` is not
+/// read as the result of the run.
+#[cfg(unix)]
+#[test]
+fn code_to_composite_ends_when_the_scene_leaves_a_timer_running() {
+    let Some(()) = node_available() else { return };
+    let (f, stdout, _) = convert_scene(
+        "code-to-composite-timer",
+        &[],
+        r#"import { engine, MeshRenderer, Transform } from '@dcl/sdk/ecs'
+import { Vector3 } from '@dcl/sdk/math'
+
+export function main() {
+  const cube = engine.addEntity()
+  Transform.create(cube, { position: Vector3.create(8, 1, 8) })
+  MeshRenderer.setBox(cube)
+  console.log('{"ok":true,"entities":99}')
+  setInterval(() => console.log('{"ok":true,"entities":98}'), 10)
+}
+"#,
+    );
+    assert!(stdout.contains("1 entity in 3 component types"), "{stdout}");
+    assert!(stdout.contains("Commented out 1 source file"), "{stdout}");
+    assert!(
+        f.read("src/index.ts")
+            .contains(dcl_scene_cli::code_to_composite::COMMENT_MARKER)
+    );
+    assert!(f.path().join("assets/scene/main.composite").is_file());
 }
 
 /// A scaffold whose `src/index.ts` is `index` and that holds `files`, converted,

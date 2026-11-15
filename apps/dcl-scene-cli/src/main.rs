@@ -1034,7 +1034,7 @@ async fn run(command: Command) -> Result<()> {
                             .as_ref()
                             .map(|missing| Vec::from_iter(missing.iter().map(|m| m.name.as_str())));
                         print_json(serde_json::json!({
-                            "dir": made.root,
+                            "dir": made.root.display().to_string(),
                             "missingDependencies": names,
                             "missingPackages": made.missing,
                         }));
@@ -1431,18 +1431,21 @@ async fn run(command: Command) -> Result<()> {
         .await
         .map(|exported| {
             if ux::json() {
+                // A path is written as it is shown: one that is not UTF-8
+                // has no JSON form of its own.
+                let shown = |path: &std::path::Path| path.display().to_string();
                 let entity_files: Vec<_> = exported
                     .entities
                     .iter()
-                    .map(|id| exported.destination.join(id))
+                    .map(|id| shown(&exported.destination.join(id)))
                     .collect();
                 print_json(serde_json::json!({
                     "scenesUrn": exported.scenes_urn,
-                    "destination": exported.destination,
+                    "destination": shown(&exported.destination),
                     "entities": exported.entities,
                     "entityFiles": entity_files,
                     "contentFiles": exported.content_files,
-                    "aboutFile": exported.about,
+                    "aboutFile": exported.about.as_deref().map(shown),
                 }));
             }
         }),

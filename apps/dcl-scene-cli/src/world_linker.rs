@@ -287,11 +287,10 @@ pub(crate) async fn serve(
             },
             TrySteps::one("pass --port <free-port> or free the port and retry"),
         ))?;
-    let port = listener
+    let bound = listener
         .local_addr()
-        .context("reading the signing page port")?
-        .port();
-    let url = format!("http://localhost:{port}/");
+        .context("reading the signing page port")?;
+    let url = format!("{}/", crate::start::signing_origin(bound));
     println!();
     println!("Sign this change to {world} with your wallet in a browser:");
     println!("  {url}");
