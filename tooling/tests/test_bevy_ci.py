@@ -169,6 +169,16 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(needs(name), {'changes'}, name)
         for name in ('headless-packages', 'images', 'publish-web'):
             self.assertIn('source', needs(name), name)
+        # The packages compile beside the web build; only the image assembly waits for it.
+        self.assertEqual(needs('images-compile'), {'source', 'changes'})
+        self.assertEqual(needs('images'), {'source', 'changes', 'build-deploy-web', 'images-compile'})
+        self.assertIn("needs.images-compile.result == 'success'", jobs['images'])
+        self.assertIn('    uses: ./.github/workflows/apis-sites-compile.yml\n', jobs['images-compile'])
+        self.assertIn('    permissions:\n      contents: read\n    uses:', jobs['images-compile'])
+        # The plan reads a finished image build from the jobs of this name; the compile job is not one.
+        compile_name = re.search(r'(?m)^    name: (.+)$', jobs['images-compile']).group(1)
+        self.assertFalse(any(job.startswith(compile_name + ' / ') for job in ci.IMAGES_JOBS))
+        self.assertFalse((compile_name + ' / packages (amd64, ubuntu-26.04)').startswith('APIs + Sites / build ('))
         # The rollout reads the published package, so it waits for the guards through publish-web.
         self.assertEqual(needs('rollout-web'), {'publish-web'})
         stop = jobs['stop-builds']

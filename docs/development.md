@@ -174,11 +174,14 @@ run tests every earlier commit and a macOS-only failure shows up
 there. A PR labelled `ci:macos` runs both on macOS (label, then push or reopen;
 re-running a job does not pick up a new label). A PR runs the Rust tests only
 when it changes an input of the Rust job: a file on the `RUST_INPUTS` list in
-`tooling/dev-ci.py` (the backend and scene CLI crates, the library crates they
-compile, the schema, the protocol, the API contract, the toolchain, the dev
-shell and the test tooling) or a path that a Rust source names. A new input of
-the Rust job goes on that list in the change that adds it; pushes to `main`
-always run the Rust tests. Two more labels work the same way:
+`tooling/dev-ci.py` (the backend crates and the scene CLI manifest, the library
+crates they compile, the schema, the protocol, the API contract, the toolchain,
+the dev shell and the test tooling) or a path that a Rust source names. A new
+input of the Rust job goes on that list and on the path list of
+`development.yml` in the change that adds it; pushes to `main` always run the
+Rust tests. The Rust tests run in three shards. Each shard sorts the test
+binaries by source file and kind, so the three take one list on any runner
+(`tooling/catalyst-test.sh`). Two more labels work the same way:
 `ci:desktop` builds the Creator Hub desktop app on a PR and attaches its test
 builds, and `ci:preview` publishes the Explorer web preview that the CI status
 comment links. `release:creator-hub` is read after the merge: the push to
@@ -188,7 +191,10 @@ smoke test; they start when the PR is marked ready for review, or on the next
 push with the `ci:engine` label (`tooling/bevy-ci.py`). A draft still builds
 the web engine, because the smoke job and the images need it. The run that
 starts when a draft is marked ready waits for a run of the same PR that is
-still in progress, because the smoke job reads that run's web build. The smoke job
+still in progress, because the smoke job reads that run's web build. Until the
+new run ends, the PR shows the two held jobs of the earlier run as skipped, and
+the CI status comment says that a newer run of the commit has not ended: merge
+after it ends. The smoke job
 restores the newest `main` build of the API and gives each unchanged file the
 time it had in that build (`tooling/cargo-mtimes.py`), so Cargo compiles only
 the crates that a changed file reaches.
@@ -245,8 +251,8 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
 | `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 2 | bevy-explorer-ci (2) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 43 | apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status, bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
-| `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 3 | apis-sites-images, bevy-explorer-images, gateway-images |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 45 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status, bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
 | `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
