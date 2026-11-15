@@ -75,12 +75,13 @@ jobs:
       # Manual /upload-assets flow on a checked-out PR branch: needs only asset-packs and
       # runs rarely, so it stays on setup-node directly rather than the ./.github/actions/creator-hub-setup
       # composite (whose node_modules cache is keyed on the base branch's lockfile).
+      - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
       - name: install
-        run: corepack enable && make install-asset-packs
+        run: make install-asset-packs
 
       - name: build
         run: make build-asset-packs

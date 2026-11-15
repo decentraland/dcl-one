@@ -72,10 +72,9 @@ jobs:
 
       - name: start inspector server
         shell: bash
-        # http-server is a dependency of the app package, so it runs from there.
         run: |
-          cd packages/creator-hub
-          pnpm exec http-server ../inspector/public -p 8000 --cors -a localhost &
+          cd packages/inspector
+          node ../../scripts/serve-static.js public 8000 &
           sleep 5
 
       - name: e2e
