@@ -82,6 +82,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         # The shards cover every test executable: the matrix lists 1 to n and the script gets i/n.
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
+        # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -125,6 +128,25 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         unset.add(f'{path.name}:{name}')
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
+
+    def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
+        # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
+        # unchanged files get the times they had when the snapshot was built.
+        smoke = jobs()['smoke']
+        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
+        self.assertEqual(smoke.count(restore), 1)
+        self.assertEqual(smoke.count(record), 1)
+        self.assertLess(smoke.index('- name: Restore Rust build cache\n'), smoke.index(restore))
+        self.assertLess(smoke.index(restore), smoke.index('bash tooling/dev-smoke.sh'))
+        self.assertLess(smoke.index('bash tooling/dev-test.sh e2e'), smoke.index(record))
+        self.assertLess(smoke.index(record), smoke.index('- name: Save successful smoke build snapshot\n'))
+        # The manifest is written only into a snapshot that the next step saves.
+        steps = {step.split('\n', 1)[0]: step for step in re.split(r'(?m)^      - name: ', smoke)}
+        condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
+        self.assertEqual(condition('Record the source file times in the snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'

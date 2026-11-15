@@ -151,37 +151,14 @@ pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// `@dcl/schema-validator-component`'s check: the media type of the
-/// `Content-Type` (repeated headers joined as `Headers.get` joins them),
-/// trimmed and lowercased, is `application/json` or an RFC 6839
-/// `type/subtype+json`.
+/// `@dcl/schema-validator-component`'s check on the request's first
+/// `Content-Type` (Node keeps only the first of a repeated one).
 pub fn is_json_content_type(headers: &HeaderMap) -> bool {
-    let values: Vec<&str> = headers
-        .get_all(header::CONTENT_TYPE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .collect();
-    if values.is_empty() {
-        return false;
-    }
-    let joined = values.join(", ");
-    let media = joined
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    if media == "application/json" {
-        return true;
-    }
-    let plain = |s: &str| !s.is_empty() && !s.contains(|c: char| c == '/' || c.is_whitespace());
-    media.split_once('/').is_some_and(|(kind, subtype)| {
-        plain(kind)
-            && plain(subtype)
-            && subtype
-                .strip_suffix("+json")
-                .is_some_and(|name| !name.is_empty())
-    })
+    crate::content::validation::is_json_content_type(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+    )
 }
 
 /// Which upsert schema the body must satisfy.
@@ -1085,7 +1062,9 @@ mod tests {
             assert!(!check(&[refused]), "{refused:?}");
         }
         assert!(!check(&[]));
-        assert!(!check(&["application/json", "text/plain"]));
+        // Node keeps only the first `Content-Type` of a request.
+        assert!(check(&["application/json", "text/plain"]));
+        assert!(!check(&["text/plain", "application/json"]));
     }
 
     fn params(pairs: &[(&str, &str)]) -> HashMap<String, String> {
