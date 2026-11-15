@@ -17,7 +17,7 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    count_urn_segments, is_relative_thumbnail_path, profile_has_emotes,
+    count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
     should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
@@ -1016,41 +1016,10 @@ fn validate_scene_navmap_thumbnail(
     metadata: &serde_json::Value,
     content: &[ContentMapping],
 ) -> ValidationResponse {
-    let Some(value) = metadata
-        .get("display")
-        .and_then(|d| d.get("navmapThumbnail"))
-    else {
-        return ValidationResponse::Ok;
-    };
-    let thumbnail = match value {
-        serde_json::Value::Null => return ValidationResponse::Ok,
-        serde_json::Value::String(s) if s.is_empty() => return ValidationResponse::Ok,
-        serde_json::Value::Bool(false) => return ValidationResponse::Ok,
-        serde_json::Value::Number(n) if n.as_f64() == Some(0.0) => return ValidationResponse::Ok,
-        serde_json::Value::String(s) => s.as_str(),
-        other => {
-            return ValidationResponse::fail(format!(
-                "Scene thumbnail '{other}' must be a relative path to a \
-                 file included in the deployment."
-            ));
-        }
-    };
-
-    if !is_relative_thumbnail_path(thumbnail) {
-        return ValidationResponse::fail(format!(
-            "Scene thumbnail '{thumbnail}' must be a relative path to a \
-             file included in the deployment."
-        ));
+    match navmap_thumbnail_error(metadata, |file| content.iter().any(|c| c.file == file)) {
+        Some(message) => ValidationResponse::fail(message),
+        None => ValidationResponse::Ok,
     }
-    let is_present = content.iter().any(|c| c.file == thumbnail);
-    if !is_present {
-        return ValidationResponse::fail(format!(
-            "Scene thumbnail '{thumbnail}' must be a file included in \
-             the deployment."
-        ));
-    }
-
-    ValidationResponse::Ok
 }
 
 #[cfg(test)]

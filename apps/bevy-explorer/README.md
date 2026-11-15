@@ -14,7 +14,8 @@ CI uses `build-web.py --shared-build`: Cargo compiles the engine and scene runti
 then the lockfile-matched wasm-bindgen emits two separate modules. `install-web-tools.py`
 checks the release archives' SHA-256 and the binding generator's version against Cargo.lock.
 Optimized builds retain the release compilation settings and run wasm-opt. Unoptimized PR
-builds use 16 codegen units; the larger modules trade download size for compilation speed.
+builds use 16 codegen units; the larger modules trade download size for compilation speed, and
+they skip the wasm target cache, which main's optimized builds fill with 1-unit artifacts.
 Linux web CI takes protoc, clang 21, pkg-config and ALSA/udev development outputs from
 the flake's cached `bevy-web-tools` package and installs no apt build dependencies. Its
 pkg-config search path points to that package. Native Linux packaging retains distribution
@@ -91,12 +92,16 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 | `apis-sites-images.yml` | Reusable image builds after the web producer; publish after complete CI | Tested AMD64/ARM64 APIs and Sites images |
 | `bevy-explorer-images.yml` | Images from a successful main CI run | Web (Linux AMD64/ARM64), headless (Linux AMD64) |
 | `bevy-explorer-rollout-manual.yml` | Roll out a CDN version at `decentraland.zone/play` or `decentraland.org/play` by hand | Rollout records |
-| `bevy-explorer-upstream.yml` | Daily fork check and drift report | `upstream/forks` PR; drift artifact |
+| `bevy-explorer-upstream.yml` | Daily upstream check and drift report | Run summary; drift artifact |
 
 `tooling/bevy-ci.py` selects engine and image jobs per changed input. Unknown engine inputs and
 manual Explorer dispatch select all engine checks. Image-only edits reuse a matching completed
 web producer and do not select native compilation. On main, non-Linux headless packages build
 alongside Headless Smoke; its stripped, tested Linux binaries also supply the Linux npm package.
+
+The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, the web build) start beside *Integration guards* and the
+format checks. When one of those checks fails on a pull request from this repository, the *Stop the build jobs*
+job cancels the run; a pull request from a fork runs to the end, because its token cannot cancel a run.
 
 Image builds use `needs` to start after the selected web producer completes. GitHub holds the
 job without allocating a runner; imports and publication receipts use `--wait 0`. This moves
@@ -112,7 +117,7 @@ per writer:
 
 | Section | Written by | Holds |
 | --- | --- | --- |
-| *Build* | `bevy-explorer-ci-status.yml` | The web app and the headless engine with their artifacts, the web app's PR preview on the zone services, and the `benchmark` runner per platform |
+| *Build* | `bevy-explorer-ci-status.yml` | The web app and the headless engine with their artifacts, the web app's PR preview on the zone services (published only for a PR with the `ci:preview` label; label, then push or reopen), and the `benchmark` runner per platform |
 | *Tests* | `bevy-explorer-ci-status.yml` | *Test Suite* per platform and *Headless Smoke*, with job times |
 | *Performance* | `bevy-explorer-benchmark.yml` | After each passed CI run that built the web app: running, not run and why, cancelled, or the report with a badge from its *Overall* line |
 
@@ -121,8 +126,8 @@ base context with write permission, and checks out only the action. It resolves 
 (`resolve-comment-pr.sh`: the run's own, else the open pull request whose head is the run's
 commit) and whether the run's *Changes* job selected an explorer job (`explorer-run-selected.sh`:
 *Test Suite*, *Headless Smoke*, *Clippy* or the web build not skipped). A run that selected none,
-such as a backend-only change that CI runs for its image jobs, leaves the pull request without a
-comment. When the run is requested, both sections go to pending; when it completes, they are
+such as a backend-only change, leaves the pull request without a comment. When the run is
+requested, both sections go to pending; when it completes, they are
 composed from its jobs and artifacts (`explorer-ci-sections.sh`). A cancelled run of a commit the
 pull request moved past writes nothing. `automation` and `inworld` sections are allowed for suites
 to come; they appear the first time one writes.
@@ -191,7 +196,7 @@ replays can overwrite tags. Desktop/headless `publish` creates a prerelease tagg
 
 | Package | Published by | Contents |
 | --- | --- | --- |
-| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job | The web job's `deploy/web`, addressed to `https://cdn.decentraland.org/<package>/<version>` |
+| `@dcl-regenesislabs/bevy-explorer-web` | `bevy-explorer-ci.yml`, `publish-web` job | The `deploy/web` that `package-web` stamps and rebuilds from the web job's tested artifact, addressed to `https://cdn.decentraland.org/<package>/<version>` |
 | `@dcl-regenesislabs/bevy-headless-server` + `-darwin-arm64`, `-darwin-x64`, `-linux-x64`, `-win32-x64` | `bevy-explorer-headless.yml`, `publish` job | Launcher, engine and `dcl_deno_ipc` sidecar |
 
 `decentraland/oddish-action` stamps `0.1.0-<run id>.commit-<sha>`: `next` from main, `latest` from a
@@ -252,6 +257,7 @@ windows through OTLP; receive-timed legacy observations cannot establish CPU
 utilization. Metrics serialization, execution baselines and CPU bucket tests run with:
 
 ```sh
-cd rendering/bevy-explorer/source # from the repository root
+python3 tooling/patched-sources.py materialise # from the repository root: the trees cargo reads
+cd rendering/bevy-explorer/source
 cargo test --locked --no-default-features --features headless --lib headless::stats
 ```

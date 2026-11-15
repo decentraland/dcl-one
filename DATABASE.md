@@ -501,6 +501,19 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
+The anonymous Registry `GET /denylist` feed reads `content.denylist` through the
+existing content pool: `id`, `added_by` and `added_at`, ordered newest first.
+Expected lists contain hundreds of rows; the read checks overflow at 100,001 rows
+and refuses lists above 100,000. The shared Explore API state retains local
+rows for five seconds and coalesces concurrent refreshes. Database failures are
+retained for the same interval and return 500; a failed refresh never serves an
+expired successful list. Operator edits become visible on the next read after
+expiry, and process restart rebuilds on demand. Source moderation responses are
+validated on every request and never cached here. Merge and serialization remain
+per-request work; the cache bounds table-read frequency, not total endpoint CPU
+or response bytes. No table, index or pool is added. The public feed intentionally
+publishes every local id kind and `added_by` as the operator's `created_by` wallet.
+
 The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
 recurrence selector and exact date window; catalogue page offsets and accounts
@@ -564,12 +577,15 @@ catalyst schema status
 
 `--release` refuses while any other client session is connected to the database,
 including sessions of roles whose activity the migrator cannot read, and reports
-their count and application names; it changes nothing then. It is a best-effort
-guard: the release locks its own tables, not every table. A connection pooler or
-monitoring agent that holds sessions open also blocks it. Exit 5 reflects the
-stamp only; the release's own checks (mixed layout, receipts, destination,
-pending wallets) can still refuse it inside the transaction. A database already
-at version 3 takes the plain migrate.
+their count and application names; it changes nothing then. Server processes
+without a role, such as autovacuum workers, are not sessions and do not block it.
+Background workers that run as another role, such as parallel workers,
+logical-replication workers and logical WAL senders, still count and block it.
+It is a best-effort guard: the release locks its own tables, not every table.
+A connection pooler or monitoring agent that holds sessions open also blocks it.
+Exit 5 reflects the stamp only; the release's own checks (mixed layout,
+receipts, destination, pending wallets) can still refuse it inside the
+transaction. A database already at version 3 takes the plain migrate.
 The binary embeds `schemas/releases/v3-private-voice-pending.sql` with its includes
 (`db::RELEASE_SQL`). The same file still runs through psql, followed by
 `catalyst schema migrate`:

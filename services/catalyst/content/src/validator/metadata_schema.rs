@@ -18,6 +18,7 @@ use serde_json::{Map, Value};
 
 use super::error::ValidationResponse;
 use super::types::*;
+use crate::auth::is_eth_address;
 use crate::entity::is_ipfs_v2;
 use crate::shared::js::is_js_whitespace;
 
@@ -211,10 +212,6 @@ fn pattern(v: &Value, p: &str, matches: fn(&str) -> bool) -> Check {
         return Err(format!("{p} must match the expected pattern"));
     }
     Ok(())
-}
-
-fn is_eth_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// `^(?:https?):\/\/[^\s/$.?#].[^\s]*$` with the JS `u` flag.

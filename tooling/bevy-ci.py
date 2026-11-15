@@ -27,10 +27,14 @@ _ARTIFACT.loader.exec_module(_artifact)
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
+PATCHES = 'rendering/bevy-explorer/patches'
+# The in-tree exact-bytes crates and the tools that prove them against their public repositories.
+PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenance.py', 'tooling/enet-provenance.py')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
-INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', 'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/hashing', 'tooling/check-local-hashing.mjs',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -46,14 +50,17 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/bevy/**',
+    'rendering/bevy-explorer/patches/**',
+    'rendering/bevy-explorer/vendor/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
     '.github/actions/bevy-explorer-tools/**',
+    '.github/actions/bevy-explorer-sources/**',
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
+    'tooling/patched-sources.py',
     'tooling/hud_shared_inputs.py',
     'tooling/tests/hud_manifest_fixture.py',
     'tooling/tests/hud_manifest_invalid_cases.json',
@@ -74,6 +81,20 @@ IMAGES_INPUTS = (
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
+)
+# How the images are built and published, and what the fixed dependency hashes in infra/packages
+# follow (manifests, lockfiles, toolchain). A PR builds the images only for these; main builds
+# them for every input above. The architecture choice in apis-sites-images.yml reads a subset.
+IMAGES_PACKAGING = (
+    'flake.*', 'rust-toolchain*', 'infra/packages/**', 'infra/containers/**', '.cargo/**',
+    'services/catalyst/rust-toolchain*', 'services/catalyst/Cargo.*', 'services/catalyst/**/Cargo.toml',
+    'library/**/Cargo.toml', 'apps/dcl-scene-cli/Cargo.toml',
+    'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
+    'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
+    'tooling/tests/check_hud_manifest_nix.py',
+    'tooling/tests/test_ci_publication.py', 'tooling/tests/test_image_publish.py',
+    '.github/workflows/bevy-explorer-ci.yml', '.github/workflows/apis-sites-images.yml',
 )
 IMAGES_JOBS = {'APIs + Sites / build (amd64, ubuntu-26.04)',
                'APIs + Sites / build (arm64, ubuntu-26.04-arm)'}
@@ -96,7 +117,7 @@ APP_INPUTS = {
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
     'install-tools.sh': (*LANES, 'native-matrix'),
-    'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'prepare-native-cache.py': ('headless', 'native-matrix', 'scenes'),
     'scene-tests.txt': ('scenes',),
 }
 
@@ -256,6 +277,10 @@ def select(base, head):
             affected = ('web', 'headless')
         elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
+        elif path.startswith('library/hashing/') or path == 'tooling/check-local-hashing.mjs':
+            # The bridge scene's SDK commands load library/hashing, and play-artifact.py
+            # fingerprints both paths with the web app.
+            affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
             # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
@@ -333,6 +358,34 @@ def plan(event, base, head, repo):
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative full build: {exc}')
         return full_selection('Comparison unavailable; full run')
+
+
+def pin_names(paths):
+    """The patched sources whose pin file, patches/<name>/source.toml, is among the paths."""
+    pin = re.compile(re.escape(PATCHES) + r'/([A-Za-z0-9_.-]+)/source\.toml')
+    return sorted({match.group(1) for match in map(pin.fullmatch, paths) if match})
+
+
+def guards_plan(event, base, head):
+    """The online guards of the `source` job that a change needs. `pins`: the patched sources whose
+    source.toml the change adds or edits; each is then proved to be on the ref it names.
+    `provenance`: whether the change touches an in-tree crate or the tools that prove them against
+    their public repositories. Without a comparison every guard runs; the daily upstream workflow
+    runs both for the whole tree."""
+    try:
+        if event not in ('push', 'pull_request', 'local'):
+            raise ValueError('No comparison for this event')
+        ensure_commit(base)
+        ensure_commit(head)
+        pins = pin_names(git('diff', '--name-only', '--no-renames', '--diff-filter=d', '-z', base, head, '--', PATCHES).split('\0'))
+        provenance = bool(git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *PROVENANCE_INPUTS).strip('\0'))
+        reason = (f'{len(pins)} changed pin(s) to prove on their refs; '
+                  f'in-tree crates {"changed" if provenance else "unchanged"}')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f'Every online guard runs: {exc}')
+        pins = pin_names(git('ls-files', '--', PATCHES).splitlines())
+        provenance, reason = True, 'Comparison unavailable; every online source guard runs'
+    return {'pins': ' '.join(pins), 'provenance': provenance, 'reason': reason}
 
 
 def scenes_plan(event, base, head):
@@ -413,7 +466,7 @@ def scene_summary(suite, outcome, log):
 
 def image_matrix(products):
     return {'include': [
-        {'product': product, 'arch': arch, 'runner': 'ubuntu-24.04' + ('-arm' if arch == 'arm64' else '')}
+        {'product': product, 'arch': arch, 'runner': 'ubuntu-26.04' + ('-arm' if arch == 'arm64' else '')}
         for product in products for arch in (('amd64', 'arm64') if product == 'web' else ('amd64',))]}
 
 
@@ -463,7 +516,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = changed_inputs(base, head, IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS if event == 'push' else IMAGES_PACKAGING)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')
@@ -500,7 +553,7 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan',
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan', 'guards-plan',
                                             'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
@@ -525,6 +578,9 @@ def main():
             print(f'Comparing with {base} (BASE_SHA {args.base or "unset"})')
         if args.command == 'consumer-plan':
             write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
+            return
+        if args.command == 'guards-plan':
+            write_outputs(guards_plan(event, base, head))
             return
         result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
                   plan(event, base, head, os.environ.get('GH_REPO', '')))
