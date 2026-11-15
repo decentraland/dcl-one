@@ -13,6 +13,10 @@ use serde_json::{Map, Value};
 
 use super::{Shared, relay};
 
+/// The largest WebSocket message, matching the default HTTP body limit of
+/// the `POST` route.
+const MAX_WS_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
+
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/", get(index))
@@ -45,7 +49,8 @@ async fn ws_upgrade(
     State(state): State<Shared>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    ws.on_upgrade(move |socket| handle_socket(socket, state, network))
+    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_socket(socket, state, network))
 }
 
 async fn handle_socket(mut socket: WebSocket, state: Shared, network: String) {

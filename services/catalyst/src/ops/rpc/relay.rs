@@ -7,9 +7,21 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use futures::StreamExt;
 use serde_json::{Value, json};
 
 use super::{RpcMemo, Shared, State, UPSTREAM_TIMEOUT};
+
+/// The most requests one batch may carry; a longer batch is refused whole
+/// with one `-32600` error and never reaches the upstream.
+pub const MAX_BATCH: usize = 100;
+
+/// The most bytes read from one upstream answer.
+const MAX_UPSTREAM_BODY: usize = 16 * 1024 * 1024;
+
+/// The most per-element forwards in flight when the upstream leaves batch
+/// slots unanswered.
+const FALLBACK_CONCURRENCY: usize = 8;
 
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({
@@ -101,7 +113,7 @@ fn remember(state: &State, memo: Option<(String, Duration)>, body: &Value) {
 #[derive(Debug)]
 enum PostError {
     Transport(String),
-    InvalidJson(reqwest::Error),
+    InvalidJson(String),
 }
 
 impl std::fmt::Display for PostError {
@@ -137,9 +149,11 @@ async fn post_json(state: &State, upstream: &str, body: &Value) -> Result<Value,
             .await
             .map_err(|e| PostError::Transport(e.to_string()))?
     };
-    resp.json::<Value>()
+    let bytes = crate::http::read_body_capped(resp, MAX_UPSTREAM_BODY)
         .await
-        .map_err(|e| PostError::InvalidJson(e.without_url()))
+        .map_err(|e| PostError::InvalidJson(e.to_string()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| PostError::InvalidJson("error decoding response body".into()))
 }
 
 pub async fn handle_single(state: &Shared, network: &str, req: Value) -> Value {
@@ -162,7 +176,8 @@ async fn forward(state: &State, upstream: &str, id: Value, req: Value) -> Value 
 }
 
 /// One upstream batch with ids rewritten to slot indexes; anything the batch
-/// does not answer falls back to per-element forwards run concurrently.
+/// does not answer falls back to per-element forwards, at most
+/// `FALLBACK_CONCURRENCY` at a time.
 async fn forward_batch(state: &Shared, upstream: &str, items: &[Forward]) -> Vec<Value> {
     if items.len() == 1 {
         return vec![forward(state, upstream, items[0].id.clone(), items[0].req.clone()).await];
@@ -206,27 +221,20 @@ async fn forward_batch(state: &Shared, upstream: &str, items: &[Forward]) -> Vec
                 .map(|element| normalize_response(item.id.clone(), element))
         })
         .collect();
-    let mut set = tokio::task::JoinSet::new();
-    for (i, item) in items.iter().enumerate() {
-        if out[i].is_some() {
-            continue;
-        }
-        let state = state.clone();
-        let upstream = upstream.to_string();
-        let (id, req) = (item.id.clone(), item.req.clone());
-        set.spawn(async move { (i, forward(&state, &upstream, id, req).await) });
-    }
-    while let Some(joined) = set.join_next().await {
-        if let Ok((i, body)) = joined {
-            out[i] = Some(body);
-        }
-    }
-    out.into_iter()
-        .zip(items)
-        .map(|(body, item)| {
-            body.unwrap_or_else(|| rpc_error(item.id.clone(), -32603, "Upstream relay task failed"))
+    let unanswered: Vec<usize> = (0..items.len()).filter(|&i| out[i].is_none()).collect();
+    let mut retries = futures::stream::iter(unanswered)
+        .map(|i| async move {
+            let item = &items[i];
+            (
+                i,
+                forward(state, upstream, item.id.clone(), item.req.clone()).await,
+            )
         })
-        .collect()
+        .buffer_unordered(FALLBACK_CONCURRENCY);
+    while let Some((i, body)) = retries.next().await {
+        out[i] = Some(body);
+    }
+    out.into_iter().flatten().collect()
 }
 
 pub async fn handle_payload(state: &Shared, network: &str, payload: Value) -> Value {
@@ -234,6 +242,13 @@ pub async fn handle_payload(state: &Shared, network: &str, payload: Value) -> Va
         Value::Array(items) => {
             if items.is_empty() {
                 return rpc_error(Value::Null, -32600, "Invalid Request: empty batch");
+            }
+            if items.len() > MAX_BATCH {
+                return rpc_error(
+                    Value::Null,
+                    -32600,
+                    &format!("Invalid Request: a batch carries at most {MAX_BATCH} requests"),
+                );
             }
             let upstream = state.upstream_for(network);
             let mut out: Vec<Option<Value>> = Vec::with_capacity(items.len());
@@ -355,6 +370,8 @@ pub(super) mod tests {
     pub(crate) struct Upstream {
         pub posts: Arc<AtomicUsize>,
         pub payloads: Arc<std::sync::Mutex<Vec<Value>>>,
+        /// The most requests the stub ever held at once.
+        pub peak: Arc<AtomicUsize>,
     }
 
     fn answer(req: &Value) -> Value {
@@ -389,14 +406,27 @@ pub(super) mod tests {
         use axum::{Json, Router, routing::post};
         let posts = Arc::new(AtomicUsize::new(0));
         let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (p, l) = (posts.clone(), payloads.clone());
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (p, l, f, k) = (
+            posts.clone(),
+            payloads.clone(),
+            in_flight.clone(),
+            peak.clone(),
+        );
         let app = Router::new().route(
             "/",
             post(move |Json(payload): Json<Value>| {
-                let (p, l) = (p.clone(), l.clone());
+                let (p, l, f, k) = (p.clone(), l.clone(), f.clone(), k.clone());
                 async move {
                     p.fetch_add(1, Ordering::SeqCst);
                     l.lock().unwrap().push(payload.clone());
+                    k.fetch_max(f.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    if payload.is_object() {
+                        // Hold single requests briefly so overlapping ones are seen.
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    f.fetch_sub(1, Ordering::SeqCst);
                     let reply = match &payload {
                         Value::Array(items) => match batch_reply {
                             BatchReply::Complete => {
@@ -419,7 +449,14 @@ pub(super) mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (format!("http://{addr}/"), Upstream { posts, payloads })
+        (
+            format!("http://{addr}/"),
+            Upstream {
+                posts,
+                payloads,
+                peak,
+            },
+        )
     }
 
     fn batch_payload() -> Value {
@@ -478,6 +515,46 @@ pub(super) mod tests {
         assert_eq!(
             sent[1..].iter().filter(|p| p["id"] == json!("a")).count(),
             2
+        );
+    }
+
+    fn balance_batch(len: usize) -> Value {
+        Value::Array(
+            (0..len)
+                .map(|i| {
+                    json!({ "id": i, "method": "eth_getBalance", "params": [format!("0x{i}"), "latest"] })
+                })
+                .collect(),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_oversized_batch_is_refused_without_an_upstream_call() {
+        let (url, upstream) = mock_upstream(false).await;
+        let state = test_state(&[("polygon", &url)]);
+        let out = handle_payload(&state, "polygon", balance_batch(MAX_BATCH + 1)).await;
+        assert_eq!(out["jsonrpc"], json!("2.0"));
+        assert_eq!(out["id"], json!(null));
+        assert_eq!(out["error"]["code"], json!(-32600));
+        assert_eq!(upstream.posts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_per_element_fallback_is_bounded() {
+        let (url, upstream) = mock_upstream(false).await;
+        let state = test_state(&[("polygon", &url)]);
+        let out = handle_payload(&state, "polygon", balance_batch(MAX_BATCH)).await;
+        let out = out.as_array().unwrap();
+        assert_eq!(out.len(), MAX_BATCH);
+        for (i, item) in out.iter().enumerate() {
+            assert_eq!(item["id"], json!(i));
+            assert_eq!(item["result"], json!(format!("0xbal0x{i}")));
+        }
+        assert_eq!(upstream.posts.load(Ordering::SeqCst), MAX_BATCH + 1);
+        let peak = upstream.peak.load(Ordering::SeqCst);
+        assert!(
+            (1..=FALLBACK_CONCURRENCY).contains(&peak),
+            "{peak} requests in flight"
         );
     }
 
