@@ -1,7 +1,7 @@
 // from: credits-server@origin/main:src/logic/workers/reminder-email-sender.ts, worker-manager.ts; notifications-workers@origin/main:processor/src/logic/event-parser.ts
 //! Credits reminders: five scheduled notices per user, keyed per season (and
 //! week) so reruns, restarts and lease handovers never send one twice.
-use super::{NOTIFICATION_NAMESPACE, Season, SharedState, policy};
+use super::{Gate, NOTIFICATION_NAMESPACE, Season, SharedState, gate};
 use crate::credits::errors::ApiError;
 use crate::jobs::{Jobs, PeriodicCfg};
 use alloy_primitives::U256;
@@ -9,6 +9,7 @@ use chrono::{NaiveDate, NaiveDateTime, TimeDelta, Timelike, Weekday};
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const PAGE: i64 = 500;
@@ -112,11 +113,6 @@ async fn send(
     metadata: Value,
     now: NaiveDateTime,
 ) -> Result<bool, ApiError> {
-    let mut conn = state.credits.pool.acquire().await?;
-    // The source's dapps program switch and Explorer wallet allowlist.
-    if policy(state, &mut conn, address).await?.is_some() {
-        return Ok(false);
-    }
     let notification = catalyst_social::notifications::NewNotification {
         id: Uuid::new_v5(&NOTIFICATION_NAMESPACE, key.as_bytes()),
         address: catalyst_social::Address::parse(address)
@@ -126,7 +122,7 @@ async fn send(
         metadata,
     };
     let n = catalyst_social::notifications::store::insert_keyed_notification(
-        &mut *conn,
+        &state.credits.pool,
         key,
         &notification,
     )
@@ -134,24 +130,26 @@ async fn send(
     Ok(n > 0)
 }
 
-/// Weekly goal reminders over enrolled wallets. dcl-one only creates progress
-/// rows on a counted photo, so a missing row reads as an untouched goal.
+/// Weekly reminders over the week's progress rows (goal reads create them, as
+/// upstream), skipping opted-out, blocked and flagged wallets.
 async fn weekly(
     state: &SharedState,
+    gate: &Gate,
     kind: Kind,
     season: &Season,
     now: NaiveDateTime,
+    cancel: &CancellationToken,
 ) -> Result<u64, ApiError> {
     let week = season.week(now).0;
     let play = links(&state.settings.shop_base_url).0;
     let mut after = String::new();
     let mut sent = 0;
-    loop {
+    while !cancel.is_cancelled() {
         let rows = if kind == Kind::Claim {
-            sqlx::query("SELECT DISTINCT address FROM credits.goal_grants WHERE season_id=$1 AND week_id=$2 AND claimed_at IS NULL AND expires_at>$3 AND address>$4 ORDER BY address LIMIT $5")
+            sqlx::query("SELECT DISTINCT g.address FROM credits.goal_grants g JOIN credits.wallets w ON w.address=g.address WHERE g.season_id=$1 AND g.week_id=$2 AND g.claimed_at IS NULL AND g.expires_at>$3 AND NOT w.is_blocked_for_claiming AND NOT EXISTS(SELECT 1 FROM credits.wallet_flags f WHERE f.address=g.address) AND g.address>$4 ORDER BY g.address LIMIT $5")
                 .bind(season.id).bind(week).bind(now).bind(&after).bind(PAGE).fetch_all(&state.credits.pool).await?
         } else {
-            sqlx::query("SELECT w.address, count(*) FILTER (WHERE p.completed_at IS NOT NULL) AS completed, count(*) FILTER (WHERE p.completed_at IS NULL) AS incomplete, bool_or(COALESCE(p.completed_steps,0)>0) AS started, COALESCE(array_agg(d.goal_id ORDER BY d.position) FILTER (WHERE p.completed_at IS NULL),'{}') AS pending FROM credits.wallets w JOIN credits.season_goals d ON d.season_id=$1 LEFT JOIN credits.goal_progress p ON p.address=w.address AND p.season_id=d.season_id AND p.week_id=$2 AND p.goal_id=d.goal_id WHERE w.has_started_program AND NOT EXISTS(SELECT 1 FROM credits.program_opt_outs o WHERE o.address=w.address) AND (p.address IS NOT NULL OR $2 BETWEEN d.start_week AND d.end_week) AND w.address>$3 GROUP BY w.address ORDER BY w.address LIMIT $4")
+            sqlx::query("SELECT p.address, count(*) FILTER (WHERE p.completed_at IS NOT NULL) AS completed, count(*) FILTER (WHERE p.completed_at IS NULL) AS incomplete, bool_or(p.completed_steps>0) AS started, COALESCE(array_agg(p.goal_id ORDER BY d.position) FILTER (WHERE p.completed_at IS NULL),'{}') AS pending FROM credits.goal_progress p JOIN credits.season_goals d ON d.season_id=p.season_id AND d.goal_id=p.goal_id JOIN credits.wallets w ON w.address=p.address WHERE p.season_id=$1 AND p.week_id=$2 AND w.has_started_program AND NOT w.is_blocked_for_claiming AND NOT EXISTS(SELECT 1 FROM credits.program_opt_outs o WHERE o.address=p.address) AND NOT EXISTS(SELECT 1 FROM credits.wallet_flags f WHERE f.address=p.address) AND p.address>$3 GROUP BY p.address ORDER BY p.address LIMIT $4")
                 .bind(season.id).bind(week).bind(&after).bind(PAGE).fetch_all(&state.credits.pool).await?
         };
         let Some(last) = rows.last() else { break };
@@ -159,6 +157,9 @@ async fn weekly(
         let done = (rows.len() as i64) < PAGE;
         for row in rows {
             let address: String = row.get("address");
+            if gate.refusal(&address).is_some() {
+                continue;
+            }
             let metadata = match kind {
                 Kind::Claim => json!({"seasonId":season.id,"weekNumber":week,"link":play}),
                 _ => {
@@ -186,13 +187,14 @@ async fn weekly(
     Ok(sent)
 }
 
-/// Claimed, unused, unexpired goal credits expiring within the window, for
-/// wallets with progress in the season (the source's `user_progress` scope).
+/// Claimed, unused goal credits expiring within the window, one aggregate per
+/// pass, keyed to the season the credits come from.
 async fn usage(
     state: &SharedState,
+    gate: &Gate,
     kind: Kind,
-    season: &Season,
     now: NaiveDateTime,
+    cancel: &CancellationToken,
 ) -> Result<u64, ApiError> {
     let window = if kind == Kind::Usage {
         TimeDelta::days(7)
@@ -200,16 +202,18 @@ async fn usage(
         TimeDelta::days(1)
     };
     let marketplace = links(&state.settings.shop_base_url).1;
-    let mut after = String::new();
+    let rows = sqlx::query("SELECT g.address, g.season_id, sum(g.amount_wei)::text AS amount, max(g.expires_at) AS expires FROM credits.goal_grants g WHERE g.claimed_at IS NOT NULL AND g.expires_at>$1 AND g.expires_at<=$2 AND NOT EXISTS(SELECT 1 FROM credits.usages u WHERE u.salt=g.salt AND u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) GROUP BY g.address, g.season_id ORDER BY g.address, g.season_id")
+        .bind(now).bind(now + window).fetch_all(&state.credits.pool).await?;
     let mut sent = 0;
-    loop {
-        let rows = sqlx::query("SELECT g.address, sum(g.amount_wei)::text AS amount, max(g.expires_at) AS expires FROM credits.goal_grants g WHERE g.claimed_at IS NOT NULL AND g.expires_at>$1 AND g.expires_at<=$2 AND NOT EXISTS(SELECT 1 FROM credits.usages u WHERE u.salt=g.salt AND u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) AND EXISTS(SELECT 1 FROM credits.goal_progress p WHERE p.address=g.address AND p.season_id=$3) AND g.address>$4 GROUP BY g.address ORDER BY g.address LIMIT $5")
-            .bind(now).bind(now + window).bind(season.id).bind(&after).bind(PAGE).fetch_all(&state.credits.pool).await?;
-        let Some(last) = rows.last() else { break };
-        after = last.get("address");
-        let done = (rows.len() as i64) < PAGE;
-        for row in rows {
+    for chunk in rows.chunks(PAGE as usize) {
+        if cancel.is_cancelled() {
+            break;
+        }
+        for row in chunk {
             let address: String = row.get("address");
+            if gate.refusal(&address).is_some() {
+                continue;
+            }
             let expires: NaiveDateTime = row.get("expires");
             let balance = ether_number(&row.get::<String, _>("amount"))?;
             let date = expires.format("%B %-d").to_string();
@@ -218,37 +222,78 @@ async fn usage(
             } else {
                 json!({"expirationDate":date,"balance":balance,"link":marketplace})
             };
-            let key = kind.key(&address, season.id, None);
+            let key = kind.key(&address, row.get("season_id"), None);
             sent += u64::from(send(state, kind, &address, &key, metadata, now).await?);
-        }
-        if done {
-            break;
         }
     }
     Ok(sent)
 }
 
-/// One reminder pass; weekly goal reminders stop once the season has ended.
-pub(crate) async fn run(
+/// One reminder kind; weekly goal reminders stop once the season has ended.
+async fn run(
     state: &SharedState,
+    gate: &Gate,
     kind: Kind,
     now: NaiveDateTime,
+    cancel: &CancellationToken,
 ) -> Result<u64, ApiError> {
-    let Some(season) = current_or_last(&state.credits.pool, now).await? else {
-        return Ok(0);
-    };
-    match kind {
-        Kind::Usage | Kind::Usage24Hours => usage(state, kind, &season, now).await,
-        _ if season.end_date <= now => Ok(0),
-        _ => weekly(state, kind, &season, now).await,
+    if matches!(kind, Kind::Usage | Kind::Usage24Hours) {
+        return usage(state, gate, kind, now, cancel).await;
     }
+    match current_or_last(&state.credits.pool, now).await? {
+        Some(season) if season.end_date > now => {
+            weekly(state, gate, kind, &season, now, cancel).await
+        }
+        _ => Ok(0),
+    }
+}
+
+pub(crate) type Ran = parking_lot::Mutex<HashMap<Kind, NaiveDate>>;
+
+/// Runs each due kind not yet done today; kinds fail independently and the
+/// first error is returned after all have run.
+pub(crate) async fn pass(
+    state: &SharedState,
+    ran: &Ran,
+    now: NaiveDateTime,
+    cancel: &CancellationToken,
+) -> Result<Vec<(Kind, u64)>, ApiError> {
+    let due: Vec<Kind> = Kind::ALL
+        .into_iter()
+        .filter(|k| k.due(now) && ran.lock().get(k) != Some(&now.date()))
+        .collect();
+    if due.is_empty() {
+        return Ok(vec![]);
+    }
+    let gate = gate(state, &mut *state.credits.pool.acquire().await?).await?;
+    if gate.disabled {
+        return Ok(vec![]);
+    }
+    let (mut done, mut first) = (vec![], None);
+    for kind in due {
+        if cancel.is_cancelled() {
+            break;
+        }
+        match run(state, &gate, kind, now, cancel).await {
+            Ok(n) if !cancel.is_cancelled() => {
+                ran.lock().insert(kind, now.date());
+                done.push((kind, n));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(kind = kind.notification_type(), %error, "credits reminder failed");
+                first.get_or_insert(error);
+            }
+        }
+    }
+    first.map_or(Ok(done), Err)
 }
 
 /// Each reminder runs once per UTC day at or after its source hour; the keys
 /// make a rerun after a restart or lease handover a no-op.
 pub fn spawn(state: &SharedState, jobs: &Jobs) {
     let state = Arc::clone(state);
-    let ran: Arc<parking_lot::Mutex<HashMap<Kind, NaiveDate>>> = Arc::default();
+    let ran: Arc<Ran> = Arc::default();
     jobs.spawn_periodic_leased(
         "credits-reminders",
         PeriodicCfg::every(Duration::from_secs(5 * 60))
@@ -260,12 +305,7 @@ pub fn spawn(state: &SharedState, jobs: &Jobs) {
                     return Ok(());
                 }
                 let now = crate::credits::store::now();
-                for kind in Kind::ALL {
-                    if !kind.due(now) || ran.lock().get(&kind) == Some(&now.date()) {
-                        continue;
-                    }
-                    let sent = run(&state, kind, now).await?;
-                    ran.lock().insert(kind, now.date());
+                for (kind, sent) in pass(&state, &ran, now, &ctx.cancel).await? {
                     ctx.progress(format!("{} sent {sent}", kind.notification_type()));
                 }
                 Ok(())

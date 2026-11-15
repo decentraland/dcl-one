@@ -84,6 +84,30 @@ async fn policy(
     conn: &mut PgConnection,
     address: &str,
 ) -> Result<Option<&'static str>, ApiError> {
+    Ok(gate(state, conn).await?.refusal(address))
+}
+
+/// The program switch and Explorer allowlist, read once and checked per wallet.
+struct Gate {
+    disabled: bool,
+    allowlist: Option<Vec<String>>,
+}
+impl Gate {
+    fn refusal(&self, address: &str) -> Option<&'static str> {
+        if self.disabled {
+            Some("disabled")
+        } else if self
+            .allowlist
+            .as_ref()
+            .is_some_and(|list| !list.iter().any(|a| a == address))
+        {
+            Some("not-allowed")
+        } else {
+            None
+        }
+    }
+}
+async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiError> {
     let [mut dapps, mut explorer] = state.goal_flags.documents();
     let overrides = sqlx::query("SELECT app,name,value FROM explore_api.feature_flags_local WHERE app IN ('dapps','explorer')")
         .fetch_all(&mut *conn).await?;
@@ -113,23 +137,26 @@ async fn policy(
     let dapps =
         dapps.ok_or_else(|| ApiError::service_unavailable("credits dapps flags unavailable"))?;
     if dapps["flags"]["dapps-credits-server"].as_bool() != Some(true) {
-        return Ok(Some("disabled"));
+        return Ok(Gate {
+            disabled: true,
+            allowlist: None,
+        });
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
     let snapshot = crate::explore::api::feature_flags::Snapshot::from_document(explorer);
-    if snapshot
+    let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
-        .is_some_and(|list| {
-            !list
-                .iter()
+        .map(|list| {
+            list.iter()
                 .filter(|a| Address::from_str(a).is_ok())
-                .any(|a| a == address)
-        })
-    {
-        return Ok(Some("not-allowed"));
-    }
-    Ok(None)
+                .map(|a| a.to_string())
+                .collect()
+        });
+    Ok(Gate {
+        disabled: false,
+        allowlist,
+    })
 }
 
 pub fn qualifies(payload: &Value, address: &str) -> bool {
