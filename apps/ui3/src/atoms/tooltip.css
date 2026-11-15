@@ -10,15 +10,15 @@
   align-items: center;
   gap: 4px;
   white-space: nowrap;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
+  padding: var(--tooltip-pad, 6px 10px);
+  border-radius: var(--tooltip-radius, 10px);
+  background: var(--tooltip-bg, var(--panel));
+  color: var(--tooltip-text, var(--text));
   font-family: var(--font-family);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--tooltip-size, 12px);
+  font-weight: var(--tooltip-weight, 600);
   line-height: 15px;
-  box-shadow: var(--shadow-panel);
+  box-shadow: var(--tooltip-shadow, var(--shadow-panel));
   opacity: 0;
   pointer-events: none;
   transition: opacity .12s ease, transform .12s ease;
@@ -57,3 +57,37 @@
 .tt__wrap:focus-within .tt__tip--top { transform: translate(-50%, -12px) scale(1); }
 .tt__wrap:hover .tt__tip--bottom,
 .tt__wrap:focus-within .tt__tip--bottom { transform: translate(-50%, 12px) scale(1); }
+
+.tt__tip--rich { display: block; }
+.tt__tip--wrap {
+  width: max-content;
+  max-width: var(--tt-max-width);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.tt__tip--interactive { pointer-events: auto; }
+.tt__tip--bare {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  white-space: normal;
+}
+
+.tt__tip--arrow::before {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: rotate(45deg);
+}
+.tt__tip--arrow.tt__tip--top::before { bottom: -4px; left: calc(50% - 4px); }
+.tt__tip--arrow.tt__tip--bottom::before { top: -4px; left: calc(50% - 4px); }
+.tt__tip--arrow.tt__tip--right::before { top: calc(50% - 4px); left: -4px; }
+.tt__tip--arrow.tt__tip--left::before { top: calc(50% - 4px); right: -4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tt__tip { transition: none; }
+}

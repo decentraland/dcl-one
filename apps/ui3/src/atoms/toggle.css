@@ -10,6 +10,8 @@
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
+/* A host sets the two tokens to dim a disabled switch. Without them the look does not change. */
+.toggle:disabled { opacity: var(--toggle-disabled-opacity, 1); cursor: var(--toggle-disabled-cursor, pointer); }
 html.theme-light .toggle { background: rgba(0, 0, 0, .22); }
 .toggle__knob {
   position: absolute; top: 3px; left: 3px;

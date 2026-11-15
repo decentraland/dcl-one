@@ -31,6 +31,15 @@
   left: 50%;
   transform-origin: 50% 50%;
 }
+/* The atlas image is half a parcel (1/680 of the square) right of and below the grid, and its own
+   rule moves it back with `top` and `left`. The browser rounds that offset to a whole pixel before
+   the zoom of the stage, so a small map lost it and the parcels of the image were not under the
+   marks. The same offset as a transform is exact at every zoom. */
+.shop-landmap__stage > .map__atlas {
+  top: 0;
+  left: 0;
+  transform: translate(calc(-100% / 680), calc(-100% / 680));
+}
 .shop-landmap__layer {
   position: absolute;
   inset: 0;
@@ -38,7 +47,6 @@
   height: 100%;
   pointer-events: none;
 }
-.shop-landmap__sale { fill: #00d3ff; opacity: 0.85; }
 .shop-landmap__owned { fill: #ff4130; }
 .shop-landmap__rented { fill: #ffbc5b; }
 .shop-landmap__selected { fill: #ff9990; stroke: #ff0044; stroke-width: 0.25; }
@@ -83,6 +91,7 @@
   gap: 6px;
   border-radius: var(--r-control);
   background: var(--panel-2, #242129);
+  color: var(--text);
 }
 .shop-landmap__swatch {
   display: inline-block;
@@ -92,11 +101,18 @@
   border-radius: 2px;
   vertical-align: -1px;
 }
+/* Over the atlas image: the colours of the image, and of the mark without its opacity. */
 .shop-landmap__swatch--plaza { background: #70ac76; }
 .shop-landmap__swatch--owned { background: #ff4130; }
 .shop-landmap__swatch--rented { background: #ffbc5b; }
 .shop-landmap__swatch--sale { background: #00d3ff; }
 .shop-landmap__swatch--taken { background: #3d3a46; }
+/* On a map painted from the tile data: the custom properties the canvas paints with
+   (LandMap.module.css). The mark is an outline on LAND that is taken. */
+.shop-landmap--tiles .shop-landmap__swatch--plaza { background: var(--_plaza); }
+.shop-landmap--tiles .shop-landmap__swatch--district { background: var(--_district); }
+.shop-landmap--tiles .shop-landmap__swatch--sale { background: var(--_taken); box-shadow: inset 0 0 0 2px var(--_sale); }
+.shop-landmap--tiles .shop-landmap__swatch--taken { background: var(--_taken); }
 .shop-landmap__popup {
   position: absolute;
   z-index: 2;
