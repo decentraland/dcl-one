@@ -287,6 +287,18 @@ describe("the painter", () => {
     expect(c.fillRect.mock.calls).toEqual([[170, 169, 1, 1]]);
   });
 
+  it("gives a parcel under one device pixel that pixel", () => {
+    // 240 px for 340 parcels: two edges of some parcels are on the same pixel line.
+    const every: MapLayer = () => ({ color: "red" });
+    for (const dpr of [1, 2]) {
+      const c = fakeCanvas();
+      drawLayers(c.ctx, { view: { x: GRID_MID, y: GRID_MID, zoom: 1 }, size: { w: 240, h: 240 }, dpr, layers: [every], color });
+      const calls = c.fillRect.mock.calls as [number, number, number, number][];
+      expect(calls).toHaveLength(340 * 340);
+      expect(calls.reduce((least, [, , w, h]) => Math.min(least, w, h), Infinity)).toBe(1 / dpr);
+    }
+  });
+
   it("paints the layers in order", () => {
     const c = fakeCanvas();
     drawLayers(c.ctx, { view, size: SHELL, dpr: 1, layers: [only(0, 0, { color: "red" }), only(0, 0, { color: "blue" })], color });

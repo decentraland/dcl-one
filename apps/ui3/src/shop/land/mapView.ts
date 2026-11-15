@@ -264,6 +264,9 @@ export function drawLayers(ctx: LayerCanvas, o: { view: MapView; size: MapSize; 
         let y0 = ys[j]!;
         let x1 = xs[i + 1]!;
         let y1 = ys[j + 1]!;
+        // A parcel under one device pixel can have two edges on the same pixel line: it still gets that pixel.
+        if (x1 === x0) x1 = x0 + 1 / dpr;
+        if (y1 === y0) y1 = y0 + 1 / dpr;
         if (t.scale !== undefined && t.scale !== 1) {
           const grow = ((t.scale - 1) * s) / 2;
           x0 -= grow;
