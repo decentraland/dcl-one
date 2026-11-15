@@ -134,11 +134,10 @@ impl Database {
     async fn await_client_sessions(&self, expected: i64) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            let sessions: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 \
-                 AND (backend_type = 'client backend' \
-                      OR (backend_type IS NULL AND usesysid IS NOT NULL))",
-            )
+            let sessions: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND {}",
+                schema_migrate::CLIENT_SESSION
+            )))
             .bind(&self.name)
             .fetch_one(&self.admin)
             .await
