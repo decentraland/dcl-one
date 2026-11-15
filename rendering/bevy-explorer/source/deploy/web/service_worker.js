@@ -72,6 +72,11 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
+    if (request.destination === 'worker' && new URL(request.url).pathname.endsWith('/sandbox_worker.bundle.js')) {
+        event.respondWith(addSandboxPolicy(request));
+        return;
+    }
+
     // Check if the request has our custom header.
     if (request.headers.has(CUSTOM_HEADER)) {
         // If it does, use our caching strategy.
@@ -118,6 +123,26 @@ async function servePreviewRealm(request, clientId) {
         requestClient(clientId),
     ]);
     return previewRealm.handle(request, PREVIEW_ROOT, cache, storage, client);
+}
+
+// A scene sandbox's own policy: a worker takes it from its script's response. The bundle imports
+// nothing, so no module or worker may load; eval and wasm run the scene; scene requests stay open
+// and go through the sandbox's fetch (sandbox_worker.js).
+const SANDBOX_POLICY = "default-src 'none'; script-src 'unsafe-eval' 'wasm-unsafe-eval'; " +
+    'connect-src http: https: ws: wss: data: blob:';
+
+async function addSandboxPolicy(request) {
+    const response = await fetch(request);
+    // A copy takes the request's url, not the redirect target's, so a redirected bundle passes as is.
+    if (response.redirected) return response;
+    const headers = new Headers(response.headers);
+    // appended: a host's own policy still applies
+    headers.append('Content-Security-Policy', SANDBOX_POLICY);
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
 }
 
 /**

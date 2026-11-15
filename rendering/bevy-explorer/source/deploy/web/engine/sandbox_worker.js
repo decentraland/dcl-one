@@ -4,6 +4,7 @@
 // of the relay uses (relayStart below). The engine's own glue is never loaded here.
 import initSceneRuntime, * as sceneRuntimeExports from "./pkg-scene/dcl_scene_wasm.js";
 import { relayCopyWasm } from "./relay_copy.js";
+import { sandboxPolicyInForce } from "./sandbox_policy.js";
 import { createSceneFetch } from "./scene_fetch.js";
 
 // The capability the trusted super-user scene is given below. Captured before the scrub so the
@@ -13,7 +14,13 @@ const RealBroadcastChannel = self.BroadcastChannel;
 // postMessage carries killToken.
 const workerPostMessage = self.postMessage.bind(self);
 const workerClose = self.close.bind(self);
-self.fetch = createSceneFetch(self.fetch.bind(self));
+const nativeFetch = self.fetch.bind(self);
+// The native fetch lives on WorkerGlobalScope.prototype, where an own property would only shadow
+// it. WebTransport and fonts (FontFace) are other request paths around the scene fetch.
+for (const name of ["fetch", "WebTransport", "FontFace", "fonts"]) {
+  for (let o = self; o != null; o = Object.getPrototypeOf(o)) delete o[name];
+}
+self.fetch = createSceneFetch(nativeFetch);
 // Stack traces are only ever formatted the default way: scene code can't install a formatter.
 Object.defineProperty(Error, "prepareStackTrace", {
   get: () => undefined,
@@ -731,6 +738,9 @@ self.onmessage = async (event) => {
     postToEngine({ type: "SCENE_READY", sceneId });
 
     try {
+      if (!(await sandboxPolicyInForce())) {
+        throw "no Content-Security-Policy on this sandbox (started outside the page's service worker): the scene does not run; reloading the page lets the current service worker take over";
+      }
       createJsContext(sceneApi, wasmContext);
       const ops = jsContext.Deno.core.ops;
 
