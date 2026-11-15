@@ -21,6 +21,9 @@ type Socket =
 async fn server(cap: u32) -> (u16, AppState) {
     let mut settings = Settings::for_tests();
     settings.server.max_sockets = cap;
+    server_with(settings).await
+}
+async fn server_with(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
         state.clone(),
@@ -1594,6 +1597,92 @@ async fn upgrade_cap_is_shared_across_paths_and_mounts_and_released_after_transp
     drop(socket);
     wait(|| state.sockets.available_permits() == 1).await;
 }
+#[tokio::test]
+async fn pending_handshakes_cannot_take_the_capacity_of_authenticated_sockets() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 5;
+    settings.server.max_pending_handshakes = 2;
+    let (port, state) = server_with(settings).await;
+    let refused = |port| async move {
+        let error = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
+            .await
+            .unwrap_err();
+        let Error::Http(response) = error else {
+            panic!("HTTP refusal expected")
+        };
+        assert_eq!(response.status().as_u16(), 503);
+        assert_eq!(response.headers()["retry-after"], "5");
+    };
+
+    let idle = raw_upgrade(port).await;
+    // Authenticated sockets give their pending slot back at the welcome.
+    let (first, _) = authenticated(port).await;
+    let (second, _) = authenticated(port).await;
+    wait(|| state.pending_handshakes.available_permits() == 1).await;
+    let other_idle = raw_upgrade(port).await;
+    assert_eq!(state.sockets.available_permits(), 1);
+    // Socket capacity remains, but only for a socket that can complete its handshake.
+    refused(port).await;
+
+    drop(idle);
+    wait(|| state.pending_handshakes.available_permits() == 1).await;
+    // The freed pending slot admits a socket that completes its handshake.
+    let (third, _) = authenticated(port).await;
+    assert_eq!(state.sockets.available_permits(), 1);
+    assert_eq!(state.pending_handshakes.available_permits(), 1);
+    drop((first, second, third, other_idle));
+    wait(|| {
+        state.sockets.available_permits() == 5 && state.pending_handshakes.available_permits() == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_socket_must_request_its_challenge_before_the_signing_deadline_starts() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 2;
+    settings.auth.challenge_request_timeout_ms = 300;
+    settings.auth.handshake_timeout_ms = 60_000;
+    let (port, state) = server_with(settings).await;
+
+    let mut silent = raw_upgrade(port).await;
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match silent.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(other)) => panic!("unexpected frame before the challenge: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("a socket silent before its challenge request closes at the shorter deadline");
+    assert!(started.elapsed() >= Duration::from_millis(250));
+    wait(|| state.sockets.available_permits() == 2).await;
+
+    // The signing stage keeps the full `HANDSHAKE_TIMEOUT`.
+    let wallet = PrivateKeySigner::random();
+    let mut socket = raw_upgrade(port).await;
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: format!("{:#x}", wallet.address()),
+            },
+        )))
+        .await
+        .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut socket).await else {
+        panic!("challenge expected")
+    };
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    send_eoa_chain(&mut socket, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(welcome) = receive(&mut socket).await else {
+        panic!("welcome expected")
+    };
+    assert_eq!(welcome.peer_id, format!("{:#x}", wallet.address()));
+}
+
 #[tokio::test]
 async fn baseline_v4_authentication_is_not_exposed() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;

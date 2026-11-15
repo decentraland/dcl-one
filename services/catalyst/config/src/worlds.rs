@@ -456,7 +456,8 @@ pub struct WorldsConfig {
 
     // worlds/archipelago: the ws-connector (the old catalyrst-archipelago
     // names); LiveKit comes from the comms settings, the pool is the ONE pool.
-    /// Process-wide connector socket cap, including pending handshakes.
+    /// Process-wide connector socket cap, including pending handshakes, which may hold at most a
+    /// quarter of it.
     #[arg(long, env = "WS_MAX_SOCKETS", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
     pub ws_max_sockets: u32,
 
@@ -464,7 +465,8 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
     pub ws_max_sockets_per_ip: u32,
 
-    /// Handshake deadline, ms; 0 keeps the default.
+    /// Signed-challenge deadline, ms, from the challenge; 0 keeps the default. The challenge
+    /// request is due within 10 s of the socket opening, or this deadline if shorter.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
     pub handshake_timeout: u64,
 

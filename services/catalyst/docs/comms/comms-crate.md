@@ -89,7 +89,10 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
-re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; `WS_MAX_SOCKETS_PER_IP`
+re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
+completed the handshake hold at most a quarter of it, beyond that also 503; a socket must send its
+challenge request within 10 s of opening and its signed challenge within `HANDSHAKE_TIMEOUT`
+(default 60 s, as the pinned upstream ws-connector) of the challenge; `WS_MAX_SOCKETS_PER_IP`
 (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64) attributable through
 `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments

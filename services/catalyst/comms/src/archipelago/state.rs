@@ -11,6 +11,8 @@ use std::sync::Arc;
 pub struct AppStateInner {
     pub settings: Settings,
     pub sockets: Arc<tokio::sync::Semaphore>,
+    /// Sockets that have not completed the handshake; released at the welcome.
+    pub pending_handshakes: Arc<tokio::sync::Semaphore>,
     pub sockets_per_ip: Arc<IpSlots>,
     pub handlers: Arc<tokio::sync::Semaphore>,
     pub restart: tokio_util::sync::CancellationToken,

@@ -22,12 +22,21 @@ impl Default for ClusterConfig {
 
 pub const DEFAULT_MAX_SOCKETS_PER_IP: u32 = 64;
 
+/// The share of `max_sockets` that sockets still in the handshake may hold, so sockets that never
+/// authenticate cannot take the capacity authenticated clients need.
+fn pending_handshake_cap(max_sockets: u32) -> u32 {
+    max_sockets.div_ceil(4)
+}
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub max_sockets: u32,
     /// `WS_MAX_SOCKETS_PER_IP`: sockets one client address may hold, pending handshakes
     /// included; 0 is unlimited.
     pub max_sockets_per_ip: u32,
+    /// Sockets that have not completed the handshake, counted inside `max_sockets`: a quarter of
+    /// it, and never more than it.
+    pub max_pending_handshakes: u32,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: proxies whose `X-Real-IP` names the client.
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// `ISLAND_CHANGED_DEDUP_MS`: the window inside which the same room handed to the same socket
@@ -41,6 +50,7 @@ impl Default for ServerConfig {
         Self {
             max_sockets: 3000,
             max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
+            max_pending_handshakes: pending_handshake_cap(3000),
             trusted_proxy_cidrs: Vec::new(),
             island_changed_dedup_ms: 10_000.0,
         }
@@ -51,9 +61,13 @@ impl Default for ServerConfig {
 pub struct AuthConfig {
     pub challenge_ttl_secs: u64,
     pub signature_max_age_secs: u64,
-    /// A socket that opens and never speaks holds a connection and a challenge slot for nothing.
-    /// Restarted after every stage, so a slow signer is not punished for the wallet's own latency.
+    /// `HANDSHAKE_TIMEOUT`: how long a socket may wait for its signed challenge, restarted when
+    /// the challenge is sent, so a slow signer is not punished for the wallet's own latency.
     pub handshake_timeout_ms: u64,
+    /// How long a newly opened socket may wait before its challenge request, at most
+    /// `handshake_timeout_ms`. A client sends it as soon as the socket opens; a socket that opens
+    /// and never speaks holds a connection for nothing.
+    pub challenge_request_timeout_ms: u64,
     pub deny_list_url: Option<String>,
 }
 
@@ -63,6 +77,7 @@ impl Default for AuthConfig {
             challenge_ttl_secs: 120,
             signature_max_age_secs: 300,
             handshake_timeout_ms: 60_000,
+            challenge_request_timeout_ms: 10_000,
             deny_list_url: None,
         }
     }
@@ -107,9 +122,11 @@ impl Settings {
             .deny_list_url
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
+        let max_sockets = raw.max_sockets.max(1);
         let server = ServerConfig {
-            max_sockets: raw.max_sockets.max(1),
+            max_sockets,
             max_sockets_per_ip: raw.max_sockets_per_ip,
+            max_pending_handshakes: pending_handshake_cap(max_sockets),
             trusted_proxy_cidrs: raw.trusted_proxy_cidrs,
             island_changed_dedup_ms: raw.island_changed_dedup_ms,
         };
@@ -156,6 +173,7 @@ impl Settings {
                 .ok()
                 .filter(|n| *n > 0)
                 .ok_or_else(|| anyhow::anyhow!("WS_MAX_SOCKETS must be a positive integer"))?;
+            server.max_pending_handshakes = pending_handshake_cap(server.max_sockets);
         }
         if let Ok(v) = env::var("ISLAND_CHANGED_DEDUP_MS") {
             server.island_changed_dedup_ms =

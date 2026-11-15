@@ -120,8 +120,9 @@ fn upgrade(
             .into_response();
     };
     let handler = state.handlers.clone().try_acquire_owned();
+    let pending = state.pending_handshakes.clone().try_acquire_owned();
     let permit = match state.sockets.clone().try_acquire_owned() {
-        Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
+        Ok(permit) if handler.is_ok() && pending.is_ok() && !state.restart.is_cancelled() => permit,
         _ => {
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -139,7 +140,7 @@ fn upgrade(
         .on_upgrade(move |socket| async move {
             let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit);
-            handle_socket(socket, state).await;
+            handle_socket(socket, state, pending.ok()).await;
             drop(handler);
         })
         .into_response()
@@ -276,7 +277,12 @@ async fn handshake_operation<F: std::future::Future>(
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
+/// `pending` is the socket's pending-handshake slot, held until the welcome.
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    mut pending: Option<tokio::sync::OwnedSemaphorePermit>,
+) {
     let mut stage = Stage::HandshakeStart;
     let mut challenge_to_sign = String::new();
     let mut issuance = None;
@@ -287,7 +293,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut last_stamp = None;
     let dedup_ms = state.settings.server.island_changed_dedup_ms;
     let handshake_timeout = Duration::from_millis(state.settings.auth.handshake_timeout_ms);
-    let mut handshake_deadline = tokio::time::Instant::now() + handshake_timeout;
+    let challenge_request_timeout = handshake_timeout.min(Duration::from_millis(
+        state.settings.auth.challenge_request_timeout_ms,
+    ));
+    let mut handshake_deadline = tokio::time::Instant::now() + challenge_request_timeout;
     let mut ownership_poll = tokio::time::interval(legacy_fence::POLL_INTERVAL);
     ownership_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut renewal = tokio::time::interval(crate::archipelago::control_v4::OWNER_RENEWAL_INTERVAL);
@@ -462,6 +471,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         // standing still is given a room only because of this.
                                         state.gatekeeper.announce_session(&signer, &session);
                                         stage = Stage::Completed;
+                                        drop(pending.take());
                                         handshake_deadline = tokio::time::Instant::now() + handshake_timeout;
                                     }
                                     Err(e) => {
@@ -484,21 +494,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 let Some(position) = heartbeat_position(&hb) else { continue };
                                 let realm = hb.desired_room.unwrap_or_else(|| "catalyrst".into());
                                 if !crate::protocol::bus::control_position::valid_realm(&realm) { continue; }
-                                if let Some(fence) = current.fence.as_ref() {
-                                    match tokio::time::timeout(
-                                        AUTHORITY_OPERATION_TIMEOUT,
-                                    legacy_fence::owns_realm(&state, &fence.owner),
-                                    ).await {
-                                        Ok(Ok(true)) => {
-                                            // Deferred positions recheck this exact owner before application.
-                                        }
-                                        Ok(Ok(false)) => {
-                                            let _ = send_packet(&mut socket, kicked_packet(), None).await;
-                                            break;
-                                        }
-                                        _ => break,
-                                    }
-                                }
+                                // A fenced position is checked against its owner only when applied, at
+                                // most once per position interval; the ownership poll kicks a socket
+                                // whose realm moved to a newer owner.
                                 socket.position(current.fence.as_ref().map(|f| f.owner.clone()), current.link.clone(), realm, position).await;
                             }
                         }
