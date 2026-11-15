@@ -7,7 +7,7 @@ import { MdContentCopy as CopyNameIcon, MdOutlineEmojiPeople as EmoteIcon } from
 import { Item as MenuItem } from 'react-contexify';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
 import { useDrag, useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { Loader } from 'decentraland-ui/dist/components/Loader/Loader';
 
 import {
@@ -70,7 +70,9 @@ function useImageUrl(path: string, enabled: boolean) {
       ?.getFile({ path: withAssetDir(path) })
       .then(({ content }) => {
         if (cancelled) return;
-        objectUrl = URL.createObjectURL(new Blob([content], { type: getMimeType(path) }));
+        objectUrl = URL.createObjectURL(
+          new Blob([content as BlobPart], { type: getMimeType(path) }),
+        );
         setUrl(objectUrl);
       })
       .catch(error => console.warn(`Could not load the image ${path}:`, error));

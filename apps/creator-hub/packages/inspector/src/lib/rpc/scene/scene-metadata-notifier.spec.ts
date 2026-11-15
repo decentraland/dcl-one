@@ -1,4 +1,4 @@
-import mitt from 'mitt';
+import { createEmitter } from '../../utils/emitter';
 import { CrdtMessageType } from '@dcl/ecs';
 import type { ComponentDefinition, Entity } from '@dcl/ecs';
 
@@ -26,14 +26,14 @@ const twoByTwo = {
 };
 
 describe('createSceneMetadataNotifier', () => {
-  let events: ReturnType<typeof mitt<SdkContextEvents>>;
+  let events: ReturnType<typeof createEmitter<SdkContextEvents>>;
   let notify: ReturnType<typeof vi.fn>;
 
   const change = (component: ComponentDefinition<unknown>, value: unknown, entity = ROOT) =>
     events.emit('change', { entity, operation: CrdtMessageType.PUT_COMPONENT, component, value });
 
   beforeEach(() => {
-    events = mitt<SdkContextEvents>();
+    events = createEmitter<SdkContextEvents>();
     notify = vi.fn().mockResolvedValue(undefined);
     createSceneMetadataNotifier(events, ROOT, notify);
   });
@@ -83,7 +83,7 @@ describe('createSceneMetadataNotifier', () => {
 
   describe('when unsubscribed', () => {
     it('should stop reporting', () => {
-      const fresh = mitt<SdkContextEvents>();
+      const fresh = createEmitter<SdkContextEvents>();
       const spy = vi.fn().mockResolvedValue(undefined);
       const unsubscribe = createSceneMetadataNotifier(fresh, ROOT, spy);
       unsubscribe();

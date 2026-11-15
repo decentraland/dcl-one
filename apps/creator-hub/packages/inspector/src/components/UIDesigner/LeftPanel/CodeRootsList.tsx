@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDrag } from 'react-dnd';
 import { IoEyeOffOutline, IoEyeOutline, IoTrashOutline } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
 import { getMobileHudSelected, selectMobileHud, selectNode } from '../../../redux/ui-designer';

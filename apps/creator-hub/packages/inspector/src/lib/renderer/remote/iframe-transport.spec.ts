@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import { InMemoryTransport } from '@dcl/mini-rpc';
 import type { Entity } from '@dcl/ecs';
 
@@ -9,7 +9,7 @@ import { startRendererIframe } from './iframe-entry';
 import { RemoteRenderer } from './RemoteRenderer';
 
 function createFakeRenderer() {
-  const events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  const events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
   const calls: string[] = [];
   const renderer: IRenderer = {
     events,

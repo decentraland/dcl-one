@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
 import { Analytics as SegmentAnalytics } from '@segment/analytics-node';
+import { randomUuid } from '../utils/uuid';
 import { getConfig } from './config';
 
 export enum Event {
@@ -125,7 +125,7 @@ const noopAnalytics = {
 class Analytics {
   private static instance: Analytics | null = null;
   private analytics: SegmentAnalytics | { track(): void } = noopAnalytics;
-  private userId: string = uuidv4();
+  private userId: string = randomUuid();
   private appId: string | undefined = undefined;
 
   constructor() {

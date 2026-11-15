@@ -1,4 +1,4 @@
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity, TransformType } from '@dcl/ecs';
 
 import type { RendererEvents } from '../types';
@@ -56,7 +56,6 @@ export function createPreviewBridge(options: PreviewBridgeOptions): () => void {
   const onError =
     options.onError ??
     ((ctx: string, error: unknown) => {
-      // eslint-disable-next-line no-console
       console.warn(`[bevy] gizmo preview failed (${ctx}):`, error);
     });
 

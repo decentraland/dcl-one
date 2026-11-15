@@ -1,7 +1,6 @@
-/* eslint-disable no-console */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity, Vector3Type } from '@dcl/ecs';
 
 import { DIRECTORY, withAssetDir } from '../../lib/data-layer/host/fs-utils';

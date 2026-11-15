@@ -1,4 +1,4 @@
-import type { Identifier } from 'dnd-core';
+import type { DropTargetMonitor } from 'react-dnd';
 import type { Asset, CustomAsset } from '../../lib/logic/catalog';
 import type { TreeNode } from '../../components/ProjectAssetExplorer/ProjectView';
 import type { AssetNodeItem } from '../../components/ProjectAssetExplorer/types';
@@ -23,7 +23,7 @@ export type DropTypes = `${DropTypesEnum}`;
 
 export function isDropType<T extends IDrop>(
   _: IDrop,
-  identifier: Identifier | null,
+  identifier: ReturnType<DropTargetMonitor['getItemType']>,
   type: DropTypes,
 ): _ is T {
   return identifier === type;

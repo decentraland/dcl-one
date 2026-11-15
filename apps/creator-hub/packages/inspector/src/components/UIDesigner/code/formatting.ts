@@ -1,10 +1,12 @@
+import type { Plugin } from 'prettier';
 import { format } from 'prettier/standalone';
 import * as estreePlugin from 'prettier/plugins/estree';
 import * as typescriptPlugin from 'prettier/plugins/typescript';
 
 const OPTIONS = {
   parser: 'typescript' as const,
-  plugins: [typescriptPlugin, estreePlugin],
+  // The estree plugin ships an empty type declaration.
+  plugins: [typescriptPlugin, estreePlugin as Plugin],
   printWidth: 100,
   semi: false,
   singleQuote: true,

@@ -3,7 +3,7 @@ import { IoAlertCircleOutline as AlertIcon } from 'react-icons/io5';
 import { VscQuestion as QuestionIcon } from 'react-icons/vsc';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { type Props, MessageType } from './types';
 

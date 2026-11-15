@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../../../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 import { withSdk, type WithSdkProps } from '../../../../../hoc/withSdk';
 import { useHasComponent } from '../../../../../hooks/sdk/useHasComponent';

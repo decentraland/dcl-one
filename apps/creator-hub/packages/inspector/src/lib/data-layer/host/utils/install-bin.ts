@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import type { FileSystemInterface } from '../../types';
 import { getConfig } from '../../../logic/config';
 

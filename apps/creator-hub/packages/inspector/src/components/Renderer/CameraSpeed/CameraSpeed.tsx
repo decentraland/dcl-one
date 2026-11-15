@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './CameraSpeed.css';
-import classNames from 'classnames';
+import { cx as classNames } from '../../../lib/utils/cx';
 import { withSdk } from '../../../hoc/withSdk';
 
 const CameraSpeed = withSdk(({ sdk }) => {

@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { VscSearch as SearchIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import { TextField } from '../../TextField';
 import { InfoTooltip } from '../../InfoTooltip';
 import type { Props as TooltipProps } from '../../InfoTooltip/types';

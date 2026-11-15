@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../utils/emitter';
+import type { Emitter } from '../utils/emitter';
 import { Engine } from '@dcl/ecs';
 import type { Entity } from '@dcl/ecs';
 import { Vector3 as DclVector3 } from '@dcl/ecs-math';
@@ -15,7 +15,7 @@ import { createRendererConformanceSuite } from './conformance';
  */
 function buildConformantRenderer() {
   const engine = Engine();
-  const events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  const events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
   const speed = 4;
   let pose = {
     position: DclVector3.create(8, 12, 24),

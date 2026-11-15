@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity } from '@dcl/ecs';
 
 import { GizmoType } from '../../utils/gizmo';
@@ -13,7 +13,7 @@ import { createLoopback } from './loopback';
  * snapshots; commands mutate it; events flow back through the fake's bus.
  */
 function createFakeRenderer() {
-  const events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  const events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
   const calls: string[] = [];
 
   let speed = 4;

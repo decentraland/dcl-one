@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { build } from 'esbuild';
 
 import { getNotBundledModules } from '../build-externals';
@@ -24,5 +26,21 @@ describe('when bundling the tooling entrypoint for Node', () => {
 
   it('should bundle the renderer math dependencies instead of requiring them at runtime', () => {
     expect(runtimeRequires.filter(path => /^(@babylonjs\/|@dcl\/ecs-math)/.test(path))).toEqual([]);
+  });
+
+  it('should require at runtime only Node built-ins and packages that the manifest has in dependencies', () => {
+    const { dependencies } = JSON.parse(readFileSync('package.json', 'utf8'));
+    const packageOf = (path: string) =>
+      path
+        .split('/')
+        .slice(0, path.startsWith('@') ? 2 : 1)
+        .join('/');
+    const notInstalled = runtimeRequires.filter(
+      path =>
+        !path.startsWith('node:') &&
+        !builtinModules.includes(path) &&
+        !(packageOf(path) in dependencies),
+    );
+    expect([...new Set(notInstalled)]).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { AssetPreview } from './AssetPreview';
 
@@ -24,7 +24,7 @@ vi.mock('decentraland-ui', () => ({
 }));
 
 describe('AssetPreview', () => {
-  let onScreenshot: ReturnType<typeof vi.fn>;
+  let onScreenshot: Mock;
 
   beforeEach(() => {
     vi.useFakeTimers();

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BsCaretDown } from 'react-icons/bs';
 import { BiCheckbox, BiCheckboxChecked } from 'react-icons/bi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { withSdk } from '../../../hoc/withSdk';
 import { useComponentValue } from '../../../hooks/sdk/useComponentValue';

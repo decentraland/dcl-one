@@ -15,8 +15,8 @@ You should have received a copy of the GNU Lesser General Public License
 along with web3.js.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-import { keccak256 } from 'ethereum-cryptography/keccak.js';
-import { utf8ToBytes } from 'ethereum-cryptography/utils.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 export type ValidInputTypes = Uint8Array | bigint | string | number | boolean;
 
@@ -40,7 +40,7 @@ export const checkAddressCheckSum = (data: string): boolean => {
   const address = data.slice(2);
   const updatedData = utf8ToBytes(address.toLowerCase());
 
-  const addressHash = uint8ArrayToHexString(keccak256(updatedData)).slice(2);
+  const addressHash = uint8ArrayToHexString(keccak_256(updatedData)).slice(2);
 
   for (let i = 0; i < 40; i += 1) {
     // the nth letter should be uppercase if the nth digit of casemap is 1
@@ -87,9 +87,4 @@ export const isAddress = (value: ValidInputTypes, checkChecksum = true) => {
 /** Shorten an address for display: `0x1234567890...12345678`. */
 export function formatAddress(address: string): string {
   return isAddress(address) ? `${address.slice(0, 12)}...${address.slice(-8)}` : address;
-}
-
-/** Canonical identity for an address: lowercase, always `0x`-prefixed. */
-export function normalizeAddress(address: string): string {
-  return `0x${address.replace(/^0x/i, '').toLowerCase()}`;
 }

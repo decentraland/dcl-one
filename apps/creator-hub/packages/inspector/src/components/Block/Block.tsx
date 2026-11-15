@@ -1,5 +1,5 @@
 import React from 'react';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { Label } from '../ui';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import type { Props } from './types';

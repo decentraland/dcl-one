@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDrag } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import './CustomAssets.css';
 import type { CustomAsset } from '../../lib/logic/catalog';

@@ -6,7 +6,7 @@ import { FaFile as AssetIcon } from 'react-icons/fa';
 import { GoClock as RecentIcon } from 'react-icons/go';
 import { MdOutlineEmojiPeople as EmoteIcon } from 'react-icons/md';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { type PropTypes, Filter } from './types';
 

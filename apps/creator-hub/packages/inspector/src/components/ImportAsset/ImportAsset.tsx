@@ -3,7 +3,7 @@ import { useDrop } from 'react-dnd';
 import { HiOutlineUpload } from 'react-icons/hi';
 import { VscFolderOpened as FolderIcon } from 'react-icons/vsc';
 import { MdLink as LinkIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { getNode, DropTypesEnum, type LocalAssetDrop } from '../../lib/sdk/drag-drop';
 import { EXTENSIONS, withAssetDir } from '../../lib/data-layer/host/fs-utils';

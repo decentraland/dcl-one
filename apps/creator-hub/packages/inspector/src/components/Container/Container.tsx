@@ -3,7 +3,7 @@ import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
 import { MdContentCopy as CopyIcon, MdContentPaste as PasteIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { Button } from '../Button';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import MoreOptionsMenu from '../EntityInspector/MoreOptionsMenu';

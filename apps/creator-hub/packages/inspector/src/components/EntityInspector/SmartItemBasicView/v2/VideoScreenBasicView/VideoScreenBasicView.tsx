@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useDrop } from 'react-dnd';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
-import cx from 'classnames';
+import { cx } from '../../../../../lib/utils/cx';
 import { MediaSource, LIVEKIT_STREAM_SRC } from '@dcl/asset-packs';
 import { withSdk } from '../../../../../hoc/withSdk';
 import { useComponentValue } from '../../../../../hooks/sdk/useComponentValue';

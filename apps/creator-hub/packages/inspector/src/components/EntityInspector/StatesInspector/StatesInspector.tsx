@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { ComponentName } from '@dcl/asset-packs';
 
 import { withSdk } from '../../../hoc/withSdk';

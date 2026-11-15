@@ -929,7 +929,7 @@ export class UndoRedoProvider implements StateProvider {
           const data = JSON.parse(stored);
           operationsStored = (data.undoStack?.length || 0) + (data.redoStack?.length || 0);
         }
-        // eslint-disable-next-line no-empty
+        // oxlint-disable-next-line no-empty
       } catch (error) {}
     }
 

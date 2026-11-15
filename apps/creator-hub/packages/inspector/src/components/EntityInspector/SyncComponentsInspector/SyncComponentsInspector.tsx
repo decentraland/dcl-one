@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { CrdtMessageType, type ISyncComponentsType } from '@dcl/ecs';
 
 import { withSdk } from '../../../hoc/withSdk';

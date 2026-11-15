@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { Message, MessageType } from '../Message';
 import { Label } from '../Label';
 import { isMixedValue } from '../utils';

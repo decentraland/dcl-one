@@ -1,4 +1,3 @@
-/* eslint-env browser */
 // Editor master mute for the Bevy engine frame. Loaded by host-boot.js BEFORE the
 // engine boots, so every audio path the engine later opens goes through it:
 //  - Web Audio (bevy_kira_audio → cpal → AudioContext): scene AudioSource clips and

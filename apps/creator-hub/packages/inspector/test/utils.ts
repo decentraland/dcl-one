@@ -1,13 +1,16 @@
 import { vi } from 'vitest';
 
-const xhrMock = vi.fn().mockImplementation(() => ({
-  open: vi.fn(),
-  send: vi.fn(),
-  setRequestHeader: vi.fn(),
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
-  abort: vi.fn(),
-}));
+// A mock that the code calls with `new` needs a `function`, not an arrow function.
+const xhrMock = vi.fn().mockImplementation(function () {
+  return {
+    open: vi.fn(),
+    send: vi.fn(),
+    setRequestHeader: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    abort: vi.fn(),
+  };
+});
 
 export function mockXMLHttpRequest() {
   const global = globalThis as any;

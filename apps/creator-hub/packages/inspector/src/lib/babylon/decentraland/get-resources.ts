@@ -1,5 +1,5 @@
 import { NullEngine, Scene } from '@babylonjs/core';
-import future from 'fp-future';
+import { future } from '../../utils/future';
 import { getDataLayerInterface } from '../../../redux/data-layer';
 import { loadAssetContainer, resourcesByPath } from './sdkComponents/gltf-container';
 
@@ -16,7 +16,7 @@ export async function getResourcesFromModel(path: string) {
     return resources;
   }
   const { content } = await dataLayer.getFile({ path });
-  const file = new File([content], src);
+  const file = new File([content as BlobPart], src);
 
   const load = future<void>();
 

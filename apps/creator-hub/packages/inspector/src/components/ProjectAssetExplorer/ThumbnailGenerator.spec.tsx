@@ -1,5 +1,5 @@
 import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { ThumbnailGenerator } from './ThumbnailGenerator';
 
@@ -56,7 +56,7 @@ function fakeContainer(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ThumbnailGenerator', () => {
-  let onProcessed: ReturnType<typeof vi.fn>;
+  let onProcessed: Mock;
 
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

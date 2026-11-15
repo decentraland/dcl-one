@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import type { PBAnimationState, PBAnimator } from '@dcl/ecs';
 
 import { withSdk } from '../../../hoc/withSdk';
@@ -50,7 +50,6 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
           await initializeAnimatorComponent(sdk, entityId, animations);
         }
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.warn('Failed to check animations or initialize animator component:', error);
       }
     };
@@ -68,7 +67,6 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
           setStates(mapAnimationsToStates(animations));
         }
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.warn('Failed to load animations:', error);
       }
     };

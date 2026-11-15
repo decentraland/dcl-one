@@ -1,10 +1,10 @@
-import { merge } from 'ts-deepmerge';
 import { CrdtMessageType } from '@dcl/ecs';
 import type { IEngine, LastWriteWinElementSetComponentDefinition } from '@dcl/ecs';
 import type { Scene } from '@dcl/schemas';
 import type { FileSystemInterface } from '../types';
 import type { EditorComponentsTypes } from '../../sdk/components';
 import { EditorComponentNames } from '../../sdk/components';
+import { mergeDeep } from '../../utils/deep-merge';
 import { fromSceneComponent, getValidParcels, toSceneComponent } from './utils/component';
 import {
   type StateProvider,
@@ -40,10 +40,7 @@ function mergeEditorChanges(onDisk: Scene, base: SceneFields, ours: SceneFields)
   for (const [key, value] of Object.entries(ours)) {
     if (sameValue(value, base[key])) continue;
     const current = next[key];
-    next[key] =
-      isPlainObject(current) && isPlainObject(value)
-        ? merge.withOptions({ mergeArrays: false }, current, value)
-        : value;
+    next[key] = isPlainObject(current) && isPlainObject(value) ? mergeDeep(current, value) : value;
   }
   return next as Scene;
 }
@@ -118,7 +115,7 @@ export class SceneProvider implements StateProvider {
   }
 
   private applyEngineScene(partialScene: Partial<Scene>) {
-    const merged = merge.withOptions({ mergeArrays: false }, this.scene, partialScene) as Scene;
+    const merged = mergeDeep(this.scene, partialScene) as Scene;
     this.scene = SceneProvider.augmentDefaults(merged);
     this.latest = partialScene;
     this.dirty = true;

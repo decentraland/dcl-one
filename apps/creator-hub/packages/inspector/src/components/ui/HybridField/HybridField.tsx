@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { Dropdown } from '../Dropdown';
 import { TextField } from '../TextField';

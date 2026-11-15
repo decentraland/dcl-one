@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { BiCube as EntityIcon } from 'react-icons/bi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { engine } from '@dcl/ecs';
 import type { Entity } from '@dcl/ecs';
 

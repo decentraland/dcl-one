@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
-import mitt from 'mitt';
+import { createEmitter } from '../../utils/emitter';
 
 const getSnapManager = () => {
   // defaults
@@ -9,7 +9,7 @@ const getSnapManager = () => {
   let enabled = true;
 
   // events
-  const events = mitt<{ change: void }>();
+  const events = createEmitter<{ change: void }>();
 
   function getPositionSnap() {
     return positionSnap;

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { BiCog, BiCheckboxChecked, BiCheckbox } from 'react-icons/bi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { withSdk } from '../../../hoc/withSdk';
 import { ToolbarButton } from '../ToolbarButton';

@@ -177,7 +177,7 @@ describe('the Anchor control', () => {
     it('should clear a leading margin only where it was a centering counter-margin', () => {
       const patch = dragPinPatch(30, 40, pinned('center', 'top'));
       expect(patch).toMatchObject({ marginLeft: 0, marginLeftUnit: YGU_UNDEFINED });
-      expect(Object.keys(patch).filter(k => /^marginTop/.test(k))).toEqual([]);
+      expect(Object.keys(patch).filter(k => k.startsWith('marginTop'))).toEqual([]);
       // The counter-margin is going, so it must NOT also be compensated for: the
       // dropped offset is the whole inset once nothing is left to re-add.
       expect(patch.positionLeft).toBe(40);
@@ -186,7 +186,7 @@ describe('the Anchor control', () => {
     it('should compensate for the leading margins it leaves authored', () => {
       const patch = dragPinPatch(30, 40, { ...WITH_MARGINS });
       expect(patch).toMatchObject({ positionTop: 20, positionLeft: 32 });
-      expect(Object.keys(patch).filter(k => /^margin/.test(k))).toEqual([]);
+      expect(Object.keys(patch).filter(k => k.startsWith('margin'))).toEqual([]);
     });
 
     // The invariant the drag exists for: after the splice round-trips, the node
@@ -214,9 +214,9 @@ describe('the Anchor control', () => {
         marginRight: 4,
         marginRightUnit: YGU_POINT,
       };
-      expect(Object.keys(dragPinPatch(30, 40, authored)).filter(k => /^margin/.test(k))).toEqual(
-        [],
-      );
+      expect(
+        Object.keys(dragPinPatch(30, 40, authored)).filter(k => k.startsWith('margin')),
+      ).toEqual([]);
     });
 
     it('should undo a centered pin, not stack a second one on top of it', () => {

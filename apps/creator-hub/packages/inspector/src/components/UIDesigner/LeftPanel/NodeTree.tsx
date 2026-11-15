@@ -11,7 +11,7 @@ import {
   IoTrashOutline as RemoveIcon,
 } from 'react-icons/io5';
 import { MdOutlineLock as LockIcon, MdOutlineLockOpen as UnlockIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 
 import { useAppDispatch, useAppSelector } from '../../../redux/hooks';

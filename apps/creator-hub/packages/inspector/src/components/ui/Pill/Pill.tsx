@@ -1,6 +1,6 @@
 import React from 'react';
 import { IoIosClose as CloseIcon } from 'react-icons/io';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import type { Props } from './types';
 

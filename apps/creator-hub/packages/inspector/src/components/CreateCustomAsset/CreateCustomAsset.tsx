@@ -53,17 +53,18 @@ const CreateCustomAsset: React.FC = () => {
         const files: File[] = await Promise.all(
           resourcesFromModel.map(async path => {
             const { content } = await dataLayer.getFile({ path });
-            return new File([content], path.split('/').pop() || 'model', {
+            return new File([content as BlobPart], path.split('/').pop() || 'model', {
               type: 'model/gltf-binary',
             });
           }),
         );
         setPreviewFile(
-          new File([content], modelFile.split('/').pop() || 'model', { type: 'model/gltf-binary' }),
+          new File([content as BlobPart], modelFile.split('/').pop() || 'model', {
+            type: 'model/gltf-binary',
+          }),
         );
         setResources(files);
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.error('Failed to load preview file:', error);
       }
     };

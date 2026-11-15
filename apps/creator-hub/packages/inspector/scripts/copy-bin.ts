@@ -5,8 +5,8 @@ console.log('Copying "@dcl/asset-packs/bin/index.js" into "public/bin/index.js".
 
 // try to find @dcl/asset-packs module at different levels
 const possiblePaths = [
-  resolve(__dirname, '../node_modules/@dcl/asset-packs/bin/index.js'), // packages/inspector level
-  resolve(__dirname, '../../../node_modules/@dcl/asset-packs/bin/index.js'), // root level
+  resolve(import.meta.dirname, '../node_modules/@dcl/asset-packs/bin/index.js'), // packages/inspector level
+  resolve(import.meta.dirname, '../../../node_modules/@dcl/asset-packs/bin/index.js'), // root level
 ];
 
 let sourcePath: string | null = null;
@@ -22,9 +22,9 @@ if (!sourcePath) {
   throw new Error('Could not find @dcl/asset-packs module at packages/inspector or root level');
 }
 
-const binDirPath = resolve(__dirname, '../public/bin');
+const binDirPath = resolve(import.meta.dirname, '../public/bin');
 if (!fs.existsSync(binDirPath)) {
   fs.mkdirSync(binDirPath);
 }
 
-fs.copyFileSync(sourcePath, resolve(__dirname, '../public/bin/index.js'));
+fs.copyFileSync(sourcePath, resolve(import.meta.dirname, '../public/bin/index.js'));

@@ -1,6 +1,6 @@
 import * as BABYLON from '@babylonjs/core';
-import type { Emitter } from 'mitt';
-import mitt from 'mitt';
+import type { Emitter } from '../../utils/emitter';
+import { createEmitter } from '../../utils/emitter';
 import { Vector3, Quaternion } from '@dcl/ecs-math';
 
 import { fitSphereIntoCameraFrustum } from '../../logic/math';
@@ -49,7 +49,7 @@ export class CameraManager {
     this.speedIndex = initialSpeedIndex;
     this.minY = minY;
     this.zoomSensitivity = zoomSensitivity;
-    this.speedChangeObservable = mitt<SpeedChangeEvent>();
+    this.speedChangeObservable = createEmitter<SpeedChangeEvent>();
     this.getAspectRatio = () => {
       return inputSource.width / inputSource.height;
     };

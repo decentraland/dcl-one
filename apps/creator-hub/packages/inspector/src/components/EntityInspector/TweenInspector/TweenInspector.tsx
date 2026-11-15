@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { EasingFunction } from '@dcl/ecs';
 import { TweenType } from '@dcl/asset-packs';
 

@@ -8,7 +8,7 @@ import {
   MdOutlineDriveFileRenameOutline as RenameIcon,
   MdContentCopy as DuplicateIcon,
 } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 
 import { PLAYER } from '../../lib/sdk/tree';

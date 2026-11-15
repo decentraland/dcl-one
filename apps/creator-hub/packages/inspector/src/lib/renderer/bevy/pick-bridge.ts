@@ -1,4 +1,4 @@
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity } from '@dcl/ecs';
 
 import { EDITOR_BUS_CHANNEL } from '@dcl/inspector-bevy-protocol';

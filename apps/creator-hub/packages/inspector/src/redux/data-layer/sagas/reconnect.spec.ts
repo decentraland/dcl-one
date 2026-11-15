@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/ban-types */
 import { expectSaga } from 'redux-saga-test-plan';
 import { combineReducers } from '@reduxjs/toolkit';
 import reducer, { ErrorType, connect, error, initialState } from '..';

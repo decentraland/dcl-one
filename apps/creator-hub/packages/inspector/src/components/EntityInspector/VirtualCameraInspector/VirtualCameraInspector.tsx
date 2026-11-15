@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { engine as CoreEngine } from '@dcl/ecs';
 import type { Entity } from '@dcl/ecs';

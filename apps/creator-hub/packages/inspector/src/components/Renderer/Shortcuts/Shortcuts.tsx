@@ -5,7 +5,7 @@ import {
   MdKeyboard as KeyboardIcon,
 } from 'react-icons/md';
 import { HiOutlineViewfinderCircle as ResetCameraIcon } from 'react-icons/hi2';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { useContainerSize } from '../../../hooks/useContainerSize';
 import { useOutsideClick } from '../../../hooks/useOutsideClick';

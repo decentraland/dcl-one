@@ -3,7 +3,7 @@ import type { XYCoord } from 'react-dnd';
 import { useDrag, useDrop } from 'react-dnd';
 import { IoIosArrowDown, IoIosArrowForward } from 'react-icons/io';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 
 import { withContextMenu } from '../../hoc/withContextMenu';

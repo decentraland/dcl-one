@@ -3,7 +3,7 @@ import { Engine } from '@dcl/ecs';
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer';
 import { createComponents, createEditorComponents } from '../../../sdk/components';
 
-export function serializeEngine(engine: IEngine) {
+export function serializeEngine(engine: IEngine): Uint8Array {
   const messages: ByteBuffer = new ReadWriteByteBuffer();
 
   for (const component of engine.componentsIter()) {

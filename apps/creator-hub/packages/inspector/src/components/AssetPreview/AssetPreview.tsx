@@ -4,7 +4,7 @@ import { AiOutlineSound as AudioIcon } from 'react-icons/ai';
 import { IoVideocamOutline as VideoIcon } from 'react-icons/io5';
 import { FaFile as OtherIcon } from 'react-icons/fa';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { PreviewCamera, PreviewMessageType, PreviewProjection, sendMessage } from '@dcl/schemas';
 import type { EmoteWithBlobs, WearableWithBlobs } from '@dcl/schemas';
 import { WearablePreview } from 'decentraland-ui';

@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 
 import type { RendererEvents } from '../types';
 import type { EngineWindow } from './console';
@@ -16,7 +16,7 @@ describe('createPreviewBridge', () => {
   let disconnect: () => void;
 
   beforeEach(() => {
-    events = mitt<RendererEvents>();
+    events = createEmitter<RendererEvents>();
     sent = [];
     disconnect = createPreviewBridge({
       events,

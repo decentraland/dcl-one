@@ -1,4 +1,3 @@
-/* eslint-env browser */
 // Bevy engine host boot script. Kept as an EXTERNAL same-origin module (not
 // inline in engine.html) so the host page's Content-Security-Policy can use a
 // strict `script-src 'self' …` with no `'unsafe-inline'` — an injected inline

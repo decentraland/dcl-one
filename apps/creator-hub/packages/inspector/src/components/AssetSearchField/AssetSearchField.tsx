@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AiOutlineSearch as SearchIcon } from 'react-icons/ai';
 import { MdClose as ClearIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 type Props = {
   value: string;

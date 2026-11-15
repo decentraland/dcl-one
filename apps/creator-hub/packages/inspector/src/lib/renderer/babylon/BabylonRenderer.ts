@@ -1,5 +1,5 @@
 import * as BABYLON from '@babylonjs/core';
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity } from '@dcl/ecs';
 import type { Vector3 } from '@dcl/ecs-math';
 import { Vector3 as DclVector3 } from '@dcl/ecs-math';

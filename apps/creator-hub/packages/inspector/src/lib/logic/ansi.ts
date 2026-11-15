@@ -45,7 +45,7 @@ const BASE_COLORS = [
   '#e5e5e5',
 ];
 
-// eslint-disable-next-line no-control-regex
+// oxlint-disable-next-line no-control-regex
 const SGR = /(?:\u001b\[|\u009b)([0-9;]*)m/g;
 
 // `textDecoration` is one property but underline (4) and strikethrough (9) are independent

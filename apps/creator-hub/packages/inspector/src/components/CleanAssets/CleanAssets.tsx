@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { IoClose } from 'react-icons/io5';
 import { FiAlertTriangle } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import { useSnackbar } from '../../hooks/useSnackbar';
 import { getStorage } from '../../lib/data-layer/client/storage';
 import { removeAssetFiles, removeEmptiedFolders } from '../../lib/data-layer/remove-assets';

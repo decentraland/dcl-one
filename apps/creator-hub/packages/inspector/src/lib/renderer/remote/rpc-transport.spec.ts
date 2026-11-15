@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import { InMemoryTransport } from '@dcl/mini-rpc';
 import type { Entity } from '@dcl/ecs';
 
@@ -11,7 +11,7 @@ import { createRpcRendererTransport, serveRendererHost } from './rpc-transport';
 
 /** Minimal in-memory renderer-side IRenderer for the proof. */
 function createFakeRenderer() {
-  const events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  const events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
   const calls: string[] = [];
   let speed = 4;
 

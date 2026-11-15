@@ -1,5 +1,5 @@
 import type { MeshPredicate, Scene, Vector3 } from '@babylonjs/core';
-import future from 'fp-future';
+import { future } from '../../utils/future';
 
 export const LEFT_BUTTON = 0;
 export const MIDDLE_BUTTON = 1;

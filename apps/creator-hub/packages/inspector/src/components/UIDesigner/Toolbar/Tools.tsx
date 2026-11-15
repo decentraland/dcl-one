@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { BsCaretDown } from 'react-icons/bs';
 import { BiCheckbox, BiCheckboxChecked } from 'react-icons/bi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
 import {

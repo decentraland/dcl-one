@@ -11,6 +11,9 @@ const esmModulesToBundle = [
   '@dcl/gltf-validator-ts',
   '@dcl/ecs-math',
   '@babylonjs/core',
+  // The bundled @dcl/mini-rpc requires these two.
+  'mitt',
+  'fp-future',
 ];
 
 /** The folder Node loads `name` from when `fromDir` requires it, or null when it is not installed. */

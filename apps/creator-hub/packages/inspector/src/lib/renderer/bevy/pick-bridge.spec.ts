@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 
 import type { RendererEvents } from '../types';
 import { createPickBridge } from './pick-bridge';
@@ -25,7 +25,7 @@ describe('createPickBridge', () => {
   const emit = (data: unknown) => fakeChannel.onmessage?.({ data });
 
   beforeEach(() => {
-    events = mitt<RendererEvents>();
+    events = createEmitter<RendererEvents>();
     picks = [];
     commits = [];
     drags = [];

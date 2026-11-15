@@ -8,8 +8,8 @@ import type { Props } from './types';
 import './ChangeCollisionsAction.css';
 
 function isValid(
-  payload: Partial<ActionPayload<ActionType.CHANGE_COLLISIONS>>,
-): payload is ActionPayload<ActionType.CHANGE_COLLISIONS> {
+  _payload: Partial<ActionPayload<ActionType.CHANGE_COLLISIONS>>,
+): _payload is ActionPayload<ActionType.CHANGE_COLLISIONS> {
   // Both values can be undefined (action will be a no-op)
   return true;
 }

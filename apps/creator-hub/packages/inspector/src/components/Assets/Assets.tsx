@@ -8,7 +8,7 @@ import { HiOutlinePlus } from 'react-icons/hi';
 import { HiOutlineRefresh as RefreshIcon } from 'react-icons/hi';
 import { IoIosFolderOpen, IoIosUndo } from 'react-icons/io';
 import { VscTerminal } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 import {
   type AssetPack,
   fetchLatestCatalog,
