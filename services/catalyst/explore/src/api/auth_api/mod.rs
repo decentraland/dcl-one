@@ -474,12 +474,25 @@ fn request_capacity_refusal(
     if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
         sweep_expired_requests(state, now);
     }
-    // Delivered records only answer 410; they go first under pressure.
-    if state.auth_api.requests.len() >= MAX_PENDING_REQUESTS {
-        state
+    // Delivered records only answer 410; under pressure the oldest go,
+    // just enough to admit one more.
+    let len = state.auth_api.requests.len();
+    if len >= MAX_PENDING_REQUESTS {
+        let mut delivered: Vec<(DateTime<Utc>, String)> = state
             .auth_api
             .requests
-            .retain(|_, record| !matches!(record.status, ChallengeStatus::Fulfilled));
+            .iter()
+            .filter(|e| matches!(e.value().status, ChallengeStatus::Fulfilled))
+            .map(|e| (e.value().created_at, e.key().clone()))
+            .collect();
+        let excess = len + 1 - MAX_PENDING_REQUESTS;
+        if delivered.len() > excess {
+            delivered.select_nth_unstable(excess - 1);
+            delivered.truncate(excess);
+        }
+        for (_, id) in delivered {
+            state.auth_api.requests.remove(&id);
+        }
     }
     let (mut live, mut from_source) = (0usize, 0usize);
     for entry in state.auth_api.requests.iter() {
@@ -488,8 +501,8 @@ fn request_capacity_refusal(
             continue;
         }
         live += 1;
-        // Answered records count until delivered, as globally: outcomes need
-        // no signature, so a sender could otherwise free its own slots.
+        // The caps bound requests in flight, not how many are created: a
+        // sender can still free its own slot by posting and fetching an outcome.
         if source.is_some() && record.source.as_deref() == source {
             from_source += 1;
         }
@@ -1511,13 +1524,20 @@ mod tests {
             let id = format!("r{i}");
             let mut r = record(&id, &format!("s{i}"), live);
             r.status = ChallengeStatus::Fulfilled;
+            r.created_at = now - Duration::seconds((MAX_PENDING_REQUESTS - i) as i64);
             state.auth_api.requests.insert(id, r);
         }
         assert!(request_capacity_refusal(&state, Some("new"), now).is_none());
-        assert!(
-            state.auth_api.requests.is_empty(),
-            "delivered records are dropped under pressure"
+        assert_eq!(
+            state.auth_api.requests.len(),
+            MAX_PENDING_REQUESTS - 1,
+            "only enough delivered records go to admit one more"
         );
+        assert!(
+            !state.auth_api.requests.contains_key("r0"),
+            "the oldest delivered record goes first"
+        );
+        assert!(state.auth_api.requests.contains_key("r1"));
     }
 
     #[tokio::test]
