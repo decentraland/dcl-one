@@ -749,12 +749,6 @@ pub struct SocialConfig {
     /// no such filter) keeps every deployment.
     #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 0)]
     pub badges_deployment_max_lag_secs: u64,
-    /// Count the gatekeeper's room joins and leaves toward the presence
-    /// badges (social.presence_badges): every process stores the events,
-    /// the leased badges-presence jobs apply them and close lost visits.
-    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
-    pub badges_presence_enabled: bool,
-
     /// A presence grant writes its badge_granted notification; false
     /// grants without one.
     #[arg(long, env = "BADGES_PRESENCE_GRANT_NOTIFICATIONS", default_value_t = presence_badges::GRANT_NOTIFICATIONS, action = clap::ArgAction::Set)]

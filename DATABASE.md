@@ -1627,8 +1627,8 @@ only when it is deployed off every badge parcel; one the node has not synced
 is kept for the engine. Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
 not counted, and the player's next join is. Expected volume is every
-join and leave of the scene and world rooms of active presence badges while
-`BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
+join and leave of the scene and world rooms of active presence badges
+(unmeasured); rows live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
 up to 500 in `seq` order, one transaction per event that deletes it, so the
 queue is its own cursor and a row committed behind a later `seq` is still

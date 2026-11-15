@@ -13,7 +13,7 @@
 //! [`crate::badges::apply_progress`] with `badge_granted` notifications, and
 //! the progress document keeps upstream's `intervals`.
 //!
-//! Enabled by `BADGES_PRESENCE_ENABLED`.
+//! Runs on every process with `SOCIAL_WRITES_ENABLED`.
 
 pub mod engine;
 pub mod intervals;
