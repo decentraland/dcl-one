@@ -56,6 +56,14 @@ on:
         description: 'Whether the version of the inspector package has changed'
         required: true
         type: boolean
+      macos-windows:
+        description: 'Build the macOS and Windows installers'
+        required: true
+        type: boolean
+      linux:
+        description: 'Build the Linux installers'
+        required: true
+        type: boolean
     outputs:
       version:
         description: 'Version of the installers this run built (and, on a release, published)'
@@ -76,7 +84,12 @@ jobs:
       # One leg failing must not show up as a cancellation of the other.
       fail-fast: false
       matrix:
-        os: [ macos-latest, windows-latest ]
+        os: [ macos-latest, windows-latest, ubuntu-22.04 ]
+        # The caller picks the platforms. An entry that names no leg drops nothing.
+        exclude:
+          - os: ${{ !inputs.macos-windows && 'macos-latest' || '' }}
+          - os: ${{ !inputs.macos-windows && 'windows-latest' || '' }}
+          - os: ${{ !inputs.linux && 'ubuntu-22.04' || '' }}
     runs-on: ${{ matrix.os }}
     # Signing, notarization and the release-repo token live in the main-only environment. Only a
     # release reads them.
@@ -89,8 +102,10 @@ jobs:
       # One output for each leg: the legs of a matrix share the job's outputs.
       macos: ${{ steps.uploaded.outputs.macos }}
       windows: ${{ steps.uploaded.outputs.windows }}
+      linux: ${{ steps.uploaded.outputs.linux }}
       macos-seconds: ${{ steps.uploaded.outputs.macos-seconds }}
       windows-seconds: ${{ steps.uploaded.outputs.windows-seconds }}
+      linux-seconds: ${{ steps.uploaded.outputs.linux-seconds }}
     env:
       # Dependabot runs (and re-runs of them) and fork PRs get no repository secrets and a
       # read-only token, so the S3 test build upload and its PR comment can't run there.
@@ -148,6 +163,13 @@ jobs:
             echo "::warning::No inspector package for this PR; building against @dcl/inspector@latest"
             pnpm add @dcl/inspector@latest
           fi
+
+      # node-pty has no Linux prebuild, so its install compiles it. Every Linux job shares the
+      # node_modules cache and the other jobs run on a newer image: compile it again here, so the
+      # installers need no newer glibc than this image has.
+      - name: Compile node-pty on the build image
+        if: runner.os == 'Linux'
+        run: pnpm rebuild node-pty
 
       - name: build
         run: make build-creator-hub
@@ -309,6 +331,32 @@ jobs:
           if ($name -ne $expected) { throw "The certificate is issued to '$name', but updates check for '$expected'" }
           Write-Output "Signed by '$name', as updates expect"
 
+      # electron-updater updates an app that has resources/package-type with that package manager.
+      # The deb target writes the file into the unpacked app, which the AppImage is also made from,
+      # so an AppImage with the file would install the deb as its update.
+      # The last check keeps the supported systems true: a native module compiled on a newer image
+      # needs a newer glibc than Ubuntu 22.04 has.
+      - name: Check the AppImage
+        if: runner.os == 'Linux'
+        working-directory: apps/creator-hub/packages/creator-hub/dist
+        env:
+          NEWEST_GLIBC: GLIBC_2.35
+        run: |
+          appimage=$(ls "$PWD"/*.AppImage)
+          cd "$RUNNER_TEMP"
+          "$appimage" --appimage-extract > /dev/null
+          test -f squashfs-root/resources/app-update.yml
+          if [ -e squashfs-root/resources/package-type ]; then
+            echo "::error::The AppImage has resources/package-type ($(cat squashfs-root/resources/package-type))"; exit 1
+          fi
+          test -f squashfs-root/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
+          find squashfs-root/resources/app.asar.unpacked -name '*.node' | while read -r module; do
+            needs=$(objdump -T "$module" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1 || true)
+            if [ -n "$needs" ] && [ "$(printf '%s\n' "$NEWEST_GLIBC" "$needs" | sort -V | tail -n 1)" != "$NEWEST_GLIBC" ]; then
+              echo "::error::$module needs $needs, newer than $NEWEST_GLIBC"; exit 1
+            fi
+          done
+
       - name: Move artifacts to upload folder
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
         working-directory: apps/creator-hub/packages/creator-hub
@@ -320,7 +368,7 @@ jobs:
         # the test builds comment links it (.github/actions/creator-hub-test-builds/section.sh).
         run: |
           mkdir dist/upload
-          for file in dist/*.dmg dist/*.exe dist/*.zip; do
+          for file in dist/*.dmg dist/*.exe dist/*.zip dist/*.AppImage dist/*.deb; do
             [ -f "$file" ] || continue
             name=${file##*/}
             cp "$file" "dist/upload/${name/-$VERSION-/-$VERSION-$PR_NUMBER-${HEAD_SHA:0:7}-}"
@@ -350,13 +398,13 @@ jobs:
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
         id: uploaded
         env:
-          LEG: ${{ matrix.os == 'macos-latest' && 'macos' || 'windows' }}
+          LEG: ${{ matrix.os == 'macos-latest' && 'macos' || matrix.os == 'windows-latest' && 'windows' || 'linux' }}
         run: |
           echo "$LEG=uploaded" >> "$GITHUB_OUTPUT"
           echo "$LEG-seconds=$(node -p "((Date.now() - $BUILD_START_MS) / 1000).toFixed(3)")" >> "$GITHUB_OUTPUT"
 
-  # One section of the pull request's test builds comment for both platforms. It also runs when a
-  # leg failed, to show which one.
+  # One section of the pull request's test builds comment for every platform it built. It also runs
+  # when a leg failed, to show which one.
   comment:
     needs: build
     if: ${{ !cancelled() && github.event.pull_request.number }}
@@ -387,10 +435,13 @@ jobs:
           base-url: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
           version: ${{ needs.build.outputs.version }}
           branch: ${{ github.head_ref }}
-          macos: ${{ needs.build.outputs.macos }}
-          windows: ${{ needs.build.outputs.windows }}
+          # `skipped`: this run did not build that platform, so the section leaves it out.
+          macos: ${{ !inputs.macos-windows && 'skipped' || needs.build.outputs.macos }}
+          windows: ${{ !inputs.macos-windows && 'skipped' || needs.build.outputs.windows }}
+          linux: ${{ !inputs.linux && 'skipped' || needs.build.outputs.linux }}
           macos-seconds: ${{ needs.build.outputs.macos-seconds }}
           windows-seconds: ${{ needs.build.outputs.windows-seconds }}
+          linux-seconds: ${{ needs.build.outputs.linux-seconds }}
 
   # The installers' releases live in decentraland/creator-hub, so nothing tags this repository.
   # semantic-version reads `creator-hub@X.Y.Z` tags here to compute the next version.

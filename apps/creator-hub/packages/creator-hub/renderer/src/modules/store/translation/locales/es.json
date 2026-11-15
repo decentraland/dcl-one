@@ -622,6 +622,7 @@
             "invalid_app_extension": "Aplicación inválida. Por favor selecciona un archivo .app válido",
             "invalid_app_bundle": "Estructura de aplicación inválida",
             "invalid_exe_file": "Aplicación inválida. Por favor selecciona un archivo .exe válido",
+            "invalid_executable": "Aplicación inválida. Por favor selecciona un archivo que puedas ejecutar",
             "unknown": "Error al establecer el editor por defecto"
           }
         },

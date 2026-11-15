@@ -1,8 +1,9 @@
+import fs from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EditorConfig } from '/shared/types/config';
 
-import { open } from '../src/modules/code';
+import { addEditor, addEditorsPathsToConfig, open } from '../src/modules/code';
 
 // `vi.hoisted` is required here: code.ts imports `child_process` and `electron` at its
 // top, so the factories below run before plain module-level consts are initialized.
@@ -68,6 +69,8 @@ vi.mock('fs/promises', () => ({
   default: {
     stat: vi.fn(async () => ({ isDirectory: () => true })),
     readdir: vi.fn(async () => []),
+    access: vi.fn(async () => undefined),
+    constants: { X_OK: 1 },
   },
 }));
 
@@ -241,6 +244,97 @@ describe('code.open', () => {
       await open('/projects/scene/main.ts');
 
       expect(editorEnv()).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+    });
+  });
+});
+
+describe('when the platform is Linux', () => {
+  const originalPlatform = process.platform;
+  const originalPath = process.env.PATH;
+  const INSTALLED = [
+    '/usr/bin/code',
+    '/usr/bin/subl',
+    '/opt/zed/bin/zed',
+    '/snap/bin/cursor',
+    '/opt/tools/constructor',
+  ];
+  // Files that are there but that the user cannot run.
+  const NOT_EXECUTABLE = ['/home/user/bin/code', '/usr/share/applications/code.desktop'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    process.env.PATH = '/home/user/bin:/usr/bin';
+    editors = [];
+    vi.mocked(fs.stat).mockImplementation((async (file: string) => {
+      if (INSTALLED.includes(file) || NOT_EXECUTABLE.includes(file)) {
+        return { isDirectory: () => false, isFile: () => true };
+      }
+      if (file === '/usr/bin') return { isDirectory: () => true, isFile: () => false };
+      throw new Error('ENOENT');
+    }) as never);
+    vi.mocked(fs.access).mockImplementation((async (file: string) => {
+      if (!INSTALLED.includes(file)) throw new Error('EACCES');
+    }) as never);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    process.env.PATH = originalPath;
+    vi.mocked(fs.stat).mockImplementation((async () => ({ isDirectory: () => true })) as never);
+    vi.mocked(fs.access).mockImplementation((async () => undefined) as never);
+  });
+
+  describe('code.addEditorsPathsToConfig', () => {
+    it('should add the editors whose command is in PATH and skip a file that cannot run', async () => {
+      await addEditorsPathsToConfig();
+
+      expect(editors).toEqual([
+        { name: 'Visual Studio Code', path: '/usr/bin/code', isDefault: true },
+        { name: 'Sublime Text', path: '/usr/bin/subl', isDefault: false },
+      ]);
+    });
+
+    it('should not run the search of another platform', async () => {
+      await addEditorsPathsToConfig();
+
+      expect(execSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('code.addEditor', () => {
+    it('should accept a command that has no extension', async () => {
+      await addEditor('/opt/zed/bin/zed');
+
+      expect(editors).toEqual([
+        { name: 'zed', path: '/opt/zed/bin/zed', isDefault: true, hidden: false },
+      ]);
+    });
+
+    it('should give a known command the name of its editor', async () => {
+      await addEditor('/snap/bin/cursor');
+
+      expect(editors[0].name).toBe('Cursor');
+    });
+
+    it('should use the file name of a command that has the name of an object property', async () => {
+      await addEditor('/opt/tools/constructor');
+
+      expect(editors[0].name).toBe('constructor');
+    });
+
+    it('should reject a path that does not exist', async () => {
+      await expect(addEditor('/usr/bin/missing')).rejects.toThrow('file_not_found');
+    });
+
+    it('should reject a file that the user cannot run', async () => {
+      await expect(addEditor('/usr/share/applications/code.desktop')).rejects.toThrow(
+        'invalid_executable',
+      );
+    });
+
+    it('should reject a directory', async () => {
+      await expect(addEditor('/usr/bin')).rejects.toThrow('invalid_executable');
     });
   });
 });

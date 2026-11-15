@@ -34,6 +34,15 @@ export function getInjectedPathEntries(): string[] {
   return injectedPathEntries;
 }
 
+/**
+ * True when the user cannot write the app folder: an AppImage is a read-only mount, and a system
+ * package installs to a folder that belongs to root.
+ */
+function isReadOnlyInstall(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EROFS' || code === 'EACCES' || code === 'EPERM';
+}
+
 export function setupNodeBinary() {
   // Only run in production mode
   if (import.meta.env.DEV || import.meta.env.TEST) {
@@ -64,6 +73,7 @@ export function setupNodeBinary() {
   }
 
   log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
+  let linked = true;
   // on windows we use a cmd file
   if (platform() === 'win32') {
     cmdShim(
@@ -73,16 +83,25 @@ export function setupNodeBinary() {
     );
   } else {
     // otherwise we use a symlink
-    fs.symlinkSync(nodeBinPath, nodeCmdPath);
+    try {
+      fs.symlinkSync(nodeBinPath, nodeCmdPath);
+    } catch (error) {
+      if (!isReadOnlyInstall(error)) throw error;
+      // Child processes run on the bundled Node (node-runtime.ts), which needs no link.
+      log.warn(`[Install] The app folder is read-only, no node link: ${nodeCmdPath}`);
+      linked = false;
+    }
   }
 
-  // Update PATH environment variable
-  injectedPathEntries = [path.dirname(nodeCmdPath), path.dirname(npmBinPath)];
-  process.env.PATH = joinEnvPaths(...injectedPathEntries, process.env.PATH || '');
+  if (linked) {
+    // Update PATH environment variable
+    injectedPathEntries = [path.dirname(nodeCmdPath), path.dirname(npmBinPath)];
+    process.env.PATH = joinEnvPaths(...injectedPathEntries, process.env.PATH || '');
+  }
 
   if (platform() !== 'win32') {
     // on unix systems we need to install the path to the local bin folder for the Open in VSCode feature to work
-    process.env.PATH = joinEnvPaths(process.env.PATH, '/usr/local/bin');
+    process.env.PATH = joinEnvPaths(process.env.PATH || '', '/usr/local/bin');
   }
 
   log.info('[Install] node command:', nodeCmdPath);

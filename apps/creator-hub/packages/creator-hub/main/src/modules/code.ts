@@ -208,6 +208,44 @@ async function findWindowsEditors(): Promise<EditorConfig[]> {
   }
 }
 
+/** The command that starts each editor on Linux. Notepad++ has no Linux build. */
+const LINUX_EDITOR_COMMANDS: Record<string, EditorType> = {
+  code: EditorType.VSCode,
+  cursor: EditorType.Cursor,
+  subl: EditorType.Sublime,
+  eclipse: EditorType.Eclipse,
+};
+
+/** True for a file that the user can run, which is what a shell takes as a command. */
+async function isExecutableFile(filePath: string): Promise<boolean> {
+  try {
+    if (!(await fs.stat(filePath)).isFile()) return false;
+    await fs.access(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** On Linux an editor is a command: the first executable file with that name in PATH. */
+async function findLinuxEditors(): Promise<EditorConfig[]> {
+  const dirs = (process.env.PATH || '').split(':').filter(Boolean);
+  const installedEditorsFound: EditorConfig[] = [];
+
+  for (const [command, name] of Object.entries(LINUX_EDITOR_COMMANDS)) {
+    for (const dir of dirs) {
+      const fullPath = path.join(dir, command);
+      if (!(await isExecutableFile(fullPath))) continue;
+      log.info(`[Editor Found] ${name} at path: ${fullPath}`);
+      installedEditorsFound.push({ name, path: fullPath, isDefault: false });
+      break;
+    }
+  }
+
+  log.info(`[Editor Search] Found ${installedEditorsFound.length} editors`);
+  return installedEditorsFound;
+}
+
 export async function getEditors() {
   const config = await getConfigStorage();
   const editors = (await config.get('editors')) || [];
@@ -269,13 +307,23 @@ export async function addEditor(editorPath: string): Promise<EditorConfig[]> {
 
     editorFullPath = path.join(macosPath, executablePath);
     name = fileName.replace('.app', '');
-  } else {
+  } else if (process.platform === 'win32') {
     const fileName = path.basename(editorPath);
     if (!fileName.endsWith('.exe')) {
       throw new Error('invalid_exe_file');
     }
     editorFullPath = editorPath;
     name = fileName.replace('.exe', '') || 'Custom Editor';
+  } else {
+    // On Linux an editor is a command: an executable file with any name.
+    if (!(await isExecutableFile(editorPath))) {
+      throw new Error('invalid_executable');
+    }
+    const fileName = path.basename(editorPath);
+    editorFullPath = editorPath;
+    name = Object.hasOwn(LINUX_EDITOR_COMMANDS, fileName)
+      ? LINUX_EDITOR_COMMANDS[fileName]
+      : fileName || 'Custom Editor';
   }
 
   const config = await getConfigStorage();
@@ -337,8 +385,10 @@ export async function addEditorsPathsToConfig() {
   const currentEditorsConfig = (await config.get('editors')) || [];
   log.info('Existing editors:', currentEditorsConfig);
 
-  const installedEditorsFound =
-    process.platform === 'darwin' ? await findMacEditors() : await findWindowsEditors();
+  let installedEditorsFound: EditorConfig[];
+  if (process.platform === 'darwin') installedEditorsFound = await findMacEditors();
+  else if (process.platform === 'win32') installedEditorsFound = await findWindowsEditors();
+  else installedEditorsFound = await findLinuxEditors();
 
   log.info('Found editors:', installedEditorsFound);
 
