@@ -35,6 +35,8 @@ struct Source {
     enumerate: AtomicUsize,
     rooms: Mutex<SourceRooms>,
     dirty_on_read: Mutex<Option<Arc<Presence>>>,
+    /// The room a roster read's event names, when not the room being read.
+    dirty_room: Mutex<Option<String>>,
     not_found_remaining: AtomicUsize,
     recreate_on_not_found: AtomicBool,
     roster_reads: AtomicUsize,
@@ -67,7 +69,8 @@ async fn fixture() -> (Arc<CommsState>, Arc<Source>, tokio::task::JoinHandle<()>
                     return axum::http::StatusCode::NOT_FOUND.into_response();
                 }
                 if let Some(presence) = source.dirty_on_read.lock().as_ref() {
-                    presence.invalidate_room(body["room"].as_str().unwrap());
+                    let room = source.dirty_room.lock().clone();
+                    presence.invalidate_room(room.as_deref().unwrap_or_else(|| body["room"].as_str().unwrap()));
                 }
                 let values = source.rooms.lock().iter().find(|(name,_,_)| Some(name.as_str()) == body["room"].as_str())
                     .map(|(_,_,people)| people.iter().map(|(identity,sid)| json!({"identity":identity,"sid":sid})).collect::<Vec<_>>()).unwrap_or_default();
@@ -342,11 +345,95 @@ async fn same_scope_refresh_is_single_flight_and_does_not_refresh_global_source_
     server.abort();
 }
 
+#[tokio::test]
+async fn island_and_voice_events_leave_occupancy_reads_valid_but_an_unseen_world_room_does_not() {
+    let (state, source, server) = fixture().await;
+    state.presence.recover_complete(&state).await.unwrap();
+    let lobby = Scope::Lobby("foo.dcl.eth".into());
+    for room in ["island-fixture", "voice-chat-private-fixture"] {
+        state.presence.invalidate_room(room);
+        assert_eq!(state.presence.admission_count(&lobby), Some(1), "{room}");
+    }
+    *source.dirty_on_read.lock() = Some(state.presence.clone());
+    for room in ["island-fixture", "voice-chat-private-fixture"] {
+        *source.dirty_room.lock() = Some(room.into());
+        state.presence.recover_complete(&state).await.unwrap();
+        // An unseen world room's event sends the next admission read to LiveKit.
+        state.presence.invalidate_room("world-unseen.dcl.eth");
+        assert_eq!(state.presence.admission_count(&lobby), None);
+        assert_eq!(
+            state
+                .presence
+                .admission_occupancy(&state, "foo.dcl.eth", false)
+                .await
+                .unwrap(),
+            1,
+            "{room}"
+        );
+    }
+    *source.dirty_room.lock() = Some("world-unseen.dcl.eth".into());
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    assert!(matches!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await,
+        Err(RecoveryFailure::Changed)
+    ));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_scoped_read_classifies_only_rooms_that_could_hold_its_participants() {
+    let (mut state, source, server) = fixture().await;
+    {
+        let mut rooms = source.rooms.lock();
+        rooms.push(("world-bar.dcl.eth".into(), "RM_bar".into(), vec![]));
+        rooms.push(("island-fixture".into(), "RM_island".into(), vec![]));
+        for index in 0..8 {
+            rooms.push((
+                format!("world-other{index}.dcl.eth"),
+                format!("RM_other{index}"),
+                vec![],
+            ));
+        }
+    }
+    let catalogue = Arc::new(Catalogue::default());
+    Arc::get_mut(&mut state).unwrap().scenes = catalogue.clone();
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await
+            .unwrap(),
+        1
+    );
+    let classified = std::mem::take(&mut *catalogue.classified.lock());
+    assert!(!classified.is_empty());
+    assert!(
+        classified.iter().all(|room| room == "world-foo.dcl.eth"),
+        "{classified:?}"
+    );
+    state.presence.recover_complete(&state).await.unwrap();
+    assert!(
+        catalogue
+            .classified
+            .lock()
+            .iter()
+            .any(|room| room == "world-other0.dcl.eth")
+    );
+    server.abort();
+}
+
 #[derive(Default)]
 struct Catalogue {
     refusal: Option<(String, RoomRefusal)>,
     unavailable: Option<String>,
     extra: HashMap<String, crate::rooms::ResolvedRoom>,
+    classified: Mutex<Vec<String>>,
 }
 #[async_trait::async_trait]
 impl crate::interfaces::SceneIdentity for Catalogue {
@@ -354,6 +441,7 @@ impl crate::interfaces::SceneIdentity for Catalogue {
         &self,
         room: &str,
     ) -> Result<RoomClassification, crate::rooms::ResolveError> {
+        self.classified.lock().push(room.to_owned());
         if self.unavailable.as_deref() == Some(room) {
             return Err(crate::rooms::ResolveError::Db(sqlx::Error::Protocol(
                 "injected catalogue outage".into(),
@@ -754,14 +842,25 @@ async fn classifier_store_error_among_valid_rooms_is_not_empty_or_successful_obs
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     assert_eq!(state.presence.world_participant_count("foo.dcl.eth"), 1);
-    state.presence.invalidate_room("world-foo.dcl.eth");
+    // A scoped read classifies only the rooms that could hold its
+    // participants: the outage keeps bar undetermined, not foo. An unseen
+    // world room's event sends both reads to LiveKit.
+    state.presence.invalidate_room("world-unseen.dcl.eth");
     assert!(matches!(
         state
             .presence
-            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .admission_occupancy(&state, "bar.dcl.eth", false)
             .await,
         Err(RecoveryFailure::Source)
     ));
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await
+            .unwrap(),
+        1
+    );
     assert!(Arc::ptr_eq(&state.presence.complete(), &published));
     assert_eq!(state.presence.last_updated(), observed);
     server.abort();

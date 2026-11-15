@@ -135,7 +135,12 @@ impl Presence {
             .await?;
         let mut out = Vec::new();
         let mut refused = Vec::new();
+        // A scoped read classifies only the names that could hold its
+        // participants; every other name is left out of it either way.
         for source in rooms {
+            if scope.is_some_and(|scope| !scope.may_hold(&source.name)) {
+                continue;
+            }
             let classification = self
                 .operation(background, async {
                     crate::rooms::classify_room_name(scenes, &source.name)

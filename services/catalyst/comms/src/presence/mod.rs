@@ -49,9 +49,9 @@ impl Scope {
         }
     }
 
-    /// Whether a room this node refused could hold participants this scope
-    /// counts: the exact room, or a world room or upstream-format room name
-    /// that names the scope's world. Any other refused room cannot hold them,
+    /// Whether a room name could hold participants this scope counts: the
+    /// exact room, or a world room or upstream-format room name that names the
+    /// scope's world. Any other room, refused or canonical, cannot hold them,
     /// since every room this node admits to a world is canonical.
     fn may_hold(&self, refused: &str) -> bool {
         let world = match self {
@@ -164,12 +164,16 @@ impl Presence {
 
     /// Bounded invalidation: unseen rooms bump one epoch rather than allocating
     /// attacker-controlled event keys. Known rooms retain independent generations.
+    /// A name that can never classify as relevant (island, voice chat) is never
+    /// counted, so its events leave every occupancy read valid.
     pub fn invalidate_room(&self, room: &str) {
         let mut state = self.state.lock();
         if let Some(generation) = state.generations.get_mut(room) {
             *generation = generation.wrapping_add(1);
-        } else {
+        } else if crate::rooms::may_classify_relevant(room) {
             state.unknown_generation = state.unknown_generation.wrapping_add(1);
+        } else {
+            return;
         }
         drop(state);
         self.dirty.notify_one();
