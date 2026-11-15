@@ -3,6 +3,7 @@
 //! delivery records share the existing database; paid USD balances are untouched.
 pub mod flags;
 mod reads;
+mod reminders;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -452,6 +453,7 @@ async fn process_pass(
 
 pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
     flags::spawn(state, jobs);
+    reminders::spawn(state, jobs);
     let state = Arc::clone(state);
     let last_sample = Arc::new(parking_lot::Mutex::new(None));
     jobs.spawn_periodic_leased(
