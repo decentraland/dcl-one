@@ -184,7 +184,7 @@ pub struct Settings {
     pub interval: Duration,
     /// `LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` (50, effective minimum 2): log,
     /// timestamp-header and repair calls per pass, excluding head probes and
-    /// the cursor block's header.
+    /// the block headers that check a range's fork.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
     /// (the start block for a full repair, which may also switch registries).

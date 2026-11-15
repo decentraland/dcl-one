@@ -14,7 +14,8 @@ pub struct LandAuthzConfig {
     pub land_authz_index_interval_secs: u64,
 
     /// Log, timestamp-header and legacy-repair RPC budget per pass (minimum 2).
-    /// Head and cursor-block header probes are excluded; timestamp batches contain at most 100 blocks.
+    /// Head probes and the headers that check a range's fork are excluded;
+    /// timestamp batches contain at most 100 blocks.
     #[arg(long, env = "LAND_AUTHZ_INDEX_REQUESTS_PER_PASS", default_value_t = 50)]
     pub land_authz_index_requests_per_pass: usize,
 

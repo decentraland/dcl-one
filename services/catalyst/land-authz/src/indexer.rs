@@ -50,7 +50,10 @@ impl From<RpcError> for IndexError {
 /// indexed block: a fold of an old snapshot is not "current rights".
 pub const HEAD_LAG_BLOCKS: u64 = 25;
 /// How far below the cursor a reorg rewind re-reads: past Ethereum's
-/// finality (two epochs, 64 blocks) on top of the confirmation depth.
+/// finality (two epochs, 64 blocks) on top of the confirmation depth. The
+/// rewound block's hash is not checked against a stored one (only the
+/// cursor block's is kept), so a fork point further back than this stays
+/// undetected; that takes a finality failure on mainnet.
 pub const REORG_REWIND_BLOCKS: u64 = 128;
 /// How old a published fold may be before readers fall back (a stopped indexer).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
@@ -1107,6 +1110,20 @@ pub async fn sync_range(
         } else {
             to
         };
+        // The range's last block is read before and after its logs: its
+        // hash commits to every block below it, so an equal pair means the
+        // logs, timestamps and cursor hash all come from one fork.
+        // A header the node cannot serve yet pauses the pass, as an
+        // unresolved timestamp does; the next pass retries the range.
+        let before = match rpc.block_header(upper).await {
+            Ok(header) => header,
+            Err(RpcError::Rpc(message)) => {
+                tracing::warn!(network = %network, block = upper, %message, "land-authz: range header unavailable; retrying next pass");
+                outcome.paused = true;
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
         let (mut logs, mut reached, used) = match rpc
             .get_logs_bounded(
                 next,
@@ -1170,9 +1187,21 @@ pub async fn sync_range(
         }
         let events = decode_logs(&logs)?;
         // The cursor block's hash, recorded with the advance: the next pass
-        // compares it with the chain ([`check_cursor_block`]). A log of that
-        // block from another fork means the chain moved under this read.
-        let header = rpc.block_header(reached).await?;
+        // compares it with the chain ([`check_cursor_block`]). A changed
+        // last block, or a log of the cursor block from another fork, means
+        // the chain moved under this read: nothing is committed.
+        let reached_header = if reached == upper {
+            None
+        } else {
+            Some(rpc.block_header(reached).await?)
+        };
+        let after = rpc.block_header(upper).await?;
+        if !after.hash.eq_ignore_ascii_case(&before.hash) {
+            return Err(IndexError::Rpc(format!(
+                "block {upper} changed while blocks {next}..={upper} were read"
+            )));
+        }
+        let header = reached_header.unwrap_or(after);
         if logs.iter().any(|log| {
             hex_to_i64(&log.block_number) == Some(reached as i64)
                 && log
@@ -1271,6 +1300,11 @@ async fn check_cursor_block(
 /// moved from `from` meanwhile (nothing written). The row is locked
 /// `FOR UPDATE`, so a fold still writing rights from the old log commits
 /// first.
+///
+/// `social.land_transfer_cursor` is not moved: the `land_transfer_received`
+/// producer has already handled positions up to it, so it neither retracts
+/// a notice for an abandoned transfer nor announces a canonical transfer
+/// re-indexed at or below it.
 pub async fn rewind_reorg(
     pool: &PgPool,
     settings: &Settings,
