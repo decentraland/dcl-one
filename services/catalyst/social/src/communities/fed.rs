@@ -3028,6 +3028,37 @@ mod tests {
         let (status, _) = upload(&app, &poster, "again").await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "the signer's rate");
 
+        // The bounds are inclusive and count characters, not bytes: 100 ids, one of
+        // them 256 two-byte characters, are accepted.
+        let edge: Vec<String> = (0..99)
+            .map(|i| format!("edge-{i}"))
+            .chain([String::from("é").repeat(256)])
+            .collect();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: edge.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let added: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.community_places WHERE community_id = $1 AND place_id = ANY($2)",
+        )
+        .bind(id)
+        .bind(&edge)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(added, 100);
+
         let (status, _) = send(
             &app,
             &owner,
