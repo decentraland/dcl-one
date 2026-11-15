@@ -164,6 +164,7 @@ impl T {
             settings: &self.settings,
             now,
             asset_base: CDN,
+            wait_for_scenes: false,
         };
         sweep(&self.pool, &flow, occupancy).await.unwrap()
     }
@@ -676,15 +677,86 @@ async fn scenes_match_by_their_deployed_parcels_and_worlds_by_name() {
     let Some(t) = T::new().await else { return };
     t.badge("scene_visit", At::Scene(PARCEL), 0).await;
     t.badge("world_visit", At::World(None), 0).await;
-    // a world room never counts for a Genesis parcel, an unknown scene matches nothing
+    // a world room never counts for a Genesis parcel
     t.join(ALICE, "s1", T0, At::World(Some(SCENE))).await;
-    t.join(BOB, "s2", T0, At::Scene("bafkreiunknownscene"))
-        .await;
     t.join(BOB, "s3", T0, At::Scene(OTHER_SCENE)).await;
     assert!(t.progress("scene_visit", ALICE).await.is_none());
     assert!(t.progress("world_visit", ALICE).await.is_some());
     assert!(t.progress("scene_visit", BOB).await.is_none());
     assert!(t.progress("world_visit", BOB).await.is_none());
+}
+
+#[tokio::test]
+async fn an_unsynced_scene_waits_for_its_sync_and_holds_only_its_wallet() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let unsynced = "bafkreiunsyncedsceneddddddddddddddd";
+    let events = [
+        t.event(true, BOB, "s1", T0, At::Scene(unsynced)),
+        t.event(true, ALICE, "s2", T0, At::Scene(SCENE)),
+        t.event(false, BOB, "s1", T0 + 60_000, At::Scene(unsynced)),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let clock = || t.now;
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+            .await
+            .unwrap(),
+        1,
+        "the other wallet's join goes on"
+    );
+    assert!(t.progress("scene_visit", ALICE).await.is_some());
+    let queued: Vec<String> =
+        sqlx::query_scalar("SELECT wallet FROM social.presence_events ORDER BY seq")
+            .fetch_all(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(queued, [BOB, BOB], "the wallet keeps its order");
+
+    // synced on the badge parcel: the join is a visit
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, \
+           entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'scene', $2, '{}', now(), ARRAY['10,20'], now(), '[]')",
+    )
+    .bind(ALICE)
+    .bind(unsynced)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(t.progress("scene_visit", BOB).await.is_some());
+}
+
+#[tokio::test]
+async fn a_scene_never_synced_matches_nothing_after_the_grace() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let events = [t.event(true, BOB, "s1", T0, At::Scene("bafkreiunknownscene"))];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let clock = || t.now;
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE social.presence_events SET received_at = received_at - interval '2 hours'")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(t.progress("scene_visit", BOB).await.is_none());
 }
 
 #[tokio::test]

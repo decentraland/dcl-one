@@ -1627,7 +1627,9 @@ with the engine's lookahead and lookback. A scene entity the snapshot does not
 know (a redeploy since) is looked up by `entity_id` in the webhook that carries
 it, under the webhook's lock stripes, and dropped
 only when it is deployed off every badge parcel; one the node has not synced
-is kept for the engine. Every event is kept when the snapshot cannot be read.
+is kept for the engine, which leaves it queued (and the wallet's later events
+behind it) until the scene syncs, matching no parcel only after an hour.
+Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
 not counted, and the player's next join is. Expected volume is every
 join and leave of the scene and world rooms of active presence badges

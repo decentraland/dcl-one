@@ -23,7 +23,7 @@ pub mod sweeper;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -87,7 +87,8 @@ pub fn secs_to_ms(seconds: u64) -> i64 {
 /// so one bad row cannot stop the flow.
 const MAX_ATTEMPTS: u32 = 3;
 /// Past this age in the queue a transient failure counts too, so an event
-/// that always times out cannot hold the queue forever.
+/// that always times out cannot hold the queue forever; an event waiting for
+/// its scene to sync is applied as matching no parcel.
 const TRANSIENT_GRACE_MS: i64 = 3_600_000;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -120,7 +121,8 @@ impl From<EventRow> for PresenceEvent {
 /// The process clock, epoch ms; read per event, so a long drain keeps time.
 pub type Clock<'a> = &'a (dyn Fn() -> i64 + Sync);
 
-/// Applies stored events until a pass comes back short.
+/// Applies stored events until a pass comes back short. Events left
+/// waiting for their scene stay queued; the drain reads past them.
 pub async fn drain(
     pool: &PgPool,
     settings: &Settings,
@@ -128,17 +130,24 @@ pub async fn drain(
     clock: Clock<'_>,
     failures: &mut HashMap<i64, u32>,
 ) -> anyhow::Result<()> {
-    while apply_pending(pool, settings, asset_base, clock, failures).await? as i64
+    let mut pass = Pass::default();
+    while apply_from(pool, settings, asset_base, clock, failures, &mut pass).await? as i64
         >= settings.event_batch
     {}
     Ok(())
 }
 
-/// Applies up to `event_batch` stored events in `seq` order, each in its own
-/// transaction that deletes it and with the clock read for it. `failures`
-/// counts the passes an event failed (kept by the job); the first failure
-/// ends the pass with the error. The age of the oldest queued event is
-/// reported as `badges_presence_queue_oldest_seconds`.
+/// Where a drain stands: the last `seq` read, and the wallets one of whose
+/// events waits for its scene (their later events wait too, keeping order).
+#[derive(Default)]
+struct Pass {
+    after: i64,
+    waiting: HashSet<String>,
+    /// Events applied this drain.
+    applied: usize,
+}
+
+/// One pass over the head of the queue; see [`drain`].
 pub async fn apply_pending(
     pool: &PgPool,
     settings: &Settings,
@@ -146,29 +155,64 @@ pub async fn apply_pending(
     clock: Clock<'_>,
     failures: &mut HashMap<i64, u32>,
 ) -> anyhow::Result<usize> {
-    let queued: Vec<(i64, i64)> = sqlx::query_as(
-        "SELECT seq, (extract(epoch FROM timezone('UTC', now()) - received_at) * 1000)::bigint \
-         FROM social.presence_events ORDER BY seq LIMIT $1",
+    let mut pass = Pass::default();
+    apply_from(pool, settings, asset_base, clock, failures, &mut pass).await?;
+    Ok(pass.applied)
+}
+
+/// Applies up to `event_batch` stored events after `pass.after` in `seq`
+/// order, each in its own transaction that deletes it and with the clock
+/// read for it, and returns how many it read. `failures` counts the passes
+/// an event failed (kept by the job); the first failure ends the pass with
+/// the error. An event a scene badge must wait for (its scene is not synced
+/// yet) stays queued, as does every later event of its wallet in the drain.
+/// The age of the oldest queued event is reported as
+/// `badges_presence_queue_oldest_seconds`.
+async fn apply_from(
+    pool: &PgPool,
+    settings: &Settings,
+    asset_base: &str,
+    clock: Clock<'_>,
+    failures: &mut HashMap<i64, u32>,
+    pass: &mut Pass,
+) -> anyhow::Result<usize> {
+    let queued: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT seq, (extract(epoch FROM timezone('UTC', now()) - received_at) * 1000)::bigint, wallet \
+         FROM social.presence_events WHERE seq > $2 ORDER BY seq LIMIT $1",
     )
     .bind(settings.event_batch)
+    .bind(pass.after)
     .fetch_all(pool)
     .await?;
-    let oldest = queued.iter().map(|(_, age)| *age).max().unwrap_or(0);
-    metrics::gauge!("badges_presence_queue_oldest_seconds").set(oldest.max(0) as f64 / 1000.0);
-    let mut applied = 0;
-    for (seq, queued_ms) in queued {
+    if pass.after == 0 {
+        let oldest = queued.iter().map(|(_, age, _)| *age).max().unwrap_or(0);
+        metrics::gauge!("badges_presence_queue_oldest_seconds").set(oldest.max(0) as f64 / 1000.0);
+    }
+    let read = queued.len();
+    for (seq, queued_ms, wallet) in queued {
+        pass.after = seq;
+        if pass.waiting.contains(&wallet) {
+            continue;
+        }
         let flow = Flow {
             settings,
             now: clock(),
             asset_base,
+            wait_for_scenes: queued_ms <= TRANSIENT_GRACE_MS,
         };
         match apply_one(pool, &flow, seq).await {
             Ok(outcome) => {
                 failures.remove(&seq);
-                applied += usize::from(outcome.is_some());
+                pass.applied += usize::from(outcome.is_some());
                 for o in outcome.into_iter().flat_map(|o| o.outcomes) {
                     metrics::counter!("badges_presence_events_total", "outcome" => o).increment(1);
                 }
+            }
+            Err(error) if engine::is_scene_not_synced(&error) => {
+                tracing::debug!(seq, %error, "presence event waits for its scene");
+                metrics::counter!("badges_presence_events_total", "outcome" => "scene_not_synced")
+                    .increment(1);
+                pass.waiting.insert(wallet);
             }
             Err(error) => {
                 let aged = queued_ms > TRANSIENT_GRACE_MS;
@@ -185,7 +229,7 @@ pub async fn apply_pending(
             }
         }
     }
-    Ok(applied)
+    Ok(read)
 }
 
 /// Whether the event is dropped after this failure. A deterministic error
@@ -303,6 +347,7 @@ pub fn spawn_jobs(
                     settings: &settings,
                     now: now_ms(),
                     asset_base: &asset_base,
+                    wait_for_scenes: false,
                 };
                 let occupancy = settings.sweeper_enabled.then_some(occupancy.as_ref());
                 let summary = sweep(&pool, &flow, occupancy).await?;
