@@ -40,8 +40,9 @@ const CONNECTION_RECEIVE_WINDOW: u32 = 4 * STREAM_RECEIVE_WINDOW;
 /// Inbound datagrams buffered before the oldest is dropped: about fifty 1200-byte Pulse
 /// datagrams. The maximum datagram frame size it advertises stays at its 65535-byte cap.
 const DATAGRAM_RECEIVE_BUFFER: usize = 64 * 1024;
-/// A connection silent for this long is closed (the QUIC default, stated explicitly).
-const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Milliseconds a connection may stay silent before it is closed (the QUIC default, stated
+/// explicitly).
+const IDLE_TIMEOUT_MS: u32 = 30_000;
 
 /// Settings for constructing a [`Host`].
 pub struct HostConfig {
@@ -370,9 +371,11 @@ fn server_config(
     Ok(config)
 }
 
-/// Stream counts, flow-control windows and buffers sized to what one Pulse session uses, so a
-/// connection buffers at most [`CONNECTION_RECEIVE_WINDOW`] of stream data and
-/// [`DATAGRAM_RECEIVE_BUFFER`] of datagrams, whether or not the host reads it.
+/// Stream counts, flow-control windows and buffers sized to what one Pulse session uses, so
+/// quinn buffers at most [`CONNECTION_RECEIVE_WINDOW`] of stream data and
+/// [`DATAGRAM_RECEIVE_BUFFER`] of datagrams per connection. These caps stop at quinn: the
+/// stream and datagram loops forward what they read into the host's unbounded events channel,
+/// which grows if [`Host::service`] falls behind.
 fn transport_config() -> quinn::TransportConfig {
     let mut transport = quinn::TransportConfig::default();
     transport
@@ -381,11 +384,7 @@ fn transport_config() -> quinn::TransportConfig {
         .stream_receive_window(STREAM_RECEIVE_WINDOW.into())
         .receive_window(CONNECTION_RECEIVE_WINDOW.into())
         .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
-        .max_idle_timeout(Some(
-            IDLE_TIMEOUT
-                .try_into()
-                .expect("the idle timeout fits a QUIC varint"),
-        ));
+        .max_idle_timeout(Some(quinn::VarInt::from_u32(IDLE_TIMEOUT_MS).into()));
     transport
 }
 
