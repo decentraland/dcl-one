@@ -12,6 +12,16 @@ on:
     branches: [main]
     paths:
       - 'apps/creator-hub/**'
+      # The ui3 and shop files in the renderer bundle: the include list of
+      # apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json.
+      - 'apps/ui3/src/atoms/**'
+      - 'apps/ui3/src/shop/land/**'
+      - 'apps/ui3/src/shop/checkout/chain/**'
+      - 'apps/ui3/src/explorer/components/MapSurface.tsx'
+      - 'apps/ui3/src/explorer/components/mapsurface.css'
+      - 'apps/ui3/src/data/**'
+      - 'apps/ui3/src/generated/bridge/**'
+      - 'library/shop/**'
       - '.github/workflows/creator-hub-*'
       - '.github/actions/creator-hub-*/**'
       # The pnpm version and its digests, which every Creator Hub job installs with.
@@ -51,7 +61,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE...$HEAD" \
-              | grep -qE '^(apps/creator-hub/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-|\.github/actions/setup-pnpm/)'; then
+              | grep -qE '^(apps/creator-hub/|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/shop/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-|\.github/actions/setup-pnpm/)'; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
           else
             echo "creator-hub=false" >> "$GITHUB_OUTPUT"

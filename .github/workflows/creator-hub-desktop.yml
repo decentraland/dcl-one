@@ -192,7 +192,9 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          change_path: "apps/creator-hub"
+          # The renderer bundle also holds apps/ui3/src/atoms (the `@ui` alias in apps/creator-hub/packages/creator-hub/renderer/vite.config.js)
+          # and the LAND map with its helpers (the include list of apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json).
+          change_path: "apps/creator-hub apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/shop"
 
       # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
