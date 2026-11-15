@@ -77,6 +77,7 @@ jobs:
               'apps/creator-hub/packages/creator-hub/shared/**',
               'apps/creator-hub/packages/creator-hub/types/**',
               'apps/creator-hub/packages/creator-hub/package.json',
+              'apps/creator-hub/packages/zip-extract/**',
               'apps/creator-hub/pnpm-lock.yaml',
               'apps/creator-hub/pnpm-workspace.yaml',
               'apps/creator-hub/Makefile',

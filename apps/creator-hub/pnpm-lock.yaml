@@ -281,9 +281,6 @@ importers:
       '@dcl/asset-packs':
         specifier: file:../asset-packs
         version: link:../asset-packs
-      '@noble/hashes':
-        specifier: 2.4.0
-        version: 2.4.0
       '@protobufjs/utf8':
         specifier: 1.1.2
         version: 1.1.2
@@ -354,6 +351,9 @@ importers:
       '@dcl/sdk':
         specifier: 7.29.0
         version: 7.29.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
       '@oxc-parser/wasm':
         specifier: ^0.60.0
         version: 0.60.0

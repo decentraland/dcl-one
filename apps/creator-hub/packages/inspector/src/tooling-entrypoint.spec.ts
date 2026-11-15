@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs';
-import { builtinModules } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
+import { builtinModules, createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
 import { build } from 'esbuild';
 
 import { getNotBundledModules } from '../build-externals';
@@ -42,5 +43,23 @@ describe('when bundling the tooling entrypoint for Node', () => {
         !(packageOf(path) in dependencies),
     );
     expect([...new Set(notInstalled)]).toEqual([]);
+  });
+
+  it('should require at runtime only files that CommonJS can load', () => {
+    // A consumer on a Node version without `require` of ES modules must still load the entry.
+    const requireFromPackage = createRequire(resolve('package.json'));
+    const isEsModule = (file: string) => {
+      if (/\.[cm]js$/.test(file)) return file.endsWith('.mjs');
+      let dir = dirname(file);
+      while (!existsSync(join(dir, 'package.json'))) dir = dirname(dir);
+      return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).type === 'module';
+    };
+    const esModules = runtimeRequires.filter(
+      path =>
+        !path.startsWith('node:') &&
+        !builtinModules.includes(path) &&
+        isEsModule(requireFromPackage.resolve(path)),
+    );
+    expect([...new Set(esModules)]).toEqual([]);
   });
 });
