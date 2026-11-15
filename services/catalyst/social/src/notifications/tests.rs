@@ -1814,7 +1814,14 @@ mod ingest {
         assert!(validate(&at_skew, Producer::Governance, NOW).is_ok());
         let mut big = ok.clone();
         big["metadata"] = json!({ "pad": "x".repeat(MAX_METADATA_BYTES - 10) });
-        assert!(validate(&json!(vec![big; 20_000]), Producer::Governance, NOW).is_ok());
+        assert!(validate(&json!([big]), Producer::Governance, NOW).is_ok());
+        // No item cap: more than the old 10,000 small items pass.
+        assert_eq!(
+            validate(&json!(vec![ok.clone(); 20_000]), Producer::Governance, NOW)
+                .unwrap()
+                .len(),
+            20_000
+        );
     }
 
     #[test]
@@ -2348,6 +2355,17 @@ mod ingest {
                 .await
                 .unwrap();
         assert_eq!(written, 2_000, "every chunk of the batch is written");
+        let delivered: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.notification_deliveries d JOIN social.notifications n ON n.id = d.notification_id WHERE n.address = $1",
+        )
+        .bind(&to)
+        .fetch_one(state.store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            delivered, 2_000,
+            "each chunk commits its rows' delivery rows"
+        );
         let req = Request::builder()
             .method("POST")
             .uri(PATH)

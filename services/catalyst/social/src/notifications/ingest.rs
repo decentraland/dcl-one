@@ -48,7 +48,7 @@ pub const BROADCAST_TYPES: [&str; 1] = ["governance_announcement"];
 pub const MAX_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
 /// Serialized `metadata` per item.
 pub const MAX_METADATA_BYTES: usize = 16 * 1024;
-/// Rows per INSERT statement inside the batch's transaction.
+/// Rows per INSERT statement and transaction.
 const WRITE_CHUNK: usize = 1_000;
 
 /// A producer and the type prefix its token may publish.
@@ -292,21 +292,26 @@ impl std::ops::AddAssign for Upserted {
     }
 }
 
-/// Upserts the batch in one transaction.
-/// Addressed rows get their email delivery row; opted-out recipients are dropped.
+/// Upserts the batch one [`WRITE_CHUNK`] transaction at a time, so no row
+/// stays locked for the whole body; a retry after a partial failure redoes
+/// the rest idempotently. Each id lands in one chunk, so a new row gets its
+/// email delivery row in its own chunk's transaction; opted-out recipients
+/// are dropped.
 pub async fn upsert(pool: &PgPool, batch: Vec<Ingested>) -> Result<Upserted, sqlx::Error> {
     let batch = dedup(batch);
     let (addressed, broadcast): (Vec<_>, Vec<_>) =
         batch.into_iter().partition(|n| n.address.is_some());
-    let mut tx = pool.begin().await?;
     let mut written = Upserted::default();
     for chunk in addressed.chunks(WRITE_CHUNK) {
+        let mut tx = pool.begin().await?;
         written += upsert_addressed(&mut tx, chunk).await?;
+        tx.commit().await?;
     }
     for chunk in broadcast.chunks(WRITE_CHUNK) {
+        let mut tx = pool.begin().await?;
         written += upsert_broadcasts(&mut tx, chunk).await?;
+        tx.commit().await?;
     }
-    tx.commit().await?;
     Ok(written)
 }
 

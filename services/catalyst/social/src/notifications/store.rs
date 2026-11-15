@@ -155,6 +155,13 @@ static UPSERT_TAIL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// A repeated broadcast key refreshes the wallet's row like upstream's upsert.
+const BROADCAST_REFRESH: &str =
+    "ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
+        SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+        WHERE t.type = EXCLUDED.type
+    RETURNING id, address, type, (xmax = 0) AS inserted";
+
 type ListRow = (
     Uuid,
     String,
@@ -263,11 +270,12 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
-    // DO UPDATE may touch a row once per statement: the last of a repeated id wins.
+    // DO UPDATE may touch a row once per statement: the last of a repeated id
+    // wins; id order keeps overlapping batches locking rows in one order.
     let mut seen = std::collections::HashSet::new();
     let mut unique: Vec<&NewNotification> =
         batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
-    unique.reverse();
+    unique.sort_by_key(|n| n.id);
     let batch = unique;
     let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
     let addresses: Vec<&str> = batch.iter().map(|n| n.address.as_str()).collect();
@@ -454,7 +462,8 @@ impl NotificationsStore {
     }
 
     /// One row per recipient (every subscription, or the explicit list),
-    /// idempotent per `(address, broadcast_key)`; returns the new rows.
+    /// one per `(address, broadcast_key)`: a repeat refreshes metadata and time,
+    /// keeps the read state and never emails again; returns the new rows.
     pub async fn broadcast(
         &self,
         broadcast_key: &str,
@@ -466,52 +475,57 @@ impl NotificationsStore {
         let Some(list) = addresses else {
             let sql = format!(
                 r#"
-                WITH ins AS (
-                    INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+                WITH ups AS (
+                    INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
                     SELECT gen_random_uuid(), address, $1, $2, $3, $4 FROM social.subscriptions
-                    ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
-                    RETURNING id, address, type
-                )
-                {delivery}
+                    ORDER BY address
+                    {BROADCAST_REFRESH}
+                ),
+                {tail}
                 "#,
-                delivery = *DELIVERY_ROWS_SQL
+                tail = *UPSERT_TAIL
             );
-            let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+            let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(kind)
                 .bind(metadata)
                 .bind(broadcast_key)
                 .bind(now)
-                .execute(&self.pool)
+                .fetch_one(&self.pool)
                 .await?;
-            return Ok(res.rows_affected());
+            return Ok(inserted as u64);
         };
         if list.is_empty() {
             return Ok(0);
         }
-        let ids: Vec<Uuid> = (0..list.len()).map(|_| Uuid::new_v4()).collect();
-        let targets: Vec<&str> = list.iter().map(Address::as_str).collect();
+        // One row per address (DO UPDATE touches a row once), in lock order.
+        let targets: Vec<&str> = list
+            .iter()
+            .map(Address::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let ids: Vec<Uuid> = (0..targets.len()).map(|_| Uuid::new_v4()).collect();
         let sql = format!(
             r#"
-            WITH ins AS (
-                INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            WITH ups AS (
+                INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
                 SELECT u.id, u.address, $3, $4, $5, $6 FROM UNNEST($1::uuid[], $2::text[]) AS u(id, address)
-                ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
-                RETURNING id, address, type
-            )
-            {delivery}
+                {BROADCAST_REFRESH}
+            ),
+            {tail}
             "#,
-            delivery = *DELIVERY_ROWS_SQL
+            tail = *UPSERT_TAIL
         );
-        let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(&ids)
             .bind(&targets)
             .bind(kind)
             .bind(metadata)
             .bind(broadcast_key)
             .bind(now)
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await?;
-        Ok(res.rows_affected())
+        Ok(inserted as u64)
     }
 
     pub async fn mark_read(&self, address: &Address, ids: &[Uuid]) -> Result<u64, ApiError> {
@@ -1219,7 +1233,7 @@ mod pg_tests {
     }
 
     #[tokio::test]
-    async fn broadcast_is_idempotent_per_recipient_and_writes_delivery_rows() {
+    async fn broadcast_is_one_row_per_recipient_refreshed_on_repeat_with_delivery_rows() {
         let Some(c) = store().await else { return };
         let pool = c.pool().clone();
         let (a, b) = (fresh_address(), fresh_address());
@@ -1321,6 +1335,36 @@ mod pg_tests {
         );
         let listed = c.list(&a, 50, None, false).await.unwrap();
         assert_eq!(listed.len(), 2);
+
+        // A repeat refreshes the payload, keeps the read state, adds no delivery row.
+        let first: Uuid = sqlx::query_scalar(
+            "SELECT id FROM social.notifications WHERE broadcast_key = $1 AND address = $2",
+        )
+        .bind(&key_some)
+        .bind(&a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        c.mark_read(&a, &[first]).await.unwrap();
+        let newer = serde_json::json!({"title": "updated"});
+        c.broadcast(
+            &key_some,
+            "bid_received",
+            &newer,
+            Some(std::slice::from_ref(&a)),
+        )
+        .await
+        .unwrap();
+        let row: (Uuid, Json, bool, i64) = sqlx::query_as(
+            "SELECT n.id, n.metadata, n.read, (SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id = n.id)
+             FROM social.notifications n WHERE n.broadcast_key = $1 AND n.address = $2",
+        )
+        .bind(&key_some)
+        .bind(&a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, (first, newer, true, 1));
     }
 
     #[tokio::test]
