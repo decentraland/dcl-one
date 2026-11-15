@@ -217,11 +217,16 @@ struct ResolvedItem {
 /// `social.badge_cursor_gaps`): the last `content.deployments.id` passed.
 pub const CURSOR_SOURCE: &str = "friend_first_wear";
 
-/// A profile signed more than this before the pass reads it is history a
-/// syncing node caught up on, not an outfit worn now: passed without effect.
-const FRESHNESS_HOURS: i64 = 24;
+/// A profile the node stored more than this after its signed timestamp is
+/// history a syncing node caught up on, not an outfit worn now: passed
+/// without effect. Measured at storage, not at the pass, so a producer that
+/// stalls still works through its backlog.
+const MAX_STORAGE_LAG_HOURS: i64 = 24;
 
-/// Batches one pass drains at most before yielding.
+/// Batches one pass drains at most before yielding. The batch size and gap
+/// grace are the id cursor's defaults (200 rows, 600 s), independent of the
+/// badge processor's `BADGES_PROCESSOR_*` knobs, which configure the badge
+/// jobs only.
 const MAX_BATCHES_PER_PASS: usize = 50;
 
 /// Every deployment by `id`, the profile metadata only: reading only the
@@ -229,6 +234,7 @@ const MAX_BATCHES_PER_PASS: usize = 50;
 const READ: IdSource = IdSource {
     name: CURSOR_SOURCE,
     select: "SELECT d.id, d.entity_type, d.entity_pointers[1] AS address, d.entity_timestamp, \
+                    d.local_timestamp, \
                     CASE WHEN d.entity_type = 'profile' THEN d.entity_metadata::text END AS meta \
              FROM content.deployments d",
     key: "d.id",
@@ -241,6 +247,7 @@ struct Deployment {
     entity_type: String,
     address: Option<String>,
     entity_timestamp: NaiveDateTime,
+    local_timestamp: NaiveDateTime,
     meta: Option<String>,
 }
 
@@ -290,6 +297,7 @@ pub async fn run_once(
             break;
         }
     }
+    crate::badges::jobs::report_id_lag(pool, &READ).await;
     Ok(emitted)
 }
 
@@ -309,10 +317,10 @@ async fn claim_batch(pass: &Pass) -> anyhow::Result<(Vec<FirstWear>, bool)> {
         tx.rollback().await?;
         return Ok((Vec::new(), false));
     }
-    let floor = now_utc() - chrono::Duration::hours(FRESHNESS_HOURS);
+    let max_lag = chrono::Duration::hours(MAX_STORAGE_LAG_HOURS);
     let mut wears = Vec::new();
     for row in &read.rows {
-        if row.entity_type != "profile" || row.entity_timestamp < floor {
+        if row.entity_type != "profile" || row.local_timestamp - row.entity_timestamp > max_lag {
             continue;
         }
         let entity_ts = row.entity_timestamp;
@@ -810,15 +818,26 @@ mod pg_tests {
         ts: chrono::NaiveDateTime,
         wearables: &[&str],
     ) {
+        deploy_profile_stored(pool, address, ts, ts, wearables).await;
+    }
+
+    async fn deploy_profile_stored(
+        pool: &PgPool,
+        address: &Address,
+        ts: chrono::NaiveDateTime,
+        stored: chrono::NaiveDateTime,
+        wearables: &[&str],
+    ) {
         let meta = json!({"v": {"avatars": [{"name": "W", "avatar": {"wearables": wearables}}]}});
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
-             VALUES ($1, 'v3', 'profile', $2, $3::json, $4, ARRAY[$1::text], $4, '[]'::json)",
+             VALUES ($1, 'v3', 'profile', $2, $3::json, $4, ARRAY[$1::text], $5, '[]'::json)",
         )
         .bind(address.as_str())
         .bind(format!("bafy-{}", Uuid::new_v4().simple()))
         .bind(meta)
         .bind(ts)
+        .bind(stored)
         .execute(pool)
         .await
         .unwrap();
@@ -930,7 +949,7 @@ mod pg_tests {
     /// The cursor follows the order the node stored deployments in, not the
     /// signer's clock: a profile signed ahead does not hide the ones stored
     /// after it, profiles sharing a timestamp across a batch edge are all
-    /// read, and a profile signed long before the pass is passed.
+    /// read, and a profile stored long after it was signed is passed.
     #[tokio::test]
     async fn profiles_are_read_in_storage_order_whatever_their_timestamps() {
         let Some(pool) = private_pool("ffw_order").await else {
@@ -979,12 +998,19 @@ mod pg_tests {
             );
         }
 
-        let stale = fresh_address();
-        deploy_profile(&pool, &stale, now - chrono::Duration::days(2), &[]).await;
+        let synced = fresh_address();
+        deploy_profile_stored(&pool, &synced, now - chrono::Duration::days(2), now, &[]).await;
+        let backlog = fresh_address();
+        let two_days_ago = now - chrono::Duration::days(2);
+        deploy_profile_stored(&pool, &backlog, two_days_ago, two_days_ago, &[]).await;
         run_once(&pool, None, &settings).await.unwrap();
         assert!(
-            !has_baseline(&pool, &stale).await,
-            "a profile signed long ago is history: passed"
+            !has_baseline(&pool, &synced).await,
+            "a profile stored long after it was signed is synced history: passed"
+        );
+        assert!(
+            has_baseline(&pool, &backlog).await,
+            "a profile stored when it was signed is read however late the pass"
         );
     }
 
