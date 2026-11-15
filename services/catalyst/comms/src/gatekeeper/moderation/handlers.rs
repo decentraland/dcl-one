@@ -24,7 +24,7 @@ use crate::gatekeeper::auth::{
     authorize_moderator, require_service_token, service_token_error, validate_body,
     verify_signed_fetch,
 };
-use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled};
+use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled, unauthorized};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -355,6 +355,25 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
+/// Listing a scene's bans takes the same owner-or-admin authority as
+/// writing them; a caller without it gets the upstream 401, and a decision
+/// that could not be made keeps its own status.
+async fn ensure_can_list_bans(
+    state: &CommsState,
+    place: &PlaceLookup<'_>,
+    signer: &Address,
+) -> Result<(), ApiError> {
+    match scene::scene_owner_or_admin_decision(state, place, signer).await {
+        crate::PermissionDecision::Allowed => Ok(()),
+        crate::PermissionDecision::Refused(
+            crate::AuthorityNotEstablished::RefusedLacksAuthority { .. },
+        ) => Err(unauthorized(
+            "User does not have permission to list scene bans",
+        )),
+        crate::PermissionDecision::Refused(why) => Err(why.into()),
+    }
+}
+
 /// GET /scene-bans (scene signed): the banned wallets of the place with
 /// names, keyed on the resolved scene.
 pub async fn list_bans(
@@ -372,6 +391,7 @@ pub async fn list_bans(
     )
     .await?;
     let context = Context::resolve(&state, &sf.metadata).await?;
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let place_id = context.place.place_id();
     if q.place_id.as_deref().is_some_and(|id| id != place_id) {
         return Err(ApiError::bad_request(
@@ -412,6 +432,7 @@ pub async fn list_ban_addresses(
     )
     .await?;
     let context = Context::resolve(&state, &sf.metadata).await?;
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let place_id = context.place.place_id();
     if q.place_id.as_deref().is_some_and(|id| id != place_id) {
         return Err(ApiError::bad_request(
