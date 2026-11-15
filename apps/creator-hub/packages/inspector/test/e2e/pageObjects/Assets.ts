@@ -61,7 +61,7 @@ class AssetsPageObject {
   async getNameTooltipPlacement(asset: string) {
     const tile = page.locator(`.Assets .assets-catalog-asset[data-test-label="${asset}"]`).first();
     await tile.hover();
-    const tooltip = page.locator('.ui.popup.InfoTooltip').first();
+    const tooltip = page.locator('.tt__tip.InfoTooltip').first();
     await tooltip.waitFor({ state: 'visible', timeout: 5_000 });
     const header = page.locator('.Assets .assets-catalog-header-title').first();
     const [tileBox, tooltipBox, headerBox] = await Promise.all([

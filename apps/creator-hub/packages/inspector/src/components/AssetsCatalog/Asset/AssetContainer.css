@@ -1,18 +1,3 @@
-.SmartItemTooltip {
-  padding: 0 !important;
-  height: 130px;
-  width: 354px;
-  background-color: #161518 !important;
-  border-width: 0.5px 0px 0px 0.5px !important;
-  border-style: solid !important;
-  border-color: #ffffff !important;
-  border-radius: 4px 0px 0px 4px !important;
-}
-
-.SmartItemTooltip::before {
-  display: none !important;
-}
-
 .SmartItemTooltipTrigger {
   display: inline-block;
 }
@@ -29,6 +14,13 @@
   line-height: 14px;
   letter-spacing: 0px;
   vertical-align: middle;
+  width: 354px;
+  background-color: #161518;
+  border-width: 0.5px 0px 0px 0.5px;
+  border-style: solid;
+  border-color: #ffffff;
+  border-radius: 4px 0px 0px 4px;
+  overflow: hidden;
 }
 
 .SmartItemTooltipText {
@@ -47,9 +39,4 @@
   align-items: center;
   gap: 4px;
   color: #ff2d55;
-}
-
-.SmartItemTooltip .SmartItemTooltipAuthor .dcl.logo {
-  width: 16px;
-  height: 16px;
 }

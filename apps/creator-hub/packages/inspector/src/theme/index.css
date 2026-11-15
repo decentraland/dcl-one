@@ -19,9 +19,11 @@ input[type="number"] {
   appearance: none;
 }
 
-.ui.popup,
-.ui.inverted.popup {
-  height: auto;
+/* The shared ui3 spinner turns with this animation; ui3 defines it in its own base stylesheet. */
+@keyframes u-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Make context menu submenus scrollable when they have many items */

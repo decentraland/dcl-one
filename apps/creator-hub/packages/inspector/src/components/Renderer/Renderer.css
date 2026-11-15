@@ -15,7 +15,7 @@
   position: absolute;
 }
 
-.Renderer .loading .ui.dimmer {
+.Renderer .loading .loading-dimmer {
   opacity: 0.5;
 }
 

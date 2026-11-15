@@ -8,8 +8,7 @@ import { store } from './redux/store';
 import { App } from './components/App';
 import { SdkProvider } from './components/SdkProvider';
 
-import 'decentraland-ui/lib/styles.css';
-import 'decentraland-ui/lib/dark-theme.css';
+import './theme/base.css';
 import 'react-contexify/ReactContexify.css';
 import './theme/vars.css';
 import './theme/index.css';

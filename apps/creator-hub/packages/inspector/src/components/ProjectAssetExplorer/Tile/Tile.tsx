@@ -8,8 +8,8 @@ import { Item as MenuItem } from 'react-contexify';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
 import { useDrag, useDrop } from 'react-dnd';
 import { cx } from '../../../lib/utils/cx';
-import { Loader } from 'decentraland-ui/dist/components/Loader/Loader';
 
+import { LoadingSpinner } from '../../Loading';
 import {
   transformBinaryToBase64Resource,
   withAssetDir,
@@ -333,7 +333,7 @@ export const Tile = withContextMenu<Props>(
         >
           {isLoading && (
             <div className="overlay">
-              <Loader active />
+              <LoadingSpinner />
             </div>
           )}
           {renderThumbnail()}
