@@ -90,11 +90,13 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
 re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
-completed the handshake hold at most a quarter of it, beyond that also 503; a socket must send its
-challenge request within 10 s of opening and its signed challenge within `HANDSHAKE_TIMEOUT`
-(default 60 s, as the pinned upstream ws-connector) of the challenge; `WS_MAX_SOCKETS_PER_IP`
-(default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64) attributable through
-`HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter), beyond
+that also 503, and at most `WS_MAX_PENDING_HANDSHAKES_PER_IP` (default 8, 0 unlimited) per client
+source, counted like the per-source socket cap, beyond that 429; a socket must send its challenge
+request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
+within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
+`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
+attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
 `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer

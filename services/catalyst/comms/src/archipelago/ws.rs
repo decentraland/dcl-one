@@ -112,17 +112,29 @@ fn upgrade(
     protocols: Vec<String>,
     client: Option<&str>,
 ) -> axum::response::Response {
-    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
-        return (
+    let too_many = || {
+        (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             [(axum::http::header::RETRY_AFTER, "5")],
         )
-            .into_response();
+            .into_response()
+    };
+    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
+        return too_many();
+    };
+    let Ok(pending_source) = state.pending_handshakes_per_ip.try_acquire(client) else {
+        return too_many();
     };
     let handler = state.handlers.clone().try_acquire_owned();
     let pending = state.pending_handshakes.clone().try_acquire_owned();
-    let permit = match state.sockets.clone().try_acquire_owned() {
-        Ok(permit) if handler.is_ok() && pending.is_ok() && !state.restart.is_cancelled() => permit,
+    let (permit, pending) = match (state.sockets.clone().try_acquire_owned(), pending) {
+        (Ok(permit), Ok(pending)) if handler.is_ok() && !state.restart.is_cancelled() => (
+            permit,
+            super::state::PendingHandshake {
+                _global: pending,
+                _source: pending_source,
+            },
+        ),
         _ => {
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -140,7 +152,7 @@ fn upgrade(
         .on_upgrade(move |socket| async move {
             let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit);
-            handle_socket(socket, state, pending.ok()).await;
+            handle_socket(socket, state, pending).await;
             drop(handler);
         })
         .into_response()
@@ -277,12 +289,13 @@ async fn handshake_operation<F: std::future::Future>(
     }
 }
 
-/// `pending` is the socket's pending-handshake slot, held until the welcome.
+/// `pending` is the socket's pending-handshake hold, released at the welcome.
 async fn handle_socket(
     mut socket: WebSocket,
     state: AppState,
-    mut pending: Option<tokio::sync::OwnedSemaphorePermit>,
+    pending: super::state::PendingHandshake,
 ) {
+    let mut pending = Some(pending);
     let mut stage = Stage::HandshakeStart;
     let mut challenge_to_sign = String::new();
     let mut issuance = None;

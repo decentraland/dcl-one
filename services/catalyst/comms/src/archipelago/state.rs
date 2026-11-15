@@ -13,6 +13,8 @@ pub struct AppStateInner {
     pub sockets: Arc<tokio::sync::Semaphore>,
     /// Sockets that have not completed the handshake; released at the welcome.
     pub pending_handshakes: Arc<tokio::sync::Semaphore>,
+    /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
+    pub pending_handshakes_per_ip: Arc<IpSlots>,
     pub sockets_per_ip: Arc<IpSlots>,
     pub handlers: Arc<tokio::sync::Semaphore>,
     pub restart: tokio_util::sync::CancellationToken,
@@ -39,6 +41,13 @@ pub struct AppStateInner {
 }
 
 pub type AppState = Arc<AppStateInner>;
+
+/// A socket's hold on the pending-handshake share, global and per source; released at the
+/// welcome or when the socket ends.
+pub(crate) struct PendingHandshake {
+    pub(crate) _global: tokio::sync::OwnedSemaphorePermit,
+    pub(crate) _source: Option<IpSlot>,
+}
 
 /// Sockets held per client source (an IPv4 address or an IPv6 /64); a request
 /// that cannot be attributed to one client is not counted.

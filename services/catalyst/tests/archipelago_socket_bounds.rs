@@ -2068,9 +2068,14 @@ async fn per_source_server() -> u16 {
     settings.server.max_sockets_per_ip = 1;
     settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
     settings.auth.handshake_timeout_ms = 300;
+    proxied_server(settings).await.0
+}
+
+/// A server that sees each request's peer, so `X-Real-IP` from a trusted proxy names the client.
+async fn proxied_server(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
-        state,
+        state.clone(),
         true,
         Default::default(),
         catalyst::comms::stats::http::test_support::matcher(),
@@ -2087,7 +2092,7 @@ async fn per_source_server() -> u16 {
         .await
         .unwrap();
     });
-    port
+    (port, state)
 }
 
 async fn connect_from(port: u16, client: &str) -> Result<Socket, (u16, Option<String>)> {
@@ -2122,6 +2127,39 @@ async fn wait_admitted(port: u16, client: &str) -> Socket {
     })
     .await
     .expect("the source's slot was never released")
+}
+
+#[tokio::test]
+async fn a_client_source_holds_at_most_its_share_of_pending_handshakes() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 20;
+    settings.server.max_pending_handshakes = 10;
+    settings.server.max_sockets_per_ip = 0;
+    settings.server.max_pending_handshakes_per_ip = 2;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
+    let (port, state) = proxied_server(settings).await;
+    let busy = "203.0.113.7";
+    let first = connect_from(port, busy).await.unwrap();
+    let _second = connect_from(port, busy).await.unwrap();
+    // The source's pending share is full; other sources still join.
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
+    let _other = connect_from(port, "203.0.113.8").await.unwrap();
+    assert_eq!(state.pending_handshakes.available_permits(), 7);
+    // A socket that completes its handshake gives its source's share back.
+    let (_first, _) = authenticate(
+        first,
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+    )
+    .await;
+    let _third = wait_admitted(port, busy).await;
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
 }
 
 #[tokio::test]
