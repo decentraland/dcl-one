@@ -219,7 +219,11 @@ export type LayerCanvas = Pick<CanvasRenderingContext2D, "setTransform" | "clear
  * pixels, so neighbours share an edge without a seam at any pixel ratio. A marked parcel is painted
  * with its mark when its turn comes: there is no other pass for the marks. With `overscan`, that
  * number of parcels of the grid beyond each side of the view is painted too, for a layer whose tiles
- * are larger than a parcel (`scale`): such a tile next to the view reaches into it.
+ * are larger than a parcel (`scale`): such a tile next to the view reaches into it. Under one device
+ * pixel for a parcel, two edges of a parcel can be on the same pixel line. Such a parcel has no area:
+ * it is painted after the other parcels of its layer, in its device pixel, only if no parcel of the
+ * layer has that pixel. Thus no pixel is painted twice, and a parcel between two painted pixels gets
+ * no pixel of its own. This rule is not for a parcel with a `scale`: its paint does not change.
  */
 export function drawLayers(ctx: LayerCanvas, o: { view: MapView; size: MapSize; dpr: number; layers: readonly MapLayer[]; color(value: string): string; overscan?: number }): void {
   const { view, size, dpr } = o;
@@ -242,9 +246,23 @@ export function drawLayers(ctx: LayerCanvas, o: { view: MapView; size: MapSize; 
   const ys = new Float64Array(rows + 1);
   for (let i = 0; i <= cols; i++) xs[i] = snap(left + i * s);
   for (let j = 0; j <= rows; j++) ys[j] = snap(top + j * s);
+  let small = false;
+  for (let i = 0; i < cols && !small; i++) small = xs[i] === xs[i + 1];
+  for (let j = 0; j < rows && !small; j++) small = ys[j] === ys[j + 1];
+  // The device pixels of the grid in view, for `small` only.
+  const cell = (v: number) => Math.round(v * dpr);
+  const cellX = cell(xs[0]!);
+  const cellY = cell(ys[0]!);
+  const cellW = cell(xs[cols]!) - cellX;
+  const cellH = cell(ys[rows]!) - cellY;
   for (const layer of o.layers) {
     let asked = "";
     let fill = "";
+    // With `small` only: the device pixels that the layer has painted, then the pixel and the colour
+    // of each parcel with no area.
+    const used = small && cellW > 0 && cellH > 0 ? new Uint8Array(cellW * cellH) : undefined;
+    const late: number[] = [];
+    const lateFill: string[] = [];
     for (let j = 0; j < rows; j++) {
       const y = nw.y - j;
       for (let i = 0; i < cols; i++) {
@@ -264,9 +282,19 @@ export function drawLayers(ctx: LayerCanvas, o: { view: MapView; size: MapSize; 
         let y0 = ys[j]!;
         let x1 = xs[i + 1]!;
         let y1 = ys[j + 1]!;
-        // A parcel under one device pixel can have two edges on the same pixel line: it still gets that pixel.
-        if (x1 === x0) x1 = x0 + 1 / dpr;
-        if (y1 === y0) y1 = y0 + 1 / dpr;
+        if (used && (t.scale === undefined || t.scale === 1)) {
+          const cx = cell(x0) - cellX;
+          const cy = cell(y0) - cellY;
+          if (x1 === x0 || y1 === y0) {
+            // On the last pixel line of the grid, the parcel gets the pixel before that line.
+            late.push(Math.min(cy, cellH - 1) * cellW + Math.min(cx, cellW - 1));
+            lateFill.push(fill);
+            continue;
+          }
+          const cx1 = cell(x1) - cellX;
+          const cy1 = cell(y1) - cellY;
+          for (let v = cy; v < cy1; v++) used.fill(1, v * cellW + cx, v * cellW + cx1);
+        }
         if (t.scale !== undefined && t.scale !== 1) {
           const grow = ((t.scale - 1) * s) / 2;
           x0 -= grow;
@@ -300,6 +328,15 @@ export function drawLayers(ctx: LayerCanvas, o: { view: MapView; size: MapSize; 
         if (edges & EDGE_LEFT) ctx.fillRect(bx, ya, line, yb - ya);
         if (edges & EDGE_RIGHT) ctx.fillRect(x1 - line, ya, line, yb - ya);
       }
+    }
+    if (!used) continue;
+    let lateStyle = "";
+    for (let n = 0; n < late.length; n++) {
+      const at = late[n]!;
+      if (used[at]) continue;
+      used[at] = 1;
+      if (lateFill[n] !== lateStyle) ctx.fillStyle = lateStyle = lateFill[n]!;
+      ctx.fillRect((cellX + (at % cellW)) / dpr, (cellY + Math.floor(at / cellW)) / dpr, 1 / dpr, 1 / dpr);
     }
   }
 }

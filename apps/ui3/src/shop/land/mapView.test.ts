@@ -287,16 +287,113 @@ describe("the painter", () => {
     expect(c.fillRect.mock.calls).toEqual([[170, 169, 1, 1]]);
   });
 
-  it("gives a parcel under one device pixel that pixel", () => {
-    // 240 px for 340 parcels: two edges of some parcels are on the same pixel line.
-    const every: MapLayer = () => ({ color: "red" });
-    for (const dpr of [1, 2]) {
+  // 240 px for 340 parcels (120 px at a pixel ratio of 2): two edges of some parcels are on the same pixel line.
+  const SMALL = [
+    { size: { w: 240, h: 240 }, dpr: 1 },
+    { size: { w: 120, h: 120 }, dpr: 2 },
+  ];
+  const whole = { x: GRID_MID, y: GRID_MID, zoom: 1 };
+  const rects = (c: ReturnType<typeof fakeCanvas>) => c.fillRect.mock.calls as [number, number, number, number][];
+
+  it("gives a lone parcel under one device pixel one device pixel", () => {
+    // One parcel of each 5 on both axes: no two of them are on the same device pixel.
+    const lone: MapLayer = (x, y) => ((x - GRID_MIN) % 5 === 0 && (y - GRID_MIN) % 5 === 0 ? { color: "red" } : null);
+    for (const { size, dpr } of SMALL) {
       const c = fakeCanvas();
-      drawLayers(c.ctx, { view: { x: GRID_MID, y: GRID_MID, zoom: 1 }, size: { w: 240, h: 240 }, dpr, layers: [every], color });
-      const calls = c.fillRect.mock.calls as [number, number, number, number][];
-      expect(calls).toHaveLength(340 * 340);
-      expect(calls.reduce((least, [, , w, h]) => Math.min(least, w, h), Infinity)).toBe(1 / dpr);
+      drawLayers(c.ctx, { view: whole, size, dpr, layers: [lone], color });
+      const calls = rects(c);
+      expect(calls).toHaveLength(68 * 68);
+      expect(calls.every(([, , w, h]) => w === 1 / dpr && h === 1 / dpr)).toBe(true);
+      expect(new Set(calls.map(([x, y]) => `${x},${y}`)).size).toBe(68 * 68);
     }
+  });
+
+  it("paints no device pixel twice when the parcels are under one device pixel", () => {
+    const every: MapLayer = () => ({ color: "red" });
+    for (const { size, dpr } of SMALL) {
+      const c = fakeCanvas();
+      drawLayers(c.ctx, { view: whole, size, dpr, layers: [every], color });
+      const calls = rects(c);
+      // Each device pixel of the grid one time: a parcel with no area adds nothing to a pixel that has paint.
+      expect(calls).toHaveLength(240 * 240);
+      expect(calls.every(([, , w, h]) => w === 1 / dpr && h === 1 / dpr)).toBe(true);
+      expect(new Set(calls.map(([x, y]) => `${x},${y}`)).size).toBe(240 * 240);
+    }
+  });
+
+  it("puts a parcel under one device pixel on its own pixel, in its own colour", () => {
+    // A shell that is not square and a view off the centre. One parcel of each 7: no two on the same pixel.
+    const size = { w: 300, h: 200 };
+    const view = { x: GRID_MID + 10, y: GRID_MID + 20, zoom: 1 };
+    const at = (x: number, y: number) => (x - GRID_MIN) % 7 === 3 && (y - GRID_MIN) % 7 === 3 && x < GRID_MAX && y > GRID_MIN;
+    const tint = (x: number) => ((x - GRID_MIN) % 2 === 0 ? "red" : "blue");
+    const lattice: MapLayer = (x, y) => (at(x, y) ? { color: tint(x) } : null);
+    const s = parcelPx(size, 1);
+    const want = new Map<string, string>();
+    for (let x = GRID_MIN; x <= GRID_MAX; x++)
+      for (let y = GRID_MIN; y <= GRID_MAX; y++)
+        if (at(x, y)) want.set(`${Math.round(size.w / 2 + (x - 0.5 - view.x) * s)},${Math.round(size.h / 2 - (y + 0.5 - view.y) * s)}`, tint(x));
+    const got = new Map<string, string>();
+    let style = "";
+    const ctx = {
+      setTransform() {},
+      clearRect() {},
+      fillRect(x: number, y: number, w: number, h: number) {
+        expect([w, h]).toEqual([1, 1]);
+        expect(got.has(`${x},${y}`)).toBe(false);
+        got.set(`${x},${y}`, style);
+      },
+      set fillStyle(value: string) {
+        style = value;
+      },
+    };
+    drawLayers(ctx as unknown as LayerCanvas, { view, size, dpr: 1, layers: [lattice], color });
+    // The parcels in view only, each on the pixel of its top left corner.
+    expect(got.size).toBeGreaterThan(1000);
+    for (const [cell, colour] of got) expect(want.get(cell)).toBe(colour);
+    expect(new Set(got.values())).toEqual(new Set(["red", "blue"]));
+  });
+
+  it("gives two parcels under one device pixel that have the same free pixel that pixel one time", () => {
+    // Blocks of 2 by 2 parcels, 6 apart: some blocks have two parcels with no area on one device pixel.
+    const blocks: MapLayer = (x, y) => ((x - GRID_MIN) % 6 < 2 && (y - GRID_MIN) % 6 < 2 ? { color: "red" } : null);
+    for (const { size, dpr } of SMALL) {
+      const c = fakeCanvas();
+      drawLayers(c.ctx, { view: whole, size, dpr, layers: [blocks], color });
+      const calls = rects(c);
+      const cells = new Set(calls.map(([x, y]) => `${x},${y}`));
+      expect(calls.every(([, , w, h]) => w === 1 / dpr && h === 1 / dpr)).toBe(true);
+      expect(cells.size).toBe(calls.length);
+      // Each block has paint, and fewer pixels than parcels: some parcels share a pixel.
+      expect(calls.length).toBeGreaterThanOrEqual(57 * 57);
+      expect(calls.length).toBeLessThan(4 * 57 * 57);
+    }
+  });
+
+  it("keeps a parcel under one device pixel inside the grid", () => {
+    // The last column and the last row only. At this size and pixel ratio, the two have no area.
+    const border: MapLayer = (x, y) => (x === GRID_MAX || y === GRID_MIN ? { color: "red" } : null);
+    const size = { w: 241, h: 185 };
+    const dpr = 1.25;
+    const c = fakeCanvas();
+    drawLayers(c.ctx, { view: whole, size, dpr, layers: [border], color });
+    const s = parcelPx(size, 1);
+    const right = Math.round((size.w / 2 + 170 * s) * dpr);
+    const bottom = Math.round((size.h / 2 + 170 * s) * dpr);
+    const cells = rects(c).map(([x, y, w, h]) => [Math.round(x * dpr), Math.round(y * dpr), Math.round((x + w) * dpr), Math.round((y + h) * dpr)] as const);
+    expect(cells.every(([x0, y0, x1, y1]) => x1 > x0 && y1 > y0 && x1 <= right && y1 <= bottom)).toBe(true);
+    // The last pixel column and the last pixel row of the grid have the paint of the border.
+    expect(cells.filter(([, , x1]) => x1 === right).length).toBeGreaterThan(100);
+    expect(cells.filter(([, , , y1]) => y1 === bottom).length).toBeGreaterThan(100);
+  });
+
+  it("paints a parcel with a scale under one device pixel as at a larger size", () => {
+    const row: MapLayer = (x, y) => (y === 0 && x >= 0 && x < 12 ? { color: "red", scale: 3 } : null);
+    const c = fakeCanvas();
+    drawLayers(c.ctx, { view: whole, size: { w: 240, h: 240 }, dpr: 1, layers: [row], color });
+    const calls = rects(c);
+    expect(calls).toHaveLength(12);
+    expect(calls.every(([, , w, h]) => w > 1 && h > 1)).toBe(true);
   });
 
   it("paints the layers in order", () => {
