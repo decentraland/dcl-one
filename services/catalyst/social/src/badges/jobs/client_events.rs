@@ -168,12 +168,19 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
                 }
             }
             "vertical-height-reached" => {
-                let Some(height) = number(&m["height"]).filter(|h| *h <= MAX_HEIGHT) else {
-                    tracing::debug!(
-                        seq = row.seq,
-                        "vertical-height-reached without a plausible height: passed"
-                    );
-                    continue;
+                // The Unity explorer sends no height: it reports on reaching the gain.
+                let height = match m.get("height") {
+                    None | Some(Value::Null) => None,
+                    Some(h) => match number(h).filter(|h| *h <= MAX_HEIGHT) {
+                        Some(h) => Some(h),
+                        None => {
+                            tracing::debug!(
+                                seq = row.seq,
+                                "vertical-height-reached without a plausible height: passed"
+                            );
+                            continue;
+                        }
+                    },
                 };
                 if !skip(ev::VERTICAL_VOYAGER) {
                     award(&mut tx, &address, ev::VERTICAL_VOYAGER, notify, |p| {

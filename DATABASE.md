@@ -1503,7 +1503,8 @@ default, and social writes are), each a reader of tables other areas own, with o
   The values are the client's claim, as upstream took them, within bounds:
   a `walked-distance` event counts at most 10,000 steps (the explorer
   reports on thresholds far below it), a `vertical-height-reached` height
-  above 5,000 m is passed (no scene is that tall) and a `passport-opened`
+  above 5,000 m is passed (no scene is that tall; one without a height, as
+  the Unity explorer sends it, counts as reached) and a `passport-opened`
   receiver must be a wallet address. Times are Segment's `received_at`, as
   upstream stamped arrival, so a client cannot backdate or space its events;
 - `content.deployments` by `id` (rarity badges, profile pro, land architect,

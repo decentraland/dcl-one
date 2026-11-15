@@ -456,6 +456,23 @@ async fn an_imported_document_resumes() {
 }
 
 #[tokio::test]
+async fn a_height_reached_without_a_height_completes_vertical_voyager() {
+    let Some(pool) = private_pool("badges_client_height_unity").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    client_event(&pool, a, "vertical-height-reached", None, now(), json!({})).await;
+    drain_client_events(&p).await;
+    assert_eq!(
+        progress(&pool, a, "vertical_voyager").await,
+        Some((1, json!({"steps": 1}), true))
+    );
+}
+
+#[tokio::test]
 async fn emote_minutes_follow_the_receive_time_not_the_client_clock() {
     let Some(pool) = private_pool("badges_client_received_at").await else {
         return;

@@ -190,12 +190,17 @@ pub fn social_butterfly(p: &mut Progress, user: &str, receiver: &str) {
 
 /// `vertical-voyager.ts`: a height of at least 500 completes it, the document
 /// becomes `{steps: 1, height_reached}`.
-pub fn vertical_voyager(p: &mut Progress, height: f64) {
-    if p.completed || height.is_nan() || height < ELEVATION_NEEDED {
+/// `vertical-voyager.ts`: a height below the gain needed is not enough; an
+/// event without one (the Unity explorer's) completes the badge, as
+/// upstream's `undefined < 500` let it.
+pub fn vertical_voyager(p: &mut Progress, height: Option<f64>) {
+    if p.completed || height.is_some_and(|h| h.is_nan() || h < ELEVATION_NEEDED) {
         return;
     }
     let mut state = Map::new();
-    state.insert("height_reached".into(), json!(height));
+    if let Some(height) = height {
+        state.insert("height_reached".into(), json!(height));
+    }
     replace_state(p, 1, state);
 }
 
@@ -533,10 +538,13 @@ mod tests {
     #[test]
     fn vertical_voyager_needs_500() {
         let mut p = progress(0, json!({}));
-        vertical_voyager(&mut p, 499.9);
+        vertical_voyager(&mut p, Some(499.9));
         assert_eq!(p.steps, 0);
-        vertical_voyager(&mut p, 500.0);
+        vertical_voyager(&mut p, Some(500.0));
         assert_eq!(p.document(), json!({"steps": 1, "height_reached": 500.0}));
+        let mut unity = progress(0, json!({}));
+        vertical_voyager(&mut unity, None);
+        assert_eq!(unity.document(), json!({"steps": 1}));
     }
 
     fn mv(title: &str, on_ms: i64) -> Move {
