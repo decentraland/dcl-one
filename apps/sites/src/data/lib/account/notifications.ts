@@ -173,21 +173,44 @@ export async function confirmEmail(
       signal: opts.signal,
     });
   } catch (err) {
+    if ((err as Error)?.name === "TimeoutError") throw new EmailConfirmationTimeout(url);
     throw new CatalystError(`Catalyst request failed: ${(err as Error)?.message ?? "network error"}`, url);
   }
   if (!res.ok) throw await errorFromResponse(res, url);
   await res.body?.cancel().catch(() => {});
 }
 
+/** The confirmation got no answer within its time budget. */
+export class EmailConfirmationTimeout extends CatalystError {
+  constructor(url: string) {
+    super("Email confirmation timed out", url);
+    this.name = "EmailConfirmationTimeout";
+  }
+}
+
 export type EmailConfirmationFailure = { message: string; retry: boolean };
 
 const INVALID_LINK = "This confirmation link is invalid or was replaced by a newer one. Request a new link from your account settings.";
 
-/** The node's refusals, worded for the page; only a failed challenge or an outage can be retried. */
-export function emailConfirmationFailure(error: unknown): EmailConfirmationFailure {
+/**
+ * The node's refusals, worded for the page; only a failed challenge, a timeout or an outage can be
+ * retried. A refused captcha with no challenge shown means the node checks one this site cannot show.
+ */
+export function emailConfirmationFailure(
+  error: unknown,
+  { challengeShown }: { challengeShown: boolean },
+): EmailConfirmationFailure {
+  if (error instanceof EmailConfirmationTimeout) {
+    return { message: "The confirmation is taking too long. Try again in a moment.", retry: true };
+  }
   const server = error instanceof CatalystError && error.serverMessage ? error.message : "";
   if (server === "Invalid captcha") {
-    return { message: "The security check did not pass. Complete it again and retry.", retry: true };
+    return challengeShown
+      ? { message: "The security check did not pass. Complete it again and retry.", retry: true }
+      : {
+          message: "Email confirmation needs a security check this site is not set up to show. Please contact support.",
+          retry: false,
+        };
   }
   if (server === "Invalid code" || server === "Missing code" || server === "Missing address") {
     return { message: INVALID_LINK, retry: false };

@@ -99,12 +99,10 @@ describe("EmailConfirmationRoute", () => {
       });
 
       it("should send the address, code, source and challenge token", () => {
-        expect(api.confirmEmail).toHaveBeenCalledWith({
-          address: ADDRESS,
-          code: CODE,
-          source: "credits",
-          turnstileToken: "token-1",
-        });
+        expect(api.confirmEmail).toHaveBeenCalledWith(
+          { address: ADDRESS, code: CODE, source: "credits", turnstileToken: "token-1" },
+          { signal: expect.any(AbortSignal) },
+        );
       });
 
       it("should show the confirmation with a link to the Shop", async () => {
@@ -156,14 +154,28 @@ describe("EmailConfirmationRoute", () => {
         renderRoute();
       });
 
-      it("should confirm once without a challenge token", async () => {
+      it("should confirm once, with a time budget and without a challenge token", async () => {
         await waitFor(() =>
-          expect(api.confirmEmail.mock.calls).toEqual([[{ address: ADDRESS, code: CODE, source: "account" }]]),
+          expect(api.confirmEmail.mock.calls).toEqual([
+            [{ address: ADDRESS, code: CODE, source: "account" }, { signal: expect.any(AbortSignal) }],
+          ]),
         );
       });
 
       it("should show the confirmation with a link back to Decentraland", async () => {
         expect((await screen.findByRole("link", { name: "Go to Decentraland" })).getAttribute("href")).toBe("/");
+      });
+    });
+
+    describe("and the node requires a challenge the site cannot show", () => {
+      beforeEach(() => {
+        api.confirmEmail.mockRejectedValueOnce(new CatalystError("Invalid captcha", "u", 401, true));
+        renderRoute();
+      });
+
+      it("should report the misconfiguration without a retry button", async () => {
+        expect((await screen.findByRole("alert")).textContent).toContain("not set up to show");
+        expect(screen.queryByRole("button", { name: "Confirm Email" })).toBeNull();
       });
     });
 

@@ -67,7 +67,7 @@ export function EmailConfirmationRoute({ code, address, source, turnstileSiteKey
 
   if (invalid) return <EmailConfirmation source="account" state={invalid} />;
   const linkSource = source as EmailConfirmationSource;
-  const failure = confirm.isError ? emailConfirmationFailure(confirm.error) : null;
+  const failure = confirm.isError ? emailConfirmationFailure(confirm.error, { challengeShown: !!turnstileSiteKey }) : null;
 
   let state: EmailConfirmationState;
   if (confirm.isSuccess) state = { kind: "confirmed", continueHref: CONTINUE[linkSource] };

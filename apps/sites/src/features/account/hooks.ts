@@ -137,7 +137,8 @@ export function useOptOutOfCredits() {
 export function useConfirmEmail() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (confirmation: EmailConfirmation) => confirmEmail(confirmation),
+    mutationFn: (confirmation: EmailConfirmation) =>
+      confirmEmail(confirmation, { signal: AbortSignal.timeout(SUBSCRIPTION_WRITE_TIMEOUT_MS) }),
     onSuccess: (_result, { address }) =>
       client.invalidateQueries({ queryKey: accountKeys.subscription(address) }),
   });

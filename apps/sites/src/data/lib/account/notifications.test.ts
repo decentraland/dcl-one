@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { CatalystError } from "../catalyst/client";
-import { confirmEmail, emailConfirmationFailure, type EmailConfirmation } from "./notifications";
+import {
+  confirmEmail,
+  emailConfirmationFailure,
+  EmailConfirmationTimeout,
+  type EmailConfirmation,
+} from "./notifications";
 
 const ADDRESS = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const BASE = "https://node.example.test";
@@ -52,6 +57,16 @@ describe("confirmEmail", () => {
     });
   });
 
+  describe("when the request times out", () => {
+    beforeEach(() => {
+      fetchSpy.mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"));
+    });
+
+    it("should reject with a confirmation timeout", async () => {
+      await expect(confirmEmail(confirmation, { base: BASE })).rejects.toBeInstanceOf(EmailConfirmationTimeout);
+    });
+  });
+
   describe("when the node cannot be reached", () => {
     beforeEach(() => {
       fetchSpy.mockRejectedValueOnce(new TypeError("network down"));
@@ -71,9 +86,33 @@ describe("emailConfirmationFailure", () => {
       error = new CatalystError("Invalid captcha", "u", 401, true);
     });
 
-    it("should ask for the challenge again and allow a retry", () => {
-      expect(emailConfirmationFailure(error)).toEqual({
-        message: "The security check did not pass. Complete it again and retry.",
+    describe("and the page showed the challenge", () => {
+      it("should ask for the challenge again and allow a retry", () => {
+        expect(emailConfirmationFailure(error, { challengeShown: true })).toEqual({
+          message: "The security check did not pass. Complete it again and retry.",
+          retry: true,
+        });
+      });
+    });
+
+    describe("and the page had no challenge to show", () => {
+      it("should report the missing challenge without a retry", () => {
+        expect(emailConfirmationFailure(error, { challengeShown: false })).toMatchObject({
+          retry: false,
+          message: expect.stringContaining("not set up to show"),
+        });
+      });
+    });
+  });
+
+  describe("when the request timed out", () => {
+    beforeEach(() => {
+      error = new EmailConfirmationTimeout("u");
+    });
+
+    it("should say it took too long and allow a retry", () => {
+      expect(emailConfirmationFailure(error, { challengeShown: false })).toEqual({
+        message: "The confirmation is taking too long. Try again in a moment.",
         retry: true,
       });
     });
@@ -85,7 +124,7 @@ describe("emailConfirmationFailure", () => {
     });
 
     it("should report an invalid link that cannot be retried", () => {
-      expect(emailConfirmationFailure(error)).toMatchObject({ retry: false, message: expect.stringContaining("invalid") });
+      expect(emailConfirmationFailure(error, { challengeShown: true })).toMatchObject({ retry: false, message: expect.stringContaining("invalid") });
     });
   });
 
@@ -95,7 +134,7 @@ describe("emailConfirmationFailure", () => {
     });
 
     it("should say nothing is waiting for confirmation", () => {
-      expect(emailConfirmationFailure(error)).toMatchObject({
+      expect(emailConfirmationFailure(error, { challengeShown: true })).toMatchObject({
         retry: false,
         message: expect.stringContaining("no email waiting for confirmation"),
       });
@@ -108,7 +147,7 @@ describe("emailConfirmationFailure", () => {
     });
 
     it("should ask for a different address", () => {
-      expect(emailConfirmationFailure(error)).toMatchObject({
+      expect(emailConfirmationFailure(error, { challengeShown: true })).toMatchObject({
         retry: false,
         message: expect.stringContaining("can't be used"),
       });
@@ -121,7 +160,7 @@ describe("emailConfirmationFailure", () => {
     });
 
     it("should allow a retry", () => {
-      expect(emailConfirmationFailure(error).retry).toBe(true);
+      expect(emailConfirmationFailure(error, { challengeShown: true }).retry).toBe(true);
     });
   });
 });

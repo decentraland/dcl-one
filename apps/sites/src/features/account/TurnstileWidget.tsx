@@ -31,12 +31,14 @@ function loadTurnstile(): Promise<TurnstileApi> {
     const script = document.createElement("script");
     script.src = SCRIPT_SRC;
     script.async = true;
-    script.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("Turnstile did not load")));
-    script.onerror = () => {
+    // A failed load forgets the script, so the next mount tries again.
+    const fail = () => {
       script.remove();
       loading = null;
       reject(new Error("Turnstile did not load"));
     };
+    script.onload = () => (window.turnstile ? resolve(window.turnstile) : fail());
+    script.onerror = fail;
     document.head.appendChild(script);
   });
   return loading;
@@ -62,15 +64,19 @@ export function TurnstileWidget({ siteKey, onToken, onExpire, onLoadError }: Tur
     loadTurnstile().then(
       (api) => {
         if (cancelled || !element.current) return;
-        widgetId = api.render(element.current, {
-          sitekey: siteKey,
-          theme: "dark",
-          size: "normal",
-          retry: "auto",
-          callback: (token) => callbacks.current.onToken(token),
-          "expired-callback": () => callbacks.current.onExpire(),
-          "error-callback": () => callbacks.current.onExpire(),
-        });
+        try {
+          widgetId = api.render(element.current, {
+            sitekey: siteKey,
+            theme: "dark",
+            size: "normal",
+            retry: "auto",
+            callback: (token) => callbacks.current.onToken(token),
+            "expired-callback": () => callbacks.current.onExpire(),
+            "error-callback": () => callbacks.current.onExpire(),
+          });
+        } catch {
+          callbacks.current.onLoadError();
+        }
       },
       () => {
         if (!cancelled) callbacks.current.onLoadError();
