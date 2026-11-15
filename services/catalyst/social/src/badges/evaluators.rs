@@ -335,15 +335,16 @@ pub fn published_key(badge_id: &str) -> &'static str {
     }
 }
 
-/// `emote-creator.ts` / `wearable-designer.ts`: one step per item not yet in
-/// the list (`{itemId, createdAt}`; `itemId` is the collections subgraph's
-/// `<contract>-<item>`), for every item of the creator the mirror holds.
+/// `emote-creator.ts` / `wearable-designer.ts`: lists every item of the
+/// creator the mirror holds (`{itemId, createdAt}`; `itemId` is the
+/// collections subgraph's `<contract>-<item>`). `items` is the creator's
+/// whole set, so steps are its size, never below what is stored: an imported
+/// entry in another id format cannot count an item twice.
 pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
     if p.completed {
         return;
     }
     let list = array(p, published_key(badge_id));
-    let mut added = 0;
     for (item_id, created_at_ms) in items {
         let known = list.iter().any(|v| {
             v.get("itemId")
@@ -352,10 +353,10 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
         });
         if !known {
             list.push(json!({ "itemId": item_id, "createdAt": created_at_ms }));
-            added += 1;
         }
     }
-    p.steps = p.steps.saturating_add(added);
+    let total = i32::try_from(items.len()).unwrap_or(i32::MAX);
+    p.steps = p.steps.max(total);
 }
 
 /// The buyers' purchase list key (`emotionista.ts`, `fashionista.ts`).
@@ -691,6 +692,29 @@ mod tests {
             w.state["published_wearables"][0]["itemId"],
             json!("0xdef-3")
         );
+    }
+
+    #[test]
+    fn creators_never_count_an_imported_item_twice() {
+        // imported under another id format: the mirror's ids do not match it
+        let mut p = progress(
+            2,
+            json!({"published_emotes": [
+                {"itemId": "urn:decentraland:matic:collections-v2:0xabc:0", "createdAt": 5},
+                {"itemId": "urn:decentraland:matic:collections-v2:0xabc:1", "createdAt": 6}
+            ]}),
+        );
+        let items = [
+            ("0xabc-0".to_string(), 5_000),
+            ("0xabc-1".to_string(), 6_000),
+            ("0xabc-2".to_string(), 7_000),
+        ];
+        creator(&mut p, EMOTE_CREATOR, &items);
+        assert_eq!(p.steps, 3);
+        // a stored count above the mirror's is kept
+        let mut q = progress(9, json!({}));
+        creator(&mut q, EMOTE_CREATOR, &items);
+        assert_eq!(q.steps, 9);
     }
 
     #[test]

@@ -1531,7 +1531,9 @@ default, and social writes are), each a reader of tables other areas own, with o
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for
-  business, referral), for the wallets whose stored steps are behind. A pass
+  business, referral), for the wallets whose stored steps are behind. A
+  creator's steps are the size of their item set, never below the stored
+  count, so an imported item id in another format is not counted twice. A pass
   walks those wallets in address order and records the last one recounted
   (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
   imported document whose flag is truthy but not `true`) never starves the
