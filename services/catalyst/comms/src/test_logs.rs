@@ -58,7 +58,6 @@ impl LogBuffer {
     }
 }
 
-#[cfg(test)]
 mod tests {
     use super::LogBuffer;
 
