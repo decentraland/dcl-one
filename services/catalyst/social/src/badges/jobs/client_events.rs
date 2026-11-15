@@ -24,7 +24,7 @@ pub const SOURCE: &str = "client_events";
 
 pub(crate) const READ: IdSource = IdSource {
     name: SOURCE,
-    select: "SELECT e.seq, e.source, e.sub_type, e.address, e.session_id, e.reported_at, e.metadata \
+    select: "SELECT e.seq, e.source, e.sub_type, e.address, e.session_id, e.received_at, e.metadata \
              FROM social.client_events e",
     key: "e.seq",
     head: "SELECT coalesce(max(seq), 0) FROM social.client_events",
@@ -51,7 +51,8 @@ struct Row {
     sub_type: String,
     address: String,
     session_id: Option<String>,
-    reported_at: NaiveDateTime,
+    /// Segment's receive time: a client cannot backdate or space its events.
+    received_at: NaiveDateTime,
     metadata: Value,
 }
 
@@ -90,7 +91,7 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
     let mut titles = Titles::default();
     let now = crate::shared::now_utc();
     for row in rows {
-        if row.source != "client" || pass.too_old(row.reported_at, now) {
+        if row.source != "client" || pass.too_old(row.received_at, now) {
             continue;
         }
         let Ok(address) = Address::parse(&row.address) else {
@@ -141,7 +142,7 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
             }
             "used-emote" => {
                 if !skip(ev::MOVES_MASTER) {
-                    let at = row.reported_at.and_utc().timestamp_millis();
+                    let at = row.received_at.and_utc().timestamp_millis();
                     award(&mut tx, &address, ev::MOVES_MASTER, notify, |p| {
                         ev::moves_master(p, at)
                     })
@@ -284,7 +285,7 @@ async fn session_moves(
         "session_id IS NULL AND $2::text IS NULL"
     };
     let history: Vec<(NaiveDateTime, Value)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT reported_at, metadata->'parcel' FROM social.client_events \
+        "SELECT received_at, metadata->'parcel' FROM social.client_events \
          WHERE address = $1 AND {session} AND sub_type = 'move-to-parcel' AND seq <= $3 \
          ORDER BY seq DESC LIMIT $4"
     )))

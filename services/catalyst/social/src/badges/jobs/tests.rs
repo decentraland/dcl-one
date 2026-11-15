@@ -455,6 +455,34 @@ async fn an_imported_document_resumes() {
     assert!(granted(&pool, a).await.is_empty(), "no tier newly reached");
 }
 
+#[tokio::test]
+async fn emote_minutes_follow_the_receive_time_not_the_client_clock() {
+    let Some(pool) = private_pool("badges_client_received_at").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    let received = now();
+    // one burst a client stamped a minute apart each
+    for back in [2, 1, 0] {
+        sqlx::query(
+            "INSERT INTO social.client_events (key, source, sub_type, address, session_id, reported_at, received_at, metadata) \
+             VALUES ($1, 'client', 'used-emote', $2, NULL, $3, $4, '{}'::jsonb)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(a)
+        .bind(received - ChronoDuration::minutes(back))
+        .bind(received)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    drain_client_events(&p).await;
+    assert_eq!(progress(&pool, a, "moves_master").await.unwrap().0, 1);
+}
+
 async fn deploy(
     conn: impl sqlx::PgExecutor<'_>,
     entity_type: &str,
