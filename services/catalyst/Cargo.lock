@@ -1732,6 +1732,7 @@ dependencies = [
  "rand 0.10.3",
  "rcgen",
  "reqwest",
+ "rustls",
  "rustls-pemfile",
  "rustls-pki-types",
  "rusty_enet",

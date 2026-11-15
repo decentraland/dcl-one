@@ -48,6 +48,7 @@ getrandom.workspace = true
 rand.workspace = true
 rusty_enet.workspace = true
 web-transport-quinn.workspace = true
+rustls.workspace = true
 rustls-pemfile.workspace = true
 rustls-pki-types.workspace = true
 async-nats.workspace = true
