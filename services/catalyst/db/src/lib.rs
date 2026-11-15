@@ -546,6 +546,12 @@ pub mod scratch {
     }
 
     /// Drops the scratch databases of test processes that no longer exist.
+    ///
+    /// Liveness is the pid embedded in the database name, probed locally. This
+    /// is only safe when every test process using the cluster shares this
+    /// process's pid namespace (as with `tooling/dev-test.sh`); a test run in
+    /// another container or host against the same cluster could have its
+    /// database dropped while it is still running.
     async fn sweep_dead(admin: &PgPool) {
         let names: Vec<String> = sqlx::query_scalar(
             "SELECT datname FROM pg_database WHERE datname LIKE 'catalyst_test_lib_%'",
