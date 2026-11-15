@@ -392,16 +392,10 @@ pub fn can_read(outfit: &Outfit, caller: Option<&str>, settings: &Settings) -> b
 fn js_number_or(raw: Option<&String>, default: i64) -> i64 {
     match raw {
         None => default,
-        Some(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                return default;
-            }
-            match t.parse::<f64>() {
-                Ok(n) if n.is_finite() && n.trunc() != 0.0 => n.trunc() as i64,
-                _ => default,
-            }
-        }
+        Some(s) => match catalyst_shared::js::number_from_str(s) {
+            n if n.is_finite() && n.trunc() != 0.0 => n.trunc() as i64,
+            _ => default,
+        },
     }
 }
 
