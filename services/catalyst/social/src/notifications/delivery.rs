@@ -376,7 +376,7 @@ pub async fn expire(
     Ok(res.rows_affected())
 }
 
-/// One pass: claim, send each outside any transaction, record. A row whose
+/// One pass: claim, send each outside any transaction, record; the caller logs `held`. A row whose
 /// recipient lost their email between insert and send, or whose type has no
 /// template (rows written before the allowlist), is `skipped` without a send.
 /// A row held at send time past `max_age` (or [`DEFAULT_MAX_AGE`] with expiry
@@ -402,14 +402,6 @@ pub async fn run_pass(
         .bind(BATCH)
         .fetch_one(pool)
         .await?;
-        if held > 0 {
-            let missing = if configured { UNSIGNED } else { UNCONFIGURED };
-            tracing::error!(
-                held,
-                missing,
-                "notification emails stay pending until email delivery is configured"
-            );
-        }
         return Ok(PassSummary {
             held: held as usize,
             ..Default::default()
@@ -457,12 +449,6 @@ pub async fn run_pass(
             Outcome::Held(_) => summary.held += 1,
         }
         record(pool, row.notification_id, now_utc(), &outcome).await?;
-    }
-    if summary.held > 0 {
-        tracing::error!(
-            held = summary.held,
-            "notification emails stay pending until email delivery is configured"
-        );
     }
     if summary.expired > 0 {
         tracing::warn!(

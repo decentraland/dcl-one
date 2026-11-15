@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use parking_lot::RwLock;
@@ -21,12 +21,15 @@ use crate::http::Outbound;
 use crate::jobs::{Jobs, PeriodicCfg};
 
 pub const CODE_LEN: usize = 32;
-/// `SENDGRID_API_URL`'s default.
-pub const SENDGRID_API_URL: &str = "https://api.sendgrid.com";
 const TURNSTILE_VERIFY_URL: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
-/// Upstream's disposable-domain source, refreshed hourly.
-pub const DISPOSABLE_LIST_URL: &str = "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf";
+/// A held disposable list is fetched again after this, as upstream.
 const DISPOSABLE_REFRESH: Duration = Duration::from_secs(3600);
+/// The refresh job's tick: an empty list is retried this soon.
+const DISPOSABLE_RETRY: Duration = Duration::from_secs(60);
+const DISPOSABLE_TIMEOUT: Duration = Duration::from_secs(30);
+const DISPOSABLE_MAX_BYTES: usize = 4 * 1024 * 1024;
+/// Fewer domains than this is a broken download, not the list (it holds thousands).
+pub const DISPOSABLE_MIN_DOMAINS: usize = 1000;
 /// The `dapps` flag that turns the confirm-email challenge on.
 pub const TURNSTILE_FLAG: &str = "turnstile-verification";
 /// The `dapps` flag whose variant lists refused email domains.
@@ -58,8 +61,10 @@ pub fn make_code() -> String {
 #[derive(Clone, Debug, Default)]
 pub struct EmailConfig {
     pub sendgrid_api_key: Option<String>,
-    /// `SENDGRID_API_URL`; empty means [`SENDGRID_API_URL`].
+    /// `SENDGRID_API_URL`; empty means no SendGrid.
     pub api_url: String,
+    /// `DISPOSABLE_EMAIL_DOMAINS_URL`; empty fetches no list.
+    pub disposable_list_url: String,
     pub from_email: Option<String>,
     /// The generic dynamic template (old `SENDGRID_EMAIL_TEMPLATE_ID`): the
     /// outbox's `email` channel, the confirmation and the ad-hoc email; unset,
@@ -146,7 +151,13 @@ pub struct EmailSender {
     http: Outbound,
     unsubscribe: Option<Unsubscribe>,
     /// The last disposable-domain list fetched; shared by every clone.
-    disposable: Arc<RwLock<HashSet<String>>>,
+    disposable: Arc<RwLock<Disposable>>,
+}
+
+#[derive(Default)]
+struct Disposable {
+    domains: HashSet<String>,
+    fetched_at: Option<Instant>,
 }
 
 impl EmailSender {
@@ -171,9 +182,7 @@ impl EmailSender {
     /// Key, sender and the notification template are set; a missing
     /// signing key holds deliveries pending instead ([`Self::has_signing_key`]).
     pub fn notifications_configured(&self) -> bool {
-        self.cfg.sendgrid_api_key.is_some()
-            && self.cfg.from_email.is_some()
-            && self.cfg.notification_template_id.is_some()
+        self.html_configured() && self.cfg.notification_template_id.is_some()
     }
 
     pub fn has_signing_key(&self) -> bool {
@@ -195,7 +204,7 @@ impl EmailSender {
             return true;
         }
         let domain = domain.to_lowercase();
-        if self.disposable.read().contains(&domain) {
+        if self.disposable.read().domains.contains(&domain) {
             return true;
         }
         let flagged = self
@@ -210,36 +219,78 @@ impl EmailSender {
             .any(|d| d == &domain)
     }
 
-    /// Replaces the disposable list from `url`; a failed fetch keeps the last one (empty refuses nothing).
-    pub async fn refresh_disposable_domains(&self, url: &str) -> anyhow::Result<usize> {
-        let resp = self.http.get(url).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            anyhow::bail!("disposable email domains: {status}");
-        }
-        let domains: HashSet<String> = resp
-            .text()
-            .await?
+    /// Replaces the disposable list from `url` when it holds at least `min_domains`; a failed
+    /// or implausible fetch keeps the last list (an empty one refuses nothing, as upstream).
+    pub async fn refresh_disposable_domains(
+        &self,
+        url: &str,
+        min_domains: usize,
+    ) -> anyhow::Result<usize> {
+        let body = tokio::time::timeout(DISPOSABLE_TIMEOUT, async {
+            let mut resp = self.http.get(url).send().await?;
+            let status = resp.status();
+            if !status.is_success() {
+                anyhow::bail!("disposable email domains: {status}");
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = resp.chunk().await? {
+                if body.len() + chunk.len() > DISPOSABLE_MAX_BYTES {
+                    anyhow::bail!("disposable email domains: over {DISPOSABLE_MAX_BYTES} bytes");
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(body)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("disposable email domains: timed out"))??;
+        let domains: HashSet<String> = String::from_utf8_lossy(&body)
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .map(str::to_lowercase)
             .collect();
         let count = domains.len();
-        *self.disposable.write() = domains;
+        if count < min_domains {
+            anyhow::bail!(
+                "disposable email domains: {count} domains, expected at least {min_domains}"
+            );
+        }
+        *self.disposable.write() = Disposable {
+            domains,
+            fetched_at: Some(Instant::now()),
+        };
         Ok(count)
     }
 
-    /// Every process keeps its own list: fetched at start, then hourly.
-    pub fn spawn_disposable_refresh(&self, jobs: &Jobs) {
+    /// No list yet, or the held one is an hour old.
+    fn disposable_due(&self) -> bool {
+        self.disposable
+            .read()
+            .fetched_at
+            .is_none_or(|at| at.elapsed() >= DISPOSABLE_REFRESH)
+    }
+
+    /// Every process keeps its own list: fetched at start, retried each minute while
+    /// missing, then refreshed hourly. `false` (no job) when no list URL is set.
+    pub fn spawn_disposable_refresh(&self, jobs: &Jobs) -> bool {
+        let url = self.cfg.disposable_list_url.clone();
+        if url.is_empty() {
+            return false;
+        }
         let sender = self.clone();
         jobs.spawn_periodic(
             "notification-disposable-domains",
-            PeriodicCfg::every(DISPOSABLE_REFRESH).with_jitter(Duration::from_secs(60)),
+            PeriodicCfg::every(DISPOSABLE_RETRY),
             move |_ctx| {
-                let sender = sender.clone();
+                let (sender, url) = (sender.clone(), url.clone());
                 async move {
-                    match sender.refresh_disposable_domains(DISPOSABLE_LIST_URL).await {
+                    if !sender.disposable_due() {
+                        return Ok(());
+                    }
+                    match sender
+                        .refresh_disposable_domains(&url, DISPOSABLE_MIN_DOMAINS)
+                        .await
+                    {
                         Ok(count) => tracing::info!(count, "disposable email domains refreshed"),
                         Err(error) => tracing::warn!(%error, "disposable email domains refresh failed; keeping the last list"),
                     }
@@ -247,6 +298,7 @@ impl EmailSender {
                 }
             },
         );
+        true
     }
 
     /// The challenge's secret while the `turnstile-verification` flag is on; `None` turns the check off.
@@ -276,11 +328,7 @@ impl EmailSender {
     }
 
     fn send_url(&self) -> String {
-        let base = match self.cfg.api_url.trim_end_matches('/') {
-            "" => SENDGRID_API_URL,
-            base => base,
-        };
-        format!("{base}/v3/mail/send")
+        format!("{}/v3/mail/send", self.cfg.api_url.trim_end_matches('/'))
     }
 
     async fn sendgrid(&self, api_key: &str, body: &Json) -> Result<Option<String>, SendFailure> {
@@ -402,10 +450,11 @@ impl EmailSender {
         data: Json,
         custom_args: Json,
     ) -> Result<Option<String>, SendFailure> {
-        let (Some(api_key), Some(from), Some(template_id)) = (
+        let (Some(api_key), Some(from), Some(template_id), true) = (
             self.cfg.sendgrid_api_key.as_deref(),
             self.cfg.from_email.as_deref(),
             template_id,
+            self.html_configured(),
         ) else {
             return Err(SendFailure::NotConfigured);
         };
@@ -436,9 +485,16 @@ impl EmailSender {
         })
     }
 
-    /// Key and sender are set: a code-rendered message can go out.
+    /// Key, sender and API URL are set: a code-rendered message can go out.
     pub fn html_configured(&self) -> bool {
-        self.cfg.sendgrid_api_key.is_some() && self.cfg.from_email.is_some()
+        self.cfg.sendgrid_api_key.is_some()
+            && self.cfg.from_email.is_some()
+            && !self.cfg.api_url.trim().is_empty()
+    }
+
+    /// `TURNSTILE_SECRET_KEY` is set but the flag is off, so confirm-email runs no challenge.
+    pub fn turnstile_secret_without_flag(&self) -> bool {
+        self.cfg.turnstile_secret_key.is_some() && self.turnstile_secret().is_none()
     }
 
     /// One code-rendered message (a subject, an HTML body and its text
@@ -453,9 +509,10 @@ impl EmailSender {
         text: &str,
         custom_args: &Json,
     ) -> Result<Option<String>, SendFailure> {
-        let (Some(api_key), Some(from)) = (
+        let (Some(api_key), Some(from), true) = (
             self.cfg.sendgrid_api_key.as_deref(),
             self.cfg.from_email.as_deref(),
+            self.html_configured(),
         ) else {
             return Err(SendFailure::NotConfigured);
         };
@@ -517,7 +574,7 @@ impl EmailSender {
                 data.insert(key.into(), v.clone());
             }
         }
-        // `titleHighlight` goes raw, as upstream's; the link only percent-encodes
+        // `titleHighlight` goes raw in every email: the template's `{{ }}` escapes it. The link only percent-encodes
         // attribute-breaking characters, so it reads the same under `{{ }}` and
         // `{{{ }}}`, and a non-http(s) link drops the button.
         if let Some(Json::String(link)) = data.get("actionButtonLink").cloned() {
@@ -701,7 +758,7 @@ pub fn validate_email_data(source: EmailSource, link: &str, user_name: Option<&s
         "subject": subject,
         "content": content,
         "title": "Hey there",
-        "titleHighlight": html_escape(user_name.unwrap_or_default()),
+        "titleHighlight": user_name.unwrap_or_default(),
         "bannerUrl": format!("http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/{banner}/600x240.png"),
         "bannerLabel": label,
     })
@@ -713,7 +770,7 @@ pub fn common_email_data(subject: &str, content: &str, title: &str, highlight: &
         "subject": html_escape(subject),
         "content": html_escape(content),
         "title": html_escape(title),
-        "titleHighlight": html_escape(highlight),
+        "titleHighlight": highlight,
         "bannerUrl": "http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/519f099b-f5a6-4ef5-9d73-0319d560f6f5/600x240.png",
         "bannerLabel": "communication",
     })
@@ -794,16 +851,61 @@ mod tests {
     }
 
     #[test]
-    fn the_send_url_honours_the_configured_api_origin() {
-        assert_eq!(sender().send_url(), "https://api.sendgrid.com/v3/mail/send");
-        let s = EmailSender::new(
-            EmailConfig {
-                api_url: "https://sendgrid.example/".into(),
-                ..Default::default()
-            },
-            Outbound::for_tests(),
+    fn the_send_url_honours_the_api_origin_and_an_empty_one_is_unconfigured() {
+        assert_eq!(
+            configured(false).send_url(),
+            "https://api.sendgrid.com/v3/mail/send"
         );
+        let mut cfg = configured(false).cfg;
+        cfg.api_url = "https://sendgrid.example/".into();
+        let s = EmailSender::new(cfg.clone(), Outbound::for_tests());
         assert_eq!(s.send_url(), "https://sendgrid.example/v3/mail/send");
+        assert!(s.notifications_configured() && s.html_configured());
+        cfg.api_url = String::new();
+        let s = EmailSender::new(cfg, Outbound::for_tests());
+        assert!(!s.notifications_configured() && !s.html_configured());
+    }
+
+    #[tokio::test]
+    async fn an_empty_api_url_sends_nothing() {
+        let mut cfg = configured(false).cfg;
+        cfg.api_url = String::new();
+        let s = EmailSender::new(cfg, Outbound::for_tests());
+        assert_eq!(
+            s.send_html("to@example.com", "s", "<p>h</p>", "h", &json!({}))
+                .await,
+            Err(SendFailure::NotConfigured)
+        );
+        assert_eq!(
+            s.send_generic("to@example.com", json!({}), json!({})).await,
+            Err(SendFailure::NotConfigured)
+        );
+    }
+
+    #[test]
+    fn a_missing_or_unloaded_flag_document_turns_both_flags_off() {
+        for flags in [
+            DappsFlags::default(),
+            dapps(json!({}), json!({})),
+            dapps(
+                json!({"dapps-credits-blacklisted-domains": true}),
+                json!({}),
+            ),
+        ] {
+            let s = EmailSender::new(
+                EmailConfig {
+                    turnstile_secret_key: Some("secret".into()),
+                    dapps_flags: flags,
+                    ..Default::default()
+                },
+                Outbound::for_tests(),
+            );
+            assert_eq!(s.turnstile_secret(), None);
+            assert!(s.turnstile_secret_without_flag());
+            assert!(!s.is_domain_blacklisted("x@spam.com"));
+        }
+        assert!(!with_turnstile(Some("s"), true).turnstile_secret_without_flag());
+        assert!(!with_turnstile(None, false).turnstile_secret_without_flag());
     }
 
     #[test]
@@ -827,7 +929,7 @@ mod tests {
         assert!(!flagged(false).is_domain_blacklisted("x@spam.com"));
     }
 
-    async fn serve_list(status: u16, body: &'static str) -> String {
+    async fn serve_list(status: u16, body: String) -> String {
         let app = axum::Router::new().route(
             "/list.conf",
             axum::routing::get(move || async move {
@@ -841,22 +943,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_refresh_job_runs_only_with_a_list_url() {
+        let jobs = Jobs::new();
+        assert!(
+            !sender().spawn_disposable_refresh(&jobs),
+            "no URL (island, journey): no job, no fetch"
+        );
+        let list: String = (0..DISPOSABLE_MIN_DOMAINS)
+            .map(|i| format!("d{i}.example\n"))
+            .collect();
+        let s = EmailSender::new(
+            EmailConfig {
+                disposable_list_url: serve_list(200, list).await,
+                ..Default::default()
+            },
+            Outbound::for_tests(),
+        );
+        assert!(s.spawn_disposable_refresh(&jobs));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !s.is_domain_blacklisted("x@d7.example") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("fetched at start");
+        jobs.shutdown(Duration::from_secs(5)).await;
+    }
+
+    #[tokio::test]
     async fn disposable_domains_are_refused_and_a_failed_refresh_keeps_the_last_list() {
         let s = sender();
         assert!(
             !s.is_domain_blacklisted("x@mailinator.com"),
             "no list yet refuses nothing"
         );
-        let ok = serve_list(200, "# comment\n\nMailinator.com\n  yopmail.com \n").await;
-        assert_eq!(s.refresh_disposable_domains(&ok).await.unwrap(), 2);
+        assert!(s.disposable_due());
+        let ok = serve_list(200, "# comment\n\nMailinator.com\n  yopmail.com \n".into()).await;
+        assert_eq!(s.refresh_disposable_domains(&ok, 2).await.unwrap(), 2);
+        assert!(!s.disposable_due(), "fresh for an hour");
         assert!(s.is_domain_blacklisted("x@mailinator.com"));
         assert!(
             s.clone().is_domain_blacklisted("x@YOPMAIL.com"),
             "clones share the list"
         );
         assert!(!s.is_domain_blacklisted("x@fine.org"));
-        let failing = serve_list(503, "").await;
-        assert!(s.refresh_disposable_domains(&failing).await.is_err());
+        let failing = serve_list(503, String::new()).await;
+        assert!(s.refresh_disposable_domains(&failing, 2).await.is_err());
+        let short = serve_list(200, "only.one\n".into()).await;
+        assert!(
+            s.refresh_disposable_domains(&short, 2).await.is_err(),
+            "an implausibly small list is refused"
+        );
+        let huge = serve_list(200, "a.io\n".repeat(DISPOSABLE_MAX_BYTES / 4)).await;
+        assert!(
+            s.refresh_disposable_domains(&huge, 2).await.is_err(),
+            "the download is capped"
+        );
         assert!(
             s.is_domain_blacklisted("x@mailinator.com"),
             "kept on failure"
@@ -897,7 +1039,10 @@ mod tests {
         let data = common_email_data("S&P", "<b>hi</b>", "New", "it's");
         assert_eq!(data["content"], "&lt;b&gt;hi&lt;/b&gt;");
         assert_eq!(data["subject"], "S&amp;P");
-        assert_eq!(data["titleHighlight"], "it&#x27;s");
+        assert_eq!(
+            data["titleHighlight"], "it's",
+            "raw: the template escapes it"
+        );
         let link = with_turnstile(Some("s"), true).confirm_url(EmailSource::Credits, ADDR, CODE);
         let data = validate_email_data(EmailSource::Credits, &link, Some("Ann"));
         let content = data["content"].as_str().unwrap();
@@ -1004,6 +1149,7 @@ mod tests {
                 sendgrid_api_key: Some("sg-example".into()),
                 from_email: Some("noreply@example.com".into()),
                 notification_template_id: Some("d-generic".into()),
+                api_url: "https://api.sendgrid.com".into(),
                 account_base_url: "https://account.decentraland.org".into(),
                 sandbox_mode,
                 environment: "prd".into(),

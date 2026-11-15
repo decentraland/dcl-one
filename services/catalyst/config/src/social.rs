@@ -554,7 +554,7 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_API_KEY", hide_env_values = true)]
     pub sendgrid_api_key: Option<String>,
 
-    /// SendGrid's API origin; `/v3/mail/send` is appended.
+    /// SendGrid's API origin; `/v3/mail/send` is appended. Empty means no SendGrid.
     #[arg(
         long,
         env = "SENDGRID_API_URL",
@@ -633,6 +633,11 @@ pub struct SocialConfig {
     /// `dapps-turnstile-verification` flag is on.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
     pub turnstile_secret_key: Option<String>,
+
+    /// The disposable email domain list set-email and confirm-email refuse, fetched hourly; empty
+    /// (the default outside the mirror posture) fetches none.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_URL", default_value = "")]
+    pub disposable_email_domains_url: String,
 
     /// Comma-separated email domains refused by set-email and confirm-email, on top of the
     /// disposable-domain list and the `dapps-credits-blacklisted-domains` flag variant.

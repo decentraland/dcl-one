@@ -406,6 +406,27 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
     );
 }
 
+/// Only a mirror fetches the disposable email list or names SendGrid; an island's empty
+/// SendGrid URL leaves email unconfigured.
+#[test]
+fn only_the_mirror_fetches_the_disposable_list_and_names_sendgrid() {
+    let bare = Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
+    assert_eq!(bare.social.disposable_email_domains_url, "");
+    for posture in ["island", "journey"] {
+        let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        assert_eq!(c.social.disposable_email_domains_url, "", "{posture}");
+        assert_eq!(c.social.sendgrid_api_url, "", "{posture}");
+    }
+    let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(
+        mirror
+            .social
+            .disposable_email_domains_url
+            .starts_with("https://raw.githubusercontent.com/disposable-email-domains/")
+    );
+    assert_eq!(mirror.social.sendgrid_api_url, "https://api.sendgrid.com");
+}
+
 /// Every URL the mirror row names is one the binary leaves empty by
 /// default: a bare `serve` and an island name no Decentraland host.
 #[test]

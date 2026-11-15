@@ -699,6 +699,7 @@ pub(super) fn social_states(
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 api_url: config.social.sendgrid_api_url.clone(),
+                disposable_list_url: config.social.disposable_email_domains_url.clone(),
                 from_email: config.social.sendgrid_sender().map(str::to_string),
                 notification_template_id: config.social.sendgrid_template_id().map(str::to_string),
                 validate_email_template_id: non_empty(

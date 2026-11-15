@@ -296,6 +296,11 @@ const ROWS: &[Row] = &[
         "https://api.sendgrid.com",
     ),
     upstream(
+        "notification email",
+        "DISPOSABLE_EMAIL_DOMAINS_URL",
+        "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf",
+    ),
+    upstream(
         "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",

@@ -190,6 +190,12 @@ impl State {
         let max_age = self.settings.delivery_max_age;
         let configured = self.email.notifications_configured();
         let can_sign = self.email.has_signing_key();
+        if self.email.turnstile_secret_without_flag() {
+            tracing::warn!(
+                "TURNSTILE_SECRET_KEY is set but the dapps turnstile-verification flag is off or not loaded: confirm-email runs no challenge"
+            );
+        }
+        let last_held = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         if !configured {
             tracing::warn!(
                 "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL or SENDGRID_NOTIFICATION_TEMPLATE_ID unset: notification emails stay pending until they are set"
@@ -205,7 +211,7 @@ impl State {
                 .with_jitter(Duration::from_secs(5))
                 .with_error_backoff(Duration::from_secs(300)),
             move |ctx| {
-                let state = state.clone();
+                let (state, last_held) = (state.clone(), last_held.clone());
                 async move {
                     let pool = state.store.pool();
                     let expired = delivery::expire(
@@ -220,6 +226,16 @@ impl State {
                     }
                     let summary =
                         delivery::run_pass(pool, &state.email, configured, max_age).await?;
+                    let previous =
+                        last_held.swap(summary.held, std::sync::atomic::Ordering::Relaxed);
+                    if summary.held != previous && summary.held > 0 {
+                        tracing::warn!(
+                            held = summary.held,
+                            sendgrid_configured = configured,
+                            signing_key = can_sign,
+                            "notification emails stay pending until email delivery is configured"
+                        );
+                    }
                     if summary.claimed > 0 {
                         tracing::info!(?summary, "notification deliveries pass");
                         ctx.progress(format!("{summary:?}"));
@@ -232,7 +248,11 @@ impl State {
                 }
             },
         );
-        self.email.spawn_disposable_refresh(jobs);
+        if !self.email.spawn_disposable_refresh(jobs) {
+            tracing::info!(
+                "DISPOSABLE_EMAIL_DOMAINS_URL empty: no disposable-domain list is fetched"
+            );
+        }
         let store = self.store.clone();
         if self.settings.broadcast_horizon.is_some() {
             jobs.spawn_periodic_leased(

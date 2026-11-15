@@ -946,6 +946,42 @@ async fn confirm_email_answers_the_old_messages_and_rechecks_the_blacklist() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let sub = state.store.get_subscription(&ok).await.unwrap();
     assert_eq!(sub.email, Some(Some("me@example.com".into())));
+
+    // A disposable domain is refused at confirm time once the list holds it.
+    let disposable = fresh_address();
+    sqlx::query("INSERT INTO social.unconfirmed_emails (address, email, code, source) VALUES ($1, 'me@Mailinator.com', $2, 'credits')")
+        .bind(&disposable)
+        .bind(&code)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let list = axum::Router::new().route(
+        "/list.conf",
+        axum::routing::get(|| async { "# disposable\nmailinator.com\n" }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/list.conf", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, list).await });
+    state
+        .email
+        .refresh_disposable_domains(&url, 1)
+        .await
+        .unwrap();
+    let (status, body) = confirm(&disposable, &code).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (StatusCode::BAD_REQUEST, Some(INVALID_EMAIL))
+    );
+    assert!(
+        state
+            .store
+            .get_subscription(&disposable)
+            .await
+            .unwrap()
+            .email
+            .is_none(),
+        "nothing confirmed"
+    );
 }
 
 const SIGNING_KEY: &str = "test-signing-key";
