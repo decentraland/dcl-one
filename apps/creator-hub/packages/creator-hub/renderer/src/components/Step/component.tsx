@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { cx } from '/@/lib/cx';
-import CheckIcon from '@mui/icons-material/Check';
-import CloseIcon from '@mui/icons-material/Close';
+import { CheckIcon, CloseIcon } from '@ui/atoms/icons-material';
 
 import type { Step as StepProps } from './types';
 

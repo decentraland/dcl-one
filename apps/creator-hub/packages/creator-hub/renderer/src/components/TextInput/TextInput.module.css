@@ -1,0 +1,55 @@
+.control.control > div {
+  gap: 8px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--palette-whiteTransparent-blurry);
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+}
+
+.form.form > div {
+  height: 46px;
+  padding: 0 16px;
+}
+
+.inline.inline > div {
+  height: 40px;
+  padding: 0 8px 0 16px;
+}
+
+.form.multiline > div,
+.inline.multiline > div {
+  height: auto;
+  align-items: flex-start;
+  padding: 14px 16px;
+}
+
+.inline.multiline > div {
+  padding: 10.5px 16px;
+}
+
+.control.control:not([data-disabled]) > div:hover {
+  box-shadow: inset 0 0 0 1px var(--palette-whiteTransparent-backdrop);
+}
+
+.control.control:not([data-disabled]) > div:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--palette-neutral-softWhite);
+}
+
+.control.control.control[data-error] > div {
+  box-shadow: inset 0 0 0 1.5px var(--error);
+}
+
+.control input,
+.control textarea {
+  padding: 0;
+}
+
+.control input::placeholder {
+  color: var(--palette-whiteTransparent-blurry);
+  opacity: 1;
+}
+
+/* An adornment keeps the colour its own content sets. */
+.control > div > span {
+  color: inherit;
+}

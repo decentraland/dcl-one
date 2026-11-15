@@ -1,7 +1,5 @@
-import type { Tile } from 'react-tile-map/dist/lib/common';
 import { createAsyncThunk, createSlice, createSelector } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
-import type { AtlasTileProps } from 'decentraland-ui2/dist/components/Atlas/Atlas.types';
 import type { Async } from '/shared/types/async';
 import { config } from '/@/config';
 import { fetch } from '/shared/fetch';
@@ -115,6 +113,31 @@ const getLandTiles = createSelector(
 );
 
 // state
+/** A tile of the Genesis City atlas, as the map service sends it. */
+export type AtlasTileProps = {
+  id?: string;
+  x: number;
+  y: number;
+  updatedAt: number;
+  type: 'owned' | 'unowned' | 'plaza' | 'road' | 'district';
+  top?: boolean;
+  left?: boolean;
+  topLeft?: boolean;
+  name?: string;
+  estateId?: string;
+  owner: string;
+  tokenId?: string;
+};
+
+/** What a map layer draws at a parcel. */
+export type Tile = {
+  color: string;
+  top?: boolean;
+  left?: boolean;
+  topLeft?: boolean;
+  scale?: number;
+};
+
 export type LandTile = Tile & { land: Land };
 export type LandState = {
   data: Land[];

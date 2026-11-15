@@ -1,8 +1,9 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
-import SignalWifiOffIcon from '@mui/icons-material/SignalWifiOff';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import CloseIcon from '@mui/icons-material/Close';
-import { Typography, Button, Box, CircularProgress, IconButton } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/HubSpinner';
+import Text from '@ui/atoms/Text';
+import { SignalWifiOffIcon, RefreshIcon, CloseIcon } from '/@/components/Icons/material';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useConnectionStatus } from '/@/hooks/useConnectionStatus';
@@ -69,35 +70,49 @@ export function ConnectionModal({ open, onClose }: ConnectionModalProps) {
       size="tiny"
       open={open}
     >
-      <Box className="ConnectionModal">
+      <div className="ConnectionModal">
         <div className="CloseButtonContainer">
-          <IconButton onClick={onClose}>
+          <IconButton
+            aria-label={t('modal.close')}
+            onClick={onClose}
+          >
             <CloseIcon fontSize="medium" />
           </IconButton>
         </div>
-        <Box className="icon-container">
+        <div className="icon-container">
           <SignalWifiOffIcon className="icon offline" />
-        </Box>
-        <Typography
+        </div>
+        <Text
           variant="h5"
           className="title"
         >
           {t('connection.offline.title')}
-        </Typography>
-        <Typography
+        </Text>
+        <Text
           variant="body1"
           className="message"
         >
           {t('connection.offline.message')}
-        </Typography>
-        <Box className="actions">
+        </Text>
+        <div className="actions">
           <Button
-            variant="contained"
-            size="large"
+            variant="primary"
+            size="lg"
             onClick={handleRetry}
             disabled={isDisabled}
             className="retry-button"
-            startIcon={isChecking ? <CircularProgress size={20} /> : <RefreshIcon />}
+            startIcon={
+              isChecking ? (
+                <Spinner
+                  ring="wide"
+                  role="progressbar"
+                  size={20}
+                  color="primary"
+                />
+              ) : (
+                <RefreshIcon />
+              )
+            }
           >
             {isChecking
               ? t('connection.offline.checking')
@@ -105,8 +120,8 @@ export function ConnectionModal({ open, onClose }: ConnectionModalProps) {
                 ? `${t('connection.offline.retry')} (${cooldown}s)`
                 : t('connection.offline.retry')}
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
     </Modal>
   );
 }

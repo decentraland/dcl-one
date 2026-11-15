@@ -1,8 +1,12 @@
-import type { ButtonProps as DclButtonProps } from 'decentraland-ui2';
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-export type ButtonProps = DclButtonProps & {
-  className?: string;
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+export type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'color'> & {
+  variant?: 'contained' | 'outlined' | 'text';
+  color?: 'primary' | 'secondary' | 'info' | 'inherit' | 'error' | 'success' | 'warning';
+  size?: 'small' | 'medium' | 'large';
+  startIcon?: ReactNode;
+  endIcon?: ReactNode;
+  fullWidth?: boolean;
   'data-testid'?: string;
 };
 

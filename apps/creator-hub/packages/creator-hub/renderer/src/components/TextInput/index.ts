@@ -1,1 +1,1 @@
-export { FormTextInput, TextInput } from './TextInput.styled';
+export { FormTextInput, TextInput } from './TextInput';

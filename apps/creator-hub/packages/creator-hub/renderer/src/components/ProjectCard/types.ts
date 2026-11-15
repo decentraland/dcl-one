@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { type TypographyProps } from 'decentraland-ui2';
+import type { TextProps } from '@ui/atoms/Text';
 
 import type { Status } from '/shared/types/async';
 
@@ -15,7 +15,7 @@ export type Props = {
   height?: number;
   publishedAt?: number;
   dropdownOptions?: Option[];
-  titleVariant?: TypographyProps['variant'];
+  titleVariant?: TextProps['variant'];
   status?: Status;
   'data-testid'?: string;
   onClick: () => void;

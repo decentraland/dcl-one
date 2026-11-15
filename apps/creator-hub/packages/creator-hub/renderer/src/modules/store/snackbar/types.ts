@@ -1,7 +1,6 @@
-import type { AlertColor } from 'decentraland-ui2';
 import type { Project } from '/shared/types/projects';
 
-export type Severity = AlertColor | 'loading';
+export type Severity = 'success' | 'info' | 'warning' | 'error' | 'loading';
 export type NotificationId = string;
 export type CustomNotificationType =
   | { type: 'missing-scenes' }

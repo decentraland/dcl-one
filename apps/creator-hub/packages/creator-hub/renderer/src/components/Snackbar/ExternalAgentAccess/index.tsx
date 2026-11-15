@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
-import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
-import { Alert, Button } from 'decentraland-ui2';
+import { SmartToyOutlinedIcon } from '/@/components/Icons/material';
+import Button from '@ui/atoms/HubButton';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useSettings } from '/@/hooks/useSettings';
+
+import { SnackbarAlert } from '../Alert';
 
 // An AI agent outside the Hub asked for access to the open scene. It stays up until the
 // creator answers; only "Allow" turns access on.
@@ -16,7 +18,7 @@ export function ExternalAgentAccess({ onClose }: { onClose: () => void }) {
   }, [settings, updateAppSettings, onClose]);
 
   return (
-    <Alert
+    <SnackbarAlert
       icon={<SmartToyOutlinedIcon color="secondary" />}
       severity="info"
       action={
@@ -24,22 +26,19 @@ export function ExternalAgentAccess({ onClose }: { onClose: () => void }) {
           <Button
             variant="text"
             onClick={onClose}
-            sx={{ whiteSpace: 'nowrap' }}
           >
             {t('snackbar.external_agent_access.actions.deny')}
           </Button>
           <Button
-            variant="contained"
+            variant="primary"
             onClick={handleAllow}
-            sx={{ whiteSpace: 'nowrap' }}
           >
             {t('snackbar.external_agent_access.actions.allow')}
           </Button>
         </>
       }
-      sx={{ alignItems: 'center' }}
     >
       {t('snackbar.external_agent_access.title')}
-    </Alert>
+    </SnackbarAlert>
   );
 }

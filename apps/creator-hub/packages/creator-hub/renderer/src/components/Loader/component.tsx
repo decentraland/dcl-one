@@ -1,26 +1,35 @@
-import { Backdrop, CircularProgress, type CircularProgressProps } from 'decentraland-ui2';
+import type { ComponentPropsWithoutRef } from 'react';
+import Spinner from '@ui/atoms/HubSpinner';
+
+import styles from './component.module.css';
 
 import './styles.css';
 
-type Props = CircularProgressProps & {
+type Props = Omit<ComponentPropsWithoutRef<'span'>, 'color'> & {
+  size?: number | string;
+  color?: string;
   overlay?: boolean;
 };
 
-export function Loader({ overlay, ...props }: Props) {
-  if (overlay) {
-    return (
-      <Backdrop
-        open
-        sx={{ position: 'absolute', zIndex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-      >
-        <CircularProgress {...props} />
-      </Backdrop>
-    );
-  }
+const DEFAULT_SIZE = 40;
 
-  return (
-    <div className="Loader">
-      <CircularProgress {...props} />
-    </div>
+function toPixels(size: number | string | undefined): number {
+  if (size === undefined) return DEFAULT_SIZE;
+  const pixels = typeof size === 'number' ? size : Number.parseFloat(size);
+  return Number.isFinite(pixels) ? pixels : DEFAULT_SIZE;
+}
+
+export function Loader({ overlay, size, color = 'primary', ...props }: Props) {
+  const spinner = (
+    <Spinner
+      role="progressbar"
+      size={toPixels(size)}
+      color={color}
+      {...props}
+    />
   );
+
+  if (overlay) return <div className={styles.overlay}>{spinner}</div>;
+
+  return <div className="Loader">{spinner}</div>;
 }

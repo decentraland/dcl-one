@@ -49,6 +49,7 @@
 
 .ProjectCard .badge {
   position: absolute;
+  display: flex;
   bottom: 85px;
   right: 10px;
   padding: 10px 12px;
@@ -76,7 +77,7 @@
   min-height: 34px;
 }
 
-.ProjectCard .title .MuiTypography-root {
+.ProjectCard .title h6 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;

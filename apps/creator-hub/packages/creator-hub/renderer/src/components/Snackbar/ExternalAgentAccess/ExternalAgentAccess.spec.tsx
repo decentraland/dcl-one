@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import en from '/@/modules/store/translation/locales/en.json';
 import es from '/@/modules/store/translation/locales/es.json';
 import zh from '/@/modules/store/translation/locales/zh.json';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { ExternalAgentAccess } from '.';
 
 // Read from disk: vitest stubs stylesheet imports (even `?raw`) to empty strings.
-const snackbarCss = readFileSync(join(__dirname, '../styles.css'), 'utf8');
+const snackbarCss = readFileSync(join(__dirname, '../Alert.module.css'), 'utf8');
 
 function lookup(locale: object, id: string): unknown {
   return id.split('.').reduce<any>((node, key) => node?.[key], locale);
@@ -28,11 +28,11 @@ vi.mock('/@/hooks/useSettings', () => ({
 
 function renderNotice(onClose = vi.fn()) {
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <div className="Snackbar">
         <ExternalAgentAccess onClose={onClose} />
       </div>
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return onClose;
 }
@@ -60,7 +60,7 @@ describe('ExternalAgentAccess', () => {
     expect(screen.getByRole('button', { name: "Don't allow" })).toBeTruthy();
   });
 
-  // The snackbar sheet paints button text --dcl red at higher specificity than MUI's own
+  // The snackbar sheet paints button text --dcl red at higher specificity than the button's own
   // classes; on the contained Allow button that red is also the fill, which left it looking
   // empty (#1718 QA). Selector matching, not computed style: happy-dom ignores specificity.
   it('should keep the red text rule off the contained Allow button', () => {

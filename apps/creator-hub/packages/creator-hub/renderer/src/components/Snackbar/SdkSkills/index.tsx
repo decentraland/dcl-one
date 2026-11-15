@@ -1,11 +1,13 @@
 import { useCallback } from 'react';
-import NotificationImportantIcon from '@mui/icons-material/NotificationImportant';
-import CloseIcon from '@mui/icons-material/Close';
-import { Alert, Button, IconButton } from 'decentraland-ui2';
+import { NotificationImportantIcon, CloseIcon } from '/@/components/Icons/material';
+import Button from '@ui/atoms/HubButton';
+import IconButton from '@ui/atoms/IconButton';
 
 import type { Project } from '/shared/types/projects';
 import { t } from '/@/modules/store/translation/utils';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+
+import { SnackbarAlert } from '../Alert';
 
 export function SdkSkills({
   project,
@@ -24,7 +26,7 @@ export function SdkSkills({
   }, [project, updateSdkSkills, onClose]);
 
   return (
-    <Alert
+    <SnackbarAlert
       icon={<NotificationImportantIcon color="secondary" />}
       severity="info"
       action={
@@ -37,14 +39,17 @@ export function SdkSkills({
               ? t('snackbar.sdk_skills.outdated.action')
               : t('snackbar.sdk_skills.missing.action')}
           </Button>
-          <IconButton onClick={onClose}>
+          <IconButton
+            className="MuiIconButton-root"
+            aria-label={t('modal.close')}
+            onClick={onClose}
+          >
             <CloseIcon color="secondary" />
           </IconButton>
         </>
       }
-      sx={{ alignItems: 'center' }}
     >
       {installed ? t('snackbar.sdk_skills.outdated.title') : t('snackbar.sdk_skills.missing.title')}
-    </Alert>
+    </SnackbarAlert>
   );
 }

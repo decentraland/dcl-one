@@ -1,41 +1,49 @@
 /* Specific Select component styles */
 .Select {
+  /* The fill shows the focus, so the trigger has no ring. */
+  --focus-ring-width: 0px;
   padding: 4px 12px 2px 12px;
   border-radius: 8px;
 }
 
 .Select:hover,
-.Select.Mui-focused {
+.Select:focus-within {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
-.Select .Mui-selected {
-  background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-.Select .MuiInput-input {
-  font-weight: 600;
-}
-
-.Select svg {
-  right: 8px;
-}
-
-.Select::before,
-.Select::after {
-  border: none !important;
-}
-
-.Select div[role="combobox"] {
+.Select [role="combobox"] {
   padding: 0px 24px 0px 0px;
   border: none;
   color: var(--text-on-secondary);
+  font-weight: 600;
+  letter-spacing: 0.00938em;
 }
 
+.Select [role="combobox"]:focus {
+  border-radius: 0;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* The arrow box. */
+.Select.Select > span[aria-hidden="true"] {
+  right: 8px;
+  transition: none;
+}
+
+.Select .SelectArrow {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  color: var(--icon-btn-ink);
+  font-size: 1.5rem;
+}
+
+/* The popup is 4px under the field; with this margin the distance is 8px. */
 .SelectMenu {
-  margin-top: 8px;
+  margin-top: 4px;
+  letter-spacing: 0.00938em;
 }
 
-.SelectMenu .sort-item.Mui-selected {
+.SelectMenu .sort-item[aria-selected="true"] {
   background-color: rgba(255, 255, 255, 0.1) !important;
 }

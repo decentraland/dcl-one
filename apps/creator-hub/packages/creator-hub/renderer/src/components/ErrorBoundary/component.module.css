@@ -1,0 +1,29 @@
+.fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 32px;
+  text-align: center;
+}
+
+.description {
+  max-width: 480px;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 8px;
+  --brand-cta: var(--dcl);
+  --ctl-tracking: 0.4px;
+}
+
+/* A button that follows another button keeps the 10px margin on top of the gap. */
+.actions [class~='btn'] + [class~='btn'] {
+  margin-left: 10px;
+}

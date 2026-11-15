@@ -1,7 +1,11 @@
 import { useCallback, useState } from 'react';
-import { Box, Button, TextField, Typography } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
 
 import { t } from '/@/modules/store/translation/utils';
+
+import styles from './component.module.css';
 
 /** Where the user pastes the code an agent's sign-in page shows when the browser can't hand the
  *  sign-in back to the app on its own. */
@@ -13,34 +17,37 @@ export function SignInCodeField({ onSubmit }: { onSubmit: (code: string) => void
     setCode('');
   }, [code, onSubmit]);
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <Typography
+    <div className={styles.root}>
+      <Text
         variant="caption"
-        color="text.secondary"
+        tone="secondary"
       >
         {t('editor.ai.setup.signin_code_hint')}
-      </Typography>
-      <Box sx={{ display: 'flex', gap: 1 }}>
+      </Text>
+      <div className={styles.row}>
         <TextField
+          className={styles.field}
           size="small"
           fullWidth
           value={code}
           placeholder={t('editor.ai.setup.signin_code_placeholder')}
-          inputProps={{ 'aria-label': t('editor.ai.setup.signin_code_placeholder') }}
+          aria-label={t('editor.ai.setup.signin_code_placeholder')}
           onChange={e => setCode(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') submit();
           }}
         />
         <Button
-          color="secondary"
-          size="small"
+          className={styles.submit}
+          variant="text"
+          tone="neutral"
+          size="sm"
           disabled={code.trim() === ''}
           onClick={submit}
         >
           {t('editor.ai.setup.signin_code_submit')}
         </Button>
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

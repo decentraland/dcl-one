@@ -1,8 +1,11 @@
 import React from 'react';
-import { Address, AvatarFace, type AvatarFaceProps, Skeleton, Typography } from 'decentraland-ui2';
+import Address from '@ui/atoms/Address';
+import AvatarFace, { type AvatarFaceProps } from '@ui/atoms/AvatarFace';
+import Text from '@ui/atoms/Text';
 import { useProfile } from '/@/hooks/useProfile';
 import { Row } from '/@/components/Row';
 import { CopyToClipboard } from '/@/components/CopyToClipboard';
+import styles from './component.module.css';
 import './styles.css';
 
 export type Props = {
@@ -24,10 +27,14 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
       return (
         <Row className="Avatar">
           <AvatarFace
+            className="MuiAvatar-root"
             size={size}
             inline
           />
-          <Skeleton width="300px" />
+          <span
+            className={`MuiSkeleton-root ${styles.skeleton}`}
+            aria-hidden="true"
+          />
         </Row>
       );
     }
@@ -36,10 +43,10 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
       return (
         <Row className="Avatar">
           {icon}
-          <Typography className="Paragraph">
+          <Text className="Paragraph">
             {name && <span className="Name">{name}</span>}
             {subtitle && <span>{subtitle}</span>}
-          </Typography>
+          </Text>
         </Row>
       );
     }
@@ -47,7 +54,8 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
     return (
       <Row className="Avatar">
         <AvatarFace
-          avatar={avatar as AvatarFaceProps['avatar']}
+          className="MuiAvatar-root"
+          avatar={avatar}
           size={size}
           inline
         />
@@ -55,13 +63,13 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
           text={value}
           showPopup
         >
-          <Typography className="Paragraph">
+          <Text className="Paragraph">
             {(name ?? avatar?.name) && <span className="Name">{name ?? avatar?.name}</span>}
             <Address
               value={value}
               shorten
             />
-          </Typography>
+          </Text>
         </CopyToClipboard>
       </Row>
     );

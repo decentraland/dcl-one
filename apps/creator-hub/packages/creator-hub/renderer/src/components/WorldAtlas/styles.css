@@ -17,22 +17,19 @@
   gap: 16px;
 }
 
-.MuiModal-root > .MuiPaper-root .TopLeftOverlay .MuiBox-root:first-child {
-  padding-bottom: 0;
-}
-
 .TopLeftOverlay .WorldSize {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.TopLeftOverlay .MuiTypography-root {
+/* Each text and each icon of the overlay, also of a content that a caller gives. */
+.TopLeftOverlay.TopLeftOverlay p {
   font-size: 12px;
   font-weight: 500;
 }
 
-.TopLeftOverlay .MuiSvgIcon-root {
+.TopLeftOverlay.TopLeftOverlay svg {
   width: 16px;
   height: 16px;
 }

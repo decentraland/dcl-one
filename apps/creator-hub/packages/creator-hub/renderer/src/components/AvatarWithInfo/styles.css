@@ -24,3 +24,32 @@
   color: var(--dcl-silver);
   font-size: 32px;
 }
+
+/*
+ * A host can set the size of the avatar on the ui2 name MuiAvatar-root. The avatar has that name, and its face
+ * takes the size of the avatar.
+ */
+.Avatar > .MuiAvatar-root {
+  width: 32px;
+  height: 32px;
+}
+
+.Avatar > .MuiAvatar-root:where([data-size='tiny']) {
+  width: 20px;
+  height: 20px;
+}
+
+.Avatar > .MuiAvatar-root:where([data-size='medium']) {
+  width: 48px;
+  height: 48px;
+}
+
+.Avatar > .MuiAvatar-root:where([data-size='large']) {
+  width: 108px;
+  height: 108px;
+}
+
+.Avatar > .MuiAvatar-root.MuiAvatar-root > span {
+  width: inherit;
+  height: inherit;
+}

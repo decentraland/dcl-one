@@ -1,5 +1,5 @@
-import { useCallback, type SyntheticEvent } from 'react';
-import { type SnackbarCloseReason } from 'decentraland-ui2';
+import { useCallback } from 'react';
+import type { ToastCloseReason } from '@ui/atoms/Toast';
 
 import { actions } from '/@/modules/store/snackbar';
 import {
@@ -14,14 +14,13 @@ export function useSnackbar() {
   const snackbar = useSelector(state => state.snackbar);
 
   const dismiss = useCallback(
-    (id: Notification['id'], idx: number) =>
-      (_: SyntheticEvent<any> | Event, reason: SnackbarCloseReason) => {
-        if (reason === 'timeout') dispatch(actions.removeSnackbar(id));
-        if (reason === 'escapeKeyDown' && idx === 0) {
-          const first = snackbar.notifications[0];
-          dispatch(actions.removeSnackbar(first.id));
-        }
-      },
+    (id: Notification['id'], idx: number) => (reason: ToastCloseReason) => {
+      if (reason === 'timeout') dispatch(actions.removeSnackbar(id));
+      if (reason === 'escape' && idx === 0) {
+        const first = snackbar.notifications[0];
+        dispatch(actions.removeSnackbar(first.id));
+      }
+    },
     [snackbar.notifications],
   );
 

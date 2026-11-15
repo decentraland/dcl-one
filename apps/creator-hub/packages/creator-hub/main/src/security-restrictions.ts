@@ -30,9 +30,9 @@
  * (so the spinner never resolved), and the video players a scene's markdown may embed, which
  * simply rendered nothing. Neither sends an enforced COEP of its own — YouTube sends only
  * `Cross-Origin-Embedder-Policy-Report-Only`, which does not count — so it is stamped here.
- * Every wearable-preview environment is listed because decentraland-ui picks the origin from
- * its own env config; the video origins mirror the inspector's markdown iframe allowlist, and
- * a test asserts this list keeps covering it.
+ * Every wearable-preview environment is listed because the inspector picks the origin from its
+ * `env` query parameter or its host name; the video origins mirror the inspector's markdown
+ * iframe allowlist, and a test asserts this list keeps covering it.
  *
  * ## One listener, one handler
  *

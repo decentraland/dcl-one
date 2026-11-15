@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { CreateButton } from '.';
 
 vi.mock('/@/hooks/useWorkspace', () => ({
@@ -33,9 +33,9 @@ function stubNarrow(matches: boolean) {
 
 const renderButton = () =>
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <CreateButton />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 
 const labelHalf = () => screen.getByRole('button', { name: 'Create' });

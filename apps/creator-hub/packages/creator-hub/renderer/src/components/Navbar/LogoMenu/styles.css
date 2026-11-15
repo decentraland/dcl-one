@@ -33,33 +33,44 @@
   font-weight: 600 !important;
 }
 
-.MuiTooltip-popper[data-popper-placement*="bottom"] .MainMenuTooltip {
-  margin-top: 10px !important;
+/* This tip keeps the font list of the ui2 tooltip, which does not start with Inter, and its line height. */
+.MainMenuTooltip.tt__tip {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+/* The ui3 tip opens 12px below its anchor; this tip is 10px below. */
+.MainMenuTooltip.tt__tip--bottom {
+  margin-top: -2px;
+}
+
+/* The surface of the ui3 Menu. */
+.LogoMenu {
+  --overlay-surface: var(--card);
+  --overlay-radius: 8px;
+  --popover-min-width: 200px;
+}
+
+/*
+ * A box with no layout around the items, with the class the capture scenarios wait for.
+ * It takes the opacity of the surface, so a reader sees when the surface is fully shown.
+ */
+.LogoMenu [role="menu"],
+.LogoMenu .MuiPaper-root {
+  opacity: inherit;
 }
 
 .LogoMenu .MuiPaper-root {
-  background-color: var(--card);
-  background-image: none;
-  border-radius: 8px;
-  min-width: 200px;
-  margin-top: 4px;
+  display: contents;
 }
 
-.LogoMenu .MuiMenuItem-root {
+.LogoMenu [role="menuitem"] {
   font-size: 14px;
+  letter-spacing: 0.00938em;
   padding: 8px 16px;
   gap: 8px;
 }
 
 .LogoMenu .LogoMenuSubmenuItem {
   justify-content: space-between;
-}
-
-.LogoSubmenu {
-  pointer-events: none;
-}
-
-.LogoSubmenu .MuiPaper-root {
-  pointer-events: auto;
-  margin-left: 4px;
 }

@@ -1,0 +1,24 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-toast) - 1);
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Each notice has a fixed place over the bottom edge; the host only gives the layer. */
+.slot {
+  position: fixed;
+  right: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (min-width: 600px) {
+  .slot {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}

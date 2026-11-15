@@ -54,5 +54,19 @@
 }
 
 .ConnectionModal .retry-button {
+  --brand-cta: var(--dcl);
+  --btn-icon-margin: 0 0 0 -4px;
+
   width: 100%;
+}
+
+/* The icon before the label is 22px and goes 4px into the left padding (--btn-icon-margin). */
+.ConnectionModal .retry-button.btn svg {
+  font-size: 22px;
+}
+
+/* The disabled primary button keeps a light brand fill. */
+.ConnectionModal .retry-button:disabled {
+  background: #f8919d;
+  color: #fee9ec;
 }

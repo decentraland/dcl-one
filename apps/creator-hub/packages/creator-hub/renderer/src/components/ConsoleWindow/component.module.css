@@ -1,0 +1,51 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: var(--bg);
+  color: var(--text-tone-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--fill-5);
+}
+
+.headerButton.headerButton {
+  color: var(--text-tone-secondary);
+}
+
+.headerButton.headerButton:hover:not(:disabled) {
+  color: var(--text-tone-primary);
+  background: var(--fill-3);
+}
+
+.logs {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 12px;
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.logs > span {
+  display: block;
+}
+
+.placeholder {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tone-secondary);
+  font-size: 13px;
+}

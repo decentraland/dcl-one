@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Snackbar } from '@mui/material';
+import { Toast, ToastHost } from '@ui/atoms/Toast';
 
 import type { Notification } from '/@/modules/store/snackbar/types';
 import { useSnackbar } from '/@/hooks/useSnackbar';
@@ -11,11 +11,11 @@ import { NewDependencyVersion } from './DependencyVersion';
 import { SdkSkills } from './SdkSkills';
 import { Deploy } from './Deploy';
 import { ExternalAgentAccess } from './ExternalAgentAccess';
-import { StyledBackdrop } from './component.styled';
 
-import './styles.css';
+import styles from './component.module.css';
 
 const DEFAULT_DURATION_IN_MS = 5_000;
+const SLOT_HEIGHT_IN_PX = 60;
 
 export function SnackbarComponent() {
   const { notifications, close, dismiss } = useSnackbar();
@@ -65,28 +65,40 @@ export function SnackbarComponent() {
 
   return (
     <>
-      <StyledBackdrop open={isInstallingDependencies} />
-      <div className="Snackbar">
+      {isInstallingDependencies && (
+        <div
+          // The capture scenarios find the backdrop by the second class name.
+          className={`${styles.backdrop} MuiBackdrop-root`}
+          aria-hidden="true"
+        />
+      )}
+      <ToastHost className="Snackbar">
         {notifications.map((notification, idx) => {
-          const component = getComponent(notification);
+          const bottom = (notifications.length - idx) * SLOT_HEIGHT_IN_PX;
+          const duration = getDuration(notification);
 
           return (
-            <Snackbar
-              style={{ bottom: `${(notifications.length - idx) * 60}px` }}
+            <div
+              // The capture scenarios find each notice by the second class name and read its bottom.
+              className={`${styles.slot} MuiSnackbar-root`}
+              style={{ bottom: `${bottom}px` }}
               key={notification.id}
-              open={true}
-              autoHideDuration={getDuration(notification)}
-              onClose={dismiss(notification.id, idx)}
-              anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             >
-              <div>
-                {/* dont remove this wrapping div... */}
-                {component}
-              </div>
-            </Snackbar>
+              <Toast
+                role="presentation"
+                duration={duration}
+                // As the ui2 notice: the time stops while the window is not active, and a stop that ends
+                // gives half of the duration again.
+                holdOnWindowBlur
+                resumeDuration={duration === null ? undefined : duration / 2}
+                onClose={dismiss(notification.id, idx)}
+              >
+                {getComponent(notification)}
+              </Toast>
+            </div>
           );
         })}
-      </div>
+      </ToastHost>
     </>
   );
 }
