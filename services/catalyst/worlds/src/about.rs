@@ -304,7 +304,10 @@ fn is_locally_published(scenes: &[WorldScene]) -> bool {
 
 fn strip_ens_suffix(name: &str) -> &str {
     let cut = name.len().saturating_sub(ENS_WORLD_SUFFIX.len());
-    match name[cut..].eq_ignore_ascii_case(ENS_WORLD_SUFFIX) && cut > 0 {
+    let has_suffix = name
+        .get(cut..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(ENS_WORLD_SUFFIX));
+    match has_suffix && cut > 0 {
         true => &name[..cut],
         false => name,
     }
@@ -484,6 +487,14 @@ mod tests {
             "swiss-cube"
         );
         assert_eq!(resolve_realm_name(".dcl.eth", None, true, true), ".dcl.eth");
+    }
+
+    #[test]
+    fn stripping_respects_non_ascii_names() {
+        // The suffix-length cut lands inside the three-byte euro sign.
+        assert_eq!(strip_ens_suffix("€abcdefg"), "€abcdefg");
+        assert_eq!(strip_ens_suffix("café.dcl.eth"), "café");
+        assert_eq!(strip_ens_suffix("名前.DCL.ETH"), "名前");
     }
 
     #[test]
