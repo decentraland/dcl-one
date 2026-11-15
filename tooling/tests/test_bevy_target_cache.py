@@ -74,7 +74,7 @@ class KeyTest(unittest.TestCase):
     def test_the_scheduled_cleanup_bounds_the_caches_of_this_key(self):
         # The cleanup keeps the newest cache of each prefix on a ref; the prefix ends with the platform.
         cleanup = (ROOT / '.github/workflows/closed-pr-cache.yml').read_text()
-        family = re.search(r"r'\|\^(bevy-native-.+)'\)", cleanup).group(1)
+        family = re.search(r"r'\|\^(bevy-native-[^']+)'", cleanup).group(1)
         for lane, system, arch in (('test', 'Linux', 'X64'), ('clippy', 'macOS', 'ARM64'), ('headless', 'Windows', 'X64')):
             exact = self.key(lane, {**ENV, 'RUNNER_OS': system, 'RUNNER_ARCH': arch})[0]
             self.assertEqual(re.match(family, exact).group(0), exact[:-50])

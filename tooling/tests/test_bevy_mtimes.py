@@ -70,7 +70,7 @@ class BevyMtimesTest(unittest.TestCase):
         mtimes.record(self.root, self.target)
         self.checkout_now()
         self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
-        self.assertEqual(self.mtime(BOIMP), 1_700_000_000 * SECOND)
+        self.assertEqual(self.mtime(BOIMP), 1_700_000_000 * SECOND + 750_000_000)
 
     def test_changed_files_keep_their_checkout_time(self):
         # Path dependencies tracked as exact bytes: Cargo judges them by file times.
@@ -83,13 +83,57 @@ class BevyMtimesTest(unittest.TestCase):
         self.assertEqual(self.mtime(BOIMP), now)
         self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
 
-    def test_recorded_times_are_whole_seconds(self):
-        # A cache archive may keep whole seconds only; a source a fraction newer than its
-        # truncated build stamp would make Cargo rebuild it.
+    def test_recorded_times_keep_their_nanoseconds(self):
+        # Cargo stores the newest file time of a package to the nanosecond: a rounded time is a change to it.
         self.set_mtime(DUI, 1_700_000_000 * SECOND + 1)
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
-        self.assertTrue(all(ns % SECOND == 0 for _, ns in manifest['files'].values()))
+        self.assertEqual(manifest['files'][DUI][1], 1_700_000_000 * SECOND + 1)
+
+    def test_a_directory_keeps_its_cached_time_while_it_holds_the_same_names(self):
+        # A build script may name a directory; Cargo then reads the time of every directory below it.
+        proto = 'library/protocol/proto'
+        kept, grown, shrunk = (f'{proto}/decentraland/{name}' for name in ('common', 'kernel', 'sdk'))
+        for directory in (kept, grown, shrunk):
+            self.write(directory + '/first.proto', 'message First {}\n')
+        self.write(shrunk + '/second.proto', 'message Second {}\n')
+        self.commit()
+        for name in (proto, proto + '/decentraland', kept, grown, shrunk):
+            self.set_mtime(name, 1_700_000_000 * SECOND + 7)
+        mtimes.record(self.root, self.target)
+        self.write(kept + '/first.proto', 'message Changed {}\n')
+        self.write(grown + '/second.proto', 'message Second {}\n')
+        self.git('rm', '-q', shrunk + '/second.proto')
+        self.commit()
+        now = self.checkout_now()
+        for name in (grown, shrunk):
+            self.set_mtime(name, now)
+        mtimes.restore(self.root, self.target)
+        for name in (proto, proto + '/decentraland', kept):
+            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND + 7)
+        for name in (grown, shrunk, kept + '/first.proto'):
+            self.assertEqual(self.mtime(name), now)
+
+    def test_directories_above_the_trees_are_left_alone(self):
+        self.set_mtime('rendering/bevy-explorer', 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        now = self.checkout_now()
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime('rendering/bevy-explorer'), now)
+
+    def test_a_manifest_without_directories_restores_the_files(self):
+        source = 'rendering/bevy-explorer/source/src/lib.rs'
+        self.set_mtime(source, 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        for profile in self.profiles:
+            manifest = profile / '.fingerprint' / mtimes.MANIFEST
+            recorded = json.loads(manifest.read_text())
+            del recorded['directories']
+            manifest.write_text(json.dumps(recorded))
+        now = self.checkout_now()
+        self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
+        self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
+        self.assertEqual(self.mtime('rendering/bevy-explorer/source/src'), now)
 
     def test_every_profile_gets_the_manifest(self):
         self.assertEqual(mtimes.record(self.root, self.target), 2)
@@ -147,11 +191,11 @@ class BevyMtimesTest(unittest.TestCase):
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
         source = written[0]
-        self.assertEqual(manifest['files'][source], [self.git('hash-object', '--no-filters', source), 1_700_000_000 * SECOND])
+        self.assertEqual(manifest['files'][source], [self.git('hash-object', '--no-filters', source), 1_700_000_000 * SECOND + 5])
         self.rewrite(written)
         self.assertEqual(mtimes.restore(self.root, self.target), (6, 0))
         for name in written:
-            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND)
+            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND + 5)
 
     def test_changed_rebuilt_files_keep_the_time_they_were_written(self):
         written = self.materialise()
@@ -176,6 +220,54 @@ class BevyMtimesTest(unittest.TestCase):
         self.checkout_now()
         mtimes.restore(self.root, self.target)
         self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
+
+    def test_a_tracked_link_is_no_input(self):
+        # The id of a link is its text, and its time would be the one of the file it names: a changed
+        # file behind an unchanged link must not get an old time back through the link.
+        link = self.root / VENDOR / 'boimp/src/alias.rs'
+        link.symlink_to('lib.rs')
+        self.commit()
+        self.assertNotIn(VENDOR + '/boimp/src/alias.rs', mtimes.blobs(self.root))
+        self.set_mtime(BOIMP, 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
+        self.assertNotIn(VENDOR + '/boimp/src/alias.rs', manifest['files'])
+        now = self.checkout_now()
+        self.write(BOIMP, 'pub fn import() { /* changed */ }\n')
+        self.set_mtime(BOIMP, now)
+        self.git('add', '.')
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(BOIMP), now)
+
+    def test_a_path_of_the_index_that_is_not_on_disk_is_left_out(self):
+        self.set_mtime(DUI, 1_700_000_000 * SECOND)
+        (self.root / BOIMP).unlink()
+        mtimes.record(self.root, self.target)
+        manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
+        self.assertNotIn(BOIMP, manifest['files'])
+        self.assertIn(DUI, manifest['files'])
+        self.git('checkout', '-q', '--', BOIMP)
+        mtimes.record(self.root, self.target)
+        self.checkout_now()
+        shutil.rmtree(self.root / VENDOR / 'boimp')
+        restored, _ = mtimes.restore(self.root, self.target)
+        self.assertEqual(restored, 3)
+        self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
+
+    def test_a_directory_of_the_rebuilt_tree_keeps_its_cached_time(self):
+        # The rebuilt tree is not tracked: its directories are named by the files on disk.
+        self.write(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs', 'pub struct World;\n')
+        folder = mtimes.TREE + '/crates/bevy_ecs/src'
+        self.set_mtime(folder, 1_700_000_000 * SECOND + 250_000_000)
+        mtimes.record(self.root, self.target)
+        now = time.time_ns()
+        self.set_mtime(folder, now)
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(folder), 1_700_000_000 * SECOND + 250_000_000)
+        self.write(mtimes.TREE + '/crates/bevy_ecs/src/world.rs', 'pub fn spawn() {}\n')
+        after = self.mtime(folder)
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(folder), after)
 
     def test_the_manifest_survives_the_native_cache_pruning(self):
         # tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>.
