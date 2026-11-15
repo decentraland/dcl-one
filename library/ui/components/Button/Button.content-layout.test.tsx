@@ -52,9 +52,12 @@ describe('when a caller chooses a supported Button content layout', () => {
     expect(fireEvent.click(node, { ctrlKey: true })).toBe(true)
     expect(action).toHaveBeenCalledOnce()
   })
-  it.each(['', null, 12, 'other'])('should reject an invalid untyped layout %j', (layout) => {
-    expect(() => renderToString(<Button contentLayout={layout as never}>Action</Button>)).toThrow(
-      'Unsupported Button content layout'
-    )
-  })
+  it.each(['', null, 12, 'other'])(
+    'should preserve intrinsic layout for an invalid untyped presentation value %j',
+    (layout) => {
+      const markup = renderToString(<Button contentLayout={layout as never}>Action</Button>)
+      expect(markup).toContain('data-content-layout="intrinsic"')
+      expect(markup).not.toContain('contentLayout=')
+    }
+  )
 })

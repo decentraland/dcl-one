@@ -75,8 +75,7 @@ export function Button({
   disabled = false,
   ...native
 }: ButtonProps) {
-  if (!['intrinsic', 'fill'].includes(contentLayout))
-    throw new Error('Unsupported Button content layout')
+  const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
@@ -94,7 +93,7 @@ export function Button({
       <span
         className={styles.content}
         data-loading={loading || undefined}
-        data-content-layout={compact ? 'intrinsic' : contentLayout}
+        data-content-layout={compact ? 'intrinsic' : layout}
       >
         {(leadingIcon ?? startIcon) != null && (
           <span className={styles.icon} aria-hidden="true">
