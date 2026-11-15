@@ -240,8 +240,13 @@ mod tests {
             serde_json::Value::String(raw),
         );
         let error = extract_from_object(&obj).unwrap_err();
-        assert!(error.starts_with("invalid auth-chain link 0: "));
-        assert!(error.len() <= "invalid auth-chain link 0: ".len() + 64);
+        assert_eq!(
+            error,
+            format!(
+                "invalid auth-chain link 0: unknown variant `{}",
+                "a".repeat(46)
+            )
+        );
     }
 
     fn header_bag_json(links: &[(usize, &AuthLink)], ts: &str, metadata: &str) -> String {
