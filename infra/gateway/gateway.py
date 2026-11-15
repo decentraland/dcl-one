@@ -15,6 +15,9 @@ WORLDS_SETTINGS_CAP = "12m"
 # The badges backfill body (social badges `MAX_BACKFILL_BODY_BYTES`); a
 # gateway test pins it.
 BADGES_BACKFILL_CAP = "64m"
+# One uploaded badge art file (social badges `MAX_ASSET_BODY_BYTES`); a
+# gateway test pins it.
+BADGES_ASSET_CAP = "16m"
 # One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
 # gateway test pins it.
 REPORT_EVIDENCE_CAP = "5m"
@@ -303,6 +306,9 @@ def render(table, cfg, mime):
     # concurrent uploads are capped as on the deploy routes.
     locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
         f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
+    # The admin art upload (PUT) shares its path with the public read.
+    locations += location('~ "^/badges/assets/.+$"', proxy("apis",
+        f"client_max_body_size {BADGES_ASSET_CAP}; {uploads}"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))

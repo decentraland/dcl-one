@@ -3,8 +3,9 @@
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
 //! admin read, grant, revoke and [`backfill`] (grant and revoke with an
 //! audit row), the bearer-gated catalog writes ([`catalog`]: `PUT` and
-//! `PATCH /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
-//! `/assets/{path}`. Revoke answers 200 with a body in every environment;
+//! `PATCH /badges/{id}`), and badge art in `BADGES_ASSETS_DIR` at
+//! `/assets/{path}` (mirrored, or uploaded by the bearer-gated `PUT` of a
+//! path the catalog names). Revoke answers 200 with a body in every environment;
 //! upstream registers it in dev and test only, with a bare 204. A missing,
 //! wrong or unconfigured bearer is 401 with upstream's `@dcl/http-commons`
 //! body on every admin route; upstream does not register them without a
@@ -58,6 +59,8 @@ pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// The backfill's request body: upstream read it whole with no limit, so this
 /// only guards memory against a runaway import.
 pub const MAX_BACKFILL_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// One uploaded art file (`PUT /assets/{path}`); the gateway applies it too.
+pub const MAX_ASSET_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// Upstream's CORS `maxAge`, in seconds.
 pub const CORS_MAX_AGE_SECS: u64 = 86_400;
 
@@ -162,7 +165,12 @@ pub fn router(state: SharedState) -> Router {
                 .post(handlers::grant_user_badge)
                 .delete(handlers::revoke_user_badge),
         )
-        .route("/assets/{*path}", get(handlers::get_asset))
+        .route(
+            "/assets/{*path}",
+            get(handlers::get_asset)
+                .put(handlers::put_asset)
+                .layer(DefaultBodyLimit::max(MAX_ASSET_BODY_BYTES)),
+        )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(
             tower_http::cors::CorsLayer::permissive()

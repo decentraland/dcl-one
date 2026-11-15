@@ -1,7 +1,8 @@
 //! The badge art served at `/badges/assets/{path}` from `BADGES_ASSETS_DIR`,
 //! upstream's CDN layout (`<badge>[/<tier slot>]/{2d,3d}/<file>.png`) mirrored
-//! there by the operator, for a node whose `BADGES_PUBLIC_ASSET_BASE_URL`
-//! is `<node>/badges/assets`. With the default base (upstream's CDN) nothing
+//! there by the operator or uploaded through the admin `PUT` of the same
+//! path, for a node whose `BADGES_PUBLIC_ASSET_BASE_URL` is
+//! `<node>/badges/assets`. With the default base (upstream's CDN) nothing
 //! links here. No art is embedded.
 
 use std::path::{Path, PathBuf};
@@ -55,6 +56,35 @@ fn respond(path: &str, bytes: Vec<u8>) -> Response {
         .into_response()
 }
 
+/// The PNG signature every uploaded file starts with.
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// Whether `bytes` is a PNG by its signature.
+pub fn is_png(bytes: &[u8]) -> bool {
+    bytes.starts_with(PNG_SIGNATURE)
+}
+
+/// Writes `bytes` at the sanitized `path` under `dir`, whole or not at all:
+/// a hidden temporary file (never served) renamed over the target.
+pub async fn store(dir: &Path, path: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let target = dir.join(path);
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(std::io::Error::other("asset path has no file name"));
+    };
+    tokio::fs::create_dir_all(parent).await?;
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        name.to_string_lossy(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    tokio::fs::write(&temporary, bytes).await?;
+    if let Err(error) = tokio::fs::rename(&temporary, &target).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// The file under `assets_dir`, else 404 (no directory configured, a
 /// missing file or a refused path).
 pub async fn serve(assets_dir: Option<&PathBuf>, raw_path: &str) -> Response {
@@ -70,6 +100,30 @@ pub async fn serve(assets_dir: Option<&PathBuf>, raw_path: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn store_writes_the_file_whole_and_leaves_no_temporary() {
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-badges-store-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let png = [PNG_SIGNATURE, b"art"].concat();
+        assert!(is_png(&png) && !is_png(b"GIF89a"));
+        store(&dir, "traveler/starter/2d/normal.png", &png)
+            .await
+            .unwrap();
+        store(&dir, "traveler/starter/2d/normal.png", &png)
+            .await
+            .unwrap();
+        let folder = dir.join("traveler/starter/2d");
+        let names: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["normal.png"]);
+        assert_eq!(std::fs::read(folder.join("normal.png")).unwrap(), png);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn sanitize_refuses_traversal_and_odd_paths() {

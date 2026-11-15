@@ -1881,3 +1881,77 @@ async fn a_badge_published_ahead_of_its_code_is_served_and_warned() {
     );
     drop_badge(&pool, &id).await;
 }
+
+#[tokio::test]
+async fn admins_upload_catalog_art_to_the_assets_directory() {
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-badges-upload-{}",
+        Uuid::new_v4().simple()
+    ));
+    let Some(state) = state(Settings {
+        admin_token: Some("s3cret".into()),
+        assets_dir: Some(dir.clone()),
+        ..Settings::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let png = b"\x89PNG\r\n\x1a\nart".to_vec();
+    let put = |path: &str, bearer: Option<&str>, body: &[u8]| {
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri(format!("/badges/assets/{path}"));
+        if let Some(token) = bearer {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        req.header(header::CONTENT_TYPE, "image/png")
+            .body(Body::from(body.to_vec()))
+            .unwrap()
+    };
+    let path = "traveler/starter/2d/normal.png";
+    let (status, _, _) = send(app(state.clone()), put(path, None, &png)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    for (bad, body, expected) in [
+        (
+            "traveler/starter/2d/normal.png",
+            &b"GIF89a"[..],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "traveler/starter/2d/normal.jpg",
+            &png[..],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "traveler/nope/2d/normal.png",
+            &png[..],
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "unknown_badge/2d/normal.png",
+            &png[..],
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, _, _) = send(app(state.clone()), put(bad, Some("s3cret"), body)).await;
+        assert_eq!(status, expected, "{bad}");
+    }
+    let (status, _, _) = send(app(state.clone()), put(path, Some("s3cret"), &png)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let get = Request::builder()
+        .uri(format!("/badges/assets/{path}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app(state.clone()).oneshot(get).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..], &png[..]);
+
+    let no_dir = admin_state().await.unwrap();
+    let (status, _, _) = send(app(no_dir), put(path, Some("s3cret"), &png)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

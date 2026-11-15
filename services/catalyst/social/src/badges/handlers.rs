@@ -277,6 +277,43 @@ pub async fn get_asset(State(state): State<AppState>, Path(path): Path<String>) 
     assets::serve(state.settings.assets_dir.as_ref(), &path).await
 }
 
+/// `PUT /assets/{path}`: one PNG of the catalog's art, the raw file as the
+/// body, at a path the badge or one of its tiers names (upstream's textures
+/// CLI uploaded the same layout to its CDN bucket). 204 once stored.
+pub async fn put_asset(
+    admin: RequireAdmin,
+    State(state): State<AppState>,
+    Path(raw_path): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let Some(dir) = state.settings.assets_dir.as_ref() else {
+        return Err(ApiError::service_unavailable(
+            "BADGES_ASSETS_DIR is not configured",
+        ));
+    };
+    let path = assets::sanitize(&raw_path)
+        .filter(|p| p.ends_with(".png"))
+        .ok_or_else(|| ApiError::bad_request("Invalid asset path"))?;
+    if !assets::is_png(&body) {
+        return Err(ApiError::bad_request("The body must be a PNG file"));
+    }
+    let badge_id = path.split('/').next().unwrap_or_default();
+    if !state.badges.is_catalog_asset(badge_id, path).await? {
+        return Err(ApiError::not_found(format!("No catalog asset at {path}")));
+    }
+    if let Err(error) = assets::store(dir, path, &body).await {
+        tracing::error!(path, %error, "badge asset not stored");
+        return Err(ApiError::internal("asset not stored"));
+    }
+    tracing::info!(
+        path,
+        bytes = body.len(),
+        actor = admin.audit_actor_description(),
+        "badge asset uploaded"
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn normalize_badge_id(badge_id: &str) -> Result<String, ApiError> {
     let trimmed = badge_id.trim();
     if trimmed.is_empty() {

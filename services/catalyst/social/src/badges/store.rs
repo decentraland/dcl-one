@@ -202,6 +202,31 @@ impl BadgesStore {
         &self.pool
     }
 
+    /// Whether `path` is an asset the catalog names for `badge_id`, on the
+    /// badge or one of its tiers (a relative path, or one under the legacy
+    /// prefix or the public base).
+    pub async fn is_catalog_asset(&self, badge_id: &str, path: &str) -> Result<bool, ApiError> {
+        let base = format!("{}/", self.public_asset_base_url.trim_end_matches('/'));
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS ( \
+               SELECT 1 FROM ( \
+                 SELECT assets FROM social.badge_definitions WHERE id = $1 \
+                 UNION ALL SELECT assets FROM social.badge_tiers WHERE badge_id = $1 \
+               ) a, jsonb_path_query(a.assets, 'strict $.**') v, \
+               LATERAL (SELECT v #>> '{}' AS s) t \
+               WHERE jsonb_typeof(v) = 'string' AND ltrim(CASE \
+                 WHEN starts_with(t.s, $3) THEN substr(t.s, length($3) + 1) \
+                 WHEN starts_with(t.s, $4) THEN substr(t.s, length($4) + 1) \
+                 ELSE t.s END, '/') = $2)",
+        )
+        .bind(badge_id)
+        .bind(path)
+        .bind(LEGACY_ASSET_PREFIX)
+        .bind(&base)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     /// `BADGES_PUBLIC_ASSET_BASE_URL` without a trailing slash: the base
     /// [`ApplyOptions::notify`] takes.
     pub fn asset_base_url(&self) -> &str {
