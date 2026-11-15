@@ -19,7 +19,7 @@ use crate::checkout::trade::TradeIn;
 use crate::market::chain_walk::{self, ChainNet, INDEXER_NFT};
 use crate::market::trades;
 use crate::policy::Facts;
-use crate::policy_entry::mirror_facts;
+use crate::policy_entry::{mirror_contract_role, mirror_facts};
 use crate::rentals::calls::{RentTerms, rent_terms};
 use crate::rentals::types::RentalListing;
 use crate::types::{
@@ -201,15 +201,7 @@ pub async fn contract_role(
     let Some(net) = chain.net else {
         return Ok(Lookup::Absent);
     };
-    let facts = mirror_facts(
-        pool,
-        chain.chain_id,
-        net.db_name(),
-        evm(contract),
-        U256::ZERO,
-    )
-    .await?;
-    Ok(facts.contract)
+    mirror_contract_role(pool, chain.chain_id, net.db_name(), evm(contract)).await
 }
 
 /// The items mirror's record of `(collection, item_id)` and its remaining
@@ -599,23 +591,6 @@ mod payment_path_facts_tests {
             .unwrap();
     }
 
-    async fn clean(pool: &PgPool) {
-        for sql in [
-            "DELETE FROM shop.items WHERE contract_address = $1",
-            "DELETE FROM shop.collections WHERE contract_address = $1",
-        ] {
-            sqlx::query(sql)
-                .bind(COLLECTION)
-                .execute(pool)
-                .await
-                .unwrap();
-        }
-        sqlx::query("DELETE FROM shop.mirror_state WHERE mirror IN ('items','collections') AND network = 'matic'")
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
     /// Both paths' answers for `(COLLECTION, item_id)` on Polygon, asserting
     /// they agree and returning the shared answer.
     async fn both(
@@ -646,14 +621,12 @@ mod payment_path_facts_tests {
 
     #[tokio::test]
     async fn credits_and_mana_read_the_same_contract_role_and_item_record() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        // Its own database, so the mirror_state, collection and item rows it
+        // writes never reach another test, even when an assertion fails.
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
             return;
         };
-        let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
-            .lock()
-            .await;
-        clean(&pool).await;
         let book = Book::production(|_| None);
         let record = |item_id: u64, kind: ItemKind| {
             Lookup::Found(ItemRecord {
@@ -716,7 +689,6 @@ mod payment_path_facts_tests {
         // Collections passed, items still catching up.
         set_ready(&pool, "items", false).await;
         assert_eq!(both(&pool, &book, 1).await, (found, Lookup::Unknown, None));
-        clean(&pool).await;
     }
 
     #[tokio::test]

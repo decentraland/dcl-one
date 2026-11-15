@@ -287,6 +287,22 @@ pub async fn mirror_facts(
     })
 }
 
+/// The collections mirror's answer alone about `collection`'s role: the
+/// contract part of [`mirror_facts`]. The statement's item lookup is
+/// ignored, so any item id gives the same answer.
+pub async fn mirror_contract_role(
+    pool: &PgPool,
+    chain_id: ChainId,
+    network: &str,
+    collection: EvmAddress,
+) -> Result<Lookup<ContractRole>, sqlx::Error> {
+    Ok(
+        mirror_facts(pool, chain_id, network, collection, U256::ZERO)
+            .await?
+            .contract,
+    )
+}
+
 /// The contract's role and the item record of `(collection, item_id)` on
 /// `chain_id`, from the static registry and the two mirrors.
 pub async fn item_facts(
