@@ -550,6 +550,14 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         ..newest
     });
     assert_eq!(replica.latest().await.unwrap().unwrap().mana_usd, Some(0.6));
+    // Past the interval the re-read returns the older row; the later
+    // published snapshot is kept, so a slow re-read cannot undo a publish.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(
+        replica.latest().await.unwrap().unwrap().mana_usd,
+        Some(0.6),
+        "a re-read must not replace a later published snapshot"
+    );
 
     // A frozen provider quote, and a jump against the fresh previous
     // snapshot, are refused before the insert.
