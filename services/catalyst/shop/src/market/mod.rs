@@ -677,6 +677,8 @@ impl MarketplaceState {
             self.pool.clone(),
             self.settings.market.marketplace_base_url.clone(),
             self.settings.market.indexes.nft_enabled,
+            self.settings.market.indexes.sales_enabled,
+            self.settings.market.mirrors_enabled,
             jobs,
         );
         transfer_notices::spawn(self, jobs);
@@ -922,13 +924,8 @@ impl AssetKey {
 
     /// Parses `<contract>-<id>`; the network is the caller's (a URN or a query parameter).
     pub fn parse(network: &str, wire: &str) -> Option<Self> {
-        let (contract, id) = wire.trim().split_once('-')?;
-        let contract = contract.to_ascii_lowercase();
-        let is_addr = contract
-            .strip_prefix("0x")
-            .is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-        let is_id = !id.is_empty() && id.len() <= 78 && id.bytes().all(|b| b.is_ascii_digit());
-        (is_addr && is_id).then(|| Self::new(network, &contract, id))
+        let (contract, id) = self::wire::split_item_wire_id(wire)?;
+        Some(Self::new(network, &contract, &id))
     }
 }
 
