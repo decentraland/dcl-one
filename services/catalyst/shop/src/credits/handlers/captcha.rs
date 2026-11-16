@@ -20,8 +20,8 @@ pub async fn generate(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let signer = signer_from(&state, &headers, "get", "/captcha", &original).await?;
-    if let Some(refusal) = crate::shared::writes::ops_refusal(state.settings.writes_enabled) {
-        return Ok(crate::credits::writes::refused_response(&refusal));
+    if !state.settings.writes_enabled {
+        return Ok(crate::credits::writes::disabled_response());
     }
     if let Err(error) = crate::credits::goals::claim_preflight(&state, signer.as_str()).await {
         if matches!(&error,ApiError::BadRequest(message) if message=="No active season found") {

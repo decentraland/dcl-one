@@ -35,7 +35,7 @@ class PackageManagerTest(unittest.TestCase):
                 '      # npm run build is what this used to call',
                 "      paths: ['**/yarn.lock', '**/package-lock.json']",
                 '      - run: corepack enable && pnpm install --frozen-lockfile && pnpm run build',
-                '      - run: corepack pnpm@12.21.0 install --frozen-lockfile',
+                '      - run: corepack pnpm@11.28.12 install --frozen-lockfile',
                 '      - run: npm pack && npm publish "$tgz" --access public && npm whoami',
                 '      - run: npm --registry https://registry.npmjs.org view "$pkg" version && npm pkg set x=1',
                 '      - run: npm view "$pkg" dist-tags --json && npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"')))
@@ -54,7 +54,7 @@ class PackageManagerTest(unittest.TestCase):
                 'ignore-scripts=true', 'save-exact = true', 'allow-builds=esbuild', 'minimum-release-age=0', 'fund=false')))
             commands = (
                 'npm ci', 'cd app && npm run build', 'npx tsc', 'npm --prefix app ci', 'npm -w pkg run build',
-                'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@12.21.0 install', 'yarn install',
+                'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@11.28.12 install', 'yarn install',
                 'cd app && yarnpkg add thing', 'corepack pnpm@11.0.0 install')
             write(root, '.github/workflows/x.yml', ''.join(f'      - run: {command}\n' for command in commands))
             write(root, '.github/actions/a/run.sh', 'npm install --global thing\n')

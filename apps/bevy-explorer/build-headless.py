@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
@@ -35,9 +34,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', help='Rust target triple')
     args = parser.parse_args()
-    # Cargo reads Bevy and the forked crates from trees that are not tracked: write the ones that
-    # are missing or stale.
-    subprocess.run((sys.executable, str(ROOT / 'tooling/patched-sources.py'), 'materialise', '--quiet'), check=True)
     headless(args.target)
 
 

@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -218,26 +217,22 @@ class EngineCacheTests(unittest.TestCase):
                 patch.dict(os.environ, {'GITHUB_SHA': SHA}):
             build.web(engine_cache=self.cache)
             self.assertEqual(sum(c[0] == 'wasm-pack' for c in calls), 2)
-            # The trees Cargo reads are written before the first compile, and only for a compile.
-            rebuild = (sys.executable, str(self.root / 'tooling/patched-sources.py'), 'materialise', '--quiet')
-            self.assertLess(calls.index(rebuild), next(i for i, c in enumerate(calls) if c[0] == 'wasm-pack'))
             self.assertTrue(any(c[0] == 'bash' for c in calls))
             self.assertFalse((self.cache / 'pkg/sandbox_worker.bundle.js').exists())
             calls.clear()
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
-        self.assertNotIn(rebuild, calls)
-        self.assertNotIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
+        self.assertNotIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
-        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test'), calls)
-        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build'), calls)
-        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
-        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+        self.assertIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web', 'run', 'test'), calls)
+        self.assertIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web', 'run', 'build'), calls)
+        self.assertIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
+        self.assertIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web/bridge-scene',
                        'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
                        str(self.source / 'react-web/bridge-scene')), calls)
-        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+        self.assertIn(('corepack', 'pnpm@11.28.12', '--dir', 'react-web',
                        'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)

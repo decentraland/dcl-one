@@ -2,7 +2,7 @@
 
 BIN="./node_modules/.bin"
 # The SDK installs this package with the same command and lockfile; a machine with pnpm on its PATH can pass PNPM=pnpm
-PNPM ?= corepack pnpm@12.21.0
+PNPM ?= corepack pnpm@11.28.12
 BUF_VERSION=1.8.0
 OS = $(shell uname -s)
 OS_ARCH = $(shell uname -m)

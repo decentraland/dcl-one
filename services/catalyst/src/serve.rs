@@ -25,7 +25,7 @@ mod states;
 #[cfg(test)]
 use lifecycle::register_metrics;
 pub(crate) use lifecycle::shutdown_signal;
-use lifecycle::{install_metrics, install_restore_stamps, run_http};
+use lifecycle::{install_metrics, run_http};
 #[cfg(test)]
 pub(crate) use routes::live_presence_routes;
 #[cfg(test)]
@@ -147,7 +147,6 @@ pub async fn serve(
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
-    install_restore_stamps(&config)?;
     let sync_settings = SyncSettings::from_config(&config)?;
     let pool = db::connect_pool(
         &config.node.database_url,
@@ -624,8 +623,7 @@ pub async fn serve(
         );
     }
     // The content history prune (src/content/history_prune.rs): behind
-    // CONTENT_HISTORY_PRUNE_ENABLED, and off beside the writes switch (an
-    // authoritative node keeps its history); it logs once why it is not running.
+    // CONTENT_HISTORY_PRUNE_ENABLED; it logs once why it is not running.
     content::history_prune::spawn(
         &jobs,
         pool.clone(),
@@ -925,11 +923,10 @@ pub async fn serve(
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
-    // The gatekeeper's room events feed the worlds access log and, when
-    // enabled, the presence badges (stored before the webhook is
-    // acknowledged, applied by a leased job).
-    let presence_badges =
-        config.social.badges_presence_enabled && config.writes.social_writes_enabled;
+    // The gatekeeper's room events feed the worlds access log and, on a
+    // process with social writes, the presence badges (stored before the
+    // webhook is acknowledged, applied by a leased job).
+    let presence_badges = config.writes.social_writes_enabled;
     let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
     let presence_badge_settings = {

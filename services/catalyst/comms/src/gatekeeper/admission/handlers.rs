@@ -141,7 +141,7 @@ pub async fn get_scene_adapter(
     } else {
         &caller_ip
     };
-    let record = crate::writes::side_refusal(switch).is_none();
+    let record = crate::writes::side_writes_on(switch);
     let (gate, world_allowed) = tokio::join!(
         async {
             // Record only an admitted connection: a refused one must not replace the recorded device.
