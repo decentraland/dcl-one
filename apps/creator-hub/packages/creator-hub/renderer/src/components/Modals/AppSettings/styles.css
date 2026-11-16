@@ -1,0 +1,21 @@
+/* Form Container Styles */
+.AppSettingsModal .FormContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+  height: max-content;
+  overflow-y: auto;
+}
+
+/* Input Styles */
+.AppSettingsModal .MuiInputBase-root .MuiOutlinedInput-notchedOutline {
+  /* TODO: Fix styles in the ui2 library */
+  border-color: #ffffff3b;
+}
+
+.AppSettingsModal .ApplyButton.Mui-disabled {
+  /* TODO: Fix styles in the ui2 library */
+  background-color: #f8919d;
+  color: #fee9ec;
+}

@@ -5,7 +5,7 @@ use bevy::{
     render::{render_resource::PipelineCompilationHandler, renderer::RenderDevice},
     tasks::BoxedFuture,
     web_worker::{WebWorkerConfig, WorkerSpec},
-    winit::{UpdateMode, WinitSettings, WinitWindows},
+    winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
@@ -27,7 +27,6 @@ use system_bridge::{SystemApi, SystemBridge};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 use web_sys::{HtmlCanvasElement, OffscreenCanvas};
-use winit::platform::web::WindowExtWebSys;
 
 use system_api_types::launch_options::{ClientOptions, EngineRunOptions, LaunchOptions};
 
@@ -576,7 +575,7 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     // The systems that call the page hooks take `JsThread` so the multi-threaded
     // executor keeps them on this thread, off the compute workers (see `JsThread`).
     app.insert_non_send_resource(());
-    app.add_systems(Update, (update_winit_fps, update_render_scale))
+    app.add_systems(Update, update_winit_fps)
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .add_systems(Last, engine_heartbeat_system);
@@ -794,26 +793,6 @@ pub fn update_winit_fps(
     }
 }
 
-// winit's page-side window draws the canvas at this share of its device pixels, reported  to the
-// app as a scale factor change, so the logical size, UI and cursor keep their places.
-pub fn update_render_scale(
-    config: Res<AppConfig>,
-    session: Res<SessionGraphics>,
-    winit_windows: NonSend<WinitWindows>,
-    mut last_scale: Local<Option<f32>>,
-) {
-    let scale = session
-        .render_scale(&config)
-        .clamp(SessionGraphics::MIN_RENDER_SCALE, 1.0);
-    if *last_scale == Some(scale) || winit_windows.windows.is_empty() {
-        return;
-    }
-    *last_scale = Some(scale);
-    for window in winit_windows.windows.values() {
-        window.set_render_scale(scale as f64);
-    }
-}
-
 /// Keeps the page url in step with the engine: the launch options with the live realm,
 /// position, ui scene, portables and mode swapped in, sent whole so every param given at
 /// launch (pulse server, imposter source, …) is retained alongside them.
@@ -866,12 +845,12 @@ fn update_url_params(
             realm: Some(server.to_owned()),
             position,
             preview: preview.is_preview,
+            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
+            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             ..launched.launch
         },
         client: ClientOptions {
             system_scene,
-            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
-            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             editor: editor.0,
             // the host's calls for this load, never a link's
             hold_world: false,

@@ -37,9 +37,10 @@ function App() {
         Searchbar or Shop actions.
       </p>
       {page === 'create' ? (
-        <TabsBar {...common} page={page} />
+        <TabsBar mode="navigation" {...common} page={page} />
       ) : (
         <TabsBar
+          mode="navigation"
           {...common}
           page={page}
           search={

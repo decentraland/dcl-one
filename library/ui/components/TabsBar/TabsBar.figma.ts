@@ -12,7 +12,7 @@ const page = instance.getEnum('page', {
 // The viewport selects responsive CSS; the application supplies real controls and route data.
 const viewport = instance.getEnum('viewport', { desktop: '', mobile: '', 'large-desktop': '' })
 export default {
-  example: figma.tsx`<TabsBar${page}${viewport} items={items} activeId={activeId} label="Sections" />`,
+  example: figma.tsx`<TabsBar mode="navigation"${page}${viewport} items={items} activeId={activeId} label="Sections" />`,
   imports: ["import { TabsBar } from '@dcl/one-ui'"],
   id: 'TabsBar',
   metadata: { nestable: true }

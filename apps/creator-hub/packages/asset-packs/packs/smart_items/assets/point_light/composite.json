@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/pointlight.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Lights.ts",
+                "priority": 0,
+                "layout": "{\"params\":{},\"actions\":[{\"methodName\":\"turnOn\",\"description\":\"Turns the light on\",\"params\":{}},{\"methodName\":\"turnOff\",\"description\":\"Turns the light off\",\"params\":{}},{\"methodName\":\"toggle\",\"description\":\"Turns the light off if it is on, or on if it is off\",\"params\":{}}]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "point light"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::LightSource",
+      "data": {
+        "0": {
+          "json": {
+            "active": true,
+            "color": {
+              "r": 1,
+              "g": 1,
+              "b": 1
+            },
+            "intensity": 16000,
+            "range": -1,
+            "shadow": true,
+            "type": {
+              "$case": "point",
+              "point": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "inspector::Config",
+      "data": {
+        "0": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "label": "Light Settings",
+            "helpTooltip": {
+              "text": "A point light that can be used to illuminate a scene."
+            },
+            "sections": [
+              {
+                "id": "light-settings",
+                "items": [
+                  {
+                    "component": "core::LightSource",
+                    "widget": "ColorField",
+                    "label": "Color",
+                    "type": "Color3",
+                    "path": "color",
+                    "props": {
+                      "basic": true
+                    },
+                    "transform": {
+                      "in": {
+                        "steps": [
+                          {
+                            "op": "toHex"
+                          }
+                        ]
+                      },
+                      "out": {
+                        "steps": [
+                          {
+                            "op": "toColor3"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "component": "core::LightSource",
+                    "widget": "RangeField",
+                    "label": "Intensity",
+                    "path": "intensity",
+                    "constraints": {
+                      "min": 0,
+                      "max": 300000,
+                      "step": 1,
+                      "default": "16000"
+                    }
+                  }
+                ],
+                "columns": 1
+              },
+              {
+                "id": "shadow-mask",
+                "items": [
+                  {
+                    "component": "core::LightSource",
+                    "widget": "FileUploadField",
+                    "label": "Shadow Mask Texture",
+                    "path": "shadowMaskTexture.tex.texture.src",
+                    "props": {
+                      "acceptURLs": true,
+                      "accept": [".png", ".jpg", ".jpeg"]
+                    }
+                  }
+                ]
+              }
+            ],
+            "version": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Turn On",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Lights.ts\",\"methodName\":\"turnOn\",\"params\":{}}"
+              },
+              {
+                "type": "call_script_method",
+                "name": "Turn Off",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Lights.ts\",\"methodName\":\"turnOff\",\"params\":{}}"
+              },
+              {
+                "type": "call_script_method",
+                "name": "Toggle",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Lights.ts\",\"methodName\":\"toggle\",\"params\":{}}",
+                "default": true
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

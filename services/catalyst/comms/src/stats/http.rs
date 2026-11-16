@@ -43,13 +43,18 @@ pub mod test_support {
 
 #[derive(Clone)]
 pub struct Settings {
+    /// Host-resolved commit identity; standalone callers can retain the environment reader.
+    pub commit_hash: Option<String>,
     pub metrics_path: String,
     pub metrics_bearer_token: Option<String>,
+    /// Base of `/hot-scenes` thumbnails. `serve` sets it from `CONTENT_URL` or this
+    /// node's own `/content` (`stats_content_url`); the default serves tests.
     pub content_url: String,
 }
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            commit_hash: None,
             metrics_path: "/metrics".into(),
             metrics_bearer_token: None,
             content_url: "https://peer.decentraland.org/content/".into(),
@@ -60,17 +65,18 @@ impl Settings {
     pub fn from_env() -> Self {
         let defaults = Self::default();
         Self {
+            commit_hash: defaults.commit_hash,
             metrics_path: std::env::var("WKC_METRICS_PUBLIC_PATH")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(defaults.metrics_path),
-            metrics_bearer_token: std::env::var("WKC_METRICS_BEARER_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            content_url: std::env::var("CONTENT_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or(defaults.content_url),
+            // The `_FILE` form too, read as the config's secret slot reads it.
+            metrics_bearer_token: catalyst_config::config::Config::secret_from_env(
+                "WKC_METRICS_BEARER_TOKEN",
+            )
+            .ok()
+            .flatten(),
+            content_url: defaults.content_url,
         }
     }
 }
@@ -157,12 +163,28 @@ pub fn socket_alias(router: Router, state: State) -> Router {
 }
 /// Install the complete public hosts outside shared path normalization and middleware.
 pub fn mount_services(shared: Router, state: State, stats: Router, connector: Router) -> Router {
+    // Camera Reel keeps its route spelling, including the Swagger UI directory.
+    let camera_reel = shared.clone();
     let shared = tower_http::normalize_path::NormalizePath::trim_trailing_slash(shared);
     merge_root(
         Router::new()
             .fallback_service(shared)
             .nest("/archipelago-ea-stats", stats)
-            .nest("/archipelago-ea-ws-connector", connector),
+            .nest("/archipelago-ea-ws-connector", connector)
+            .layer(middleware::from_fn(move |request: Request, next: Next| {
+                let camera_reel = camera_reel.clone();
+                async move {
+                    let path = request.uri().path();
+                    if path == "/camera-reel-service" || path.starts_with("/camera-reel-service/") {
+                        // Dispatch without an outer route match: wildcard captures would leak
+                        // into the inner Path extractor and alter its metrics route label.
+                        use tower::ServiceExt;
+                        camera_reel.oneshot(request).await.unwrap()
+                    } else {
+                        next.run(request).await
+                    }
+                }
+            })),
         state,
     )
 }
@@ -610,19 +632,7 @@ async fn handle(
         Some(Route::CoreStatus) => Reply::json(200, render::core_status(&snapshot, (state.now)())),
         Some(Route::HotScenes) => {
             let tiles = render::tiles(&snapshot);
-            let scenes = if tiles.is_empty() {
-                Vec::new()
-            } else {
-                state
-                    .content
-                    .fetch(
-                        &tiles
-                            .iter()
-                            .map(|(tile, _)| tile.clone())
-                            .collect::<Vec<_>>(),
-                    )
-                    .await?
-            };
+            let scenes = content::tile_documents(state.content.as_ref(), &tiles).await?;
             Reply::json(
                 200,
                 content::hot_scenes(&scenes, &tiles, &state.settings.content_url)?,
@@ -638,6 +648,7 @@ async fn handle(
                 commit_hash: String,
             }
             let (version, commit_hash) = (state.environment)();
+            let commit_hash = state.settings.commit_hash.clone().unwrap_or(commit_hash);
             Reply::json(
                 200,
                 render::json(&Status {

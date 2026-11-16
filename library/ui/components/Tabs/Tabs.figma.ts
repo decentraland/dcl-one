@@ -2,18 +2,18 @@
 // source=components/Tabs/Tabs.tsx
 // component=Tabs
 // contract=1
+// states=Status,Device
 import figma from 'figma'
 const instance = figma.selectedInstance
-const selected = instance.getEnum('Status', {
-  Default: '',
-  Hover: '',
-  Selected: ' selected'
-})
-// Device selection is owned by responsive CSS, not a forced viewport prop.
-const device = instance.getEnum('Device', { Desktop: '', Mobile: '' })
+
+const selected = instance.getEnum('Status', { Selected: ' selected', Default: '' })
+const device = instance.getEnum('Device', { Desktop: 'desktop', Mobile: 'mobile' })
+const labelLayer = instance.findText('Overview')
+const label = labelLayer.type === 'TEXT' ? labelLayer.textContent : ''
+
 export default {
-  example: figma.tsx`<Tabs href={href} label={label}${selected}${device} />`,
+  example: figma.tsx`<Tabs label="${label}" device="${device}"${selected} />`,
   imports: ["import { Tabs } from '@dcl/one-ui'"],
-  id: 'Tabs',
+  id: 'tabs',
   metadata: { nestable: true }
 }

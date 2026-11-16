@@ -145,7 +145,7 @@ pub struct PostBody {
     pub content: String,
 }
 
-const POST_CONTENT_MAX: usize = 1000;
+pub(super) const POST_CONTENT_MAX: usize = 1000;
 
 fn parse_post_id(raw: &str) -> Result<Uuid, Response> {
     Uuid::parse_str(raw).map_err(|_| err_json(StatusCode::BAD_REQUEST, "invalid post id"))
@@ -156,14 +156,19 @@ fn parse_post_id(raw: &str) -> Result<Uuid, Response> {
 fn parse_content(body: &[u8], _new_post: bool) -> Result<String, Response> {
     let parsed: PostBody = serde_json::from_slice(body)
         .map_err(|e| err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")))?;
-    let content = parsed
-        .content
+    validate_text(&parsed.content)
+}
+
+/// A post's text rules, shared with the federated post: trimmed, non-empty,
+/// at most [`POST_CONTENT_MAX`] characters.
+pub(super) fn validate_text(raw: &str) -> Result<String, Response> {
+    let content = raw
         .trim_matches(crate::rpc::http::js_whitespace)
         .to_string();
     if content.is_empty() {
         return Err(err_json(StatusCode::BAD_REQUEST, "content is required"));
     }
-    if parsed.content.chars().count() > POST_CONTENT_MAX {
+    if raw.chars().count() > POST_CONTENT_MAX {
         return Err(err_json(
             StatusCode::BAD_REQUEST,
             format!("content must be at most {POST_CONTENT_MAX} characters"),

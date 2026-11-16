@@ -1,12 +1,56 @@
-import {
-  useLayoutEffect,
-  useRef,
-  type AnchorHTMLAttributes,
-  type ComponentType,
-  type ReactNode
-} from 'react'
+import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
+import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType } from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
+
+type PanelTabsBarProps = {
+  label: string
+  children: ReactNode
+  /** `underline` is the Figma bar (a bottom rule); `pill` spaces rounded tabs as decentraland.org's events page does. */
+  variant?: 'underline' | 'pill'
+} & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
+
+const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
+
+/** A tab list: arrows, Home and End move focus between its tabs; a button tab is also activated. */
+function PanelTabsBar({
+  label,
+  children,
+  variant = 'underline',
+  className,
+  onKeyDown,
+  ...rest
+}: PanelTabsBarProps) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    onKeyDown?.(event)
+    if (event.defaultPrevented || !KEYS.has(event.key)) return
+    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'))
+    const current = tabs.indexOf(event.target as HTMLElement)
+    if (current < 0) return
+    event.preventDefault()
+    const last = tabs.length - 1
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? last
+          : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+    const tab = tabs[next]!
+    tab.focus()
+    if (tab instanceof HTMLButtonElement) tab.click()
+  }
+  return (
+    <div
+      {...rest}
+      role="tablist"
+      aria-label={label}
+      className={[styles.root, styles[variant], className].filter(Boolean).join(' ')}
+      onKeyDown={handleKeyDown}
+    >
+      {children}
+    </div>
+  )
+}
 
 export type TabsBarItem = Readonly<{
   id: string
@@ -32,8 +76,11 @@ type SharedProps = {
   LinkComponent?: ComponentType<TabsBarLinkProps>
   className?: string
 }
-export type TabsBarProps = SharedProps &
-  (
+type NavigationTabsBarProps = SharedProps & {
+  mode: 'navigation'
+  children?: never
+  variant?: never
+} & (
     | { page?: 'create'; search?: never; actions?: never }
     | {
         page: 'shop' | 'learn'
@@ -44,7 +91,7 @@ export type TabsBarProps = SharedProps &
   )
 
 /** Navigation precedes caller-owned controls in visual and keyboard order at every size. */
-export function TabsBar({
+function NavigationTabsBar({
   page = 'create',
   items,
   activeId,
@@ -54,7 +101,7 @@ export function TabsBar({
   className,
   search,
   actions
-}: TabsBarProps) {
+}: NavigationTabsBarProps) {
   if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
   const ids = new Set<string>()
   for (const item of items) {
@@ -106,10 +153,10 @@ export function TabsBar({
     <nav
       aria-label={label.trim() || 'Sections'}
       data-page={page}
-      className={[styles.root, className].filter(Boolean).join(' ')}
+      className={[styles.routeRoot, className].filter(Boolean).join(' ')}
     >
-      <div className={styles.navigation} data-region="navigation">
-        <ul ref={listRef} className={styles.list}>
+      <div className={styles.routeNavigation} data-region="navigation">
+        <ul ref={listRef} className={styles.routeList}>
           {items.map((item) => {
             const select: AnchorHTMLAttributes<HTMLAnchorElement>['onClick'] = (event) => {
               if (
@@ -125,7 +172,7 @@ export function TabsBar({
             return (
               <li
                 key={item.id}
-                className={styles.item}
+                className={styles.routeItem}
                 data-mobile-hidden={(item.hiddenOnMobile && item.id !== activeId) || undefined}
               >
                 {LinkComponent ? (
@@ -133,18 +180,19 @@ export function TabsBar({
                     href={item.href}
                     prefetch="intent"
                     data-label={item.label}
-                    className={styles.link}
+                    className={styles.routeLink}
                     aria-current={item.id === activeId ? 'page' : undefined}
                     onClick={select}
                   >
-                    <span className={styles.text}>{item.label}</span>
+                    <span className={styles.routeText}>{item.label}</span>
                   </LinkComponent>
                 ) : (
                   <Tabs
+                    mode="navigation"
                     href={item.href}
                     label={item.label}
                     selected={item.id === activeId}
-                    className={styles.link}
+                    className={styles.routeLink}
                     onClick={select}
                   />
                 )}
@@ -154,15 +202,33 @@ export function TabsBar({
         </ul>
       </div>
       {page !== 'create' ? (
-        <div className={styles.controls} data-region="controls">
-          <div className={styles.search} data-region="search">
+        <div className={styles.routeControls} data-region="controls">
+          <div className={styles.routeSearch} data-region="search">
             {search}
           </div>
-          <div className={styles.actions} data-region="actions">
+          <div className={styles.routeActions} data-region="actions">
             {actions}
           </div>
         </div>
       ) : null}
     </nav>
   )
+}
+
+export type TabsBarProps =
+  | (PanelTabsBarProps & {
+      mode?: 'panel'
+      items?: never
+      activeId?: never
+      page?: never
+      search?: never
+      actions?: never
+      LinkComponent?: never
+    })
+  | NavigationTabsBarProps
+/** Choose panel-tab behavior or explicitly controlled route navigation. */
+export function TabsBar(props: TabsBarProps) {
+  if (props.mode === 'navigation') return <NavigationTabsBar {...props} />
+  const { mode, ...panel } = props
+  return <PanelTabsBar {...panel} data-mode={mode} />
 }
