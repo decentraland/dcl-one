@@ -151,9 +151,10 @@ a script); `--skip-build` skips the initial run.
 
 A scene with no `node_modules` folder (a fresh clone) gets the vendored SDK restored before the
 built-in pipeline runs, with a line saying so and a second one when `package.json` pins another
-`@dcl/sdk`; `--skip-install` turns that off. An existing `node_modules` is never touched, except one
-whose install of the vendored SDK stopped half way (an empty `node_modules/.dcl-one-archive`): the
-build then replaces the eleven vendored packages, as `init --node-modules-only` does.
+`@dcl/sdk`; `--skip-install` turns that off. An existing `node_modules` is never reinstalled, except
+one whose install of the vendored SDK stopped half way (an empty `node_modules/.dcl-one-archive`):
+the build then replaces the eleven vendored packages, as `init --node-modules-only` does. Otherwise
+a build writes into it only the script types of [smart-item scripts](#smart-item-scripts).
 
 The embedded SDK retains its pinned 7.29.1 runtime and local fixes. Its Skybox, Sun and
 EnvironmentFog bindings (1223–1225) are generated from the monorepo protocol/SDK sources.
@@ -175,6 +176,21 @@ build and writes nothing, so under a watcher the last good bundle keeps serving.
 A watcher (`start`, `build --watch`) keeps one node process with tsc 5.x or 6.x loaded and the last
 program in memory, so the check after a save covers the edit alone; it reports what a spawned tsc
 does, ends with the watcher, and with TypeScript 7 each check spawns tsc.
+
+### Smart-item scripts
+
+Every `asset-packs::Script` entry in the scene's composites is bundled into the scene chunk and
+started before `main()` with the entity, the script's folder as `src` and the layout parameters, as
+`@dcl/sdk-commands` does. The script runtime is the SDK toolchain's `runtime-script.ts`, embedded in
+the binary; a scene with scripts loads the smart-item chunk, and on an npm install it needs
+`@dcl/asset-packs` in `node_modules`. Script data a composite stores in binary form stops the build
+with the composite named. For a scene with scripts, the build also writes their types into the
+`~sdk/script-utils` declaration of `@dcl/js-runtime` (`sdk.d.ts`, or the vendored `index.d.ts`), so
+`getScriptInstance` and `callScriptMethod` are typed per script path.
+
+The vendored `@dcl/sdk/prebuilt/smart.js` is built by `dcl-scene-cli vendor-chunks` from a scene
+whose `node_modules` is an npm install of the pinned `@dcl/sdk` plus `@dcl/asset-packs`; only that
+entry of `src/vendor/node_modules.zip` is replaced, the others stay byte-for-byte.
 
 ### Code to composite
 

@@ -724,8 +724,8 @@ enum Command {
     },
     /// Build the prebuilt SDK runtime chunks for the vendored blob: a step of
     /// `scripts/build-base-blob.py`, so `--dir` must be a throwaway scene whose
-    /// `node_modules` is the full install tree (including `@dcl/asset-packs`
-    /// and `@dcl/sdk-commands`, which the blob itself does not ship).
+    /// `node_modules` is the full install tree (including `@dcl/asset-packs`,
+    /// which the blob itself does not ship).
     #[command(hide = true)]
     VendorChunks {
         #[arg(long, default_value = ".")]

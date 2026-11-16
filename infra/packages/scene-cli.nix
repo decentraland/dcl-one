@@ -74,6 +74,8 @@ let
       (root + /library/protocol/proto)
       # A path dependency of the node's crates: its manifest has to load.
       (root + /library/vendor/rusty_enet)
+      (root + /library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/logic/runtime-script.ts)
+      (root + /library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/logic/script-module.d.ts.template)
       # The preview pages' shared sheets (src/start/chrome.rs).
       (root + /apps/ui3/src/atoms/primitives.css)
       (root + /apps/ui3/src/atoms/button.css)
