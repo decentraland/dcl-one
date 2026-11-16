@@ -3,12 +3,8 @@ import { redirect } from "react-router";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
-import { isWorldLocation, type WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
-import {
-  resolveWatch,
-  fallbackPlaceName,
-  type WatchIntent,
-} from "@/data/lib/catalyst/landings/cast-watcher.server";
+import { type WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
+import { resolveWatch, type WatchIntent } from "@/data/lib/catalyst/landings/cast-watcher.server";
 import CastWatch from "@/features/social/cast-watch/CastWatch";
 
 import type { Route } from "./+types/landings.cast-watch";
@@ -57,17 +53,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     variant: assignment.variant,
   };
 
-  const watch: WatchResult = await resolveWatch(location, identity, intent).catch(
-    (): WatchResult => ({
-      status: intent === "live" ? "waiting" : intent,
-      location,
-      isWorld: isWorldLocation(location),
-      placeName: fallbackPlaceName(location),
-      identity,
-      error: intent === "expired" ? "access_expired" : "no_active_stream",
-      fallback: true,
-    }),
-  );
+  const watch: WatchResult = resolveWatch(location, identity, intent);
 
   track("cast_watch_opened", { location, is_world: watch.isWorld }, trackCtx);
 
