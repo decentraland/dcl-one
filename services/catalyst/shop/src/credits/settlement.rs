@@ -20,7 +20,7 @@
 //!   whatever it was (`retired`, `released`, `expired`: a cancel or an expiry
 //!   is not proof a signed credit went unused), and its hash is queued for
 //!   revocation. A debit the balance cannot cover rolls back and is retried
-//!   by the next pass and the reconciler.
+//!   by the reconciler's full pass.
 //! - **Revocation** ([`Revoker`], the `credits-settlement` job): the outbox
 //!   `credits.revocations` is drained with `revokeCredits(bytes32[])` from
 //!   the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is

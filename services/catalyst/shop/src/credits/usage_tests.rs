@@ -968,21 +968,15 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
     db.drop().await;
 }
 
-/// A used credit's own pledge does not count against its debit: a 60-credit
-/// pledge on a 100-credit wallet settles in one pass and leaves 40.
-#[tokio::test]
-async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
-    let Some(db) = OwnDatabase::create("usage_own_pledge").await else {
-        return;
-    };
-    let pool = db.pool.clone();
+/// A usage index over a chain stub holding one CreditUsed log of `pledge`
+/// (10 MANA at block 1_500), for `wallet`.
+async fn one_used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+) -> super::usage::UsageIndex {
     let chain_id: i64 = 137;
     let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
-    let wallet = scratch_wallet();
-    seed_wallet(&pool, &wallet.address, "0", "100").await;
-    let pledge = salt();
-    let later = super::store::now() + chrono::Duration::minutes(10);
-    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
     let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
         chain_id,
         head: 2_000,
@@ -993,8 +987,8 @@ async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
             &contract,
             1_500,
             0,
-            &wallet.address,
-            &pledge,
+            wallet,
+            pledge,
             10u128.pow(19),
             10u128.pow(19),
         )],
@@ -1004,13 +998,38 @@ async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
     let rpc = format!("http://{}", listener.local_addr().unwrap());
     let stub = axum::Router::new()
         .route("/", axum::routing::post(chain_rpc))
-        .with_state(chain.clone());
+        .with_state(chain);
     tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
-    let index = super::usage::UsageIndex::new(
+    super::usage::UsageIndex::new(
         Credits::new(pool.clone()).with_usage_index(chain_id),
         Outbound::for_tests(),
         usage_settings(&rpc, chain_id, &contract, 50),
-    );
+    )
+}
+
+async fn credit_used_spends(pool: &PgPool, pledge: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM credits.ledger WHERE kind = 'spend' AND tx_ref = $1")
+        .bind(format!("credit-used:{pledge}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A used credit's own pledge does not count against its debit: a 60-credit
+/// pledge on a 100-credit wallet settles in one pass and leaves 40, and a
+/// second pass moves nothing.
+#[tokio::test]
+async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
+    let Some(db) = OwnDatabase::create("usage_own_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
 
     let out = index.run_pass(None, true).await.unwrap();
     assert!(
@@ -1019,6 +1038,60 @@ async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
     );
     assert_eq!(auth_status(&pool, &pledge).await, "consumed");
     assert!(balance_is(&pool, &wallet.address, "40").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+
+    let again = index.run_pass(None, true).await.unwrap();
+    assert!(
+        again.published && again.consumed == 0 && again.failed == 0,
+        "{again:?}"
+    );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(
+        balance_is(&pool, &wallet.address, "40").await,
+        "the second pass debits nothing"
+    );
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+    db.drop().await;
+}
+
+/// Another live pledge still counts against the debit: with 50 credits held
+/// by a second `authorized` pledge, a 60-credit used credit on a 100-credit
+/// wallet is refused, and its authorization stays `authorized`.
+#[tokio::test]
+async fn a_used_credit_another_pledge_leaves_uncovered_keeps_its_authorization() {
+    let Some(db) = OwnDatabase::create("usage_other_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let (pledge, other) = (salt(), salt());
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    authorization(&pool, &other, &wallet.address, 500, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
+
+    let out = index.run_pass(None, true).await.unwrap();
+    assert!(
+        out.published && out.consumed == 0 && out.failed == 1,
+        "{out:?}"
+    );
+    assert_eq!(
+        auth_status(&pool, &pledge).await,
+        "authorized",
+        "the refused debit rolls the early flip back"
+    );
+    assert_eq!(auth_status(&pool, &other).await, "authorized");
+    assert!(balance_is(&pool, &wallet.address, "100").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 0);
+    let settlements: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.usage_settlements WHERE authorization_id = $1",
+    )
+    .bind(&pledge)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(settlements, 0);
     db.drop().await;
 }
 
