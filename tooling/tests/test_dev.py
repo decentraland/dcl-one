@@ -267,11 +267,14 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['PULSE_WT_ENABLED'], 'true')
         self.assertEqual((env['PULSE_WT_CERT_PATH'], env['PULSE_WT_KEY_PATH']), (str(certificate), str(key)))
         self.assertTrue(Path(env['PULSE_REPLAY_STATE_PATH']).is_relative_to(self.state))
-        self.assertNotIn('DATABASE_URL', env)
+        self.assertEqual(env['DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(env['PULSE_V4_AUDIENCE'], dev.pulse_about_env(self.config)['COMMS_V4_PULSE_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['ARCHIPELAGO_CONTROL_V4_AUDIENCE'], env['PULSE_V4_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['DATABASE_URL'], env['DATABASE_URL'])
         self.assertEqual(env['PULSE_NATS_URL'], dev.nats_url(self.config), "the stack's own broker, not the shell's")
         pulse = dev.project(self.config)['processes']['pulse']
         self.assertEqual(pulse['readiness_probe']['http_get']['port'], metrics)
-        self.assertEqual(pulse['depends_on'], {'api-build': {'condition': 'process_completed_successfully'},
+        self.assertEqual(pulse['depends_on'], {'api': {'condition': 'process_healthy'},
                                                'nats': {'condition': 'process_healthy'}})
         self.assertIn('pulse', dev.SERVICES)
         with patch.object(dev, 'started', return_value='start'), \
@@ -281,6 +284,40 @@ class DevTest(unittest.TestCase):
         binary, argv, env = execve.call_args.args
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
+
+    def test_api_process_readiness_can_start_pulse_before_whole_stack_about_is_healthy(self):
+        processes = dev.project(self.config)['processes']
+        pulse_ready = False
+        observed = []
+        api_url = f"http://127.0.0.1:{self.config['port']}"
+
+        def response(url, timeout):
+            observed.append(url)
+            if url == api_url + '/about' and not pulse_ready:
+                raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
+            return contextlib.nullcontext(type('Response', (), {'status': 200})())
+
+        def start_pulse(_delay):
+            nonlocal pulse_ready
+            mirrors.assert_not_called()
+            pulse_ready = True
+
+        listing = subprocess.CompletedProcess([], 0, stdout='[]')
+        with patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                patch.object(dev, 'pc', return_value=listing), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
+                patch.object(dev.time, 'sleep', side_effect=start_pulse), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
+            probe = processes['api']['readiness_probe']['http_get']
+            # The real /status route answers 200 after schema/state/listener setup,
+            # while /about includes the still-absent Pulse heartbeat.
+            with dev.urllib.request.urlopen(api_url + probe['path'], timeout=3) as ready:
+                self.assertEqual(ready.status, 200)
+            self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
+            self.assertEqual(dev.wait_ready(10), 0)
+        self.assertTrue(pulse_ready)
+        self.assertEqual(observed.count(api_url + '/about'), 2)
+        mirrors.assert_called_once()
 
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
         client, monitor = dev.nats_ports(self.config)

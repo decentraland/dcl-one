@@ -56,6 +56,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
+| `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
 | `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
@@ -78,13 +79,58 @@ metadata; it does not own identity lifecycle.
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
 the repository structure checks. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
 
+## Deployment generation ownership
+
+The root `pulse_generation` module owns one existing `jobs::Leases` PostgreSQL
+session lease per deployment audience. On that exact held session it allocates from
+`social.archipelago_v4_connection_epoch` and commits a fresh UUID/epoch binding in
+`social.pulse_authority_generation` before starting Pulse. The row contains only
+`deployment_audience`, `epoch`, `source_incarnation` and a naive UTC `updated_at`;
+root alone writes it. Pulse receives `interfaces::PulseGeneration`, retains its
+assignments and unfinished work in memory and imports no Gatekeeper implementation.
+Gatekeeper reads the binding through its existing pool. The metadata is local
+authority, outside catalogue mirrors and content snapshots.
+
+A successor row commit is the logical authority cutover. The current row remains
+valid until that commit; session keepalive does not periodically update it.
+Gatekeeper takes a generation share lock before wallet safety and realm locks for
+selected mutations and credential authorization. Unregistered source UUIDs allocate
+no selected-state slots. Mint and final socket delivery are separate fresh,
+exact-stamp, single-use permissions, each bounded by its original two-second deadline
+including pool checkout. A stale source cannot renew that deadline after cutover.
+Already issued credentials and accepted transport bytes keep their existing finite
+validity. Local lease-loss detection cancels source work; it does not synchronously
+stop every physical byte or SQL-fence statistics/topology publication per message.
+
+The configured HTTP room authority requires `X-Pulse-Authority-Source`, a canonical
+UUID from the client's immutable root capability. The dedicated-key HMAC preimage
+is method, exact path, timestamp, nonce, source UUID and body hash, separated by
+newlines. Missing, unregistered or stale sources fail closed before policy evaluation;
+a final generation share lock after policy guards lease issuance and renewal.
+Nonce replay protection and the original two-second room-lease lifetime remain.
+The bound HTTP client refuses cached admission and late responses after local loss.
+The endpoint is mounted when configured; the application relay's production client
+activation remains absent. Public native packets and protobuf shapes are unchanged.
+
+`catalyst pulse` requires `DATABASE_URL` and an explicit audience matching serve's
+`ARCHIPELAGO_CONTROL_V4_AUDIENCE`; Pulse also accepts `PULSE_V4_AUDIENCE`, with
+conflicting values rejected. Apply the schema first. The dev launcher supplies the
+same local database/audience and waits for the schema-ready API. Stop admissions
+and upgrade all incompatible writers together: older binaries lack generation guards.
+Restore with writers stopped and admissions closed, then acquire a fresh UUID/epoch
+before reopening; restored metadata alone does not authorize an old capability.
+This is a deployment requirement, not an automated restore orchestrator. See the
+[generation fencing decision](../../../../docs/adr/2026-11-16-pulse-generation-fencing.md).
+Runtime admission under complete generation churn and rollout readiness remain
+unverified pending acceptance evidence.
+
 ## Services and how they talk
 
 | Link | Channel |
 |---|---|
 | connector ↔ gatekeeper | calls inside the primary `serve` (`CommsState::announce_session`, `IslandSockets`); `peer.*.connect`, `peer.*.disconnect`, `engine.peer.*.island_changed` are retired |
 | Pulse ↔ `serve` | core NATS, § Bus messages |
-| Pulse → gatekeeper | `GET /bans` (moderator bearer, ETag); `POST /internal/pulse/room-authority/v1` with an HMAC key |
+| Pulse → gatekeeper | `GET /bans` (moderator bearer, ETag); configured `POST /internal/pulse/room-authority/v1` with dedicated HMAC key and authenticated source UUID; relay client activation remains dormant |
 | gatekeeper → `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1` (defined, not yet published) |
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
@@ -171,6 +217,9 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 |---|---|---|---|---|---|
 | Cluster change | Pulse → primary island subscriber (one unqueued subscription) | `peer.{wallet}.cluster_change` | 64 KiB; coalescing outbox | fresh lookup; rotating retained-pending hints | Pulse pub, `serve` sub |
 | Cluster lookup | `serve` → Pulse, reply on private `_INBOX.` | `peer.{wallet}.cluster_lookup` | exact session request; complete reply ≤64 KiB; 2 s deadline | active re-announcement and retained pending cleanup | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
+| Fenced selection lookup | `serve` → current Pulse, reply on private `_INBOX.` | `pulse.{source_uuid_without_hyphens}.selection_lookup` | audience/epoch/source plus exact wallet/session; complete reply ≤64 KiB; 2 s request budget | fresh registered source; no stale responder on another source subject | `serve` pub, Pulse sub on its own UUID; both pub/sub `_INBOX.>` |
+| Complete selection discovery | `serve` → current Pulse, reply on private `_INBOX.` | `pulse.{source_uuid_without_hyphens}.selection_view` | one immutable view shared for 30 s; ≤49,146 targets and 8 MiB canonical entries; ≤256 entries and 64 KiB per reply | exact source/epoch/request/view IDs, ordered pages, count and digest; incomplete transfer seeds nothing | `serve` pub, Pulse sub on its own UUID; both pub/sub `_INBOX.>` |
+| Selection retirement | gatekeeper → Pulse, reply on private `_INBOX.` | `peer.{wallet}.selection_retirement` | exact source/session/version and optional observed identity; each direction ≤64 KiB; 2 s deadline | negative-only complete-view proof; unknown retains retry | `serve` pub, Pulse sub; both pub/sub `_INBOX.>` |
 | Takeover completion | gatekeeper → Pulse | `peer.{wallet}.takeover_completed` | 1–4096 bytes; ID 1–64 bytes | resend identical ID/cutoff until authoritative acknowledgment | `serve` pub, Pulse sub |
 | Islands snapshot | Pulse → social topology in every `serve` | `engine.islands` | 1 MiB, 1 s | next snapshot; online expires 5 s after the last valid one | Pulse pub, `serve` sub |
 | Discovery beacon | Pulse → retained connector discovery subscription | `engine.discovery` | 10 s | next beacon; no statistics cache | Pulse pub, `serve` sub |
@@ -360,8 +409,56 @@ registration reserves precedence even without usable coordinates and invalidates
 evidence until a completed pass installs a fresh version. Unknown and cleanup-only evidence
 cannot mint or refresh credentials. Legacy v1/v2 readers share the wallet capacity; mixed
 authority is withheld without a grounded common allocator-domain proof. The ordinary connector
-continues emitting v1, so reader support does not establish final native SQL ownership or a
-producer cutover ([selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md)).
+emits v2 intents after independent verified-session registration. The newest completed live
+transport with a fresh valid heartbeat supplies the wallet candidate; replacement or promotion
+allocates a new sequence-backed candidate epoch. Gatekeeper acquires and renews only positively
+selected realm bindings, including native selection without `/ws`. It replaces only a known
+exact owned predecessor or a lapsed row. Fresh unknown same-session rows are borrowed read-only;
+fresh foreign sessions remain conflicts. Socket delivery retains the exact transport, immutable
+admission stamp and committed SQL fence. SQL timeouts retain before/after identities and their
+existing queue credit until conditional reconciliation. No old row is restored or broadly released.
+Ownership loss stops renewal; the existing 90-second lease bounds residual authority. These
+paths require the coordinated maintenance cutover in the
+[selected evidence ADR](../../../../docs/adr/2026-11-12-pulse-selected-room-evidence.md);
+source implementation alone does not establish rollout readiness.
+
+Borrowing, conflict and unknown lookup retain a bounded selected retry obligation.
+An explicit current-source retirement reply from Pulse's fresh complete selection
+view can end it only when no current owner, blocked/pending cleanup, native
+reservation or newly ingested candidate is present. Missing positive snapshots and
+cache or SQL expiry do not prove absence. The complete view retains every current
+and unfinished record. Gatekeeper settles exact SQL attempts and their credits
+before retiring the unchanged local slot; desired generation, selected identity
+and outstanding lease guards preserve concurrent successors. Retirement neither
+writes a foreign row nor releases a settled owner.
+
+A registered older epoch can instead retire after a complete newer-generation
+discovery pass, a final current-binding check and the original operation-grant
+window. Exact uncertain SQL settlement and unchanged epoch/source/generation/map
+identity with no extra slot handles remain required. Unidentified historical source
+UUIDs stay retained; UUID inequality alone proves no supersession. Independent
+cleanup and takeover obligations keep their existing owners. Wallets present in the
+sorted complete current view keep their exact predecessors until reseeding; absent
+old wallets can still retire to free capacity.
+
+Discovery runs as a cooperative future inside the existing subscriber job. It
+retains one complete bounded target vector and rotates through 128-target batches,
+reclaims eligible obsolete slots and seeds ordinary reconciliation. This reconstructs
+unchanged targets after restart or dropped hints without requiring a native reconnect.
+Entries remain hints: fresh per-target selection and SQL authority still decide
+admission. Runtime recovery duration and admission under full generation churn
+remain unverified. Slot occupancy and cap refusals are exposed as
+`comms_cluster_selected_slots` and `comms_cluster_selected_slot_refused_total`.
+
+Maintenance retries rotate with bounded item, lifetime-credit and running reservations;
+event and durable takeover lanes retain headroom. Cold hint-only work is limited to
+112 of 128 maintenance items and lifetime credits and eight of 16 maintenance runners;
+known-owned and unfinished targets retain the remaining reserve, run first and rotate
+separately without overtaking earlier work in the same wallet. Healthy exact owned targets wait
+until their 30-second renewal is due, while unknown or unfinished targets retry after
+five seconds. Capacity notifications refill batches without a global five-second
+throughput limit. The full shutdown settlement scan remains independent of due filtering.
+These bounds do not establish measured recovery duration or useful throughput.
 
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per

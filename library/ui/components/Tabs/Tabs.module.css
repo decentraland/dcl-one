@@ -1,3 +1,5 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
 /* Figma: Tabs bar / Tabs. The pill variant follows decentraland.org's events tabs (ExperiencesTabs);
    where the reference and Figma differ, the reference wins and the comment names both values. */
 @layer dcl.components {
@@ -72,5 +74,131 @@
   .pill[aria-selected='true'] {
     background-color: var(--dcl-neutrals-snow);
     color: var(--dcl-neutrals-shadow);
+  }
+}
+
+@layer dcl.components {
+  .routeRoot {
+    composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
+    position: relative;
+    --tab-underline: transparent;
+    --tab-underline-offset: 0px;
+    background-image: linear-gradient(var(--tab-underline), var(--tab-underline));
+    background-repeat: no-repeat;
+    background-size: 100% 4px;
+    background-position: left 0 bottom var(--tab-underline-offset);
+    box-sizing: border-box;
+    display: inline-grid;
+    flex: none;
+    align-items: center;
+    min-height: 64px;
+    padding: 0;
+    color: var(--dcl-neutrals-silver);
+    line-height: 19.36px;
+    letter-spacing: normal;
+    text-decoration: none;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .routeRoot[aria-current='page'] {
+    color: var(--dcl-neutrals-white);
+    --tab-underline: var(--dcl-primary-primary);
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .routeRoot:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+  @media (hover: hover) and (min-width: 768px) {
+    .routeRoot:hover {
+      color: var(--dcl-neutrals-white);
+      font-size: var(--dcl-font-size-button-lg);
+      font-weight: 700;
+      line-height: 18.75px;
+      letter-spacing: 0.5px;
+    }
+    .routeRoot:not([aria-current='page']):hover {
+      --tab-underline: var(--dcl-transparencies-white-10);
+    }
+  }
+  @media (width < 768px) {
+    .routeRoot {
+      min-height: 44px;
+      --tab-underline-offset: 9px;
+      align-items: flex-start;
+      padding-top: var(--dcl-space-8);
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 14.52px;
+    }
+    .routeRoot[aria-current='page'] {
+      color: var(--dcl-neutrals-snow);
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 15px;
+    }
+  }
+}
+
+@layer dcl.components {
+  /* Overlapping intrinsic text measurements reserve the widest supported state. */
+  .routeRoot::before,
+  .routeRoot::after {
+    content: attr(data-label);
+    visibility: hidden;
+    grid-area: 1 / 1;
+  }
+  .routeRoot::after {
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .routeRoot::before {
+    font-size: var(--dcl-font-size-label-md-caps);
+    font-weight: 600;
+    line-height: 19.36px;
+    letter-spacing: normal;
+  }
+  .routeRoot[aria-current='page']::before {
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 18.75px;
+    letter-spacing: 0.5px;
+  }
+  .routeLabel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (width < 768px) {
+    .routeRoot::before,
+    .routeRoot::after {
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 14.52px;
+    }
+    .routeRoot::after {
+      letter-spacing: normal;
+    }
+    .routeRoot[aria-current='page']::after {
+      letter-spacing: 0.5px;
+    }
+    .routeRoot[aria-current='page']::before {
+      font-size: var(--dcl-font-size-label-xs-caps);
+      font-weight: 600;
+      line-height: 15px;
+    }
+    .routeLabel {
+      top: var(--dcl-space-8);
+      transform: none;
+    }
   }
 }
