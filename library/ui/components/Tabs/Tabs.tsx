@@ -1,5 +1,10 @@
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from 'react'
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ComponentType, ReactNode } from 'react'
 import styles from './Tabs.module.css'
+
+/** The props a link tab hands its link component: the anchor's attributes, `href` included. */
+export type TabsLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
+/** The app's router link, so choosing a link tab is a client navigation instead of a page load. */
+export type TabsLinkComponent = ComponentType<TabsLinkProps>
 
 type TabsBaseProps = {
   label: ReactNode
@@ -11,21 +16,31 @@ type TabsBaseProps = {
   device?: 'mobile' | 'desktop'
 }
 
-type TabsLinkProps = TabsBaseProps & { href: string } & Omit<
-    AnchorHTMLAttributes<HTMLAnchorElement>,
-    'children' | 'href' | 'role'
-  >
+type TabsLinkTabProps = TabsBaseProps & {
+  href: string
+  /** Renders the link tab; a plain anchor without it. */
+  linkComponent?: TabsLinkComponent
+} & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'children' | 'href' | 'role'>
 
-type TabsButtonProps = TabsBaseProps & { href?: undefined } & Omit<
+type TabsButtonProps = TabsBaseProps & { href?: undefined; linkComponent?: undefined } & Omit<
     ButtonHTMLAttributes<HTMLButtonElement>,
     'children' | 'type' | 'role'
   >
 
-export type TabsProps = TabsLinkProps | TabsButtonProps
+export type TabsProps = TabsLinkTabProps | TabsButtonProps
 
 /** One tab of a TabsBar: a link when it has `href` (works without script), otherwise a button. */
 export function Tabs(props: TabsProps) {
-  const { label, selected = false, variant = 'underline', device, className, tabIndex, ...rest } = props
+  const {
+    label,
+    selected = false,
+    variant = 'underline',
+    device,
+    className,
+    tabIndex,
+    linkComponent: LinkComponent,
+    ...rest
+  } = props
   const classes = [styles.root, styles[variant], device && styles[device], className]
     .filter(Boolean)
     .join(' ')
@@ -36,11 +51,8 @@ export function Tabs(props: TabsProps) {
     className: classes
   } as const
   if (rest.href !== undefined) {
-    return (
-      <a {...(rest as AnchorHTMLAttributes<HTMLAnchorElement>)} {...shared}>
-        {label}
-      </a>
-    )
+    const anchor = { ...(rest as TabsLinkProps), ...shared }
+    return LinkComponent ? <LinkComponent {...anchor}>{label}</LinkComponent> : <a {...anchor}>{label}</a>
   }
   return (
     <button type="button" {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)} {...shared}>

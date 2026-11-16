@@ -1,29 +1,46 @@
-// TODO(figma-ds): replace with the Figma-generated profile header from library/ui/components.
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import {
-  GeneralCheck,
-  GeneralCopy,
-  GeneralVerified,
-  GeneralWallet
-} from '../../../../foundations/icons'
-import { ProfileAvatar } from '../ProfileAvatar/ProfileAvatar'
-import styles from './ProfileHeader.module.css'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+
+import { GeneralCheck, GeneralCopy, GeneralVerified, GeneralWallet } from "@dcl/one-ui/foundations/icons";
+
+import styles from "./ProfileHeader.module.css";
+import { useBrokenImage } from "./useBrokenImage";
 
 type ProfileHeaderProps = {
-  address: string
+  address: string;
   /** The address as the app shortens it for display (`0x1234…abcd`); the copy button copies `address`. */
-  addressLabel: string
-  name: string
+  addressLabel: string;
+  name: string;
   /** The profile's name color, also the avatar fallback background. */
-  nameColor: string
+  nameColor: string;
   /** A claimed NAME shows the verified mark; an unclaimed one the `#1234` suffix. */
-  hasClaimedName: boolean
-  avatarUrl?: string
+  hasClaimedName: boolean;
+  avatarUrl?: string;
   /** Buttons on the right: the owner's calls to action, or a member's. */
-  actions?: ReactNode
+  actions?: ReactNode;
+};
+
+type CopyState = "idle" | "copied" | "failed";
+
+function firstGrapheme(value: string): string {
+  for (const ch of value) return ch;
+  return "";
 }
 
-type CopyState = 'idle' | 'copied' | 'failed'
+/** The round face snapshot with a soft border; the initial on the name color without one, or when it fails. */
+function Avatar({ imageUrl, name }: { imageUrl?: string; name: string }) {
+  const { broken, ref, onError } = useBrokenImage(imageUrl);
+  return (
+    <span className={styles.avatar}>
+      {imageUrl && !broken ? (
+        <img ref={ref} className={styles.avatarImage} src={imageUrl} alt={name} onError={onError} />
+      ) : (
+        <span className={styles.avatarInitial} aria-hidden="true">
+          {(firstGrapheme(name) || "?").toUpperCase()}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /**
  * The live region stays mounted and only its text changes, so screen readers announce the result.
@@ -31,64 +48,59 @@ type CopyState = 'idle' | 'copied' | 'failed'
  * silently.
  */
 function CopyAddress({ address }: { address: string }) {
-  const [state, setState] = useState<CopyState>('idle')
-  const [announcement, setAnnouncement] = useState(0)
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  useEffect(() => () => clearTimeout(timer.current), [])
+  const [state, setState] = useState<CopyState>("idle");
+  const [announcement, setAnnouncement] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const show = (next: CopyState) => {
-    setState(next)
-    setAnnouncement((current) => current + 1)
-    clearTimeout(timer.current)
-    timer.current = setTimeout(() => setState('idle'), 2000)
-  }
+    setState(next);
+    setAnnouncement((current) => current + 1);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), 2000);
+  };
   const copy = () => {
-    const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard
-    if (!clipboard) return show('failed')
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (!clipboard) return show("failed");
     clipboard.writeText(address).then(
-      () => show('copied'),
-      () => show('failed')
-    )
-  }
+      () => show("copied"),
+      () => show("failed"),
+    );
+  };
   return (
     <span className={styles.copyWrap}>
       <button type="button" className={styles.copy} aria-label="Copy address" onClick={copy}>
         <GeneralCopy size={16} aria-hidden="true" />
       </button>
-      <span className={state === 'idle' ? styles.copiedHidden : styles.copied} role="status">
+      <span className={state === "idle" ? styles.copiedHidden : styles.copied} role="status">
         <Fragment key={announcement}>
-          {state === 'copied' ? (
+          {state === "copied" ? (
             <>
               <GeneralCheck size={14} aria-hidden="true" /> Address copied!
             </>
-          ) : state === 'failed' ? (
+          ) : state === "failed" ? (
             "Couldn't copy the address"
           ) : null}
         </Fragment>
       </span>
     </span>
-  )
+  );
 }
 
 /** Avatar, name and address on the left, actions on the right; stacked on narrow screens. */
-function ProfileHeader({
+export function ProfileHeader({
   address,
   addressLabel,
   name,
   nameColor,
   hasClaimedName,
   avatarUrl,
-  actions
+  actions,
 }: ProfileHeaderProps) {
-  const style = { '--name-color': nameColor } as CSSProperties
+  const style = { "--name-color": nameColor } as CSSProperties;
   return (
     <header className={styles.root} style={style}>
       <div className={styles.identity}>
-        <ProfileAvatar
-          imageUrl={avatarUrl}
-          name={name}
-          color={nameColor}
-          className={styles.avatar}
-        />
+        <Avatar imageUrl={avatarUrl} name={name} />
         <div className={styles.nameBlock}>
           <div className={styles.nameRow}>
             <h1 className={styles.name}>{name}</h1>
@@ -109,8 +121,5 @@ function ProfileHeader({
       </div>
       {actions ? <div className={styles.actions}>{actions}</div> : null}
     </header>
-  )
+  );
 }
-
-export { ProfileHeader }
-export type { ProfileHeaderProps }
