@@ -533,7 +533,7 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
             let state = state.clone();
             let last_sample = last_sample.clone();
             async move {
-                if crate::shared::writes::ops_refusal(state.settings.writes_enabled).is_some() {
+                if !state.settings.writes_enabled {
                     return Ok(());
                 }
                 let (n, sample) = process_pass(&state, &last_sample).await?;

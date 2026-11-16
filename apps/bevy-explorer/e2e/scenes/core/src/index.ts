@@ -296,8 +296,8 @@ export function main() {
   // parcel corner (0, 0, 0) stays in frame alongside the y-stacked rows in
   // the parcel interior.
   setupVisualTest({
-    lookAtPos: Vector3.create(8, 2, 6),
-    cameraPos: Vector3.create(8, 12, -6),
+    lookAtPos: Vector3.create(8, 3, 8),
+    cameraPos: Vector3.create(8, 4, 1),
   })
 }
 
@@ -328,7 +328,7 @@ function makePrimitive(
 // Hover hint: show `text` while the cursor is over the entity. The empty
 // click handler is intentional — the goal is the on-hover tooltip, not a
 // click action. maxDistance is bumped well past the SDK default (~10) so
-// the locked virtual camera still resolves hovers on every entity,
+// the locked virtual camera (z=-11) still resolves hovers on every entity,
 // including the cube at the parcel origin.
 const HINT_MAX_DISTANCE = 100
 

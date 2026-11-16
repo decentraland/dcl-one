@@ -1,15 +1,12 @@
-use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+use std::marker::PhantomData;
 
 use bevy::log::{debug, warn};
-use common::rpc::{RpcCall, RpcEventSender, RpcResultSender, RpcStreamReceiver};
-use serde::{Deserialize, Serialize};
+use common::rpc::{RpcCall, RpcEventSender, RpcStreamReceiver};
+use serde::Serialize;
 
 use dcl_types::RpcCalls;
 
-use super::{
-    runtime::{player_language, send_immediate_rpc},
-    State,
-};
+use super::{runtime::player_language, State};
 
 const MAX_NETWORK_MESSAGE_QUEUE: usize = 1024;
 
@@ -232,43 +229,4 @@ pub fn op_send_batch(state: &mut impl State) -> Vec<Event> {
     }
 
     results
-}
-
-struct LegacyAvatarEvents {
-    // The engine owns the queue; this receiver only ties the subscription to scene lifetime.
-    _lifetime: RpcStreamReceiver<String>,
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
-pub struct LegacyAvatarEvent {
-    pub event: String,
-    pub payload: String,
-}
-
-pub fn op_subscribe_legacy_avatar_events(state: &mut impl State) -> Result<(), anyhow::Error> {
-    if state.has::<LegacyAvatarEvents>() {
-        return Ok(());
-    }
-    let (sender, receiver) = RpcEventSender::channel_with_capacity(1);
-    send_immediate_rpc(state, RpcCall::SubscribeLegacyAvatarEvents { sender })?;
-    state.put(LegacyAvatarEvents {
-        _lifetime: receiver,
-    });
-    Ok(())
-}
-
-pub async fn op_pull_legacy_avatar_events(
-    state: Rc<RefCell<impl State>>,
-) -> Result<Vec<LegacyAvatarEvent>, anyhow::Error> {
-    op_subscribe_legacy_avatar_events(&mut *state.borrow_mut())?;
-    let (response, receiver) = RpcResultSender::channel();
-    send_immediate_rpc(
-        &mut *state.borrow_mut(),
-        RpcCall::PullLegacyAvatarEvents { response },
-    )?;
-    receiver
-        .await?
-        .into_iter()
-        .map(|value| serde_json::from_str(&value).map_err(anyhow::Error::from))
-        .collect()
 }
