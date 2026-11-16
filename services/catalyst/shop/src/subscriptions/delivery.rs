@@ -112,6 +112,8 @@ pub fn escape_html(value: &str) -> String {
     out
 }
 
+pub const ITEM_AVAILABLE_SUBJECT: &str = "An item you asked about is available again";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedEmail {
     pub subject: String,
@@ -121,13 +123,14 @@ pub struct RenderedEmail {
 
 /// The "your item is available again" email: web2 copy only (no wallets,
 /// chains or MANA), inline styles, one call to action deep-linking the item,
-/// every interpolated value HTML-escaped; the subject and text are plain.
+/// every interpolated value HTML-escaped; the subject is fixed text (the item
+/// name is the creator's) and the text is plain.
 pub fn render_item_available_email(
     item_name: &str,
     item_url: &str,
     unsubscribe_url: Option<&str>,
 ) -> RenderedEmail {
-    let subject = format!("{item_name} is available again");
+    let subject = ITEM_AVAILABLE_SUBJECT.to_string();
     let mut text = format!(
         "Good news — {item_name} is available again in the Decentraland shop.\n\nView it here: {item_url}\n\nYou are receiving this because you asked to be notified when it came back. There is nothing else you need to do."
     );

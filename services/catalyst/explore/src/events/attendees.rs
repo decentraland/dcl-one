@@ -50,7 +50,7 @@ fn to_records(event_id: &str, row: ListRow) -> Vec<EventAttendeeRecord> {
             out.push(EventAttendeeRecord {
                 event_id: event_id.to_string(),
                 user: signer,
-                user_name: names.get(i).cloned().flatten(),
+                user_name: crate::sanitize::strip_all_markup_opt(names.get(i).cloned().flatten()),
                 created_at: times.get(i).map(|t| t.and_utc()).unwrap_or_else(Utc::now),
             });
         }
@@ -172,5 +172,23 @@ mod tests {
             "2026-08-16T04:00:00.019Z"
         );
         assert!(to_records("e2", (vec![], vec![], vec![], None, None, vec![])).is_empty());
+    }
+
+    #[test]
+    fn attendee_names_carry_no_rich_text_tags() {
+        let now = Utc::now().naive_utc();
+        let row: ListRow = (
+            vec!["0xaaa".into(), "0xbbb".into()],
+            vec![Some("<size=300>Big</size>".into()), Some("Plain".into())],
+            vec![now, now],
+            None,
+            None,
+            Vec::new(),
+        );
+        let names: Vec<_> = to_records("e1", row)
+            .into_iter()
+            .map(|a| a.user_name)
+            .collect();
+        assert_eq!(names, vec![Some("Big".into()), Some("Plain".into())]);
     }
 }

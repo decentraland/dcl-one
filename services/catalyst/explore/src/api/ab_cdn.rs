@@ -92,6 +92,11 @@ pub fn object_key(path: &str) -> Option<String> {
     if object.is_empty() {
         return None;
     }
+    // The key is appended to the upstream URL: no escapes, query, fragment or
+    // control characters (a URL parser drops tabs and newlines).
+    if path.contains(['%', '?', '#', '\\']) || path.chars().any(char::is_control) {
+        return None;
+    }
     valid_rel(path).then(|| path.to_string())
 }
 
@@ -235,6 +240,14 @@ mod tests {
             "v49/assets/",
             "LOD",
             "manifest",
+            "v49/%2e%2e/x",
+            "v49/bafk/%2e%2e/%2e%2e/secret",
+            "v49/bafk/x?y=1",
+            "v49/bafk/x#frag",
+            "v49/bafk\\..\\x",
+            "v49/bafk/.\t./.\t./x",
+            "v49/bafk/.\n./x",
+            "v49/bafk/x\r",
         ] {
             assert_eq!(object_key(bad), None, "{bad:?}");
         }

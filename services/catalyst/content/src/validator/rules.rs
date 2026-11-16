@@ -17,7 +17,7 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    count_urn_segments, is_ipfs_v2_hash, is_relative_thumbnail_path, profile_has_emotes,
+    count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
     should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
@@ -25,6 +25,7 @@ use super::scene_parcels::validate_scene_parcels_match_pointers;
 use super::spring_bones::validate_spring_bones_metadata;
 use super::types::*;
 use crate::auth::{AuthChain, AuthError};
+use crate::entity::is_ipfs_v2;
 
 /// The longest an entity's validation, from the signature step to the end of
 /// its access checks, takes before the deploy is undecided, well under the
@@ -89,33 +90,8 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
     pub async fn validate(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let deadline = tokio::time::Instant::now() + self.access_budget();
-        let result = self.validate_entity_structure(deployment);
+        let result = self.validate_common_prefix(deployment).await;
         if !result.is_ok() {
-            debug!("Validation failed at entity structure");
-            return result;
-        }
-
-        let result = self.validate_ipfs_hashing(deployment);
-        if !result.is_ok() {
-            debug!("Validation failed at IPFS hashing");
-            return result;
-        }
-
-        let result = super::metadata_schema::validate_metadata(deployment.entity);
-        if !result.is_ok() {
-            debug!("Validation failed at metadata schema");
-            return result;
-        }
-
-        let result = self.validate_adr45(deployment);
-        if !result.is_ok() {
-            debug!("Validation failed at ADR-45 check");
-            return result;
-        }
-
-        let result = self.validate_signature(deployment).await;
-        if !result.is_ok() {
-            debug!("Validation failed at signature");
             return result;
         }
 
@@ -207,20 +183,11 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         include_access: bool,
     ) -> ValidationResponse {
         let deadline = tokio::time::Instant::now() + self.access_budget();
-        for result in [
-            self.validate_entity_structure(deployment),
-            self.validate_ipfs_hashing(deployment),
-            super::metadata_schema::validate_metadata(deployment.entity),
-            self.validate_adr45(deployment),
-        ] {
-            if !result.is_ok() {
-                return result;
-            }
-        }
-        let result = self.validate_signature(deployment).await;
+        let result = self.validate_common_prefix(deployment).await;
         if !result.is_ok() {
             return result;
         }
+
         let result = self.validate_scene_content(deployment);
         if !result.is_ok() {
             return result;
@@ -244,6 +211,40 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         ValidationResponse::Ok
     }
 
+    async fn validate_common_prefix(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        let result = self.validate_entity_structure(deployment);
+        if !result.is_ok() {
+            debug!("Validation failed at entity structure");
+            return result;
+        }
+
+        let result = validate_ipfs_hashing(deployment.entity);
+        if !result.is_ok() {
+            debug!("Validation failed at IPFS hashing");
+            return result;
+        }
+
+        let result = super::metadata_schema::validate_metadata(deployment.entity);
+        if !result.is_ok() {
+            debug!("Validation failed at metadata schema");
+            return result;
+        }
+
+        let result = self.validate_adr45(deployment);
+        if !result.is_ok() {
+            debug!("Validation failed at ADR-45 check");
+            return result;
+        }
+
+        let result = self.validate_signature(deployment).await;
+        if !result.is_ok() {
+            debug!("Validation failed at signature");
+            return result;
+        }
+
+        ValidationResponse::Ok
+    }
+
     fn validate_entity_structure(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
 
@@ -261,27 +262,6 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
 
         ValidationResponse::Ok
-    }
-
-    fn validate_ipfs_hashing(&self, deployment: &Deployment<'_>) -> ValidationResponse {
-        let entity = &deployment.entity;
-
-        if entity.timestamp < adr_timestamps::ADR_45 {
-            return ValidationResponse::Ok;
-        }
-
-        let mut all_hashes = vec![&entity.id];
-        for cm in &entity.content {
-            all_hashes.push(&cm.hash);
-        }
-
-        let errors: Vec<String> = all_hashes
-            .into_iter()
-            .filter(|hash| !is_ipfs_v2_hash(hash))
-            .map(|hash| format!("This hash '{hash}' is not valid. It should be IPFS v2 format."))
-            .collect();
-
-        ValidationResponse::from_errors(errors)
     }
 
     fn validate_adr45(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -1018,45 +998,28 @@ fn validate_social_emote(data: Option<&serde_json::Value>) -> ValidationResponse
     ValidationResponse::Ok
 }
 
+/// ADR-45 hashing: from ADR-45 on, the entity id and every content hash are
+/// IPFS v2 (`IPFSv2.validate`).
+fn validate_ipfs_hashing(entity: &Entity) -> ValidationResponse {
+    if entity.timestamp < adr_timestamps::ADR_45 {
+        return ValidationResponse::Ok;
+    }
+    let errors: Vec<String> = std::iter::once(&entity.id)
+        .chain(entity.content.iter().map(|cm| &cm.hash))
+        .filter(|hash| !is_ipfs_v2(hash))
+        .map(|hash| format!("This hash '{hash}' is not valid. It should be IPFS v2 format."))
+        .collect();
+    ValidationResponse::from_errors(errors)
+}
+
 fn validate_scene_navmap_thumbnail(
     metadata: &serde_json::Value,
     content: &[ContentMapping],
 ) -> ValidationResponse {
-    let Some(value) = metadata
-        .get("display")
-        .and_then(|d| d.get("navmapThumbnail"))
-    else {
-        return ValidationResponse::Ok;
-    };
-    let thumbnail = match value {
-        serde_json::Value::Null => return ValidationResponse::Ok,
-        serde_json::Value::String(s) if s.is_empty() => return ValidationResponse::Ok,
-        serde_json::Value::Bool(false) => return ValidationResponse::Ok,
-        serde_json::Value::Number(n) if n.as_f64() == Some(0.0) => return ValidationResponse::Ok,
-        serde_json::Value::String(s) => s.as_str(),
-        other => {
-            return ValidationResponse::fail(format!(
-                "Scene thumbnail '{other}' must be a relative path to a \
-                 file included in the deployment."
-            ));
-        }
-    };
-
-    if !is_relative_thumbnail_path(thumbnail) {
-        return ValidationResponse::fail(format!(
-            "Scene thumbnail '{thumbnail}' must be a relative path to a \
-             file included in the deployment."
-        ));
+    match navmap_thumbnail_error(metadata, |file| content.iter().any(|c| c.file == file)) {
+        Some(message) => ValidationResponse::fail(message),
+        None => ValidationResponse::Ok,
     }
-    let is_present = content.iter().any(|c| c.file == thumbnail);
-    if !is_present {
-        return ValidationResponse::fail(format!(
-            "Scene thumbnail '{thumbnail}' must be a file included in \
-             the deployment."
-        ));
-    }
-
-    ValidationResponse::Ok
 }
 
 #[cfg(test)]
@@ -1092,6 +1055,32 @@ mod tests {
             version: "v3".into(),
             metadata: None,
         }
+    }
+
+    #[test]
+    fn ipfs_hashing_takes_any_ipfs_v2_hash_and_nothing_else() {
+        let other_prefix = format!("bag{}", "a".repeat(56));
+        let bafy_prefix_only = "bafybogus".to_string();
+        let mut entity = item(vec![ContentMapping {
+            file: "model.glb".into(),
+            hash: other_prefix.clone(),
+        }]);
+        entity.id = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776".into();
+        assert!(validate_ipfs_hashing(&entity).is_ok());
+
+        entity.content.push(ContentMapping {
+            file: "thumbnail.png".into(),
+            hash: bafy_prefix_only.clone(),
+        });
+        assert_eq!(
+            failure(validate_ipfs_hashing(&entity)),
+            vec![format!(
+                "This hash '{bafy_prefix_only}' is not valid. It should be IPFS v2 format."
+            )]
+        );
+
+        entity.timestamp = adr_timestamps::ADR_45 - 1;
+        assert!(validate_ipfs_hashing(&entity).is_ok());
     }
 
     #[test]
@@ -1260,7 +1249,13 @@ mod tests {
         const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
 
         /// Answers the signature step after its delay; holds no content.
-        struct Calls(Duration);
+        struct Calls(Duration, std::sync::atomic::AtomicUsize);
+
+        impl Calls {
+            fn new(delay: Duration) -> Self {
+                Self(delay, std::sync::atomic::AtomicUsize::new(0))
+            }
+        }
 
         #[async_trait]
         impl ExternalCalls for Calls {
@@ -1281,6 +1276,7 @@ mod tests {
                 _auth_chain: &AuthChain,
                 _timestamp: Timestamp,
             ) -> Result<(), AuthError> {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 tokio::time::sleep(self.0).await;
                 Ok(())
             }
@@ -1353,7 +1349,7 @@ mod tests {
 
         fn profile() -> OwnedDeployment {
             let mut d = OwnedDeployment::new(Entity {
-                id: "bafkreiprofile".into(),
+                id: "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776".into(),
                 entity_type: EntityType::Profile,
                 pointers: vec![OWNER.to_string()],
                 // No face thumbnail is required in this window.
@@ -1386,7 +1382,7 @@ mod tests {
         async fn access_with(delay: Duration) -> ValidationResponse {
             let d = profile();
             ContentValidator {
-                external_calls: &Calls(Duration::ZERO),
+                external_calls: &Calls::new(Duration::ZERO),
                 blockchain_checker: &SlowChecker(delay, false),
                 ignore_blockchain_access: false,
                 synced: false,
@@ -1412,31 +1408,74 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn the_deadline_starts_before_the_signature_step() {
             let d = profile();
-            let validate = |signature: Duration| {
+            let validate = |signature: Duration, staging: bool| {
                 let d = &d;
                 async move {
-                    ContentValidator {
-                        external_calls: &Calls(signature),
+                    let calls = Calls::new(signature);
+                    let validator = ContentValidator {
+                        external_calls: &calls,
                         blockchain_checker: &SlowChecker(ACCESS_DEADLINE / 4, false),
                         ignore_blockchain_access: false,
                         synced: false,
                         access_passed: false,
+                    };
+                    if staging {
+                        validator.validate_staging(&d.view(), true).await
+                    } else {
+                        validator.validate(&d.view()).await
                     }
-                    .validate(&d.view())
-                    .await
                 }
             };
-            let quick = validate(Duration::from_secs(1)).await;
-            assert!(quick.is_ok(), "{quick:?}");
-            let late = validate(ACCESS_DEADLINE * 2 / 3).await;
-            assert!(timed_out(&late), "{late:?}");
+            for staging in [false, true] {
+                let quick = validate(Duration::from_secs(1), staging).await;
+                assert!(quick.is_ok(), "{quick:?}");
+                let late = validate(ACCESS_DEADLINE * 2 / 3, staging).await;
+                assert!(timed_out(&late), "{late:?}");
+            }
+        }
+
+        #[tokio::test]
+        async fn both_paths_short_circuit_prefix_errors_before_the_signature() {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let mut d = profile();
+            d.entity.pointers.clear();
+            d.entity.id = "invalid-hash".into();
+            d.entity.metadata = None;
+            d.entity.version = "v2".into();
+            for stage in 0..4 {
+                let full = validator.validate(&d.view()).await.into_result();
+                let staging = validator
+                    .validate_staging(&d.view(), false)
+                    .await
+                    .into_result();
+                assert_eq!(full, staging);
+                assert!(full.is_err());
+                assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 0);
+                match stage {
+                    0 => d.entity.pointers = vec![OWNER.into()],
+                    1 => d.entity.id = profile().entity.id,
+                    2 => d.entity.metadata = profile().entity.metadata,
+                    _ => d.entity.version = "v3".into(),
+                }
+            }
+            assert!(validator.validate(&d.view()).await.is_ok());
+            assert!(validator.validate_staging(&d.view(), false).await.is_ok());
+            assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 2);
         }
 
         #[tokio::test]
         async fn too_many_items_refuse_the_deploy() {
             let d = profile();
             let response = ContentValidator {
-                external_calls: &Calls(Duration::ZERO),
+                external_calls: &Calls::new(Duration::ZERO),
                 blockchain_checker: &SlowChecker(Duration::ZERO, true),
                 ignore_blockchain_access: false,
                 synced: false,

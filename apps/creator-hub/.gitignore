@@ -1,3 +1,71 @@
-target/
-.cargo-home/
-gen/
+node_modules
+.DS_Store
+dist
+*.local
+thumbs.db
+.cursor/
+!.cursor/skills
+
+.eslintcache
+.browserslistrc
+.electron-vendors.cache.json
+.vscode/settings.json
+
+.env
+.env.*
+
+coverage/
+/build
+
+# Playwright E2E output
+test-results/
+playwright-report/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+**/public/bundle*
+**/public/bin
+**/public/bevy-engine
+**/public/bevy-agent
+packages/creator-hub/node-bin
+packages/creator-hub/devtools-frontend
+**/gen
+**/tsconfig.tsbuildinfo
+**/tsconfig.check.tsbuildinfo
+
+settings.local.json
+.serena/
+
+# Local dev artifacts (env files kept locally for restore, Playwright MCP logs)
+*.env*
+!.env.example
+.playwright-mcp/
+
+# Claude agent verification screenshots
+.claude/screenshots/
+
+# Captured @live signed-in identity (never commit)
+packages/creator-hub/e2e/.auth/
+
+# Local package tarballs from .ai/skills/local-package-chain
+.local-packages/
+
+# Third-party skills, installed per-developer and tracked in skills-lock.json
+.agents/skills/
+.claude/skills/
+
+# Local agent state (Claude Code worktrees, schedulers, checkpoints, QA lanes)
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/checkpoints/
+.claude/mailbox/
+.claude/routines/.state/
+.claude/agent-registry.json
+.claude/agent-memory-local
+.claude/first-run
+.claude/assistant-daemon-state.json
+.claude/pr-summaries/
+.wt/

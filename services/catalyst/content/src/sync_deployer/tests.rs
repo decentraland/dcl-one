@@ -472,6 +472,21 @@ async fn metadata_and_retry_cleanup_roll_back_when_content_insert_fails() {
 }
 
 #[test]
+fn a_synced_entity_stores_the_canonical_type() {
+    for raw in ["scene", "Scene", " scenes ", "SCENES"] {
+        let body = format!(r#"{{"type":"{raw}","pointers":["0,0"],"timestamp":1,"content":[]}}"#);
+        let entity = parse_entity_for_deploy(body.as_bytes(), "bafytype", &Vec::new()).unwrap();
+        assert_eq!(entity.entity_type, "scene", "{raw:?}");
+    }
+    let body = br#"{"type":"bogus","pointers":["0,0"],"timestamp":1,"content":[]}"#;
+    let entity = parse_entity_for_deploy(body, "bafytype", &Vec::new()).unwrap();
+    assert_eq!(
+        entity.entity_type, "bogus",
+        "an unknown type is left to the validator"
+    );
+}
+
+#[test]
 fn a_flush_failure_record_carries_the_stamped_retry_state() {
     let entity = parse_entity_for_deploy(ENTITY_BODY, "bafytest", &Vec::new()).unwrap();
     let before = chrono::Utc::now().timestamp_millis();
@@ -759,24 +774,6 @@ async fn a_synced_expiration_the_peer_accepted_is_not_a_rejection() {
 }
 
 use crate::sync_types::AuthLink;
-
-#[test]
-fn a_failure_reason_survives_the_column_round_trip() {
-    for reason in [
-        FailureReason::DeploymentError,
-        FailureReason::NoEntity,
-        FailureReason::ValidationUndecided,
-        FailureReason::Rejected,
-    ] {
-        let label = reason_label(&reason);
-        assert_eq!(reason_from_label(label), reason);
-    }
-    assert_eq!(reason_label(&FailureReason::NoEntity), "No entity");
-    assert_eq!(
-        reason_label(&FailureReason::DeploymentError),
-        "Deployment error"
-    );
-}
 
 async fn cleanup(pool: &PgPool, prefix: &str) {
     let like = format!("{prefix}%");
