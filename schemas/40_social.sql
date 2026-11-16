@@ -1468,6 +1468,14 @@ CREATE TABLE social.archipelago_v4_meta (
 -- The per-connection epoch a `/ws/v4` owner claims with.
 CREATE SEQUENCE social.archipelago_v4_connection_epoch;
 
+-- Root/jobs writes only deployment authority metadata, never Pulse assignment state.
+CREATE TABLE social.pulse_authority_generation (
+    deployment_audience text NOT NULL PRIMARY KEY,
+    epoch bigint NOT NULL CHECK (epoch > 0),
+    source_incarnation uuid NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
+
 CREATE TABLE social.archipelago_v4_assignments (
     deployment_audience text NOT NULL,
     owner_address text NOT NULL,

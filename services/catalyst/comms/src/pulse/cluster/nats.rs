@@ -74,6 +74,7 @@ impl Default for NatsFeedOptions {
 }
 
 struct Shared {
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
     outbox: Mutex<ClusterOutbox>,
     pending: Notify,
     user_count: AtomicU32,
@@ -90,12 +91,14 @@ struct Shared {
 /// feed lives exactly as long as the server that owns it.
 pub struct NatsClusterFeed {
     shared: Arc<Shared>,
-    drain: tokio::task::JoinHandle<()>,
+    drain: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for NatsClusterFeed {
     fn drop(&mut self) {
-        self.drain.abort();
+        if let Some(drain) = self.drain.get_mut().unwrap().take() {
+            drain.abort();
+        }
     }
 }
 
@@ -103,12 +106,25 @@ impl NatsClusterFeed {
     /// Returns immediately: the first connection is established by the drain task, so a broker
     /// that is down at boot delays no startup and needs no ordering against it in the unit file.
     pub fn spawn(options: NatsFeedOptions) -> Self {
+        Self::spawn_with_generation(options, None)
+    }
+    pub fn spawn_with_generation(
+        options: NatsFeedOptions,
+        generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+    ) -> Self {
+        let current = Arc::new(match &generation {
+            Some(authority) => {
+                CurrentAssignments::with_source(authority.binding().source_incarnation.clone())
+            }
+            None => CurrentAssignments::default(),
+        });
         let statistics_epoch = uuid::Uuid::new_v4();
         let shared = Arc::new(Shared {
+            generation,
             outbox: Mutex::new(ClusterOutbox::new(options.capacity)),
             pending: Notify::new(),
             user_count: AtomicU32::new(0),
-            current: Arc::new(CurrentAssignments::default()),
+            current,
             control: Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
             statistics: Mutex::new(crate::pulse::statistics::Statistics::with_incarnation(
@@ -119,7 +135,10 @@ impl NatsClusterFeed {
             statistics_pending: Notify::new(),
         });
         let drain = tokio::spawn(supervise(shared.clone(), options));
-        Self { shared, drain }
+        Self {
+            shared,
+            drain: Mutex::new(Some(drain)),
+        }
     }
 
     pub fn pending_changes(&self) -> usize {
@@ -142,6 +161,15 @@ fn record(outcome: QueueOutcome) {
 }
 
 impl ClusterFeedPublisher for NatsClusterFeed {
+    fn shutdown(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let drain = self.drain.lock().unwrap().take();
+        Box::pin(async move {
+            if let Some(drain) = drain {
+                drain.abort();
+                let _ = drain.await;
+            }
+        })
+    }
     fn current_assignments(&self) -> Option<Arc<CurrentAssignments>> {
         Some(self.shared.current.clone())
     }
@@ -155,6 +183,15 @@ impl ClusterFeedPublisher for NatsClusterFeed {
         valid_for: Duration,
         assignments: Vec<CurrentAssignment>,
     ) {
+        if self
+            .shared
+            .generation
+            .as_ref()
+            .is_some_and(|authority| authority.lost().is_cancelled())
+        {
+            return;
+        }
+
         for snapshot in self.shared.current.replace_checked(
             pass,
             valid_for,
@@ -618,15 +655,75 @@ async fn serve_lookups(shared: &Shared, client: &async_nats::Client) {
     else {
         return;
     };
-    let mut requests = futures::stream::select(requests, retirements);
+    let mut requests = futures::stream::select(requests, retirements).boxed();
+    if let Some(authority) = &shared.generation {
+        let scope = crate::protocol::bus::selection_view::source_subject(authority.binding(), "*");
+        let Ok(Ok(scoped)) = tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(scope)).await
+        else {
+            return;
+        };
+        requests = futures::stream::select(requests, scoped).boxed();
+    }
+    let mut selection_view: Option<(
+        tokio::time::Instant,
+        crate::protocol::bus::selection_view::SelectionView,
+    )> = None;
     while let Some(request) = requests.next().await {
+        if shared
+            .generation
+            .as_ref()
+            .is_some_and(|authority| authority.lost().is_cancelled())
+        {
+            continue;
+        }
         let Some(reply) = request
             .reply
             .filter(|subject| private_reply(subject.as_str()))
         else {
             continue;
         };
-        let payload = if let Some(lookup) =
+        let payload = if let Some(view_request) =
+            crate::protocol::bus::selection_view::ViewRequest::decode(
+                request.subject.as_str(),
+                &request.payload,
+            ) {
+            let Some(authority) = &shared.generation else {
+                continue;
+            };
+            if &view_request.generation != authority.binding() {
+                continue;
+            }
+            let Some(payload) = crate::protocol::bus::selection_view::SelectionView::cached_page(
+                &mut selection_view,
+                &view_request,
+                || {
+                    shared
+                        .current
+                        .selection_view_checked(authority.binding(), Some(&shared.control))
+                },
+            ) else {
+                continue;
+            };
+            payload
+        } else if let Some(lookup) = crate::protocol::bus::selection_view::FencedLookup::decode(
+            request.subject.as_str(),
+            &request.payload,
+        ) {
+            let Some(authority) = &shared.generation else {
+                continue;
+            };
+            if &lookup.generation != authority.binding() {
+                continue;
+            }
+            let Some(snapshot) = shared.current.lookup_checked(
+                &lookup.wallet,
+                &lookup.session,
+                Some(&shared.control),
+            ) else {
+                continue;
+            };
+            snapshot.encode_to_vec()
+        } else if let Some(lookup) =
             SelectionRetirementLookup::decode(request.subject.as_str(), &request.payload)
         {
             let Some(payload) = shared
@@ -901,6 +998,7 @@ mod tests {
 
     pub(super) fn feed_shared(capacity: usize) -> Arc<Shared> {
         Arc::new(Shared {
+            generation: None,
             outbox: Mutex::new(ClusterOutbox::new(capacity)),
             pending: Notify::new(),
             user_count: AtomicU32::new(0),

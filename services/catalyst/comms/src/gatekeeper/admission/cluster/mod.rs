@@ -25,6 +25,7 @@
 
 pub mod fence;
 pub mod gateway;
+pub mod generation;
 pub mod metrics;
 pub mod peer_state;
 pub mod safety;
@@ -169,9 +170,12 @@ impl ClusterRuntime {
         self.subscriber.start();
         let subscriber = self.subscriber.clone();
         jobs.spawn("comms-cluster-subscriber", move |ctx| async move {
+            let discovery = subscriber.recover_selection_views();
+            tokio::pin!(discovery);
             loop {
                 tokio::select! {
                     _=ctx.cancel.cancelled()=>break,
+                    _ = &mut discovery => break,
                     _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{},
                     _=subscriber.maintenance_capacity_changed()=>{},
                 }

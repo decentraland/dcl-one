@@ -48,7 +48,7 @@ impl RelayPolicy for Policy {
 
 fn authority() -> (Arc<RelayAuthority>, Arc<Policy>) {
     let policy = Arc::new(Policy::default());
-    let authority = RelayAuthority::new(
+    let authority = RelayAuthority::unfenced_test(
         policy.clone(),
         "livekit-key".into(),
         LIVEKIT_SECRET.to_vec(),
@@ -646,7 +646,7 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
 #[test]
 fn service_key_must_be_dedicated() {
     assert!(
-        RelayAuthority::new(
+        RelayAuthority::unfenced_test(
             Arc::new(Policy::default()),
             "key".into(),
             LIVEKIT_SECRET.to_vec(),
@@ -763,7 +763,8 @@ async fn composed_http_outage_and_old_connection_completion_cannot_install_membe
             .unwrap();
     });
     let mut relay = ApplicationRelay::new(Arc::new(
-        HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true).unwrap(),
+        HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true)
+            .unwrap(),
     ));
     let authenticate = |relay: &mut ApplicationRelay, nonce| {
         relay.authenticated(
@@ -804,7 +805,8 @@ async fn composed_http_outage_and_old_connection_completion_cannot_install_membe
     );
     drop(unavailable);
     let mut relay = ApplicationRelay::new(Arc::new(
-        HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true).unwrap(),
+        HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true)
+            .unwrap(),
     ));
     authenticate(&mut relay, [3; 32]);
     relay.join(1, join, 0);

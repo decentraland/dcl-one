@@ -267,11 +267,14 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['PULSE_WT_ENABLED'], 'true')
         self.assertEqual((env['PULSE_WT_CERT_PATH'], env['PULSE_WT_KEY_PATH']), (str(certificate), str(key)))
         self.assertTrue(Path(env['PULSE_REPLAY_STATE_PATH']).is_relative_to(self.state))
-        self.assertNotIn('DATABASE_URL', env)
+        self.assertEqual(env['DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(env['PULSE_V4_AUDIENCE'], dev.pulse_about_env(self.config)['COMMS_V4_PULSE_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['ARCHIPELAGO_CONTROL_V4_AUDIENCE'], env['PULSE_V4_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['DATABASE_URL'], env['DATABASE_URL'])
         self.assertEqual(env['PULSE_NATS_URL'], dev.nats_url(self.config), "the stack's own broker, not the shell's")
         pulse = dev.project(self.config)['processes']['pulse']
         self.assertEqual(pulse['readiness_probe']['http_get']['port'], metrics)
-        self.assertEqual(pulse['depends_on'], {'api-build': {'condition': 'process_completed_successfully'},
+        self.assertEqual(pulse['depends_on'], {'api': {'condition': 'process_healthy'},
                                                'nats': {'condition': 'process_healthy'}})
         self.assertIn('pulse', dev.SERVICES)
         with patch.object(dev, 'started', return_value='start'), \

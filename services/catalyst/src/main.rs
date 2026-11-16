@@ -546,7 +546,7 @@ async fn run(
                 builder::catalog::build(&pool, &storage, &packs_dir).await
             }
         }
-        Command::Pulse => catalyst::comms::pulse::run_from_env().await,
+        Command::Pulse => catalyst::pulse_generation::run_from_env().await,
         Command::Explore {
             command: ExploreCommand::ImportLikes { database_url, file },
         } => {

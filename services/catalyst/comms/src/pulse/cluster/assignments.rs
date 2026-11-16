@@ -118,6 +118,16 @@ fn unix_seconds() -> u64 {
 }
 
 impl CurrentAssignments {
+    pub fn with_source(source_incarnation: String) -> Self {
+        Self {
+            incarnation: source_incarnation,
+            ..Self::default()
+        }
+    }
+    pub fn source_incarnation(&self) -> &str {
+        &self.incarnation
+    }
+
     pub(crate) fn native_current(&self) -> crate::pulse::snapshot::NativeCurrent {
         self.native.clone()
     }
@@ -363,6 +373,50 @@ impl CurrentAssignments {
         let mut view = self.view.lock().ok()?;
         let snapshot = self.snapshot(&mut view, wallet, &native, control.as_deref())?;
         (snapshot.session == session).then_some(snapshot)
+    }
+
+    pub(crate) fn selection_view_checked(
+        &self,
+        generation: &crate::interfaces::PulseGenerationBinding,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Option<crate::protocol::bus::selection_view::SelectionView> {
+        use crate::protocol::bus::selection_view::{
+            MAX_VIEW_ENTRIES, SelectionTarget, SelectionView,
+        };
+        const _: () =
+            assert!(RECOVERY_WALLETS <= crate::protocol::bus::selection_view::MAX_VIEW_ENTRIES);
+        if !generation.valid() || generation.source_incarnation != self.incarnation {
+            return None;
+        }
+        let _native = self.native.lock().ok()?;
+        let _control = match control {
+            Some(control) => Some(control.lock().ok()?),
+            None => None,
+        };
+        let view = self.view.lock().ok()?;
+        if view.pass == 0
+            || view.observed.elapsed() >= view.valid_for
+            || view.records.len() > MAX_VIEW_ENTRIES
+        {
+            return None;
+        }
+        let targets = view
+            .records
+            .iter()
+            .filter_map(|(wallet, record)| {
+                let (assignment, version) = record.current.as_ref().or_else(|| {
+                    (!record.pending.is_empty() || record.blocked)
+                        .then_some(record.retained.as_ref())
+                        .flatten()
+                })?;
+                Some(SelectionTarget {
+                    wallet: wallet.clone(),
+                    session: assignment.session.clone(),
+                    assignment_version: *version,
+                })
+            })
+            .collect();
+        SelectionView::new(generation.clone(), view.pass, targets)
     }
 
     pub fn lookup_retirement(

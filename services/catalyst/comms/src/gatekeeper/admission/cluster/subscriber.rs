@@ -46,6 +46,7 @@ use super::safety::LIVEKIT_TOKEN_LEEWAY;
 use super::safety::TOKEN_EXPIRY_SAFETY;
 
 mod recovery;
+mod selection_view;
 #[cfg(test)]
 use recovery::{CleanupReceipts, CleanupState};
 use recovery::{RecoveryOwners, RecoveryTicket};
@@ -561,9 +562,6 @@ impl ClusterSubscriber {
             return;
         }
 
-        if let Some(fence) = &self.assignment_fence {
-            fence.observe_selected_hint(&wallet, &change);
-        }
         self.recovery.invalidate(&wallet);
 
         let takeover = (self.config.self_hosted_token_quarantine
@@ -671,6 +669,18 @@ impl ClusterSubscriber {
     ) {
         if change.cluster_id.is_empty() || !accept_assignment_session(wallet, &change.session) {
             return;
+        }
+        if let Some(authority) = &self.assignment_fence {
+            if !matches!(
+                tokio::time::timeout(
+                    super::fence::FENCE_CALL_TIMEOUT,
+                    authority.accept_selected_hint(wallet, change)
+                )
+                .await,
+                Ok(true)
+            ) {
+                return;
+            }
         }
         self.reconcile_current(wallet, &change.session, true, takeover.as_ref())
             .await;
@@ -908,16 +918,32 @@ impl ClusterSubscriber {
             wallet: wallet.to_owned(),
             session: session.to_owned(),
         };
-        let payload = self
-            .bus
-            .request(&lookup.subject(), lookup.encode())
-            .await
-            .ok()?;
+        let expected = match &self.assignment_fence {
+            Some(authority) if authority.requires_generation() => {
+                Some(authority.generation_binding().await?)
+            }
+            _ => None,
+        };
+        let (subject, payload) = if let Some(generation) = &expected {
+            let request = crate::protocol::bus::selection_view::FencedLookup {
+                generation: generation.clone(),
+                wallet: lookup.wallet.clone(),
+                session: lookup.session.clone(),
+            };
+            (request.subject(), request.encode()?)
+        } else {
+            (lookup.subject(), lookup.encode())
+        };
+        let payload = self.bus.request(&subject, payload).await.ok()?;
         if payload.len() > crate::protocol::bus::cluster::MAX_REPLY_BYTES {
             return None;
         }
         let snapshot = PeerClusterSnapshot::decode(payload.as_slice()).ok()?;
-        valid_reply(&lookup, &snapshot).then_some(snapshot)
+        (valid_reply(&lookup, &snapshot)
+            && expected
+                .as_ref()
+                .is_none_or(|binding| binding.source_incarnation == snapshot.source_incarnation))
+        .then_some(snapshot)
     }
 
     #[cfg(test)]

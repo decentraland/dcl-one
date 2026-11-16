@@ -99,7 +99,7 @@ fn gatekeeper(bans: &Bans, livekit: LiveKit) -> SharedState {
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(StubDirectory::default()),
         )
-        .with_cluster(
+        .with_cluster_for_test(
             catalyst::comms::gatekeeper::admission::cluster::ClusterConfig {
                 self_hosted_token_quarantine: false,
                 ..Default::default()

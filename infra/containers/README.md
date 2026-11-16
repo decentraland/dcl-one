@@ -148,6 +148,23 @@ Keep the pre-migration database backup: old binaries cannot read stable world ba
 keys, so rollback must restore the matching backup. See `DATABASE.md` for the
 retention and token-remint behavior.
 
+### Pulse generation ownership
+
+`catalyst pulse` requires `DATABASE_URL` and a deployment audience in
+`ARCHIPELAGO_CONTROL_V4_AUDIENCE` or `PULSE_V4_AUDIENCE`, matching serve's audience.
+Apply the schema before starting Pulse. Its root process holds a PostgreSQL session
+lease and commits a fresh UUID/epoch binding before opening admissions; another Pulse
+for that audience cannot acquire the lease concurrently. Database errors fail closed.
+The local development launcher waits for the schema-ready API before starting Pulse.
+
+Upgrade Pulse and every Gatekeeper writer together while admissions are stopped;
+older binaries do not enforce generation guards and cannot safely share this deployment.
+A database restore also requires stopped writers and closed admissions. Start a fresh
+Pulse acquisition after restore; a restored generation row alone is never permission
+to resume an old process. Existing issued credentials retain their finite validity.
+Lease-loss detection cancels local source work; it does not synchronously retract bytes
+already delivered or fence statistics publication through SQL on every message.
+
 ### Notification email settings
 
 - `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` now defaults to 0: producer broadcasts are kept and listed forever, as upstream. Set it to 90 to keep the previous hide-and-prune behaviour.

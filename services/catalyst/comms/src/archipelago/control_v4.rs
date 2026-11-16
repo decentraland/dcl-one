@@ -724,7 +724,7 @@ mod tests {
                 .claim_lanes(&owner, std::slice::from_ref(&lane))
                 .await
                 .unwrap();
-            let store = SafetyStore::new(pool.clone());
+            let store = SafetyStore::unfenced_test(pool.clone());
             let safety = store.snapshot(&owner.address).await.unwrap();
             let plan = PeerClusterSnapshot {
                 selected_origin: 1,

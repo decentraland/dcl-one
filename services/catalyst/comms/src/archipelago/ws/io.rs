@@ -1193,6 +1193,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
         if !frame_authorized(frame, state).await {
             return FrameWrite::Dropped;
         }
+        let generation = if let Some(stamp) = frame.pulse_admission.as_ref() {
+            match state.gatekeeper.generation_grant(stamp).await {
+                Ok(grant) => grant,
+                Err(_) => return FrameWrite::Dropped,
+            }
+        } else {
+            None
+        };
         // Reading can queue an automatic control reply during authorization.
         // If readiness was lost, discard this unstarted frame; only assignment
         // frames have a reconciliation retry. Never loop remote authorization.
@@ -1210,6 +1218,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
                 || pending.terminal.is_some()
                 || state.restart.is_cancelled()
             {
+                return;
+            }
+            if generation.as_ref().is_some_and(|grant| {
+                frame
+                    .pulse_admission
+                    .as_ref()
+                    .is_none_or(|stamp| !grant.consume(stamp))
+            }) {
                 return;
             }
             pending.write_phase = WritePhase::Active;
@@ -2358,7 +2374,7 @@ mod bounds_tests {
         let pool = crate::db::scratch::pool(4).await.unwrap();
         let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
         let session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let store = SafetyStore::new(pool.clone());
+        let store = SafetyStore::unfenced_test(pool.clone());
         let safety = store.snapshot(&wallet).await.unwrap();
         assert!(safety.generation > 0);
         let token_fence = fenced.then(|| TokenFence {
@@ -2403,7 +2419,7 @@ mod bounds_tests {
                 Arc::new(crate::presence::Presence::new()),
                 Arc::new(StubDirectory::default()),
             )
-            .with_cluster(ClusterConfig {
+            .with_cluster_for_test(ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 control_v4_audience: token_fence.as_ref().map(|fence| fence.audience.clone()),
                 ..Default::default()

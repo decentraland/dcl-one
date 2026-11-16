@@ -587,3 +587,28 @@ pub mod test_support {
         }
     }
 }
+
+/// The root's deployment lease and durable generation binding, without any room state.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PulseGenerationBinding {
+    pub audience: String,
+    pub epoch: u64,
+    pub source_incarnation: String,
+}
+impl PulseGenerationBinding {
+    pub fn valid(&self) -> bool {
+        !self.audience.is_empty()
+            && self.audience.len() <= 256
+            && self.epoch > 0
+            && self.epoch <= i64::MAX as u64
+            && uuid::Uuid::parse_str(&self.source_incarnation)
+                .is_ok_and(|source| source.to_string() == self.source_incarnation)
+    }
+}
+
+/// Supplied by root/jobs. Pulse never allocates a generation or persists assignments.
+pub trait PulseGeneration: Send + Sync {
+    fn binding(&self) -> &PulseGenerationBinding;
+    fn lost(&self) -> &tokio_util::sync::CancellationToken;
+}
