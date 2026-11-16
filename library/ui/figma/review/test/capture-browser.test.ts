@@ -116,7 +116,7 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     const { file } = await script(
       'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","");setInterval(()=>{},1000)'
     )
-    await assert.rejects(openSession(file), /did not start/)
+    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
     const diagnostic = report(log.mock.calls)
     assert.equal(diagnostic.port.state, 'empty')
     assert.equal(diagnostic.port.validObserved, false)
@@ -127,7 +127,7 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     const { file } = await script(
       'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","not-a-port");setInterval(()=>{},1000)'
     )
-    await assert.rejects(openSession(file), /did not start/)
+    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
     const diagnostic = report(log.mock.calls)
     assert.equal(diagnostic.port.state, 'partial')
     assert.equal(diagnostic.port.validObserved, false)
@@ -241,7 +241,7 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     const { file } = await script(
       'const fs=require("node:fs");const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);fs.writeSync(2,"startup failure\\n");fs.writeFileSync(dir+"/DevToolsActivePort","not-a-port");process.on("SIGTERM",()=>{fs.writeSync(2,"shutdown noise\\n".repeat(500));process.exit(0)});setInterval(()=>{},1000)'
     )
-    await assert.rejects(openSession(file), /did not start/)
+    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
     assert.match(report(log.mock.calls).stderr, /startup failure/)
     assert.ok(!report(log.mock.calls).stderr.includes('shutdown noise'))
   })

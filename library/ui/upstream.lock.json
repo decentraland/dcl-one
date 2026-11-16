@@ -2245,7 +2245,7 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "bcc9c469430d83ce7ae4e94c4837b30985322559c6fc8a69433b893ef076e5be",
+          "sha256": "0c0294072a632dc5b20b4e58372389693ada2a8c928d8654c0228c8e727c4e20",
           "fds": null,
           "deviation": [
             "dcl-one-only",
