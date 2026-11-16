@@ -1093,6 +1093,9 @@ async fn started_selected_retirement_rejects_a_delayed_negative_after_native_rec
         .expect("periodic job captured a real authoritative absence before reconnect");
         let session = if same_session { SESSION } else { STALE_SESSION };
         let successor = harness.select(WALLET, session, true);
+        // The absence reply is already captured. Freeze new lookups before the
+        // hint can schedule a legitimate successor mint during the SQL awaits below.
+        harness.lookup_available.store(false, Ordering::SeqCst);
         harness.hint(&successor).await;
         if same_session {
             // A real newer selected writer can race the delayed broker response.
@@ -1105,7 +1108,6 @@ async fn started_selected_retirement_rejects_a_delayed_negative_after_native_rec
             drop(lease);
         }
         let before = periodic_native_owner_row(&fixture).await;
-        harness.lookup_available.store(false, Ordering::SeqCst);
         harness.bus.negative_release.notify_one();
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
