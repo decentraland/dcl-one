@@ -49,11 +49,14 @@ function fakeWindow(id = 1) {
   return Object.assign(emitter, { id, isDestroyed: () => false }) as never as Electron.WebContents;
 }
 
-// The newest session folder of the project whose folder starts with `slug`.
-function currentSessionDir(slug: string): string {
+// The newest session folder of the project whose folder starts with `slug`. Two sessions
+// started within the same millisecond differ only by their random suffix, so a test that
+// already knows the previous session's folder passes it as `except`.
+function currentSessionDir(slug: string, except?: string): string {
   const root = path.join(userData, 'recordings');
   const projectDir = path.join(root, fs.readdirSync(root).find(e => e.startsWith(slug))!);
-  return path.join(projectDir, fs.readdirSync(projectDir).sort().pop()!);
+  const folders = fs.readdirSync(projectDir).filter(f => f !== path.basename(except ?? ''));
+  return path.join(projectDir, folders.sort().pop()!);
 }
 
 function pcm(samples: number[]): Uint8Array {
@@ -324,7 +327,7 @@ describe('when the user discards a finished recording', () => {
     transcriber.transcribe.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
     const stopping = stop(owner.id, sessionId);
     await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalled());
-    const transcribingDir = currentSessionDir('Discard');
+    const transcribingDir = currentSessionDir('Discard', dir);
     await expect(discard(transcribingDir)).rejects.toThrow(
       'This recording is still being transcribed.',
     );
@@ -337,7 +340,7 @@ describe('when the user discards a finished recording', () => {
 
   it('should refuse the recording still running', async () => {
     const { sessionId } = await start(owner, '/scenes/Discard', 'Discard', 'en');
-    const running = currentSessionDir('Discard');
+    const running = currentSessionDir('Discard', dir);
     await expect(discard(running)).rejects.toThrow('This recording is still running.');
     expect(isRecording()).toBe(true);
     await stop(owner.id, sessionId);
