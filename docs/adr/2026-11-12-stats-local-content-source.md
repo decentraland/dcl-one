@@ -19,8 +19,12 @@ output limit. Surviving documents keep their relative order. HTTP and archive
 receive the same policy instance used by local content reads, so policy updates
 apply on subsequent enrichment passes without a separate reload job.
 
-`CONTENT_URL` supplies the existing thumbnail URL concatenation. It does not
-select a remote active-entities source. Enrichment is uncached: the local content
+Thumbnails use the node's content URL, the server the scenes are read from, with
+upstream's literal `${url}/contents/` concatenation. `CONTENT_URL` is used as
+written when set; otherwise the base is this node's `/content` without the trailing
+slash, because the node's nested `/content` route does not match `/content//contents/`.
+That default derives from `PUBLIC_URL`, so a public node without `PUBLIC_URL` names
+its bind address in thumbnails. It does not select a remote active-entities source. Enrichment is uncached: the local content
 corpus, active selection and metadata at query time determine the candidates.
 An empty statistics population skips content I/O. A SQL or projection failure
 remains a failed request or archive pass rather than a successful empty result.
