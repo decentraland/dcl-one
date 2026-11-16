@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_log): gate the web tracing-wasm layer and keep bevy_log/trace out of trace
+Date: 2026-11-16T13:34:44+00:00
+
+---
+diff --git a/crates/bevy_internal/Cargo.toml b/crates/bevy_internal/Cargo.toml
+index c0259e115c8ef885f7e8caf236a1e9e8b36529fa..c422b7aad3c07dea0444364c1226fe8139e61138 100644
+--- a/crates/bevy_internal/Cargo.toml
++++ b/crates/bevy_internal/Cargo.toml
+@@ -25,7 +25,6 @@ trace = [
+   "bevy_asset?/trace",
+   "bevy_core_pipeline?/trace",
+   "bevy_ecs/trace",
+-  "bevy_log/trace",
+   "bevy_pbr?/trace",
+   "bevy_render?/trace",
+   "bevy_winit?/trace",
+diff --git a/crates/bevy_log/Cargo.toml b/crates/bevy_log/Cargo.toml
+index 5f48d08b3bb013ad99e7eca62bf3d8c89fe519b9..391c46e8efbeb9d64b303d1e85dff995b61b06b9 100644
+--- a/crates/bevy_log/Cargo.toml
++++ b/crates/bevy_log/Cargo.toml
+@@ -11,6 +11,9 @@ keywords = ["bevy"]
+ [features]
+ trace = ["tracing-error"]
+ trace_tracy_memory = ["dep:tracy-client"]
++# The web's `tracing-wasm` layer, which marks and measures every span on the page's performance
++# timeline; off, the web's output is the custom layer's.
++tracing-wasm = ["dep:tracing-wasm"]
+ 
+ [dependencies]
+ # bevy
+@@ -37,7 +40,7 @@ tracy-client = { version = "0.18.0", optional = true }
+ android_log-sys = "0.3.0"
+ 
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+-tracing-wasm = "0.2.1"
++tracing-wasm = { version = "0.2.1", optional = true }
+ # TODO: Assuming all wasm builds are for the browser. Require `no_std` support to break assumption.
+ bevy_app = { path = "../bevy_app", version = "0.16.1", default-features = false, features = [
+   "web",
+diff --git a/crates/bevy_log/src/lib.rs b/crates/bevy_log/src/lib.rs
+index 055395bad7206bb6fd4414130f5089688c0a75eb..8dd4b00597fa16ccc07495c6f554ab8fbc820bef 100644
+--- a/crates/bevy_log/src/lib.rs
++++ b/crates/bevy_log/src/lib.rs
+@@ -350,12 +350,18 @@ impl Plugin for LogPlugin {
+             finished_subscriber = subscriber;
+         }
+ 
+-        #[cfg(target_arch = "wasm32")]
++        #[cfg(all(target_arch = "wasm32", feature = "tracing-wasm"))]
+         {
+             finished_subscriber = subscriber.with(tracing_wasm::WASMLayer::new(
+                 tracing_wasm::WASMLayerConfig::default(),
+             ));
+         }
++        // `tracing-wasm` marks and measures every span on the page's performance timeline;
++        // without its feature the custom layer is the web's only output
++        #[cfg(all(target_arch = "wasm32", not(feature = "tracing-wasm")))]
++        {
++            finished_subscriber = subscriber;
++        }
+ 
+         #[cfg(target_os = "android")]
+         {

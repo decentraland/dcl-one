@@ -16,7 +16,7 @@
 // ui) skips this plugin entirely — the engine-side ui drives instead.
 //
 // Run (files only, no servers):
-//   cd react-web && npm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
+//   cd react-web && pnpm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
 //   cargo run --release --features react-hud-cef --bin decentra-bevy -- --realm <realm>
 // The page loads from cef://localhost/react-hud (the bevy assets dir) and the bridge-scene loads
 // as a file realm from assets/bridge-scene. Override: REACT_HUD_URL (e.g. a vite dev server with
@@ -96,7 +96,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
-        diagnostics::register(app);
+        app.add_plugins(diagnostics::CefHudDiagnosticsPlugin);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -180,7 +180,7 @@ fn react_hud_url() -> Option<String> {
     if let Ok(url) = std::env::var("REACT_HUD_URL") {
         return Some(url);
     }
-    // Bundled page (npm run bundle:native → assets/react-hud) served over the cef:// scheme —
+    // Bundled page (pnpm run bundle:native → assets/react-hud) served over the cef:// scheme —
     // dev and prod run the same embedded build, no server. The path check mirrors the bevy
     // asset root: cwd for packaged runs, the checkout for `cargo run` from any directory.
     let mut roots = vec![
@@ -211,7 +211,7 @@ fn spawn_hud(
 ) {
     let Some(mut url) = react_hud_url() else {
         error!(
-            "[react-hud-cef] no HUD page: run `npm run bundle:native` in react-web (or set \
+            "[react-hud-cef] no HUD page: run `pnpm run bundle:native` in react-web (or set \
              REACT_HUD_URL); the app will run without a HUD"
         );
         return;
@@ -694,6 +694,14 @@ fn on_page_envelope(
                 ) {
                     state.prefs.insert(key.to_owned(), value.to_owned());
                     write_prefs(&state.prefs);
+                }
+            }
+            // The page names no path: only the folder the download handler saves to is opened.
+            Some("openDownloads") => {
+                if let Some(dir) = cef_offscreen::prelude::downloads_dir() {
+                    if let Err(e) = opener::open(&dir) {
+                        warn!("[react-hud-cef] could not open {}: {e}", dir.display());
+                    }
                 }
             }
             _ => {}

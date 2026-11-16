@@ -36,145 +36,149 @@ use crate::perf::{
 const BYTES_PER_MIB: u64 = 1 << 20;
 const WAITING_FOR_FIRST_SNAPSHOT: &str = "Waiting for the first 15 s of sampled time.";
 
-pub(super) fn register(app: &mut App) {
-    app.add_console_command::<MemoryCommand, _>(debug_memory)
-        .add_debug_section(DebugSection {
-            title: "Memory and limits",
-            query: "/debug_memory",
-            fields: &[
-                ("Engine memory (MiB)", "used"),
-                (
-                    "Peak engine memory in the sample (MiB)",
-                    "usedPeakMiBInSample",
-                ),
-                ("Platform capacity (MiB)", "capacity"),
-                ("Effective cap (MiB)", "cap"),
-                ("Memory pressure", "pressure"),
-                ("Thresholds (MiB)", "thresholds"),
-                ("GPU memory pools", "gpu"),
-                (
-                    "JS heaps (used MiB / limit MiB / external MiB / scenes)",
-                    "jsHeap",
-                ),
-                ("Current scene textures (count / MiB)", "textures"),
-                ("Current scene meshes (count / MiB)", "meshes"),
-            ],
-            actions: &[
-                ("Restore platform limit", "/debug_memory 0"),
-                (
-                    "Simulate Warning pressure",
-                    "/debug_memory --simulate warning",
-                ),
-                ("Simulate Full pressure", "/debug_memory --simulate full"),
-                ("Stop simulating", "/debug_memory --simulate off"),
-            ],
-            inputs: &[DebugInput {
-                label: "Session memory limit (MiB)",
-                field: "limit",
-                command: "/debug_memory {value}",
-                kind: DebugInputKind::Number {
-                    min: 0.0,
-                    max: u32::MAX as f64,
-                    step: 1.0,
-                },
-            }],
-        });
-    app.add_console_command::<PerformanceStateCommand, _>(performance_state)
-        .add_debug_section(DebugSection {
-            title: "Performance",
-            inputs: &[DebugInput {
-                label: "30 FPS limit",
-                field: "limit30",
-                command: "/session_graphics fps {value}",
-                kind: DebugInputKind::ActionButton {
-                    enable: ("Limit to 30 FPS", "30"),
-                    disable: ("Use configured FPS", ""),
-                },
-            }],
-            query: "/performance_state",
-            fields: &[
-                ("Client version", "version"),
-                ("Frame rate (FPS)", "fps"),
-                ("Frame duration (ms)", "frameMs"),
-                ("GPU frame time (ms)", "gpuFrameMs"),
-                ("Target frame rate (FPS)", "targetFps"),
-                ("Sampling", "sampling.status"),
-                ("Sampling paused because", "sampling.pausedReason"),
-                ("Sampled seconds in progress", "inProgressSample.sampledSeconds"),
-                ("Snapshot duration (s)", "snapshot.durationSeconds"),
-                ("Snapshot taken at (s since launch)", "snapshot.takenAtRealSeconds"),
-                (
-                    "CPU frame time (min / mean / p50 / p95 / p99 / max, ms)",
-                    "cpuFrameTimes.summary",
-                ),
-                (
-                    "CPU frames over the hiccup threshold (count / threshold ms)",
-                    "cpuFrameTimes.hiccups",
-                ),
-                (
-                    "GPU frame time (min / mean / p50 / p95 / p99 / max, ms)",
-                    "gpuFrameTimes.summary",
-                ),
-                (
-                    "GPU frames over the hiccup threshold (count / threshold ms)",
-                    "gpuFrameTimes.hiccups",
-                ),
-                (
-                    "Frame time breakdown (main world / scene loop / sleep / render CPU / present wait / GPU, ms)",
-                    "frameTimeBreakdown",
-                ),
-                ("Bottleneck", "bottleneck"),
-                (
-                    "HUD main thread, last window (React commits / commit ms / long frames / HUD script ms / style+layout ms)",
-                    "hudMainThreadCost",
-                ),
-                ("Entities", "entityCount"),
-                ("CPU usage (system % / process %)", "system.cpuUsage"),
-                ("System (OS / CPU / cores / RAM)", "system.info"),
-                ("Engine memory (MiB)", "engineMemoryMiB"),
-            ],
-            actions: &[],
-        });
-    app.add_console_command::<RenderStateCommand, _>(render_state)
-        .add_debug_section(DebugSection {
-            title: "Render",
-            query: "/render_state",
-            fields: &[
-                ("Adapter (name / backend / driver)", "adapter"),
-                ("Render passes (CPU ms / GPU ms)", "passSummary"),
-                (
-                    "Pipeline statistics (vertex / fragment shader invocations)",
-                    "pipeline",
-                ),
-            ],
-            actions: &[],
-            inputs: &[],
-        });
-    app.add_console_command::<ProfileTopCommand, _>(profile_top)
-        .add_console_command::<ProfileEnableCommand, _>(profile_enable)
-        .add_debug_section(DebugSection {
-            title: "Profiler",
-            query: "/profile_top",
-            fields: &[
-                ("Profiler", "enabled"),
-                ("Sorted by", "sort"),
-                (
-                    "Top scopes (kind, calls, self ms, inclusive ms, max call ms, smoothed ms per frame)",
-                    "scopeSummary",
-                ),
-                ("Allocations per frame (count / bytes)", "allocations"),
-            ],
-            actions: &[("Reset the table", "/profile_enable reset")],
-            inputs: &[DebugInput {
-                label: "Recording",
-                field: "enabled",
-                command: "/profile_enable {value}",
-                kind: DebugInputKind::ActionButton {
-                    enable: ("Enable profiler", "on"),
-                    disable: ("Disable profiler", "off"),
-                },
-            }],
-        });
+pub(super) struct MemoryDebugPanelPlugin;
+
+impl Plugin for MemoryDebugPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<MemoryCommand, _>(debug_memory)
+            .add_debug_section(DebugSection {
+                title: "Memory and limits",
+                query: "/debug_memory",
+                fields: &[
+                    ("Engine memory (MiB)", "used"),
+                    (
+                        "Peak engine memory in the sample (MiB)",
+                        "usedPeakMiBInSample",
+                    ),
+                    ("Platform capacity (MiB)", "capacity"),
+                    ("Effective cap (MiB)", "cap"),
+                    ("Memory pressure", "pressure"),
+                    ("Thresholds (MiB)", "thresholds"),
+                    ("GPU memory pools", "gpu"),
+                    (
+                        "JS heaps (used MiB / limit MiB / external MiB / scenes)",
+                        "jsHeap",
+                    ),
+                    ("Current scene textures (count / MiB)", "textures"),
+                    ("Current scene meshes (count / MiB)", "meshes"),
+                ],
+                actions: &[
+                    ("Restore platform limit", "/debug_memory 0"),
+                    (
+                        "Simulate Warning pressure",
+                        "/debug_memory --simulate warning",
+                    ),
+                    ("Simulate Full pressure", "/debug_memory --simulate full"),
+                    ("Stop simulating", "/debug_memory --simulate off"),
+                ],
+                inputs: &[DebugInput {
+                    label: "Session memory limit (MiB)",
+                    field: "limit",
+                    command: "/debug_memory {value}",
+                    kind: DebugInputKind::Number {
+                        min: 0.0,
+                        max: u32::MAX as f64,
+                        step: 1.0,
+                    },
+                }],
+            });
+        app.add_console_command::<PerformanceStateCommand, _>(performance_state)
+            .add_debug_section(DebugSection {
+                title: "Performance",
+                inputs: &[DebugInput {
+                    label: "30 FPS limit",
+                    field: "limit30",
+                    command: "/session_graphics fps {value}",
+                    kind: DebugInputKind::ActionButton {
+                        enable: ("Limit to 30 FPS", "30"),
+                        disable: ("Use configured FPS", ""),
+                    },
+                }],
+                query: "/performance_state",
+                fields: &[
+                    ("Client version", "version"),
+                    ("Frame rate (FPS)", "fps"),
+                    ("Frame duration (ms)", "frameMs"),
+                    ("GPU frame time (ms)", "gpuFrameMs"),
+                    ("Target frame rate (FPS)", "targetFps"),
+                    ("Sampling", "sampling.status"),
+                    ("Sampling paused because", "sampling.pausedReason"),
+                    ("Sampled seconds in progress", "inProgressSample.sampledSeconds"),
+                    ("Snapshot duration (s)", "snapshot.durationSeconds"),
+                    ("Snapshot taken at (s since launch)", "snapshot.takenAtRealSeconds"),
+                    (
+                        "CPU frame time (min / mean / p50 / p95 / p99 / max, ms)",
+                        "cpuFrameTimes.summary",
+                    ),
+                    (
+                        "CPU frames over the hiccup threshold (count / threshold ms)",
+                        "cpuFrameTimes.hiccups",
+                    ),
+                    (
+                        "GPU frame time (min / mean / p50 / p95 / p99 / max, ms)",
+                        "gpuFrameTimes.summary",
+                    ),
+                    (
+                        "GPU frames over the hiccup threshold (count / threshold ms)",
+                        "gpuFrameTimes.hiccups",
+                    ),
+                    (
+                        "Frame time breakdown (main world / scene loop / sleep / render CPU / present wait / GPU, ms)",
+                        "frameTimeBreakdown",
+                    ),
+                    ("Bottleneck", "bottleneck"),
+                    (
+                        "HUD main thread, last window (React commits / commit ms / long frames / HUD script ms / style+layout ms)",
+                        "hudMainThreadCost",
+                    ),
+                    ("Entities", "entityCount"),
+                    ("CPU usage (system % / process %)", "system.cpuUsage"),
+                    ("System (OS / CPU / cores / RAM)", "system.info"),
+                    ("Engine memory (MiB)", "engineMemoryMiB"),
+                ],
+                actions: &[],
+            });
+        app.add_console_command::<RenderStateCommand, _>(render_state)
+            .add_debug_section(DebugSection {
+                title: "Render",
+                query: "/render_state",
+                fields: &[
+                    ("Adapter (name / backend / driver)", "adapter"),
+                    ("Render passes (CPU ms / GPU ms)", "passSummary"),
+                    (
+                        "Pipeline statistics (vertex / fragment shader invocations)",
+                        "pipeline",
+                    ),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+        app.add_console_command::<ProfileTopCommand, _>(profile_top)
+            .add_console_command::<ProfileEnableCommand, _>(profile_enable)
+            .add_debug_section(DebugSection {
+                title: "Profiler",
+                query: "/profile_top",
+                fields: &[
+                    ("Profiler", "enabled"),
+                    ("Sorted by", "sort"),
+                    (
+                        "Top scopes (kind, calls, self ms, inclusive ms, max call ms, smoothed ms per frame)",
+                        "scopeSummary",
+                    ),
+                    ("Allocations per frame (count / bytes)", "allocations"),
+                ],
+                actions: &[("Reset the table", "/profile_enable reset")],
+                inputs: &[DebugInput {
+                    label: "Recording",
+                    field: "enabled",
+                    command: "/profile_enable {value}",
+                    kind: DebugInputKind::ActionButton {
+                        enable: ("Enable profiler", "on"),
+                        disable: ("Disable profiler", "off"),
+                    },
+                }],
+            });
+    }
 }
 
 /// Report the live engine readings, the latest performance snapshot, the frame-time breakdown

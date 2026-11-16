@@ -41,7 +41,7 @@ beforeEach(() => {
   web = path.join(root, WEB)
   put('.gitignore', 'node_modules/\n')
   put(WEB + '/package.json', '{"type":"module"}')
-  put(WEB + '/package-lock.json', '{"lockfileVersion":3}')
+  put(WEB + '/pnpm-lock.yaml', "lockfileVersion: '9.0'\n")
   put(WEB + '/scripts/shared-inputs.mjs', readFileSync(path.join(here, 'shared-inputs.mjs')))
   put(
     WEB + '/tsconfig.json',
@@ -925,7 +925,7 @@ describe('the actual compiler and Vite shared-source contract', () => {
           git('add', WEB + '/src/local-added.ts')
         } else if (change === 'config')
           put(config, readFileSync(path.join(root, config)) + '\n// local resolver edit\n')
-        else put(WEB + '/package-lock.json', '{"lockfileVersion":3,"localChange":true}')
+        else put(WEB + '/pnpm-lock.yaml', "lockfileVersion: '9.0'\nlocalChange: true\n")
         const before = readFileSync(path.join(root, MANIFEST))
         assert.throws(() => readSharedPaths(root), /Stale/)
         assert(readSharedPaths(root, { mode: 'config' }).length > 0)
@@ -1001,7 +1001,7 @@ describe('the actual compiler and Vite shared-source contract', () => {
     git('add', 'library/ui/foundations/index.ts')
     assert.throws(
       () => readSharedPaths(root, { mode: 'config' }),
-      /Missing shared input .*run npm run gen:shared-inputs/
+      /Missing shared input .*run pnpm run gen:shared-inputs/
     )
     const { loadConfigFromFile } = await import(
       pathToFileURL(path.join(web, 'node_modules/vite/dist/node/index.js')).href
@@ -1012,7 +1012,7 @@ describe('the actual compiler and Vite shared-source contract', () => {
         path.join(web, 'vite.config.ts'),
         web
       ),
-      /Missing shared input .*run npm run gen:shared-inputs/
+      /Missing shared input .*run pnpm run gen:shared-inputs/
     )
     assert.throws(
       () =>
@@ -1029,7 +1029,7 @@ describe('the actual compiler and Vite shared-source contract', () => {
         ),
       (error) =>
         error.status === 2 &&
-        error.stderr.toString().includes('npm --prefix ' + WEB + ' run gen:shared-inputs')
+        error.stderr.toString().includes('pnpm --dir ' + WEB + ' run gen:shared-inputs')
     )
     const regenerated = await save()
     assert(regenerated.files.some((entry) => entry.path === 'library/ui/foundations/token-next.ts'))
