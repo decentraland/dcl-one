@@ -7,10 +7,10 @@ use dcl_types::scene_response_channel;
 use super::*;
 use crate::SceneUpdates;
 
-const SIXTY_FPS: Duration = Duration::from_nanos(1_000_000_000 / 60);
+pub(crate) const SIXTY_FPS: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// The scene loop's state with nothing in flight, targeting `frame_target`.
-fn scene_updates(frame_target: Option<Duration>) -> SceneUpdates {
+pub(crate) fn scene_updates(frame_target: Option<Duration>) -> SceneUpdates {
     let (sender, receiver) = scene_response_channel();
     SceneUpdates {
         sender,
@@ -33,6 +33,7 @@ fn world_with_player() -> (World, Entity) {
     let mut world = World::new();
     world.init_resource::<SceneSpawner>();
     world.init_resource::<ProcessingDeadline>();
+    world.init_resource::<InstantiationCharges>();
     world.insert_resource(scene_updates(Some(SIXTY_FPS)));
     let player = world.spawn(PrimaryUser::default()).id();
     (world, player)
@@ -141,4 +142,138 @@ fn arriving_back_in_world_slices_again() {
 
     let (spawning, processing) = deadlines_after_a_run(&mut world);
     assert!(spawning.is_some() && processing.is_some());
+}
+
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
+/// One run's admissions of `costs`, in order, after `charged` was spent this frame.
+fn admissions(world: &mut World, charged: Duration, costs: &[Duration]) -> Vec<bool> {
+    world.resource_mut::<InstantiationCharges>().this_frame = charged;
+    let costs = costs.to_vec();
+    world
+        .run_system_once(move |mut budget: InstantiationBudget| {
+            let mut gate = budget.gate();
+            costs
+                .iter()
+                .map(|cost| gate.admit(*cost))
+                .collect::<Vec<_>>()
+        })
+        .unwrap()
+}
+
+fn charges(world: &World) -> Duration {
+    world.resource::<InstantiationCharges>().this_frame
+}
+
+#[test]
+fn the_first_item_of_a_run_is_admitted_whatever_was_spent() {
+    let (mut world, _) = world_with_player();
+
+    let admitted = admissions(&mut world, ms(10), &[ms(1), Duration::from_micros(1)]);
+
+    assert_eq!(admitted, [true, false]);
+}
+
+#[test]
+fn items_are_admitted_until_the_slice_is_charged() {
+    let (mut world, _) = world_with_player();
+
+    let admitted = admissions(&mut world, Duration::ZERO, &[ms(1); 5]);
+
+    assert_eq!(admitted, [true, true, true, true, false]);
+    assert_eq!(charges(&world), ms(4));
+}
+
+#[test]
+fn an_item_over_the_rest_of_the_slice_waits() {
+    let (mut world, _) = world_with_player();
+
+    let admitted = admissions(&mut world, Duration::ZERO, &[ms(3), ms(2)]);
+
+    assert_eq!(admitted, [true, false]);
+    assert_eq!(charges(&world), ms(3));
+}
+
+#[test]
+fn behind_the_loading_backdrop_everything_is_admitted_uncharged() {
+    let (mut world, player) = world_with_player();
+    world.entity_mut(player).insert(OutOfWorld);
+
+    let admitted = admissions(&mut world, Duration::ZERO, &[ms(1); 1_000]);
+
+    assert!(admitted.iter().all(|admitted| *admitted));
+    assert_eq!(charges(&world), Duration::ZERO);
+}
+
+#[test]
+fn a_headless_app_admits_everything_uncharged() {
+    let (mut world, _) = world_with_player();
+    world.insert_resource(NoRenderApp);
+
+    let admitted = admissions(&mut world, Duration::ZERO, &[ms(1); 1_000]);
+
+    assert!(admitted.iter().all(|admitted| *admitted));
+    assert_eq!(charges(&world), Duration::ZERO);
+}
+
+#[test]
+fn the_slice_ends_earlier_by_what_was_charged() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(3);
+
+    let before = Instant::now();
+    let (spawning, processing) = deadlines_after_a_run(&mut world);
+    let after = Instant::now();
+
+    let slice = slice(Some(SIXTY_FPS));
+    let processing = processing.expect("a processing deadline");
+    assert!(processing >= before + slice - ms(3));
+    assert!(processing <= after + slice - ms(3));
+    assert_eq!(processing - spawning.unwrap(), processing_share(slice));
+    // the next frame's charges start from nothing
+    assert_eq!(charges(&world), Duration::ZERO);
+}
+
+#[test]
+fn charges_past_the_slice_leave_an_expired_slice() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(6);
+
+    let (_, processing) = deadlines_after_a_run(&mut world);
+    let after = Instant::now();
+
+    assert!(processing.expect("a processing deadline") <= after);
+}
+
+#[test]
+fn a_gate_is_spent_once_it_refuses() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(10);
+
+    let spent = world
+        .run_system_once(|mut budget: InstantiationBudget| {
+            let mut gate = budget.gate();
+            let before = gate.is_spent();
+            gate.admit(ms(1));
+            let after_the_first = gate.is_spent();
+            gate.admit(ms(1));
+            (before, after_the_first, gate.is_spent())
+        })
+        .unwrap();
+
+    assert_eq!(spent, (false, false, true));
+}
+
+#[test]
+fn the_last_frames_charges_stay_readable() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(3);
+
+    deadlines_after_a_run(&mut world);
+
+    let charges = world.resource::<InstantiationCharges>();
+    assert_eq!(charges.last_frame, ms(3));
+    assert_eq!(charges.this_frame, Duration::ZERO);
 }

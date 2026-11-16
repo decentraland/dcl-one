@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::Animator",
+      "data": {
+        "0": {
+          "json": {
+            "states": []
+          }
+        }
+      }
+    },
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/xsocialmedia_triangle.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/SocialLink.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"url\":{\"type\":\"string\",\"optional\":true,\"value\":\"https://x.com/home\",\"tooltip\":\"URL opened when the item is clicked.\"},\"hoverText\":{\"type\":\"string\",\"optional\":true,\"value\":\"X Link\",\"tooltip\":\"Text shown when the player points at the item.\"}},\"actions\":[{\"methodName\":\"openLink\",\"description\":\"Opens the link in the player's browser\",\"params\":{}}]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "X Link"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Open Link",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/SocialLink.ts\",\"methodName\":\"openLink\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

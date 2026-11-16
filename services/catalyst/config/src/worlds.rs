@@ -365,6 +365,30 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_FRAME_BYTES", default_value_t = 2_097_152)]
     pub ws_max_frame_bytes: usize,
 
+    /// The scene host's largest single component payload a scene's state keeps.
+    #[arg(long, env = "CRDT_MAX_VALUE_BYTES", default_value_t = 262_144)]
+    pub crdt_max_value_bytes: usize,
+
+    /// The scene host's payload bytes one scene's state keeps.
+    #[arg(long, env = "CRDT_MAX_BYTES", default_value_t = 33_554_432)]
+    pub crdt_max_bytes: usize,
+
+    /// The scene host's unread client bytes queued toward the scene, per client.
+    #[arg(long, env = "CLIENT_INBOUND_MAX_BYTES", default_value_t = 8_388_608)]
+    pub client_inbound_max_bytes: usize,
+
+    /// The scene host's unread client bytes queued toward one scene.
+    #[arg(long, env = "SCENE_INBOUND_MAX_BYTES", default_value_t = 33_554_432)]
+    pub scene_inbound_max_bytes: usize,
+
+    /// The scene host's scene bytes queued to one client.
+    #[arg(long, env = "CLIENT_OUTBOUND_MAX_BYTES", default_value_t = 8_388_608)]
+    pub client_outbound_max_bytes: usize,
+
+    /// The scene host's ArrayBuffer memory one isolate holds outside its JS heap.
+    #[arg(long, env = "JS_ARRAY_BUFFER_LIMIT_MB", default_value_t = 128)]
+    pub js_array_buffer_limit_mb: usize,
+
     /// The world-storage origin, the ONLY origin a scene's `~system/SignedFetch`
     /// may reach (this node's `<PUBLIC_URL>/world-storage`); unset disables scene storage.
     #[arg(long, env = "SCENE_HOST_STORAGE_URL")]
@@ -417,7 +441,8 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_HOST_MAX_SCENES", default_value_t = 64)]
     pub scene_host_max_scenes: usize,
 
-    /// Load an unhosted scene with a local active deployment on first contact.
+    /// Load, for an admitted client, an unhosted scene with a local active
+    /// deployment that sets `authoritativeMultiplayer`.
     #[arg(long, env = "SCENE_HOST_AUTOLOAD", default_value_t = true, action = clap::ArgAction::Set)]
     pub scene_host_autoload: bool,
 
@@ -425,15 +450,47 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_HOST_SWEEP_INTERVAL_SECS", default_value_t = 30)]
     pub scene_host_sweep_interval_secs: u64,
 
+    /// Unload a hosted scene with no clients for this long; 0 disables it.
+    #[arg(long, env = "SCENE_HOST_IDLE_UNLOAD_SECS", default_value_t = 300)]
+    pub scene_host_idle_unload_secs: u64,
+
     // worlds/archipelago: the ws-connector (the old catalyrst-archipelago
     // names); LiveKit comes from the comms settings, the pool is the ONE pool.
     /// Process-wide connector socket cap, including pending handshakes.
     #[arg(long, env = "WS_MAX_SOCKETS", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
     pub ws_max_sockets: u32,
 
-    /// Handshake deadline, ms; 0 keeps the default.
+    /// Connector sockets that have not completed the handshake, counted inside `WS_MAX_SOCKETS`;
+    /// 0 keeps a quarter of it. When full, a new socket evicts the oldest pending one.
+    #[arg(long, env = "WS_MAX_PENDING_HANDSHAKES", default_value_t = 0)]
+    pub ws_max_pending_handshakes: u32,
+
+    /// Pending handshakes one client address may hold; 0 is unlimited.
+    #[arg(long, env = "WS_MAX_PENDING_HANDSHAKES_PER_IP", default_value_t = 8)]
+    pub ws_max_pending_handshakes_per_ip: u32,
+
+    /// Connector sockets one client address may hold, pending handshakes included; 0 is unlimited.
+    #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
+    pub ws_max_sockets_per_ip: u32,
+
+    /// Connected-wallet ban sweep cadence, ms; overlapping ticks are skipped.
+    #[arg(
+        long,
+        env = "BAN_SWEEP_INTERVAL_MS",
+        default_value = "30000",
+        value_parser = parse_ban_sweep_interval_ms,
+        allow_hyphen_values = true
+    )]
+    pub ban_sweep_interval_ms: u64,
+
+    /// Signed-challenge deadline, ms, from the challenge; 0 keeps the default.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
     pub handshake_timeout: u64,
+
+    /// Challenge-request deadline, ms, from the socket opening, at most `HANDSHAKE_TIMEOUT`; 0
+    /// keeps the default.
+    #[arg(long, env = "CHALLENGE_REQUEST_TIMEOUT", default_value_t = 10_000)]
+    pub challenge_request_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
     /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
@@ -446,12 +503,25 @@ pub struct WorldsConfig {
     #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
     pub denylist_json_url: Option<String>,
 
+    /// Comma-separated full world names refused as the DAO name deny list
+    /// refuses a name (upstream's `BLOCKED_WORLD_NAMES`): each entry trimmed
+    /// and lowercased, compared with the whole lowercased name, and applied
+    /// even while that list cannot be read.
+    #[arg(long, env = "BLOCKED_WORLD_NAMES", default_value = "")]
+    pub blocked_world_names: String,
+
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
     pub nats_url: Option<String>,
 
-    #[arg(long, env = "ISLAND_CHANGED_DEDUP_MS", default_value_t = 10_000)]
-    pub island_changed_dedup_ms: u64,
+    #[arg(
+        long,
+        env = "ISLAND_CHANGED_DEDUP_MS",
+        default_value = "10000",
+        value_parser = parse_island_changed_dedup_ms,
+        allow_hyphen_values = true
+    )]
+    pub island_changed_dedup_ms: f64,
 
     #[arg(long, env = "CLUSTER_TAKEOVER_RETRY_DELAY_MS", default_value_t = 100)]
     pub cluster_takeover_retry_delay_ms: u64,
@@ -520,12 +590,213 @@ pub struct WorldsFedConfig {
     pub worlds_fed_allow_insecure_loopback_peers: bool,
 }
 
+/// Decimal prefix accepted by the connector's numeric environment setting, including
+/// signed infinity. Only ECMAScript whitespace is skipped; an absent value is defaulted
+/// by the caller, while an explicitly empty value is invalid.
+pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
+    parse_numeric_prefix(input, "ISLAND_CHANGED_DEDUP_MS")
+}
+
+/// Millisecond timer delay: truncate fractions; values outside 1..=2147483647 become 1 ms.
+pub fn parse_ban_sweep_interval_ms(input: &str) -> Result<u64, String> {
+    let ms = parse_numeric_prefix(input, "BAN_SWEEP_INTERVAL_MS")?;
+    Ok(if (1.0..=2_147_483_647.0).contains(&ms) {
+        ms as u64
+    } else {
+        1
+    })
+}
+
+fn parse_numeric_prefix(input: &str, name: &str) -> Result<f64, String> {
+    let value = input.trim_start_matches(|c| {
+        matches!(c,
+        '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
+        '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
+        '\u{205f}' | '\u{3000}' | '\u{feff}')
+    });
+    let bytes = value.as_bytes();
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    if value[end..].starts_with("Infinity") {
+        return Ok(if bytes.first() == Some(&b'-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+    let mut digits = 0;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+        digits += 1;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return Err(format!("{name} must start with a number"));
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let mut exponent = end + 1;
+        if matches!(bytes.get(exponent), Some(b'+' | b'-')) {
+            exponent += 1;
+        }
+        let start = exponent;
+        while bytes.get(exponent).is_some_and(u8::is_ascii_digit) {
+            exponent += 1;
+        }
+        if exponent > start {
+            end = exponent;
+        }
+    }
+    value[..end]
+        .parse::<f64>()
+        .map_err(|_| format!("{name} must start with a number"))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
 
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
         Config::parse_for_tests(args)
+    }
+
+    #[test]
+    fn ban_sweep_interval_defaults_to_thirty_seconds() {
+        let config = parse(&["catalyst", "--database-url", "postgres://localhost/test"]).unwrap();
+        assert_eq!(config.worlds.ban_sweep_interval_ms, 30_000);
+    }
+
+    #[test]
+    fn ban_sweep_interval_uses_numeric_prefixes_and_timer_delay_bounds() {
+        for (text, expected) in [
+            ("100", 100),
+            ("1250", 1250),
+            ("12.9ms", 12),
+            ("+1e2suffix", 100),
+            ("1e+", 1),
+            ("0x10", 1),
+            (".5", 1),
+            ("0", 1),
+            ("-0", 1),
+            ("-100", 1),
+            ("2147483647", 2_147_483_647),
+            ("2147483647.5", 1),
+            ("2147483648", 1),
+            ("1e9999", 1),
+            ("1e-9999", 1),
+            ("Infinity", 1),
+            ("-Infinity", 1),
+            ("\u{feff}\u{2028}1250ms", 1250),
+        ] {
+            let config = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--ban-sweep-interval-ms",
+                text,
+            ])
+            .unwrap_or_else(|error| panic!("{text:?}: {error}"));
+            assert_eq!(config.worlds.ban_sweep_interval_ms, expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn ban_sweep_interval_rejects_missing_numeric_prefix() {
+        for text in [
+            "",
+            " ",
+            "NaN",
+            "inf",
+            "infinity",
+            "+",
+            ".",
+            "\u{85}1",
+            "\u{180e}1",
+        ] {
+            let error = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--ban-sweep-interval-ms",
+                text,
+            ])
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("BAN_SWEEP_INTERVAL_MS"), "{text:?}: {error}");
+            assert!(!error.contains("ISLAND_CHANGED_DEDUP_MS"), "{error}");
+        }
+    }
+
+    #[test]
+    fn island_dedup_uses_ecmascript_numeric_prefixes() {
+        for (text, expected) in [
+            (".5", 0.5_f64),
+            ("1.", 1.0),
+            ("+12.5ms", 12.5),
+            ("1e2suffix", 100.0),
+            ("1e", 1.0),
+            ("1e+", 1.0),
+            ("0x10", 0.0),
+            ("-0", -0.0),
+            ("-1e-9999", -0.0),
+            ("1e9999", f64::INFINITY),
+            ("+Infinitysuffix", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("\u{feff}\u{2028}2", 2.0),
+        ] {
+            let config = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--island-changed-dedup-ms",
+                text,
+            ])
+            .unwrap_or_else(|e| panic!("{text:?}: {e}"));
+            assert_eq!(
+                config.worlds.island_changed_dedup_ms.to_bits(),
+                expected.to_bits(),
+                "{text:?}"
+            );
+        }
+        for text in [
+            "",
+            " ",
+            "NaN",
+            "inf",
+            "infinity",
+            "+",
+            ".",
+            "\u{85}1",
+            "\u{180e}1",
+        ] {
+            assert!(
+                parse(&[
+                    "catalyst",
+                    "--database-url",
+                    "postgres://localhost/test",
+                    "--island-changed-dedup-ms",
+                    text
+                ])
+                .is_err(),
+                "{text:?}"
+            );
+        }
+    }
+    #[test]
+    fn negative_island_dedup_configuration_is_accepted() {
+        let config = parse(&[
+            "catalyst",
+            "--database-url",
+            "postgres://localhost/test",
+            "--island-changed-dedup-ms",
+            "-1",
+        ])
+        .unwrap();
+        assert_eq!(config.worlds.island_changed_dedup_ms, -1.0);
     }
 
     #[test]
@@ -565,6 +836,24 @@ mod tests {
                 config.worlds.pg_component_stream_query_timeout
             ),
             (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn blocked_world_names_defaults_empty_and_keeps_the_raw_list() {
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(defaults.worlds.blocked_world_names, "");
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--blocked-world-names",
+            " Blocked.dcl.eth, , other.eth",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.worlds.blocked_world_names,
+            " Blocked.dcl.eth, , other.eth"
         );
     }
 
@@ -744,9 +1033,10 @@ mod tests {
                 c.worlds.scene_host_auth_timeout_secs,
                 c.worlds.scene_host_delegation_ttl_secs,
                 c.worlds.scene_host_max_scenes,
-                c.worlds.scene_host_sweep_interval_secs
+                c.worlds.scene_host_sweep_interval_secs,
+                c.worlds.scene_host_idle_unload_secs
             ),
-            (5, 3600, 64, 30)
+            (5, 3600, 64, 30, 300)
         );
         assert_eq!(
             (
@@ -768,6 +1058,17 @@ mod tests {
         );
         assert_eq!(
             (
+                c.worlds.crdt_max_value_bytes,
+                c.worlds.crdt_max_bytes,
+                c.worlds.client_inbound_max_bytes,
+                c.worlds.scene_inbound_max_bytes,
+                c.worlds.client_outbound_max_bytes,
+                c.worlds.js_array_buffer_limit_mb
+            ),
+            (262_144, 33_554_432, 8_388_608, 33_554_432, 8_388_608, 128)
+        );
+        assert_eq!(
+            (
                 c.worlds.signed_fetch_max_response_bytes,
                 c.worlds.signed_fetch_max_body_bytes,
                 c.worlds.signed_fetch_max_in_flight,
@@ -777,7 +1078,7 @@ mod tests {
         );
         assert_eq!(
             (c.worlds.handshake_timeout, c.worlds.island_changed_dedup_ms),
-            (60_000, 10_000)
+            (60_000, 10_000.0)
         );
         assert!(
             c.worlds.deny_list().is_none()

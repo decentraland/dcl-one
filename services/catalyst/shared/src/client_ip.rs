@@ -30,6 +30,8 @@ pub fn single_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
 }
 
 /// `X-Real-IP`, else the last `X-Forwarded-For` entry; empty when neither is set.
+/// The server pins both to the socket peer unless it is a trusted proxy
+/// ([`pin_forwarding_headers`]).
 pub fn client_ip(headers: &HeaderMap) -> String {
     if let Some(value) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
         let ip = value.trim();
@@ -46,6 +48,61 @@ pub fn client_ip(headers: &HeaderMap) -> String {
         }
     }
     String::new()
+}
+
+/// Makes the socket peer the client unless it is a trusted proxy (a loopback
+/// peer or one in `HTTP_TRUSTED_PROXY_CIDRS`): `X-Real-IP` becomes the peer and
+/// `X-Forwarded-For` is dropped, so [`client_ip`] never reads a direct
+/// caller's own header. Returns whether an internal peer's differing
+/// `X-Real-IP` was replaced (most likely an unlisted backend proxy).
+pub fn pin_forwarding_headers(
+    headers: &mut HeaderMap,
+    peer: IpAddr,
+    trusted_proxies: &[ipnet::IpNet],
+) -> bool {
+    let peer = peer.to_canonical();
+    if peer.is_loopback() || is_trusted_proxy(peer, trusted_proxies) {
+        return false;
+    }
+    let replaced = is_internal(peer)
+        && headers.contains_key("x-real-ip")
+        && single_real_ip(headers) != Some(peer);
+    headers.remove("x-forwarded-for");
+    headers.insert(
+        "x-real-ip",
+        axum::http::HeaderValue::from_str(&peer.to_string()).expect("an address is a header value"),
+    );
+    replaced
+}
+
+/// Applies [`pin_forwarding_headers`] to every request `router` answers that
+/// carries the server's `ConnectInfo`; in-process callers pass untouched.
+pub fn pin_client_headers(
+    router: axum::Router,
+    trusted_proxies: Vec<ipnet::IpNet>,
+) -> axum::Router {
+    use axum::extract::{ConnectInfo, Request};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    router.layer(axum::middleware::map_request(move |mut req: Request| {
+        let trusted_proxies = trusted_proxies.clone();
+        async move {
+            if let Some(ConnectInfo(peer)) = req
+                .extensions()
+                .get::<ConnectInfo<std::net::SocketAddr>>()
+                .copied()
+                && pin_forwarding_headers(req.headers_mut(), peer.ip(), &trusted_proxies)
+                && !WARNED.swap(true, Ordering::Relaxed)
+            {
+                tracing::warn!(
+                    peer = %peer.ip(),
+                    "a private peer forwards X-Real-IP but is not in HTTP_TRUSTED_PROXY_CIDRS, \
+                     so its clients are counted as the peer; list the backend proxy networks there"
+                );
+            }
+            req
+        }
+    }))
 }
 
 /// The TCP peer, or the single `X-Real-IP` it supplies when it is a trusted proxy
@@ -173,6 +230,44 @@ mod tests {
             distinct_client_ip(&HeaderMap::new(), peer("10.0.0.5"), &trusted),
             None
         );
+    }
+
+    #[test]
+    fn only_a_trusted_or_loopback_peer_names_the_client() {
+        let forged = || {
+            headers(&[
+                ("x-real-ip", "203.0.113.9"),
+                ("x-forwarded-for", "203.0.113.10"),
+            ])
+        };
+        let trusted: [ipnet::IpNet; 1] = ["10.0.0.0/8".parse().unwrap()];
+
+        let mut direct = forged();
+        assert!(!pin_forwarding_headers(
+            &mut direct,
+            "198.51.100.4".parse().unwrap(),
+            &trusted
+        ));
+        assert_eq!(client_ip(&direct), "198.51.100.4");
+        assert!(direct.get("x-forwarded-for").is_none());
+
+        let mut unlisted = forged();
+        assert!(pin_forwarding_headers(
+            &mut unlisted,
+            "172.18.0.2".parse().unwrap(),
+            &trusted
+        ));
+        assert_eq!(client_ip(&unlisted), "172.18.0.2");
+
+        for proxy in ["127.0.0.1", "::1", "::ffff:127.0.0.1", "10.0.0.5"] {
+            let mut via = forged();
+            assert!(!pin_forwarding_headers(
+                &mut via,
+                proxy.parse().unwrap(),
+                &trusted
+            ));
+            assert_eq!(client_ip(&via), "203.0.113.9", "{proxy}");
+        }
     }
 
     #[test]

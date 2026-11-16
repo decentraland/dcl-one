@@ -5,7 +5,11 @@ edition = "2021"
 
 [lib]
 
+[features]
+livekit = ["comms/livekit"]
+
 [dependencies]
+avatar = { workspace = true }
 common = { workspace = true }
 ipfs = { workspace = true }
 scene_runner = { workspace = true }

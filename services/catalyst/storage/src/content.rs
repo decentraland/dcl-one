@@ -132,7 +132,12 @@ impl Storage {
                 metrics::counter!("storage_store_file_copy_fallbacks").increment(1);
                 std::fs::copy(&src, &staging_target)?;
             }
-            std::fs::File::open(&staging_target)?.sync_all()?;
+            // Windows requires a writable handle to flush the staged bytes.
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(cfg!(windows))
+                .open(&staging_target)?
+                .sync_all()?;
             std::fs::rename(&staging_target, &path)?;
             staging.disarm();
             if let Some(parent) = path.parent()
