@@ -109,7 +109,11 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
         "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
         "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
-        "pulse::statistics::tests::producer_capacity_never_forgets_cursors_and_backlog_recovers_completely",
+        "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+        "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+        "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+        "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+        "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
     ],
     ("catalyst_content", "lib"): [
         "entity::tests::deployment_metadata_retains_order_and_exact_scalars",
