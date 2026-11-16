@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { Button, JumpInCTA } from "@dcl/one-ui";
+import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
 import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/index";
@@ -108,9 +109,7 @@ function viewerDetails(photo: ProfilePhoto, faces: Record<string, { picture?: st
 
 /** A snapshot in the grid; the whole tile opens the viewer. */
 function PhotoTile({ photo, label, isPrivate, onOpen }: { photo: ProfilePhoto; label: string; isPrivate: boolean; onOpen: () => void }) {
-  // The failed URL, so a new thumbnail for the same tile is tried again.
-  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
-  const broken = brokenUrl === photo.thumbnailUrl;
+  const { broken, ref, onError } = useBrokenImage(photo.thumbnailUrl);
   return (
     <button type="button" className={styles.tile} aria-label={isPrivate ? `${label}, private` : label} onClick={onOpen}>
       {broken ? (
@@ -119,11 +118,12 @@ function PhotoTile({ photo, label, isPrivate, onOpen }: { photo: ProfilePhoto; l
         </span>
       ) : (
         <img
+          ref={ref}
           className={styles.tileImage}
           src={photo.thumbnailUrl}
           alt=""
           loading="lazy"
-          onError={() => setBrokenUrl(photo.thumbnailUrl)}
+          onError={onError}
         />
       )}
       {isPrivate ? (

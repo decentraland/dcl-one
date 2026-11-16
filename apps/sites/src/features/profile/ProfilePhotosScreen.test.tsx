@@ -137,6 +137,22 @@ describe("profile photos, the grid", () => {
     expect(screen.getByRole("dialog", { name: `${tileName(0)}, 1 of 1` })).toBeTruthy();
   });
 
+  it("shows the placeholder for a thumbnail that failed before the page hydrated", async () => {
+    // A server-rendered image can fail before onError is attached: it is complete with no size.
+    const complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    const width = vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(0);
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
+    try {
+      show();
+
+      const first = await tile(0);
+      await waitFor(() => expect(first.querySelector("img")).toBeNull());
+    } finally {
+      complete.mockRestore();
+      width.mockRestore();
+    }
+  });
+
   it("shows no visibility tabs or panel role to a visitor", async () => {
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
 
@@ -623,6 +639,19 @@ describe("profile photos, the viewer", () => {
     await user.click(await screen.findByRole("button", { name: /^Photo at Plaza 0/ }));
 
     expect(screen.getByRole("link", { name: "Download photo" }).getAttribute("download")).toBe("kurd_1-2026-11-10.jpg");
+  });
+
+  it.each([
+    ["an author name with no usable character", { author: { name: "###", address: A } }, "photo-2026-11-10.jpg"],
+    ["an unreadable date", { dateTime: "someday" }, "kurd.jpg"],
+  ])("names the download without what it cannot read: %s", async (_case, over, fileName) => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0, { dateTime: "2026-11-10T23:30:00Z", ...over })]));
+    show();
+
+    await user.click(await screen.findByRole("button", { name: /^Photo at Plaza 0/ }));
+
+    expect(screen.getByRole("link", { name: "Download photo" }).getAttribute("download")).toBe(fileName);
   });
 
   it("keeps Shift+Tab inside after a click on the photo", async () => {

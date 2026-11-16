@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router";
 
 import { Button, JumpInCTA } from "@dcl/one-ui";
+import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
 import {
   GeneralClose,
   GeneralInfoButton,
@@ -237,13 +238,12 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
 
 /** A person's face, or their initial when there is none or it fails to load. Decoration: the name follows it. */
 function PersonFace({ name, faceUrl }: { name: string; faceUrl?: string | undefined }) {
-  // The failed URL, so a new face for the same person is tried again.
-  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
-  const showImage = Boolean(faceUrl) && brokenUrl !== faceUrl;
+  const { broken, ref, onError } = useBrokenImage(faceUrl);
+  const showImage = Boolean(faceUrl) && !broken;
   return (
     <span className={styles.face} aria-hidden="true">
       {showImage ? (
-        <img className={styles.faceImage} src={faceUrl} alt={name} onError={() => setBrokenUrl(faceUrl ?? null)} />
+        <img ref={ref} className={styles.faceImage} src={faceUrl} alt={name} onError={onError} />
       ) : (
         <span>{(Array.from(name)[0] ?? "?").toUpperCase()}</span>
       )}

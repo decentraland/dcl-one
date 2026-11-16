@@ -31,13 +31,17 @@
   outline: none;
 }
 
-/* Button's icon-only look is transparent; over a photo each control sits on a dark frame of the
- * small Button's radius. */
+/* Bridge until Button's icon-only look keeps a fill (it forces a transparent background for every
+ * variant): over a photo each control sits on a dark frame of the small Button's radius. */
 .control {
   display: inline-flex;
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-snow);
+}
+
+/* Button fades an unavailable Previous or Next; the frame fades with it. */
+.control:has([aria-disabled='true']) {
+  background: var(--dcl-transparencies-black-20);
 }
 
 .controlOn {
