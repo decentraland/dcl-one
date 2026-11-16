@@ -21,6 +21,9 @@ type Socket =
 async fn server(cap: u32) -> (u16, AppState) {
     let mut settings = Settings::for_tests();
     settings.server.max_sockets = cap;
+    server_with(settings).await
+}
+async fn server_with(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
         state.clone(),
@@ -1659,6 +1662,101 @@ async fn upgrade_cap_is_shared_across_paths_and_mounts_and_released_after_transp
     wait(|| state.sockets.available_permits() == 1).await;
 }
 #[tokio::test]
+async fn a_full_pending_share_evicts_its_oldest_handshake_instead_of_refusing_new_joins() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 5;
+    settings.server.max_pending_handshakes = 2;
+    let (port, state) = server_with(settings).await;
+    let closed = |mut socket: Socket| async move {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("the evicted handshake closes");
+    };
+
+    let oldest = raw_upgrade(port).await;
+    let mut held = raw_upgrade(port).await;
+    wait(|| state.pending_handshakes.held() == 2).await;
+    // The share is full, yet a new client joins: the oldest pending handshake makes room.
+    let (first, _) = authenticated(port).await;
+    closed(oldest).await;
+    // Sockets that completed the handshake no longer hold a pending place.
+    wait(|| state.pending_handshakes.held() == 1).await;
+    wait(|| state.sockets.available_permits() == 3).await;
+    // The next-oldest handshake was not evicted and still completes.
+    let wallet = PrivateKeySigner::random();
+    held.send(packet(client_packet::Message::ChallengeRequest(
+        ChallengeRequestMessage {
+            address: format!("{:#x}", wallet.address()),
+        },
+    )))
+    .await
+    .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut held).await else {
+        panic!("challenge expected")
+    };
+    send_eoa_chain(&mut held, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(_) = receive(&mut held).await else {
+        panic!("welcome expected")
+    };
+    wait(|| state.pending_handshakes.held() == 0).await;
+    drop((first, held));
+    wait(|| state.sockets.available_permits() == 5).await;
+}
+
+#[tokio::test]
+async fn a_socket_must_request_its_challenge_before_the_signing_deadline_starts() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 2;
+    settings.auth.challenge_request_timeout_ms = 300;
+    settings.auth.handshake_timeout_ms = 60_000;
+    let (port, state) = server_with(settings).await;
+
+    let mut silent = raw_upgrade(port).await;
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match silent.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(other)) => panic!("unexpected frame before the challenge: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("a socket silent before its challenge request closes at the shorter deadline");
+    assert!(started.elapsed() >= Duration::from_millis(250));
+    wait(|| state.sockets.available_permits() == 2).await;
+
+    // The signing stage keeps the full `HANDSHAKE_TIMEOUT`.
+    let wallet = PrivateKeySigner::random();
+    let mut socket = raw_upgrade(port).await;
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: format!("{:#x}", wallet.address()),
+            },
+        )))
+        .await
+        .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut socket).await else {
+        panic!("challenge expected")
+    };
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    send_eoa_chain(&mut socket, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(welcome) = receive(&mut socket).await else {
+        panic!("welcome expected")
+    };
+    assert_eq!(welcome.peer_id, format!("{:#x}", wallet.address()));
+}
+
+#[tokio::test]
 async fn baseline_v4_authentication_is_not_exposed() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let (port, _) = server(2).await;
@@ -2043,9 +2141,14 @@ async fn per_source_server() -> u16 {
     settings.server.max_sockets_per_ip = 1;
     settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
     settings.auth.handshake_timeout_ms = 300;
+    proxied_server(settings).await.0
+}
+
+/// A server that sees each request's peer, so `X-Real-IP` from a trusted proxy names the client.
+async fn proxied_server(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
-        state,
+        state.clone(),
         true,
         Default::default(),
         catalyst::comms::stats::http::test_support::matcher(),
@@ -2062,7 +2165,7 @@ async fn per_source_server() -> u16 {
         .await
         .unwrap();
     });
-    port
+    (port, state)
 }
 
 async fn connect_from(port: u16, client: &str) -> Result<Socket, (u16, Option<String>)> {
@@ -2097,6 +2200,39 @@ async fn wait_admitted(port: u16, client: &str) -> Socket {
     })
     .await
     .expect("the source's slot was never released")
+}
+
+#[tokio::test]
+async fn a_client_source_holds_at_most_its_share_of_pending_handshakes() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 20;
+    settings.server.max_pending_handshakes = 10;
+    settings.server.max_sockets_per_ip = 0;
+    settings.server.max_pending_handshakes_per_ip = 2;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
+    let (port, state) = proxied_server(settings).await;
+    let busy = "203.0.113.7";
+    let first = connect_from(port, busy).await.unwrap();
+    let _second = connect_from(port, busy).await.unwrap();
+    // The source's pending share is full; other sources still join.
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
+    let _other = connect_from(port, "203.0.113.8").await.unwrap();
+    assert_eq!(state.pending_handshakes.held(), 3);
+    // A socket that completes its handshake gives its source's share back.
+    let (_first, _) = authenticate(
+        first,
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+    )
+    .await;
+    let _third = wait_admitted(port, busy).await;
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
 }
 
 #[tokio::test]
