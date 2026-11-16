@@ -11,7 +11,7 @@ use common::{
         PrimaryPlayerRes, PrimaryUser,
     },
 };
-use comms::global_crdt::ForeignPlayer;
+use comms::{global_crdt::ForeignPlayer, HiddenByModeration};
 use dcl_component::{
     proto_components::sdk::components::{
         pb_input_modifier, AvatarControlType, AvatarModifierType, PbAvatarModifierArea,
@@ -392,13 +392,18 @@ fn update_avatar_modifier_area(
     active_hide_areas.retain(|ent, _| scenes.contains(ent));
 }
 
-// primary user visiblity is more complex, and is managed in user_input::manage_player_visibility
+// primary user visiblity is more complex, and is managed in user_input::manage_player_visibility.
+// a foreign player is hidden by a scene's modifier area, or when the local user must not see them
+// (`HiddenByModeration`)
 fn manage_foreign_player_visibility(
-    mut players: Query<(&mut Visibility, &PlayerModifiers), With<ForeignPlayer>>,
+    mut players: Query<
+        (&mut Visibility, &PlayerModifiers, Has<HiddenByModeration>),
+        With<ForeignPlayer>,
+    >,
 ) {
-    for (mut vis, modifiers) in players.iter_mut() {
+    for (mut vis, modifiers, moderated) in players.iter_mut() {
         #[allow(clippy::collapsible_else_if)]
-        if modifiers.hide {
+        if modifiers.hide || moderated {
             if *vis != Visibility::Hidden {
                 *vis = Visibility::Hidden;
             }

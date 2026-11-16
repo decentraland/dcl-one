@@ -11,10 +11,15 @@ mod platform_ban;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::{App, Plugin},
-    ecs::system::{Query, Res, SystemParam},
+    app::{App, Plugin, Update},
+    ecs::{
+        entity::Entity,
+        query::Has,
+        system::{Commands, Query, Res, SystemParam},
+    },
     platform::collections::HashSet,
 };
+use comms::{global_crdt::ForeignPlayer, HiddenByModeration};
 use serde::Serialize;
 use social::SocialClient;
 use wallet::Wallet;
@@ -28,6 +33,35 @@ impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(platform_ban::PlatformBanPlugin);
         app.add_plugins(debug::BanBlockDebugPlugin);
+        app.add_systems(Update, mark_hidden_players);
+    }
+}
+
+/// True when the local user must not see `addr`: either side blocked the other, or the
+/// connected scene room bans them. Unknown blocks and a room that is down hide no one.
+pub fn hides_player(blocks: &Blocks, room: &SceneRoomView, addr: Address) -> bool {
+    blocks.is_blocked_either_way(addr) || room.is_addr_banned_in_scene(addr)
+}
+
+/// Keeps [`HiddenByModeration`] on exactly the remote players [`hides_player`] answers for,
+/// so they disappear on a block or ban and come back when it is lifted.
+fn mark_hidden_players(
+    mut commands: Commands,
+    ban_block: BanBlock,
+    players: Query<(Entity, &ForeignPlayer, Has<HiddenByModeration>)>,
+) {
+    let blocks = ban_block.blocks();
+    let room = ban_block.scene_room();
+    for (entity, player, hidden) in &players {
+        match (hides_player(&blocks, &room, player.address), hidden) {
+            (true, false) => {
+                commands.entity(entity).try_insert(HiddenByModeration);
+            }
+            (false, true) => {
+                commands.entity(entity).try_remove::<HiddenByModeration>();
+            }
+            _ => (),
+        }
     }
 }
 
@@ -352,6 +386,43 @@ mod tests {
             world.run_system_once(read).unwrap(),
             AdminPermissionsStatus::Admin
         );
+    }
+
+    #[test]
+    fn a_player_is_hidden_when_blocked_either_way_or_banned_from_the_scene() {
+        let blocked = HashSet::from_iter([address(1)]);
+        let blocked_by = HashSet::from_iter([address(2)]);
+        let blocks = Blocks::from_client(true, &blocked, &blocked_by);
+        let banned = HashSet::from_iter([address(3)]);
+        let admins = HashSet::new();
+        let room = SceneRoomView::Connected {
+            scene_id: "scene",
+            banned_addresses: &banned,
+            scene_admins: &admins,
+        };
+        assert!(hides_player(&blocks, &room, address(1)));
+        assert!(hides_player(&blocks, &room, address(2)));
+        assert!(hides_player(&blocks, &room, address(3)));
+        assert!(!hides_player(&blocks, &room, address(4)));
+    }
+
+    #[test]
+    fn unknown_blocks_and_a_room_that_is_down_hide_no_one() {
+        let set = HashSet::from_iter([address(1)]);
+        let unknown = Blocks::from_client(false, &set, &set);
+        assert!(!hides_player(
+            &unknown,
+            &SceneRoomView::NotConnected,
+            address(1)
+        ));
+        // a lifted block shows the player again
+        let none = HashSet::new();
+        let lifted = Blocks::from_client(true, &none, &none);
+        assert!(!hides_player(
+            &lifted,
+            &SceneRoomView::NotConnected,
+            address(1)
+        ));
     }
 
     #[test]
