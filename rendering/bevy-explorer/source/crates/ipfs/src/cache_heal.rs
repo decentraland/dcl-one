@@ -7,7 +7,8 @@
 //! entry filed under a url cannot be checked and is dropped. After a drop every asset that failed
 //! on the entry is reloaded once, which downloads it, and the asset processor leaves that file
 //! alone for the rest of the session ([`IpfsIo::cache_entry_dropped`]). On web the entry is the
-//! service worker's, under both its keys (`web_cache`); natively it is the disk cache file.
+//! service worker's: the one the read found, and the url's own (`web_cache`); natively it is the
+//! disk cache file.
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "cache_heal_tests.rs"]
@@ -228,7 +229,7 @@ async fn drop_bad_web_entry(remote: &str) -> bool {
     if !holds_other_bytes(filed, &bytes) {
         return false;
     }
-    match web_cache::discard(&cache, remote).await {
+    match web_cache::discard(&cache, remote, &key).await {
         Ok(()) => true,
         Err(error) => {
             warn!("failed to drop the cached copy of `{remote}`: {error:?}");

@@ -4,7 +4,8 @@
 //! The worker only answers from the cache; the engine fills it from what it downloads. An entry
 //! under the shared key answers for every content server, so it is only written once the bytes
 //! are checked against the hash (`content_hash`), and under that hash; a url's response goes
-//! under the url. An entry whose bytes fail to load is dropped under both keys (`cache_heal`).
+//! under the url. An entry whose bytes fail to load is dropped, with the url's own entry
+//! (`cache_heal`).
 //!
 //! The cache is capped (`effective_cap`). The service worker trims it, oldest-written entries
 //! first, when the engine asks through the `__contentCacheTrim` page function
@@ -39,6 +40,18 @@ pub(crate) fn shared_hash(key: &str) -> Option<&str> {
     key.strip_prefix(SHARED_ORIGIN)?
         .strip_prefix('/')
         .filter(|name| !name.is_empty())
+}
+
+// The keys `discard` deletes after a check judged the entry under `judged` (a key from `keys`):
+// that one and the url's own. The shared entry goes only when it is the judged one: one
+// written after the lookup was verified when it was written.
+fn discard_keys(url: &str, judged: &str) -> Option<Vec<String>> {
+    let [shared, own] = keys(url)?;
+    Some(if judged == shared {
+        vec![shared, own]
+    } else {
+        vec![own]
+    })
 }
 
 // Whether a request for `url` is one the worker would answer from the shared entry for `hash`.
@@ -246,7 +259,7 @@ pub use io::*;
 #[cfg(target_arch = "wasm32")]
 mod io {
     use super::{
-        crosses_interval, forced_trim_allowed, keys, names, page_content_cache_trim,
+        crosses_interval, discard_keys, forced_trim_allowed, keys, names, page_content_cache_trim,
         parse_trim_reply, trim_interval_for, TrimReply, TrimReport, WebCacheState,
         WEB_CACHE_CAP_BYTES,
     };
@@ -357,11 +370,13 @@ mod io {
         Ok(())
     }
 
-    /// Drops both entries for `url`, the shared one and the url's own, if there are any. Every
-    /// entry is tried even when one delete fails; the first error is returned.
-    pub async fn discard(cache: &Cache, url: &str) -> Result<(), JsValue> {
+    /// Drops the entry the check judged, `judged` (a key `find` returned), and the url's own one,
+    /// if there are any. The shared entry goes only when it is `judged`: one written after the
+    /// lookup was verified when it was written. Every entry is tried even when one delete fails;
+    /// the first error is returned.
+    pub async fn discard(cache: &Cache, url: &str, judged: &str) -> Result<(), JsValue> {
         let mut result = Ok(());
-        for key in keys(url).ok_or("not a url")? {
+        for key in discard_keys(url, judged).ok_or("not a url")? {
             if let Err(error) = JsFuture::from(cache.delete_with_str(&key)).await {
                 result = result.and(Err(error));
             }
@@ -546,6 +561,18 @@ mod tests {
         assert_eq!(shared_hash(&own), None);
         assert_eq!(shared_hash("https://shared.invalid/"), None);
         assert_eq!(shared_hash("https://shared.invalidx/a"), None);
+    }
+
+    #[test]
+    fn a_discard_keeps_a_shared_entry_it_did_not_judge() {
+        let url = "https://peer.example/contents/bafkreihash?v=1";
+        let [shared, own] = keys(url).unwrap();
+        assert_eq!(
+            discard_keys(url, &shared),
+            Some(vec![shared.clone(), own.clone()])
+        );
+        assert_eq!(discard_keys(url, &own), Some(vec![own.clone()]));
+        assert_eq!(discard_keys("not a url", &own), None);
     }
 
     #[test]
