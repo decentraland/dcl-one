@@ -911,10 +911,7 @@ mod tests {
     fn worlds_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.worlds.worlds_writes_enabled,
-            "worlds writes are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.worlds.worlds_writes_enabled, "worlds writes are opt-in");
         assert!(
             c.worlds.worlds_forward_upstream_url.is_none(),
             "nothing is forwarded until an operator names an upstream"

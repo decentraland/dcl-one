@@ -370,14 +370,8 @@ mod tests {
     fn social_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.writes.social_writes_enabled,
-            "social writes are opt-in; a restore must be demonstrated first"
-        );
-        assert!(
-            !c.writes.content_writes_enabled,
-            "local deploys are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.writes.social_writes_enabled, "social writes are opt-in");
+        assert!(!c.writes.content_writes_enabled, "local deploys are opt-in");
         assert!(
             c.writes.content_forward_upstream_url.is_none()
                 && c.writes.catalyrst_content_admin_token.is_none(),
