@@ -11,7 +11,8 @@ import {
   GeneralPublic
 } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
-import dclLogo from '../assets/dcl-logo.svg'
+import { EventCardHost } from '../../../components/EventCard/EventCard'
+import { hostOf } from './cards'
 import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
 import { Dialog } from './Dialog'
 import styles from './DetailModal.module.css'
@@ -108,32 +109,6 @@ function LocationChip({ location }: { location: Location }) {
   )
 }
 
-/** "By <host>"; the host link sits beside the detail's other controls. */
-function CreatorRow({ creator }: { creator: EventCardCreator }) {
-  const src = creator.avatarUrl ?? (creator.foundation ? dclLogo : undefined)
-  return (
-    <div className={styles.creatorRow}>
-      {src ? (
-        <img className={styles.avatar} src={src} alt="" loading="lazy" />
-      ) : (
-        <span className={styles.avatar} aria-hidden="true">
-          {creator.name.charAt(0).toUpperCase()}
-        </span>
-      )}
-      <p className={styles.by}>
-        By{' '}
-        {creator.href ? (
-          <a className={styles.creator} href={creator.href}>
-            {creator.name}
-          </a>
-        ) : (
-          <span className={styles.creator}>{creator.name}</span>
-        )}
-      </p>
-    </div>
-  )
-}
-
 function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
   return (
     <Button href={jumpIn.href} onClick={jumpIn.onJumpIn}>
@@ -213,7 +188,7 @@ function EventDetailModal(props: EventDetailModalProps) {
         }
       >
         <div className={styles.meta}>
-          {creator ? <CreatorRow creator={creator} /> : null}
+          {creator ? <EventCardHost creator={hostOf(creator)} byLabel="By" /> : null}
           <LocationChip location={location} />
         </div>
         <div className={styles.actions}>
@@ -281,7 +256,7 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
       <Hero titleId={titleId} title={props.title} image={props.image} onClose={props.onClose}>
         {creator ? (
           <div className={styles.meta}>
-            <CreatorRow creator={creator} />
+            <EventCardHost creator={hostOf(creator)} byLabel="By" />
           </div>
         ) : null}
         <div className={styles.actions}>

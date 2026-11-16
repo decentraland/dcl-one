@@ -16,15 +16,16 @@ import type {
   UpcomingEventCardProps
 } from './types'
 
-/** The page's creator as the public cards take it; Genesis Plaza's host shows the Decentraland logo. */
-function creatorOf(creator: EventCardCreator | undefined): PublicCreator | undefined {
-  if (!creator) return undefined
+/** The page's host as the public cards take it; Genesis Plaza's host shows the Decentraland logo. */
+export function hostOf(creator: EventCardCreator): PublicCreator {
   return {
     name: creator.name,
     avatar: creator.avatarUrl ?? (creator.foundation ? dclLogo : undefined),
     profileHref: creator.href
   }
 }
+
+const creatorOf = (creator: EventCardCreator | undefined) => (creator ? hostOf(creator) : undefined)
 
 /** Live Now: a live event or a busy place, as the public PlaceCard's Live Now variant. */
 function LiveNowCard({
@@ -36,8 +37,9 @@ function LiveNowCard({
   usersLabel,
   creator,
   live,
-  jumpIn
-}: LiveEventCardProps) {
+  jumpIn,
+  priority = false
+}: LiveEventCardProps & { priority?: boolean }) {
   return (
     <PlaceCard
       variant="live"
@@ -45,12 +47,12 @@ function LiveNowCard({
       href={href}
       onOpen={onOpen}
       image={image ?? undefined}
+      priority={priority}
       // A missing count is unknown and shows none; a known zero shows 0.
       players={users ?? 0}
       showPlayers={users !== undefined}
       playersLabel={usersLabel}
       live={live}
-      liveEventName={live ? title : undefined}
       creator={creatorOf(creator)}
       jumpHref={jumpIn?.href}
       jumpLabel="Jump In"
@@ -94,6 +96,7 @@ function EventActions({
           aria-pressed={remind.active}
           disabled={remind.pending}
           icon={<GeneralBell size={20} aria-hidden="true" />}
+          label="Remind me"
           onClick={remind.onToggle}
         />
       ) : null}

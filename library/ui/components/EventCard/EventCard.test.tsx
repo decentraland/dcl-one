@@ -6,6 +6,7 @@ import {
   EventCard,
   EventCardAction,
   EventCardActionLink,
+  EventCardHost,
   type EventCardLinkProps,
   type EventCardProps
 } from './EventCard'
@@ -81,9 +82,13 @@ describe('EventCard', () => {
   })
 
   describe('when it has actions', () => {
-    it('renders them in the card, reachable by keyboard', () => {
+    it('renders them in the card as focusable controls after the title link', () => {
       setup({ actions: <EventCardAction aria-label="Remind me: Poker Night" icon={<svg />} /> })
-      expect(screen.getByRole('button', { name: 'Remind me: Poker Night' })).toBeInTheDocument()
+      const action = screen.getByRole('button', { name: 'Remind me: Poker Night' })
+      action.focus()
+      expect(action).toHaveFocus()
+      const link = screen.getByRole('link', { name: 'Poker Night' })
+      expect(link.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       expect(screen.getByRole('article')).toHaveClass('hasActions')
     })
 
@@ -93,9 +98,11 @@ describe('EventCard', () => {
       expect(screen.queryByRole('button')).toBeNull()
     })
 
-    it('announces an action outcome without showing it', () => {
+    it('announces an action outcome in a visually hidden status region', () => {
       setup({ actions: <EventCardAction aria-label="Copy link" icon={<svg />} />, announcement: 'Link copied.' })
-      expect(screen.getByRole('status')).toHaveTextContent('Link copied.')
+      const status = screen.getByRole('status')
+      expect(status).toHaveTextContent('Link copied.')
+      expect(status).toHaveClass('visuallyHidden')
     })
 
     it('has no status region without an announcement', () => {
@@ -166,6 +173,28 @@ describe('EventCardAction', () => {
     render(<EventCardAction aria-label="Remind me" disabled icon={<svg />} onClick={onClick} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remind me' }))
     expect(onClick).not.toHaveBeenCalled()
+  })
+})
+
+describe('EventCardAction with a label', () => {
+  it('shows the label after the glyph and keeps the accessible name', () => {
+    render(<EventCardAction aria-label="Remind me: Poker Night" label="Remind me" icon={<svg />} />)
+    const button = screen.getByRole('button', { name: 'Remind me: Poker Night' })
+    expect(button).toHaveTextContent('Remind me')
+    expect(button).toHaveClass('labelled')
+  })
+
+  it('is icon-only without a label', () => {
+    render(<EventCardAction aria-label="Copy link" icon={<svg />} />)
+    expect(screen.getByRole('button', { name: 'Copy link' })).not.toHaveClass('labelled')
+  })
+})
+
+describe('EventCardHost', () => {
+  it('renders the host byline outside a card', () => {
+    render(<EventCardHost creator={{ name: 'Alice', profileHref: '/profile/alice' }} byLabel="By" />)
+    expect(screen.getByText(/^By/)).toHaveTextContent('By Alice')
+    expect(screen.getByRole('link', { name: 'Alice' })).toHaveAttribute('href', '/profile/alice')
   })
 })
 
@@ -252,5 +281,10 @@ describe('EventCard motion', () => {
     expect(blockOf(css, '.footer')).toContain('flex-direction: column')
     expect(blockOf(css, '.action')).toMatch(/width: 44px;\s*height: 44px/)
     expect(mediaOf('(hover: none), (max-width: 767px)')).toContain('min-height: 176px')
+  })
+
+  it('drops an action label in a compact card narrower than 400px', () => {
+    const narrow = css.slice(css.indexOf('@container (max-width: 399px) {'))
+    expect(blockOf(narrow, '.compact .actionLabel')).toContain('display: none')
   })
 })

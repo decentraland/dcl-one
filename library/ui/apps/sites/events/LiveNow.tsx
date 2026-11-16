@@ -16,9 +16,9 @@ function LiveNow({ cards }: { cards: readonly LiveEventCardProps[] }) {
         Live Now
       </h2>
       <Rail label="live scenes" count={cards.length} trackClassName={styles.track}>
-        {cards.map((card) => (
+        {cards.map((card, index) => (
           <div key={card.id} className={styles.slide}>
-            <LiveNowCard {...card} />
+            <LiveNowCard {...card} priority={index === 0} />
           </div>
         ))}
       </Rail>

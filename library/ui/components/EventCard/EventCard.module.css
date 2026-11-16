@@ -274,6 +274,31 @@
     color: var(--dcl-brand-ruby);
   }
 
+  .labelled {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    width: auto;
+    padding-inline: var(--dcl-space-8);
+  }
+
+  .actionLabel {
+    composes: text627574746f6e2f736d from '../../foundations/typography/text-styles.module.css';
+    white-space: nowrap;
+  }
+
+  @container (max-width: 399px) {
+    .compact .actionLabel {
+      display: none;
+    }
+
+    .compact .labelled {
+      width: 44px;
+      padding-inline: 0;
+      justify-content: center;
+    }
+  }
+
   /* A device that hovers, from tablet width: the actions wait, hidden, over the time. Hover or focus
      inside the card lifts it (4px, with the reference's 30% white glow), fades the time out and fades
      and slides the actions up 8px into its place, all over 200ms. Hidden by opacity only, the actions
@@ -315,6 +340,10 @@
       width: 32px;
       height: 32px;
       pointer-events: none;
+    }
+
+    .hasActions .labelled {
+      width: auto;
     }
 
     .hasActions:hover .actions,

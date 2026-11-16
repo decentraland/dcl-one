@@ -137,7 +137,7 @@ export function EventCard({
             {title}
           </Link>
         </Heading>
-        {creator ? <Creator creator={creator} label={byLabel} /> : null}
+        {creator ? <EventCardHost creator={creator} byLabel={byLabel} /> : null}
         {time || hasActions ? (
           <div className={styles.footer}>
             {time ? (
@@ -159,7 +159,10 @@ export function EventCard({
   )
 }
 
-function Creator({ creator, label }: { creator: EventCardCreator; label: string }) {
+export type EventCardHostProps = { creator: EventCardCreator; byLabel?: string }
+
+/** "by <host>" with the host's face or initial; also usable outside a card, e.g. in an event's detail. */
+export function EventCardHost({ creator, byLabel = 'by' }: EventCardHostProps) {
   return (
     <div className={styles.creator}>
       {creator.avatar ? (
@@ -170,7 +173,7 @@ function Creator({ creator, label }: { creator: EventCardCreator; label: string 
         </span>
       )}
       <p className={styles.by}>
-        {label}{' '}
+        {byLabel}{' '}
         {creator.profileHref ? (
           <a className={styles.name} href={creator.profileHref}>
             {creator.name}
@@ -188,16 +191,26 @@ export type EventCardActionProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>,
   'aria-label': string
   /** The 20px glyph. */
   icon: ReactNode
+  /**
+   * Visible text after the glyph, e.g. "Remind me". A compact card narrower than 400px shows the glyph
+   * only; `aria-label` names the action either way.
+   */
+  label?: string
 }
 
 /**
- * An icon-only action of an EventCard, named by `aria-label`. A toggle (Remind me) passes
- * `aria-pressed`, which also tints its glyph.
+ * An action of an EventCard, named by `aria-label`. A toggle (Remind me) passes `aria-pressed`, which
+ * also tints its glyph.
  */
-export function EventCardAction({ icon, className, type = 'button', ...rest }: EventCardActionProps) {
+export function EventCardAction({ icon, label, className, type = 'button', ...rest }: EventCardActionProps) {
   return (
-    <button {...rest} type={type} className={[styles.action, className].filter(Boolean).join(' ')}>
+    <button
+      {...rest}
+      type={type}
+      className={[styles.action, label ? styles.labelled : undefined, className].filter(Boolean).join(' ')}
+    >
       {icon}
+      {label ? <span className={styles.actionLabel}>{label}</span> : null}
     </button>
   )
 }

@@ -1,4 +1,5 @@
 import type { ComponentType, CSSProperties, MouseEvent, ReactNode } from 'react'
+import { preload } from 'react-dom'
 import { Skeleton } from '../Skeleton/Skeleton'
 import styles from './PlaceCard.module.css'
 
@@ -36,6 +37,8 @@ export type PlaceCardProps = {
   /** Where JUMP IN goes. Without it the card has no JUMP IN and keeps its details on hover. */
   jumpHref?: string
   image?: string
+  /** Fetches the cover early and at high priority, for the card that is the page's largest paint. */
+  priority?: boolean
   players?: number
   /** Show the presence count; by default only when someone is in the place. */
   showPlayers?: boolean
@@ -91,6 +94,7 @@ export function PlaceCard({
   href,
   jumpHref,
   image,
+  priority = false,
   players = 0,
   showPlayers = players > 0,
   playersLabel,
@@ -107,6 +111,8 @@ export function PlaceCard({
   onOpen,
   onJumpIn
 }: PlaceCardProps) {
+  // The cover is a CSS background, so it has no <img> to mark eager; a high-priority preload stands in.
+  if (priority && image && !loading) preload(image, { as: 'image', fetchPriority: 'high' })
   if (loading) {
     return (
       <div className={styles.container} role="progressbar" aria-label={loadingLabel} aria-busy="true">

@@ -438,8 +438,8 @@
     }
   }
 
-  /* The phone card has no hover: it keeps the By row and a JUMP IN row under it. The query is the
-     reference theme's, as for the grid card. */
+  /* The phone card, and the live card on a touch screen of any width, cannot hover: it keeps the By
+     row and a JUMP IN row under it. The width query is the reference theme's, as for the grid card. */
   @media (max-width: 990.98px) {
     .liveCard {
       border-radius: var(--dcl-radius-lg);
@@ -449,33 +449,9 @@
       aspect-ratio: 16 / 10;
       max-height: none;
     }
-
-    .liveSwap {
-      height: auto;
-      display: flex;
-      flex-direction: column;
-      gap: min(1.974cqw, var(--dcl-space-8));
-    }
-
-    .liveBy,
-    .liveCard:hover .liveBy:has(+ .liveJump),
-    .liveCard:focus-within .liveBy:has(+ .liveJump) {
-      position: static;
-      opacity: 1;
-    }
-
-    .liveJump {
-      position: relative;
-      height: min(11.764cqw, 47.674px);
-      opacity: 1;
-      transform: none;
-      pointer-events: auto;
-    }
   }
 
-  /* A touch screen of any width cannot hover to reveal JUMP IN, so the live card keeps the By row and a
-     JUMP IN row under it, as on a phone, at its own cover and corners. */
-  @media (hover: none) {
+  @media (max-width: 990.98px), (hover: none) {
     .liveSwap {
       height: auto;
       display: flex;

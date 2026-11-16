@@ -200,6 +200,14 @@ describe('PlaceCard', () => {
     })
   })
 
+  describe('when it is the page\'s first card', () => {
+    it('preloads the cover at high priority', () => {
+      setup({ variant: 'live', priority: true })
+      const hint = document.head.querySelector('link[rel="preload"][as="image"]')
+      expect(hint).toHaveAttribute('fetchpriority', 'high')
+    })
+  })
+
   describe('when the presence count has a label', () => {
     it('names the count for assistive technology and hides the bare number', () => {
       setup({ variant: 'live', players: 12, playersLabel: '12 online' })
@@ -235,7 +243,7 @@ describe('PlaceCard live motion', () => {
   })
 
   it('keeps the By row and JUMP IN shown, unmoved, on a touch screen of any width', () => {
-    const touch = mediaOf('(hover: none)')
+    const touch = mediaOf('(max-width: 990.98px), (hover: none)')
     expect(touch).toMatch(/\.liveJump \{[^}]*opacity: 1;[^}]*transform: none;[^}]*pointer-events: auto/)
     expect(touch).toMatch(/\.liveBy,[^{]*\{[^}]*position: static;[^}]*opacity: 1/)
   })
