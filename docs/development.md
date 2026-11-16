@@ -239,7 +239,8 @@ variables name. A job with no permissions block counts as one that holds a write
 `tooling/tests/test_dev_workflow.py` fails on a job that breaks this rule.
 
 A step that removes the SDK directories of the hosted image to free disk space runs only on a
-GitHub-hosted runner (`runner.environment == 'github-hosted'`).
+GitHub-hosted runner (`runner.environment == 'github-hosted'`), and only when the free space is
+below the limit that the step names: the delete takes one to two minutes.
 
 `BEVY_E2E_WINDOWS_RUNNER` stays the separate switch for the GPU scenarios job, the one
 privileged job on a variable because GitHub hosts no such machine; its runner must serve no

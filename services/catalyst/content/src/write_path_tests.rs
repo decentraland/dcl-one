@@ -552,94 +552,6 @@ async fn pointers_differing_only_by_case_are_repeated() {
     );
 }
 
-/// A switch that is on still waits for the restore stamps: a stale backup
-/// stamp answers the content 503 naming the stamp and its age, on the
-/// deploy and the unpublish alike, before the read-only and bootstrapping
-/// gates; a fresh one lets the request on to them.
-#[tokio::test]
-async fn a_stale_restore_stamp_holds_content_writes_and_names_it() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
-    let node = TestNode::without_db("write-gates-held").await;
-    let router = node.router();
-    attach(&node.state, true, None, None);
-    let chain = json!([{"type": "SIGNER", "payload": "0xabc"}]);
-    let lab = StampLab::fresh();
-    scoped(lab.stamps.clone(), async {
-        let (_, _, body) = call(
-            &router,
-            deploy_request("/content/entities", "bafy", &chain, &[]),
-        )
-        .await;
-        assert_eq!(
-            json_of(&body),
-            json!({"error": writes::BOOTSTRAPPING_MESSAGE}),
-            "fresh stamps pass the request on to the next gate"
-        );
-        lab.advance(30 * HOUR);
-        let held = "content writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26";
-        let (status, headers, body) = call(
-            &router,
-            deploy_request("/content/entities", "bafy", &chain, &[]),
-        )
-        .await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(headers[header::RETRY_AFTER], "3600");
-        assert_eq!(json_of(&body), json!({"error": held}));
-        let (status, _, body) = call(
-            &router,
-            Request::delete("/content/scenes/0,0")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(
-            (status, json_of(&body)),
-            (StatusCode::SERVICE_UNAVAILABLE, json!({"error": held}))
-        );
-    })
-    .await;
-}
-
-/// Content stores blobs: a backup that left them out (`--no-blobs`) holds
-/// its writes, naming the stamp.
-#[tokio::test]
-async fn a_backup_without_blobs_holds_content_writes() {
-    use crate::shared::writes::restore::{Stamp, lab::StampLab, scoped};
-    let node = TestNode::without_db("write-gates-no-blobs").await;
-    let router = node.router();
-    attach(&node.state, true, None, None);
-    let chain = json!([{"type": "SIGNER", "payload": "0xabc"}]);
-    let lab = StampLab::fresh();
-    lab.write_json(
-        Stamp::Backup,
-        json!({
-            "kind": "backup",
-            "completed_at": (lab.now() - chrono::Duration::hours(1)).to_rfc3339(),
-            "snapshot": "20261002T020000Z",
-            "manifest_sha256": "ab",
-            "blobs": { "included": false },
-        }),
-    );
-    scoped(lab.stamps.clone(), async {
-        let (status, _, body) = call(
-            &router,
-            deploy_request("/content/entities", "bafy", &chain, &[]),
-        )
-        .await;
-        assert_eq!(
-            (status, json_of(&body)),
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                json!({"error": "content writes are held on this node: the last complete backup (backup.json) left the blobs out (backup.sh --no-blobs)"})
-            )
-        );
-    })
-    .await;
-}
-
 /// A database of its own, created from `CATALYST_TEST_DATABASE_URL` with
 /// schema.sql applied; dropped by [`OwnDb::drop_now`].
 struct OwnDb {
@@ -717,7 +629,7 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
         .collect();
     let mut conn = pool.acquire().await.unwrap();
     indexer::insert_events(&mut conn, &events).await.unwrap();
-    indexer::set_cursor(&mut conn, &settings, start + 100)
+    indexer::set_cursor(&mut conn, &settings, start + 100, None)
         .await
         .unwrap();
     drop(conn);

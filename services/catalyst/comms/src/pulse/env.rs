@@ -252,7 +252,7 @@ fn refuse_outside_hosts(env: &catalyst_config::posture::Lookup) -> anyhow::Resul
 
 /// Reject historical requests for an authentication mode this process cannot serve.
 /// These values validate the shipped posture; they never configure server capabilities.
-fn validate_auth_requests(
+pub fn validate_auth_requests(
     legacy: Result<String, VarError>,
     v4: Result<String, VarError>,
 ) -> anyhow::Result<()> {
@@ -280,6 +280,12 @@ fn validate_auth_requests(
 /// `catalyst pulse`: tracing, the Prometheus exporter, and the server assembled from the
 /// environment; returns when the loop ends.
 pub async fn run_from_env() -> anyhow::Result<()> {
+    run_from_env_with_generation(None).await
+}
+
+pub async fn run_from_env_with_generation(
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<()> {
     validate_auth_requests(
         std::env::var("PULSE_LEGACY_HANDSHAKE"),
         std::env::var("PULSE_V4_ENABLED"),
@@ -350,11 +356,40 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         )?,
         env_value("PULSE_V4_AUDIENCE", std::env::var("PULSE_V4_AUDIENCE"))?,
     )?;
-    server.clusters = clusters_from_env(control_audience.as_deref())?;
+    if let Some(audience) = control_audience.as_deref() {
+        anyhow::ensure!(
+            generation
+                .as_ref()
+                .is_some_and(|authority| authority.binding().valid()
+                    && authority.binding().audience == audience
+                    && !authority.lost().is_cancelled()),
+            "configured Pulse requires the root's current deployment generation"
+        );
+    }
+    server.clusters =
+        clusters_from_env_with_generation(control_audience.as_deref(), generation.clone())?;
     if let Some(clusters) = &server.clusters {
         clusters.bind_identity(&mut server.identity);
     }
-    server.run_with_webtransport(bind, 50, wt).await
+    let publisher = server
+        .clusters
+        .as_ref()
+        .map(|clusters| clusters.publisher());
+    let result = if let Some(authority) = &generation {
+        tokio::select! {
+            result = server.run_with_webtransport(bind, 50, wt) => result,
+            _ = authority.lost().cancelled() => Err(anyhow::anyhow!("Pulse deployment generation was revoked")),
+        }
+    } else {
+        server.run_with_webtransport(bind, 50, wt).await
+    };
+    if let Some(authority) = &generation {
+        authority.lost().cancel();
+    }
+    if let Some(publisher) = publisher {
+        publisher.shutdown().await;
+    }
+    result
 }
 
 fn limiter_options_from_lookup(
@@ -501,7 +536,14 @@ fn webtransport_config_from_env() -> anyhow::Result<Option<WtConfig>> {
 /// The cluster tracker, or `None` when clustering is off entirely -- which leaves every cluster
 /// path out of the server loop rather than running a tracker that publishes nothing. Publishing
 /// nothing is the separate, and far more common, stats-only mode: clustering on with no broker URL.
+#[cfg(test)]
 fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<ClusterTracker>> {
+    clusters_from_env_with_generation(control_audience, None)
+}
+fn clusters_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<Option<ClusterTracker>> {
     if !env_bool_or("PULSE_CLUSTERS_ENABLED", DEFAULT_CLUSTERS_ENABLED)? {
         tracing::info!("peer clustering disabled");
         return Ok(None);
@@ -530,7 +572,7 @@ fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<Cl
     Ok(Some(ClusterTracker::new(
         options,
         ENET_CAPACITY + WT_CAPACITY,
-        cluster_feed_from_env(control_audience)?,
+        cluster_feed_from_env_with_generation(control_audience, generation)?,
     )))
 }
 
@@ -557,8 +599,15 @@ fn nats_url_from_env() -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
+#[cfg(test)]
 fn cluster_feed_from_env(
     control_audience: Option<&str>,
+) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
+    cluster_feed_from_env_with_generation(control_audience, None)
+}
+fn cluster_feed_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
 ) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
     let Some(url) = nats_url_from_env()? else {
         tracing::info!("cluster feed in stats-only mode: no broker URL set");
@@ -587,7 +636,7 @@ fn cluster_feed_from_env(
         );
     }
     tracing::info!(server_name = %options.server_name, "cluster feed publishing");
-    let feed = NatsClusterFeed::spawn(options);
+    let feed = NatsClusterFeed::spawn_with_generation(options, generation);
     if let Some(audience) = control_audience {
         feed.enable_control_positions(audience)
             .map_err(anyhow::Error::msg)?;

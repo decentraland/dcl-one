@@ -118,6 +118,32 @@ enum Admission {
     Deny(Box<Action>),
 }
 
+/// What a peer may send while its handshake answer waits for the replay journal. A peer that
+/// sends more is refused once the answer is released, and nothing more of it is kept.
+const MAX_HELD_PACKETS: usize = 64;
+const MAX_HELD_BYTES: usize = 16 * 1024;
+
+/// A handshake outcome held until the replay journal has synced every job up to `journaled`,
+/// with the packets its peer sent meanwhile, replayed in order once it is applied.
+#[derive(Debug)]
+struct HeldHandshake {
+    journaled: u64,
+    peer: u32,
+    action: Action,
+    now: u32,
+    packets: Vec<HeldPacket>,
+    held_bytes: usize,
+    overflowed: bool,
+}
+
+#[derive(Debug)]
+struct HeldPacket {
+    channel: u8,
+    data: Vec<u8>,
+    now_ms: i64,
+    now: u32,
+}
+
 fn scene_listener_max_parcels_from_env() -> usize {
     std::env::var("PULSE_SCENE_LISTENER_MAX_PARCELS")
         .ok()
@@ -187,6 +213,8 @@ pub struct PulseServer {
     pub simulation: PeerSimulation,
 
     pub replay_policy: HandshakeReplayPolicy,
+    /// Handshake outcomes waiting for their replay record to be durable, in journal order.
+    held_handshakes: std::collections::VecDeque<HeldHandshake>,
 
     pub application_relay: Option<crate::pulse::application_relay::ApplicationRelay>,
 
@@ -268,6 +296,7 @@ impl PulseServer {
                 crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
                 max_peers,
             ),
+            held_handshakes: std::collections::VecDeque::new(),
             application_relay: None,
             ban_list: BanList::new(),
             ban_snapshots: None,
@@ -1393,6 +1422,9 @@ impl PulseServer {
                     let now = started.elapsed().as_millis() as u32;
                     self.run_tick(&mut transports, now).await?;
                 }
+                _ = self.replay_policy.journal_progressed() => {
+                    self.release_journaled(&mut transports).await?;
+                }
                 _ = cluster_ticker.tick(), if self.clusters.is_some() => {
                     self.run_cluster_pass();
                 }
@@ -1444,8 +1476,149 @@ impl PulseServer {
             }
             return Ok(());
         }
-        let action = self.dispatch(peer, channel, data, now_ms, now);
+        let Some(action) = self.dispatch_or_hold(peer, channel, data, now_ms, now) else {
+            return Ok(());
+        };
         self.apply(transports, peer, action, now).await
+    }
+
+    /// [`Self::dispatch`], except that an outcome which issued a replay-journal record is held
+    /// until that record is durable (`None`), as are the peer's packets behind it.
+    fn dispatch_or_hold(
+        &mut self,
+        peer: u32,
+        channel: u8,
+        data: &[u8],
+        now_ms: i64,
+        now: u32,
+    ) -> Option<Action> {
+        if let Some(held) = self
+            .held_handshakes
+            .iter_mut()
+            .find(|held| held.peer == peer)
+        {
+            if held.overflowed {
+                return None;
+            }
+            held.held_bytes += data.len();
+            if held.packets.len() >= MAX_HELD_PACKETS || held.held_bytes > MAX_HELD_BYTES {
+                held.overflowed = true;
+                held.packets = Vec::new();
+                crate::pulse::metrics::handshake("legacy", "held_packets_overflow");
+                tracing::debug!(
+                    peer,
+                    "Pulse peer sent too much while its handshake was held"
+                );
+                return None;
+            }
+            held.packets.push(HeldPacket {
+                channel,
+                data: data.to_vec(),
+                now_ms,
+                now,
+            });
+            return None;
+        }
+        let issued = self.replay_policy.journal_issued();
+        let action = self.dispatch(peer, channel, data, now_ms, now);
+        let journaled = self.replay_policy.journal_issued();
+        if journaled == issued {
+            return Some(action);
+        }
+        self.held_handshakes.push_back(HeldHandshake {
+            journaled,
+            peer,
+            action,
+            now,
+            packets: Vec::new(),
+            held_bytes: 0,
+            overflowed: false,
+        });
+        None
+    }
+
+    /// Removes the held outcomes the journal has made durable, in order. Once the journal has
+    /// failed, the rest become a `ServerFull` refusal without a reply. A peer that overflowed
+    /// its held packets is refused with `InputRateExceeded` and no reply.
+    fn take_journaled(&mut self) -> Vec<HeldHandshake> {
+        let progress = self.replay_policy.journal_progress();
+        let mut ready = Vec::new();
+        while let Some(held) = self.held_handshakes.front() {
+            if held.journaled > progress.durable_through && !progress.failed {
+                break;
+            }
+            let mut held = self.held_handshakes.pop_front().expect("front exists");
+            if held.journaled > progress.durable_through {
+                if let Some(state) = self.peers.get_mut(&held.peer) {
+                    state.connection_state = PeerConnectionState::PendingDisconnect;
+                }
+                held.action = Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::ServerFull,
+                };
+            } else if held.overflowed {
+                if let Some(state) = self.peers.get_mut(&held.peer) {
+                    state.connection_state = PeerConnectionState::PendingDisconnect;
+                }
+                held.action = Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::InputRateExceeded,
+                };
+            }
+            ready.push(held);
+        }
+        ready
+    }
+
+    /// A held admission is applied against the state at release: a ban that arrived meanwhile
+    /// refuses it, and the incumbent session of its wallet is looked up again.
+    fn recheck_held(&mut self, peer: u32, mut action: Action) -> Action {
+        let (Action::Authenticated {
+            wallet,
+            duplicate_of,
+            ..
+        }
+        | Action::AuthenticatedListener {
+            wallet,
+            duplicate_of,
+            ..
+        }) = &mut action
+        else {
+            return action;
+        };
+        if self.ban_list.is_banned(wallet) {
+            if let Some(state) = self.peers.get_mut(&peer) {
+                state.connection_state = PeerConnectionState::PendingDisconnect;
+            }
+            return Action::Reject {
+                reply: Some(handshake_response(false, Some("banned".into()))),
+                reason: DisconnectReason::Banned,
+            };
+        }
+        *duplicate_of = self.identity.peer_by_wallet(wallet).filter(|p| *p != peer);
+        action
+    }
+
+    async fn release_journaled(&mut self, transports: &mut Transports) -> anyhow::Result<()> {
+        for held in self.take_journaled() {
+            if !self.peers.contains_key(&held.peer) {
+                continue;
+            }
+            let action = self.recheck_held(held.peer, held.action);
+            self.apply(transports, held.peer, action, held.now).await?;
+            for packet in held.packets {
+                self.receive(
+                    transports,
+                    held.peer,
+                    packet.channel,
+                    &packet.data,
+                    packet.now_ms,
+                    packet.now,
+                )
+                .await?;
+            }
+        }
+        Ok(())
     }
     fn connect_pending(&mut self, peer: u32, ip: String, now: u32) -> Result<(), DisconnectReason> {
         // A transport slot is already allocated, but no application admission work has run.
@@ -1525,6 +1698,7 @@ impl PulseServer {
     }
 
     fn remove_peer_state(&mut self, peer: u32) -> bool {
+        self.held_handshakes.retain(|held| held.peer != peer);
         let Some(state) = self.peers.remove(&peer) else {
             return false;
         };
