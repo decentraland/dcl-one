@@ -137,3 +137,70 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
         "the emote's hash has no owner once nothing plays it"
     );
 }
+
+fn urn(urn: &str) -> WearableUrn {
+    WearableUrn::new(urn).unwrap()
+}
+
+#[test]
+fn an_avatar_keeps_its_body_until_the_body_fails() {
+    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    assert_eq!(
+        AvatarLoadFailures::body(None, female.clone()),
+        Some(female.clone())
+    );
+    let other_failed = AvatarLoadFailures {
+        bodies: HashSet::from([urn("urn:decentraland:off-chain:base-avatars:BaseMale")]),
+        ..Default::default()
+    };
+    assert_eq!(
+        AvatarLoadFailures::body(Some(&other_failed), female.clone()),
+        Some(female)
+    );
+}
+
+#[test]
+fn a_failed_body_falls_back_to_the_default_body() {
+    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([female.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(
+        AvatarLoadFailures::body(Some(&failures), female),
+        Some(base_wearables::default_bodyshape_urn())
+    );
+}
+
+#[test]
+fn an_avatar_whose_body_and_default_body_failed_has_no_body_to_build() {
+    let default = base_wearables::default_bodyshape_urn();
+    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([female.clone(), default.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(AvatarLoadFailures::body(Some(&failures), female), None);
+    // the default body failing alone ends the fallback too
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([default.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(AvatarLoadFailures::body(Some(&failures), default), None);
+}
+
+#[test]
+fn only_the_wearables_that_failed_are_left_out() {
+    let hat = urn("urn:decentraland:off-chain:base-avatars:cap");
+    let shirt = urn("urn:decentraland:off-chain:base-avatars:f_sweater");
+    let failures = AvatarLoadFailures {
+        wearables: HashSet::from([hat.clone()]),
+        ..Default::default()
+    };
+    assert!(AvatarLoadFailures::wearable_failed(Some(&failures), &hat));
+    assert!(!AvatarLoadFailures::wearable_failed(
+        Some(&failures),
+        &shirt
+    ));
+    assert!(!AvatarLoadFailures::wearable_failed(None, &hat));
+}

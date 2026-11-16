@@ -550,6 +550,65 @@ pub struct AvatarRenderDefinition {
 #[derive(Component)]
 pub struct RetryRenderAvatar;
 
+/// The files an avatar could not be built from. The avatar is rebuilt without them: a failed
+/// body falls back to the default body, and a failed wearable leaves its category to the
+/// body's default, so a broken file never leaves the avatar missing or with parts hidden.
+/// Each rebuild adds at least one file, so the fallback ends.
+#[derive(Component, Default, Debug)]
+pub struct AvatarLoadFailures {
+    bodies: HashSet<WearableUrn>,
+    wearables: HashSet<WearableUrn>,
+}
+
+impl AvatarLoadFailures {
+    /// The body to build with: the requested one, else the default body, else none when both
+    /// failed.
+    fn body(failures: Option<&Self>, requested: WearableUrn) -> Option<WearableUrn> {
+        let Some(failures) = failures else {
+            return Some(requested);
+        };
+        if !failures.bodies.contains(&requested) {
+            return Some(requested);
+        }
+        let default = base_wearables::default_bodyshape_urn();
+        (!failures.bodies.contains(&default)).then_some(default)
+    }
+
+    fn wearable_failed(failures: Option<&Self>, urn: &WearableUrn) -> bool {
+        failures.is_some_and(|failures| failures.wearables.contains(urn))
+    }
+}
+
+/// Drops the build `build` of the avatar on `avatar` and has the avatar rebuilt without the
+/// failed files. The avatar shown before stays until the rebuild replaces it.
+fn abandon_build(
+    commands: &mut Commands,
+    build: Entity,
+    avatar: Entity,
+    body: Option<WearableUrn>,
+    wearables: Vec<WearableUrn>,
+) {
+    commands.entity(build).try_despawn();
+    record_avatar_failures(commands, avatar, body, wearables);
+}
+
+/// Records files the avatar on `avatar` failed to build from and has it rebuilt without them.
+fn record_avatar_failures(
+    commands: &mut Commands,
+    avatar: Entity,
+    body: Option<WearableUrn>,
+    wearables: Vec<WearableUrn>,
+) {
+    commands
+        .entity(avatar)
+        .queue_silenced(move |mut entity: EntityWorldMut| {
+            let mut failures = entity.take::<AvatarLoadFailures>().unwrap_or_default();
+            failures.bodies.extend(body);
+            failures.wearables.extend(wearables);
+            entity.insert((failures, RetryRenderAvatar));
+        });
+}
+
 // when an avatar style setting (cel shading, outline) is toggled, re-render every
 // avatar so their meshes are respawned with the right mesh tags. the tags are set
 // once at mesh creation in process_avatar, so an in-place flip isn't enough.
@@ -583,6 +642,7 @@ fn update_render_avatar(
             Option<&SceneEntity>,
             Option<&PreviousAvatar>,
             Option<&PartitionedDownloads>,
+            Option<&AvatarLoadFailures>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -621,20 +681,38 @@ fn update_render_avatar(
         maybe_scene_ent,
         maybe_prev,
         maybe_downloads,
+        maybe_failures,
     ) in &query
     {
         commands.entity(entity).try_remove::<RetryRenderAvatar>();
 
         debug!("updating render avatar");
 
-        // get body shape
-        let body_urn = selection
+        // get body shape, falling back to the default body when the requested one failed
+        let requested_body = selection
             .shape
             .0
             .body_shape
             .as_ref()
             .and_then(|b| WearableUrn::new(b).ok())
             .unwrap_or(base_wearables::default_bodyshape_urn());
+        let Some(body_urn) = AvatarLoadFailures::body(maybe_failures, requested_body.clone())
+        else {
+            warn!("no body to build {requested_body} with: it and the default body failed");
+            if let Some(scene_ent) = maybe_scene_ent {
+                report_avatar_load(
+                    &mut scenes,
+                    &timestamp,
+                    scene_ent,
+                    LoadingState::FinishedWithError,
+                    requested_body.as_str(),
+                );
+            }
+            continue;
+        };
+        if body_urn != requested_body {
+            debug!("body {requested_body} failed, building with {body_urn}");
+        }
 
         // the avatar's downloads are filed under its body's and wearables' hashes, so they
         // take the avatar's partition in the request-slot queue; whatever has resolved so far
@@ -674,18 +752,8 @@ fn update_render_avatar(
             }
             Err(other) => {
                 warn!("failed to resolve body {body_urn}: {other:?}");
-                if let Some(scene_ent) = maybe_scene_ent {
-                    report_avatar_load(
-                        &mut scenes,
-                        &timestamp,
-                        scene_ent,
-                        LoadingState::FinishedWithError,
-                        body_urn.as_str(),
-                    );
-                }
-                // don't retry
-                let data = wearable_loader.get_data(&body_urn);
-                debug!("data: {data:?}");
+                // rebuilt with the default body, or reported as failed if this was it
+                record_avatar_failures(&mut commands, entity, Some(body_urn), Vec::new());
                 continue;
             }
         };
@@ -698,6 +766,8 @@ fn update_render_avatar(
             .wearables
             .iter()
             .flat_map(|w| WearableUrn::new(w).ok())
+            // a wearable whose model failed leaves its category to the default
+            .filter(|wearable| !AvatarLoadFailures::wearable_failed(maybe_failures, wearable))
             .flat_map(|wearable| {
                 match wearable_loader.get_representation(&wearable, body_urn.as_str()) {
                     Ok(data) => Some((data.category, (data.clone(), wearable))),
@@ -724,12 +794,19 @@ fn update_render_avatar(
 
         // add defaults
         let defaults: Vec<_> = base_wearables::default_wearables(&body_urn)
+            .filter(|default| !AvatarLoadFailures::wearable_failed(maybe_failures, default.base()))
             .flat_map(|default| {
                 match wearable_loader.get_representation(default.base(), body_urn.as_str()) {
                     Ok(data) => Some((data.clone(), default.base().to_owned())),
-                    _ => {
+                    Err(CollectibleError::Loading) => {
                         debug!("waiting for {default:?}");
                         all_loaded = false;
+                        None
+                    }
+                    // a default that never resolves leaves its category to the base model,
+                    // instead of a retry every frame
+                    Err(other) => {
+                        warn!("skipping failed default wearable {default:?}: {other:?}");
                         None
                     }
                 }
@@ -987,14 +1064,12 @@ fn update_render_avatar(
                 .iter()
                 .filter(|child| avatar_render_entities.get(*child).is_ok())
             {
-                if maybe_prev.is_some_and(|e| e.0 != render_child) {
-                    debug!("despawn {render_child:?} as prev is already {maybe_prev:?}");
+                if chose_existing || maybe_prev.is_some_and(|e| e.0 != render_child) {
+                    // one built avatar stays on show while the new one builds
+                    debug!("despawn {render_child:?}: the previous avatar is already chosen");
                     commands.entity(render_child).despawn();
                 } else {
                     debug!("set prev -> {render_child:?}");
-                    if chose_existing {
-                        panic!();
-                    }
                     chose_existing = true;
                     commands
                         .entity(entity)
@@ -1051,23 +1126,10 @@ fn spawn_scenes(
     asset_server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     mut scene_spawner: ResMut<SceneSpawner>,
-    scene_ents: Query<&SceneEntity>,
-    mut contexts: Query<&mut RendererSceneContext>,
-    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
 ) {
     for (ent, def, parent) in query.iter() {
         let def = &def.render;
-        let report_failure = |contexts: &mut Query<&mut RendererSceneContext>| {
-            if let Ok(scene_ent) = scene_ents.get(parent.parent()) {
-                report_avatar_load(
-                    contexts,
-                    &timestamp,
-                    scene_ent,
-                    LoadingState::FinishedWithError,
-                    &def.body_shape,
-                );
-            }
-        };
+        let body_urn = || WearableUrn::new(&def.body_shape).ok();
         let any_loading = def
             .body
             .model
@@ -1106,8 +1168,7 @@ fn spawn_scenes(
                 }
                 otherwise => {
                     warn!("failed to load body gltf: {otherwise:?}");
-                    commands.entity(ent).try_insert(AvatarProcessed);
-                    report_failure(&mut contexts);
+                    abandon_build(&mut commands, ent, parent.parent(), body_urn(), Vec::new());
                 }
             }
             continue;
@@ -1115,10 +1176,33 @@ fn spawn_scenes(
 
         let Some(h_scene) = gltf.default_scene.as_ref() else {
             warn!("body gltf has no default scene");
-            commands.entity(ent).try_insert(AvatarProcessed);
-            report_failure(&mut contexts);
+            abandon_build(&mut commands, ent, parent.parent(), body_urn(), Vec::new());
             continue;
         };
+
+        // a wearable whose model failed would still hide the body parts it covers: rebuild
+        // without it, so its category falls back to the default
+        let failed_wearables: Vec<WearableUrn> = def
+            .wearables
+            .iter()
+            .filter(|(_, wearable)| {
+                wearable.model.as_ref().is_some_and(|model| {
+                    match asset_server.get_load_state(&model.gltf) {
+                        Some(bevy::asset::LoadState::Failed(_)) => true,
+                        Some(bevy::asset::LoadState::Loaded) => gltfs
+                            .get(&model.gltf)
+                            .is_none_or(|gltf| gltf.default_scene.is_none()),
+                        _ => false,
+                    }
+                })
+            })
+            .map(|(urn, _)| urn.clone())
+            .collect();
+        if !failed_wearables.is_empty() {
+            warn!("wearable models failed to load: {failed_wearables:?}");
+            abandon_build(&mut commands, ent, parent.parent(), None, failed_wearables);
+            continue;
+        }
 
         // store skin/hair materials to update with color on spawned instance
         let mut skin_materials = HashSet::default();
@@ -1156,7 +1240,10 @@ fn spawn_scenes(
                     }
                 }
 
-                let gltf = gltfs.get(h_gltf).unwrap();
+                // checked above, with the wearables that failed
+                let Some(gltf) = gltfs.get(h_gltf) else {
+                    return Some(None);
+                };
                 let gltf_scene_handle = gltf.default_scene.as_ref();
 
                 // store skin/hair materials
@@ -1455,9 +1542,11 @@ fn process_avatar(
                         def.wearables.iter().find(|(_, w)| w.category == category)
                     {
                         debug!("setting {suffix} color {:?}", color);
-                        if let Some(mask) = wearable.mask.as_ref() {
+                        // a mask without its texture is malformed: drawn as unmasked
+                        if let (Some(mask), Some(texture)) =
+                            (wearable.mask.as_ref(), wearable.texture.clone())
+                        {
                             debug!("using mask for {suffix}");
-                            let texture = wearable.texture.clone().unwrap();
                             let key = AvatarMaskKey::new(
                                 texture.id(),
                                 mask.id(),
@@ -1551,15 +1640,22 @@ fn process_avatar(
             }
         }
 
-        let Some(armature_node) = armature_node else {
-            warn!("no armature node!");
+        // a body that cannot be animated is rebuilt with the default body, instead of being
+        // checked again every frame
+        let unanimatable = armature_node.is_none() || target_armature_entities.is_empty();
+        let (Some(armature_node), false) = (armature_node, unanimatable) else {
+            warn!("body {} has no armature or bones", def.body_shape);
+            abandon_build(
+                &mut commands,
+                avatar_ent,
+                root_player_entity.parent(),
+                WearableUrn::new(&def.body_shape).ok(),
+                Vec::new(),
+            );
             continue;
         };
 
-        if target_armature_entities.is_empty() {
-            warn!("boneless body!");
-            continue;
-        } else {
+        {
             // reparent hands
             if let Ok(attach_points) = attach_points.get(root_player_entity.parent()) {
                 for (key, attach_point) in [
@@ -1603,13 +1699,23 @@ fn process_avatar(
             for (bone, ent) in target_armature_entities.iter() {
                 let mut path = VecDeque::default();
                 let mut e = *ent;
-                loop {
-                    let (name, parent) = name_and_parent.get(e).unwrap();
+                // a bone outside the armature (malformed body) is left unanimated
+                let in_armature = loop {
+                    let Ok((name, parent)) = name_and_parent.get(e) else {
+                        break false;
+                    };
                     path.push_front(name);
                     if name.to_lowercase() == "armature" {
-                        break;
+                        break true;
                     }
                     e = parent.parent();
+                };
+                if !in_armature {
+                    warn!(
+                        "bone {bone} of body {} is outside its armature",
+                        def.body_shape
+                    );
+                    continue;
                 }
                 let id = AnimationTargetId::from_names(path.into_iter());
 
