@@ -61,7 +61,7 @@ just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-we
 
 With Nix, `nix develop .#wasm` from the repository root replaces the two installs: the shell carries the pinned nightly with the wasm target, `just`, `wasm-pack`, `wasm-bindgen` at the `Cargo.lock` version, `wasm-opt`, node, pnpm and protoc.
 
-`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web`, a frozen pnpm install in `react-web/bridge-scene`, then `npm run dev`.
+`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), a frozen pnpm install in `react-web` and in `react-web/bridge-scene`, then `pnpm run dev`.
 
 Useful URLs once the dev server is up:
 
@@ -111,9 +111,9 @@ Doing it by hand instead of via `just`:
 ```bash
 python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && npm ci
+cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
 (cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.27.0 --filter @dcl/hashing build)
-npm run bundle:native && cd ..
+corepack pnpm@11.27.0 run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release
@@ -220,8 +220,8 @@ Console commands:
 ```bash
 python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo test --all                      # engine
-npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
-npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
+corepack pnpm@11.27.0 --dir react-web test          # HUD, deterministic (vitest, no engine)
+corepack pnpm@11.27.0 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
 ```
 
 CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
@@ -247,7 +247,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
+  `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
+  nearby voice off, the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
   `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states

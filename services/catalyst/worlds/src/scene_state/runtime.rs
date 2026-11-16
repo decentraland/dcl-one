@@ -496,10 +496,17 @@ pub trait SceneRuntime: Send + Sync {
 
     fn allocate_client_index(&self) -> u32;
 
+    /// `close` is the connection's own token. A runtime that has to end the
+    /// client (because it stopped) cancels it, and the host closes the socket
+    /// and removes the client through
+    /// [`Scene::remove_connection`](crate::scene_state::scene::Scene::remove_connection);
+    /// `client_index` is never freed before that removal reaches
+    /// [`Self::on_client_close`].
     fn on_client_open(
         &self,
         client_index: u32,
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
+        close: tokio_util::sync::CancellationToken,
     ) -> InitState;
 
     /// `Err` when the client has queued more than its byte budget: the
@@ -523,6 +530,12 @@ pub trait SceneRuntime: Send + Sync {
     /// Whether a V8 OOM parked this runtime's thread.
     fn parked(&self) -> bool {
         false
+    }
+
+    /// `false` once the runtime has stopped for good; a join then loads the
+    /// scene again instead of joining it.
+    fn is_running(&self) -> bool {
+        true
     }
 
     #[cfg(test)]
@@ -602,6 +615,7 @@ impl SceneRuntime for RelayRuntime {
         &self,
         client_index: u32,
         _outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
+        _close: tokio_util::sync::CancellationToken,
     ) -> InitState {
         let (start, size) = match self.config.try_range_for_client(client_index) {
             Some(range) => range,
@@ -731,6 +745,7 @@ impl SceneRuntime for JsRuntime {
         &self,
         client_index: u32,
         outbound: tokio::sync::mpsc::Sender<Vec<u8>>,
+        close: tokio_util::sync::CancellationToken,
     ) -> InitState {
         let meter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         self.handle
@@ -758,6 +773,14 @@ impl SceneRuntime for JsRuntime {
             start,
             size,
         });
+        self.handle
+            .shared
+            .closes
+            .insert(client_index, close.clone());
+        if !self.is_running() {
+            // Stopped: nothing serves this client (see `close_clients`).
+            close.cancel();
+        }
         InitState {
             start,
             size,
@@ -818,6 +841,7 @@ impl SceneRuntime for JsRuntime {
         // Before the close frees the index for a new client.
         self.handle.shared.outbound.remove(&client_index);
         self.handle.shared.outbound_meters.remove(&client_index);
+        self.handle.shared.closes.remove(&client_index);
         let _ = self.handle.tx.send(Command::ClientClose {
             index: client_index,
         });
@@ -837,6 +861,13 @@ impl SceneRuntime for JsRuntime {
     fn snapshot(&self) -> Vec<u8> {
         self.handle.shared.snapshot.lock().clone()
     }
+
+    fn is_running(&self) -> bool {
+        self.handle
+            .shared
+            .running
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 pub fn frame_crdt(body: &[u8]) -> Vec<u8> {
@@ -854,7 +885,7 @@ mod tests {
     fn open(rt: &RelayRuntime) -> u32 {
         let index = rt.allocate_client_index();
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        let _ = rt.on_client_open(index, tx);
+        let _ = rt.on_client_open(index, tx, Default::default());
         index
     }
 
@@ -986,7 +1017,7 @@ mod tests {
 
         let second = open(&rt);
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        let init = rt.on_client_open(second, tx);
+        let init = rt.on_client_open(second, tx, Default::default());
         let joined: Vec<CrdtMessage> = decode_batch(&init.crdt_state)
             .into_iter()
             .filter(|m| matches!(m, CrdtMessage::Put { .. }))
@@ -1229,7 +1260,7 @@ mod tests {
     fn js_open(rt: &JsRuntime) -> u32 {
         let index = rt.allocate_client_index();
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        let _ = rt.on_client_open(index, tx);
+        let _ = rt.on_client_open(index, tx, Default::default());
         index
     }
 
@@ -1492,5 +1523,53 @@ mod tests {
             "with the held share full, b's early frame is not kept"
         );
         assert_eq!((budget.held(), budget.client_usage(a).0), (100, 100));
+    }
+
+    /// A runtime that stops asks every client to close and keeps their
+    /// indices until the host removes each one; a client added afterwards is
+    /// closed at once.
+    #[test]
+    fn a_stopped_runtime_closes_its_clients_and_keeps_their_indices() {
+        let js = "var open = false;\n\
+             registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } },\n\
+               function (ev) { if (ev.type === 'open') open = true; });\n\
+             module.exports.onUpdate = function (dt) { if (open) throw new Error('stop'); };"
+            .to_string();
+        let limits = RuntimeLimits {
+            js_update_failure_cap: 1,
+            ..RuntimeLimits::default()
+        };
+        let rt = std::sync::Arc::new(JsRuntime::new(
+            "stopping-scene",
+            js,
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        ));
+        let scene = crate::scene_state::scene::Scene::new("stopping-scene", rt.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        let (a, _) = scene.add_client("0x1".into(), tx.clone());
+
+        // `finish` clears `running` before it cancels the tokens: wait on
+        // the token itself.
+        assert!(
+            crate::shared::test_wait::until_blocking(|| a.cancel.is_cancelled()),
+            "every client of a stopped runtime is asked to close"
+        );
+        assert!(
+            !rt.is_running(),
+            "the runtime stopped after the failure cap"
+        );
+        assert_eq!(rt.handle.shared.slots.live(), 1, "the index stays held");
+
+        let (late, _) = scene.add_client("0x2".into(), tx);
+        assert_ne!(late.index, a.index, "no index of an open socket is reused");
+        assert!(late.cancel.is_cancelled(), "nothing serves a late joiner");
+
+        // What each socket loop does once its token fires.
+        assert!(scene.remove_connection(a.index, a.id));
+        assert!(scene.remove_connection(late.index, late.id));
+        assert_eq!(rt.handle.shared.slots.live(), 0);
     }
 }

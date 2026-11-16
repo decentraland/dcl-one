@@ -21,7 +21,7 @@ overrides:
   # extract-zip 2 makes the links of an archive, and a later entry can then write outside the target folder.
   # It has no fixed release. packages/zip-extract has the same call and makes no link.
   extract-zip: file:packages/zip-extract
-  # The versions npm installed for these dependents, which the packaged app ships.
+  # The versions npm installed for these dependents, which the packaged app ships; drop each with its dependent's next upgrade.
   '@dcl/single-sign-on-client>@dcl/crypto': 3.4.5
   'dcl-catalyst-client>@dcl/crypto': 3.4.5
   '@dcl/sdk-commands>@dcl/crypto': 3.4.5
@@ -29,10 +29,6 @@ overrides:
   '@dcl/crypto@3.4.5>@dcl/schemas': 9.15.0
   '@dcl/crypto@3.4.5>ethereum-cryptography': 1.2.0
   'electron-updater>semver': 7.6.3
-  'glob@11.1.0>minimatch': 10.2.2
-  'minimatch@10.2.2>brace-expansion': 5.0.2
-  'brace-expansion@5.0.2>balanced-match': 4.0.3
-  'path-scurry@2.0.2>lru-cache': 11.2.6
   '@types/glob>@types/node': 20.14.9
   '@types/node-fetch>@types/node': 20.14.9
 patchedDependencies:
@@ -55,3 +51,5 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@dcl/asset-packs'
   - '@dcl/inspector'
+  # The desktop build's upload step runs whatever the SDK team last tagged "next".
+  - '@dcl/cdn-uploader'

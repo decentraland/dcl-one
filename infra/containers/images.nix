@@ -46,6 +46,7 @@ let
       "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
       "PATH=${lib.makeBinPath [ pkgs.nodejs-slim_26 ]}:/bin"
       "HOST=0.0.0.0" "PORT=5212" "NODE_ENV=production" "SITES_STATE_DIR=/data"
+      "COMMIT_HASH=${revision}"
     ];
     ExposedPorts."5212/tcp" = { };
   };
@@ -57,6 +58,7 @@ let
       "HTTP_SERVER_HOST=0.0.0.0" "HTTP_SERVER_PORT=5210"
       "STORAGE_ROOT_FOLDER=/data/content" "AB_CDN_CACHE_DIR=/data/ab-cdn"
       "PROFILE_IMAGES_CACHE_DIR=/data/profile-images" "BVIMPOSTERS_STORE_ROOT=/data/imposters"
+      "COMMIT_HASH=${revision}"
     ];
     ExposedPorts."5210/tcp" = { };
   };

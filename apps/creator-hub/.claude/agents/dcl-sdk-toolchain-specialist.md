@@ -10,7 +10,7 @@ Follow `.ai/skills/local-package-chain/SKILL.md` steps 3 to 5 exactly. It's the 
 
 ## Know the toolchain
 
-- `packages/@dcl/sdk-commands/package.json` pins `@dcl/inspector` to an **exact** version, and you replace that pin. The toolchain keeps one lockfile per package, so install from inside `packages/@dcl/sdk-commands`.
+- `packages/@dcl/sdk-commands/package.json` pins `@dcl/inspector` to an **exact** version, and you replace that pin. The toolchain is one pnpm workspace with a single lockfile at its root; install from inside `packages/@dcl/sdk-commands`.
 - `@dcl/sdk` reaches its siblings through `file:../ecs`, `file:../sdk-commands`, and so on. Install it into a scene by **directory** (as `make init-test-scene` does), never as a packed tarball.
 - `make build` runs `make clean` first. `make test` is the jest suite. Never run `make update-snapshots` to turn a test green. A snapshot change is behavior the PR must explain.
 - Script component inputs are baked at build time (`collectScriptData`, the inlined `runtime-script.ts`). Rebuild the scene after any Script schema change.

@@ -6,7 +6,7 @@ pub mod relay_proto;
 
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use bevy::{log::tracing::span::EnteredSpan, tasks::IoTaskPool};
+use bevy::tasks::IoTaskPool;
 use common::structs::SceneJsFile;
 use common::{rpc::CancellationToken, structs::GlobalCrdtStateUpdate};
 use dcl_js::{CommunicatedWithRenderer, CrdtSendsThisTick, KillFlag, SuperUserScene};
@@ -201,13 +201,6 @@ impl WorkerContext {
             .to_bits()
     }
 
-    /// live references to the scene state: 1 = only this context, +1 per in-flight or
-    /// parked op future (every op clones via rc()). teardown is safe to free the state
-    /// only once this drains to 1.
-    pub fn ref_count(&self) -> usize {
-        Rc::strong_count(&self.state)
-    }
-
     pub(crate) fn rc(&self) -> Rc<RefCell<GothamState>> {
         self.state.clone()
     }
@@ -307,21 +300,6 @@ pub fn op_communicated_with_renderer(state: &WorkerContext) -> bool {
         .borrow_mut()
         .try_take::<CommunicatedWithRenderer>()
         .is_some()
-}
-
-#[wasm_bindgen]
-pub fn drop_context(state: WorkerContext) {
-    let span = state.state.borrow_mut().try_take::<EnteredSpan>();
-    drop(span);
-    let strong_count = Rc::strong_count(&state.state);
-    let weak_count = Rc::weak_count(&state.state);
-
-    let Ok(inner) = Rc::try_unwrap(state.state) else {
-        panic!("strong: {strong_count}, weak: {weak_count}");
-    };
-
-    let inner_inner = inner.into_inner();
-    drop(inner_inner);
 }
 
 #[wasm_bindgen]

@@ -128,7 +128,7 @@ class WorkflowTest(unittest.TestCase):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
         job = workflow.split('  build-deploy-web:', 1)[1].split('  headless-packages:', 1)[0]
         build = job.index('run: python3 ../../../apps/bevy-explorer/build-web.py')
-        tests = job.index('run: npm run test:shared-inputs --prefix react-web')
+        tests = job.index('run: cd react-web && pnpm run test:shared-inputs')
         upload = job.index('- name: Upload the complete web app')
         self.assertLess(build, tests)
         self.assertLess(tests, upload)
@@ -197,26 +197,21 @@ class WorkflowTest(unittest.TestCase):
         # Scenes tick within 11 s of the start; the assert step needs a first tick and a later, higher one.
         self.assertIn(' --location 52,-52 --server-mode --preview --timeout 30 ', job)
 
-    def test_a_pull_request_publishes_a_preview_only_with_the_label(self):
+    def test_a_same_repository_pull_request_publishes_a_preview(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         job = workflow.split('\n  build-deploy-web:\n', 1)[1].split('\n  headless-packages:\n', 1)[0]
         self.assertIn("      BEVY_WEB_PUBLISH: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || "
                       "(github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || "
                       "(github.event_name == 'pull_request' && "
                       "github.event.pull_request.head.repo.full_name == github.repository && "
-                      "github.head_ref != 'main' && github.head_ref != 'master' && "
-                      "contains(github.event.pull_request.labels.*.name, 'ci:preview')) }}\n", job)
+                      "github.head_ref != 'main' && github.head_ref != 'master') }}\n", job)
         self.assertIn('      publish: ${{ env.BEVY_WEB_PUBLISH }}\n', job)
         # The package job and the publish job read only that answer.
         self.assertIn("      - name: Upload the stamped package for publication\n"
                       "        if: needs.build-deploy-web.outputs.publish == 'true'\n", job)
         self.assertIn("\n  publish-web:\n    if: needs.build-deploy-web.outputs.publish == 'true'\n", workflow)
-        notice = job[job.index('      - name: Say how to get a preview\n'):
-                     job.index('      - name: Upload the stamped package for publication\n')]
-        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository && "
-                      "needs.build-deploy-web.outputs.publish != 'true'\n", notice)
-        self.assertIn('Add the ci:preview label, then push or reopen', notice)
-        # A closed pull request removes its tag with or without the label.
+        # No label gates the preview or its removal.
+        self.assertNotIn('ci:preview', workflow)
         cleanup = workflow.split('\n  preview-cleanup:\n', 1)[1].split('\n    name:', 1)[0]
         self.assertNotIn('labels', cleanup)
 
@@ -305,7 +300,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_source_and_integration_inputs_select_builds(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
-                     'rendering/bevy-explorer/source/react-web/package-lock.json',
+                     'rendering/bevy-explorer/source/react-web/pnpm-lock.yaml',
                      'apps/bevy-explorer/build-web.py', 'apps/bevy-explorer/Dockerfile.web',
                      'tooling/bevy-ci.py', 'tooling/ci_paths.py', ci.WORKFLOW,
                      '.github/workflows/bevy-explorer-images.yml'):
@@ -384,7 +379,7 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(all(result[lane] for lane in ci.LANES))
 
     def test_web_assets_validate_web_without_recompiling_native_targets(self):
-        for name in ('react-web/src/App.tsx', 'react-web/package-lock.json',
+        for name in ('react-web/src/App.tsx', 'react-web/pnpm-lock.yaml',
                      'react-web/bridge-scene/src/index.ts', 'deploy/web/engine/boot.js',
                      'deploy/web/service_worker.js'):
             with self.subTest(path=name):

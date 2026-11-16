@@ -38,8 +38,7 @@
         "healthy": true,
         "protocol": "<<VOLATILE>>",
         "usersCount": "<<VOLATILE>>",
-        "adapter": "<<VOLATILE>>",
-        "fixedAdapter": "<<VOLATILE>>"
+        "adapter": "<<VOLATILE>>"
       },
       "bff": {
         "healthy": true,

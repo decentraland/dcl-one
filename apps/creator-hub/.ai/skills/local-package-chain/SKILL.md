@@ -120,7 +120,7 @@ Then open the scene in Creator Hub (`pnpm run start` in `packages/creator-hub`) 
 
 Local tarball paths must never reach a pushed `package.json`. Before you push the js-sdk-toolchain branch:
 
-1. Open the monorepo PR first. Its CI posts a "Creator Hub test builds" comment whose Inspector section has an `npm install "<url>"` line (and an Asset packs section with its own when asset-packs changed). Read it with `gh pr view <number> --comments`.
+1. Open the monorepo PR first. Its CI posts a "Creator Hub test builds" comment whose Inspector section has a `pnpm add "<url>"` line (and an Asset packs section with its own when asset-packs changed). Read it with `gh pr view <number> --comments`.
 2. In `$TOOLCHAIN/packages/@dcl/sdk-commands`, run `pnpm add --save-exact "<inspector tarball url>"`, then `make build test` again.
 3. Push the toolchain branch and open its PR. In the body, link the monorepo PR and state that it merges first.
 4. After the monorepo PR lands on `main`, CI publishes `@dcl/inspector` to npm under `latest`. Replace the URL with that exact version (`pnpm add --save-exact @dcl/inspector@<version>`) before the toolchain PR merges.
@@ -130,6 +130,6 @@ Local tarball paths must never reach a pushed `package.json`. Before you push th
 Each hop undoes cleanly. Source the env file first:
 
 - Inspector `package.json`: `git -C "$REPO" checkout -- packages/inspector/package.json`.
-- Toolchain: `git -C "$TOOLCHAIN" checkout -- packages/@dcl/sdk-commands/package.json packages/@dcl/sdk-commands/pnpm-lock.yaml`, then `pnpm install` in that folder.
+- Toolchain: `git -C "$TOOLCHAIN" checkout -- packages/@dcl/sdk-commands/package.json pnpm-lock.yaml`, then `pnpm install` in `$TOOLCHAIN`.
 - Scene: `git -C "$SCENE" checkout -- package.json package-lock.json && (cd "$SCENE" && npm install)`.
 - Tarballs and env: `rm -rf "$PKGS"`.

@@ -4,11 +4,12 @@
 # most one test thread per core: after the others when the pool would oversubscribe the cores.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
 set -euo pipefail
-source "$(dirname "$0")/catalyst-test-resources.sh"
-prepare_catalyst_test_resources
-cd "$(dirname "$0")/../services/catalyst"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root/services/catalyst"
+receipts="$root/.cache/dev"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
-mkdir -p "$logs"
+mkdir -p "$logs" "$receipts"
+rm -f "$receipts/stats-engine-receipt.log"
 cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c '
 import json, os, sys
 for line in sys.stdin:
@@ -41,7 +42,12 @@ run() {
 log="$2/$(basename "$1").log"
 "$1" > "$log" 2>&1 || { cat "$log"; exit 1; }
 sed -n "s|^test result|$(basename "$1")|p" "$log"
-' _ {} "$logs"
+case "$(basename "$1")" in
+  stats_metrics_engine-*)
+    sed -n "/^STATS_ENGINE_RECEIPT /p" "$log" > "$3/stats-engine-receipt.log" || exit 1
+    cat "$3/stats-engine-receipt.log" ;;
+esac
+' _ {} "$logs" "$receipts"
 }
 if [ "$socket_jobs" -eq "$jobs" ]; then
   run "$jobs" < "$logs/shard"
