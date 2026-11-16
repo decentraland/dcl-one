@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralImage } from '@dcl/one-ui/foundations'
 import styles from './CardImage.module.css'
 import { hasUnsafeURLCharacters } from '../../link.helpers'
+import { contentLabel } from '../../content.helpers'
 
 export type CardImageProps = {
   src?: string | null
@@ -97,6 +98,7 @@ export function CardImage(props: CardImageProps) {
     <ImageAttempt
       key={JSON.stringify([src ?? null, fallbackSrc ?? null])}
       {...props}
+      alt={contentLabel(props.alt, '')}
       src={src}
       fallbackSrc={fallbackSrc}
     />
