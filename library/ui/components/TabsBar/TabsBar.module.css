@@ -1,3 +1,5 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
 /* Figma: Tabs bar / TabsBar. The pill variant follows decentraland.org's events tab row (ExperiencesTabs). */
 @layer dcl.components {
   .root {

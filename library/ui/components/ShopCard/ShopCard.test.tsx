@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ShopCard, ShopCardPrice, ShopCardSkeleton, type ShopCardLinkProps } from './ShopCard'
@@ -183,5 +185,78 @@ describe('ShopCardSkeleton', () => {
   it('is hidden from assistive technology', () => {
     const { container } = render(<ShopCardSkeleton />)
     expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true')
+  })
+})
+
+/** The module's text, and the declarations of the rule whose selector list is exactly `selector`. */
+// Vitest runs from library/ui (its config's root), where jsdom gives no file URL for this module.
+const css = readFileSync(join(process.cwd(), 'components/ShopCard/ShopCard.module.css'), 'utf8')
+const blockOf = (source: string, selector: string): string => {
+  const start = source.indexOf(`${selector} {`)
+  if (start < 0) throw new Error(`no rule ${selector}`)
+  return source.slice(start, source.indexOf('}', start))
+}
+const mediaOf = (query: string): string => {
+  const start = css.indexOf(`@media (${query}) {`)
+  if (start < 0) throw new Error(`no @media (${query})`)
+  // The block ends at the first line that closes it at its own indentation.
+  return css.slice(start, css.indexOf('\n  }\n', start))
+}
+
+describe('ShopCard motion', () => {
+  it('keys the catalogue motion on its class, and the swap on having actions', () => {
+    render(<ShopCard {...item} variant="catalogue" actions={<button type="button">Buy</button>} />)
+    const card = screen.getByRole('article')
+    expect(card).toHaveClass('catalogue', 'hasActions')
+  })
+
+  it('gives the in-world Shop card no catalogue motion', () => {
+    render(<ShopCard {...item} actions={<button type="button">Buy</button>} />)
+    expect(screen.getByRole('article')).not.toHaveClass('catalogue')
+    // The shop variant only fades its ring (140ms), as the in-world card did.
+    expect(blockOf(css, '.card::after')).toContain('transition: opacity 140ms')
+    expect(css).not.toMatch(/\.card:hover\s*\{[^}]*transform/)
+  })
+
+  it('slides the actions up from the bottom and back on hover and keyboard focus', () => {
+    const rest = blockOf(css, '.catalogue .actions')
+    expect(rest).toContain('transform: translateY(100%)')
+    expect(rest).toMatch(/opacity 300ms ease-in-out,\s*transform 300ms ease-in-out/)
+    const shown = blockOf(
+      css,
+      '.catalogue.hasActions:hover .actions,\n  .catalogue.hasActions:has(:focus-visible) .actions'
+    )
+    expect(shown).toContain('transform: translateY(0)')
+    expect(blockOf(css, '.hasActions:hover .actions,\n  .hasActions:has(:focus-visible) .actions')).toContain(
+      'opacity: 1'
+    )
+  })
+
+  it('lifts the card and brings its ring out from behind its edge', () => {
+    expect(blockOf(css, '.catalogue')).toContain('transition: transform 200ms ease-in-out')
+    expect(blockOf(css, '.catalogue:hover,\n  .catalogue:focus-within')).toContain('transform: translateY(-4px)')
+    expect(blockOf(css, '.catalogue::after')).toMatch(/inset: 0;[\s\S]*inset 300ms ease-in-out/)
+    expect(
+      blockOf(css, '.catalogue:hover::after,\n  .catalogue:has(:focus-visible)::after,\n  .catalogue.selected::after')
+    ).toContain('inset: -8px')
+  })
+
+  it('shows every state at once, in place, under reduced motion', () => {
+    const reduced = mediaOf('prefers-reduced-motion: reduce')
+    expect(blockOf(reduced, '.card::after,\n    .catalogue,\n    .catalogue .actions,\n    .catalogue .creator,\n    .catalogue .meta')).toContain(
+      'transition: none'
+    )
+    expect(blockOf(reduced, '.catalogue:hover,\n    .catalogue:focus-within,\n    .catalogue .actions')).toContain(
+      'transform: none'
+    )
+    expect(reduced).toContain('animation: none')
+  })
+
+  it('keeps the actions shown and unmoved on a touch screen', () => {
+    const touch = mediaOf('hover: none')
+    const actions = blockOf(touch, '.catalogue .actions')
+    expect(actions).toContain('opacity: 1')
+    expect(actions).toContain('pointer-events: auto')
+    expect(actions).toContain('transform: none')
   })
 })
