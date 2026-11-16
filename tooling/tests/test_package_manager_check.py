@@ -21,14 +21,21 @@ class PackageManagerTest(unittest.TestCase):
             root = Path(tmp)
             write(root, 'apps/x/pnpm-lock.yaml')
             write(root, 'apps/x/pnpm-workspace.yaml', 'ignoreScripts: true\nsaveExact: true\n')
-            write(root, 'apps/x/.npmrc', 'registry=https://registry.npmjs.org/\n')
+            write(root, 'apps/x/.npmrc', '\n'.join((
+                '; registry and auth only',
+                'registry=https://registry.npmjs.org/',
+                '@dcl:registry=https://registry.npmjs.org/',
+                '//registry.npmjs.org/:_authToken=${NPM_TOKEN}',
+                'strict-ssl = true')))
             write(root, 'apps/x/node_modules/y/package-lock.json')
             write(root, 'library/js-sdk-toolchain/test/snapshots/package-lock.json')
             write(root, '.github/workflows/x.yml', '\n'.join((
                 '      # npm run build is what this used to call',
+                "      paths: ['**/yarn.lock', '**/package-lock.json']",
                 '      - run: corepack enable && pnpm install --frozen-lockfile && pnpm run build',
-                '      - run: npx --yes pnpm@11.27.0 install --frozen-lockfile',
-                '      - run: npm pack && npm publish "$tgz" --access public',
+                '      - run: corepack pnpm@11.27.0 install --frozen-lockfile',
+                '      - run: npm pack && npm publish "$tgz" --access public && npm whoami',
+                '      - run: npm --registry https://registry.npmjs.org view "$pkg" version && npm pkg set x=1',
                 '      - run: npm view "$pkg" dist-tags --json && npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"')))
             self.assertEqual(check.offenders(root), [])
 
@@ -37,18 +44,22 @@ class PackageManagerTest(unittest.TestCase):
             root = Path(tmp)
             write(root, 'apps/x/package-lock.json')
             write(root, 'apps/y/yarn.lock')
-            write(root, 'apps/z/.npmrc', 'ignore-scripts=true\nsave-exact = true\nfund=false\n')
-            write(root, '.github/workflows/x.yml', '      - run: npm ci\n      - run: cd app && npm run build\n      - run: npx tsc\n')
+            write(root, 'apps/z/.npmrc', '\n'.join((
+                'ignore-scripts=true', 'save-exact = true', 'allow-builds=esbuild', 'minimum-release-age=0', 'fund=false')))
+            commands = (
+                'npm ci', 'cd app && npm run build', 'npx tsc', 'npm --prefix app ci', 'npm -w pkg run build',
+                'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@11.27.0 install', 'yarn install',
+                'cd app && yarnpkg add thing')
+            write(root, '.github/workflows/x.yml', ''.join(f'      - run: {command}\n' for command in commands))
             write(root, '.github/actions/a/run.sh', 'npm install --global thing\n')
             self.assertEqual(check.offenders(root), [
-                '.github/actions/a/run.sh:1: installs or runs with npm; use pnpm',
-                '.github/workflows/x.yml:1: installs or runs with npm; use pnpm',
-                '.github/workflows/x.yml:2: installs or runs with npm; use pnpm',
-                '.github/workflows/x.yml:3: installs or runs with npm; use pnpm',
+                '.github/actions/a/run.sh:1: installs or runs with npm or yarn; use pnpm',
+                *(f'.github/workflows/x.yml:{line}: installs or runs with npm or yarn; use pnpm'
+                  for line in range(1, len(commands) + 1)),
                 'apps/x/package-lock.json: npm or yarn lockfile; convert it with `pnpm import` and delete it',
                 'apps/y/yarn.lock: npm or yarn lockfile; convert it with `pnpm import` and delete it',
-                'apps/z/.npmrc: pnpm does not read `ignore-scripts` here; set it in pnpm-workspace.yaml',
-                'apps/z/.npmrc: pnpm does not read `save-exact` here; set it in pnpm-workspace.yaml'])
+                *(f'apps/z/.npmrc: pnpm does not read `{key}` here; move it to pnpm-workspace.yaml or delete it'
+                  for key in ('ignore-scripts', 'save-exact', 'allow-builds', 'minimum-release-age', 'fund'))])
 
     def test_the_repository_passes(self):
         self.assertEqual(check.offenders(check.ROOT), [])

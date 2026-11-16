@@ -18,18 +18,18 @@ the SDK belongs beside it.
 
 `library/js-sdk-toolchain` is a first-party snapshot of `decentraland/js-sdk-toolchain` `main`
 (`afd7f79`, 2026-10-23), keeping its Apache-2.0 `LICENSE`, its layout (six packages under
-`packages/@dcl`, `file:` links between them) and its build (`make install
+`packages/@dcl`, linked to each other with `workspace:*`) and its build (`make install
 build test prepare`). Its `.github`, agent files and editor configuration were left behind.
 It installs with pnpm as one workspace with a single lockfile
 ([decision](2026-11-13-pnpm-default-package-manager.md)).
 
-- `@dcl/protocol` is `file:../protocol` (root) and `file:../../../../protocol` (`sdk-commands`):
+- `@dcl/protocol` is `link:../protocol` (root) and `link:../../../../protocol` (`sdk-commands`):
   the install links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
 - `make prepare` pins `@dcl/protocol` in the packed manifests to `PROTOCOL_VERSION`, which the
   caller must set (the publish job's value; `sdk.yml` packs with a `0.0.0-unpublished.<sha>` that
-  says what it is), so a tarball never names a `file:` link or a version that is not on npm
+  says what it is), so a tarball never names a local link or a version that is not on npm
   (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
@@ -58,7 +58,7 @@ It installs with pnpm as one workspace with a single lockfile
 - `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
   movement scenes stop needing the `experimental-bevy` dist-tag.
 - `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
-  `protocol/` already are); its lockfiles and `node_modules` stay its own.
+  `protocol/` already are); its lockfile and `node_modules` stay its own.
 
 ## Follow-ups
 

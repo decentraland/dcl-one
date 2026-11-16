@@ -66,14 +66,14 @@ jobs:
         if: success() || failure()
         working-directory: tooling/shop-parity
         run: |
-          npx --yes pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-          npx --yes pnpm@11.27.0 typecheck
+          corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.27.0 typecheck
           node --test test/*.test.mts
       - name: Test shop trade journey helpers
         if: success() || failure()
         working-directory: tooling/shop-trade-journey
         run: |
-          npx --yes pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
           node --test lib/*.test.mts
   # Advisory until its default-branch run history supports required-check promotion.
   social-service-contracts:

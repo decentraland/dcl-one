@@ -31,8 +31,8 @@ decisions; the rest of both stands.
   where npm had settled a dist-tag or a peer on its own, so the two version sets are compared
   before the old lockfile goes.
 - pnpm settings live in `pnpm-workspace.yaml` (`ignoreScripts`, `saveExact`, `allowBuilds`,
-  `overrides`, `nodeLinker`, `minimumReleaseAge`). pnpm 11 does not read `ignore-scripts`,
-  `save-exact` or a manifest's `overrides`.
+  `overrides`, `nodeLinker`, `minimumReleaseAge`). pnpm 11 reads only registry, auth and network
+  keys from `.npmrc`, and no manifest's `overrides`.
 - No dependency runs an install script unless `allowBuilds` names it with the reason.
 - Tools a project depends on run from its lockfile (`pnpm exec`), never through `npx`, which
   fetches a release when it runs. A tool in no lockfile runs through `pnpm dlx` (the Creator Hub's
@@ -42,8 +42,9 @@ decisions; the rest of both stands.
   hands a `--` to the script as an argument, where npm removes it.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
   install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
-- `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on pnpm settings left in
-  `.npmrc`, and on a workflow that installs or runs with npm.
+- `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on an `.npmrc` key pnpm does
+  not read, and on a workflow that installs or runs with npm or yarn, or runs anything through
+  `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
 
 Where the layout differs from pnpm's default:
 

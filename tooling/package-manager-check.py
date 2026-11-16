@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail on an npm or yarn lockfile, pnpm settings in .npmrc, or a workflow that installs or runs with npm."""
+"""Fail on an npm or yarn lockfile, a setting pnpm ignores in .npmrc, or a workflow that installs or runs with npm or yarn."""
 import argparse
 import os
 from pathlib import Path
@@ -12,11 +12,17 @@ SKIP_DIRS = {'.git', 'node_modules', 'target', 'dist', '.cache', '.agent-work'}
 LOCKFILES = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock'}
 # Test scenes that install as a creator's project does, with npm.
 CREATOR_SCENES = ('library/js-sdk-toolchain/test/snapshots/package-lock.json',)
-# pnpm reads these from pnpm-workspace.yaml, never from .npmrc.
-UNREAD = re.compile(r'^\s*(ignore-scripts|save-exact|save-prefix|node-linker|auto-install-peers)\s*=', re.M)
+# pnpm 11 reads only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
+NPMRC_READ = {'ca', 'cafile', 'cert', 'key', 'registry', '_auth', '_authToken', '_password', 'email', 'username',
+              'https-proxy', 'proxy', 'no-proxy', 'http-proxy', 'local-address', 'strict-ssl'}
+NPMRC_KEY = re.compile(r'^\s*([^#;\s=][^=]*?)\s*=', re.M)
 WORKFLOWS = ('.github/workflows/', '.github/actions/')
-# Publishing and registry queries stay on npm; fetching pnpm or a newer npm through npx is how a job bootstraps them.
-NPM_USE = re.compile(r'\bnpm\s+(ci|install|i|add|run|run-script|test|start|exec|rebuild|link)\b|\bnpx\b(?!\s+--yes\s+(pnpm|npm)@)')
+# A job may fetch a newer npm to publish; that npm is checked like any other.
+NPX_NPM = re.compile(r'\bnpx\s+--yes\s+npm@\S+')
+# npm commands that install or run a project, after any global flags; publishing and registry queries stay on npm.
+NPM_USE = re.compile(r'\bnpm(?:\s+-{1,2}[\w-]+(?:[= ][^\s-]\S*)?)*\s+(?:ci|install|i|add|uninstall|remove|update|up|dedupe'
+                     r'|prune|run|run-script|test|t|start|stop|restart|exec|x|rebuild|link|init|create)(?![\w-])'
+                     r'|\bnpx\b|(?:^|[\s;&|(])(?:yarn|yarnpkg)(?=\s|$)')
 
 
 def files(root):
@@ -41,12 +47,14 @@ def offenders(root):
         if name in LOCKFILES:
             found.append(f'{rel}: npm or yarn lockfile; convert it with `pnpm import` and delete it')
         elif name == '.npmrc':
-            for match in UNREAD.finditer((root / rel).read_text(encoding='utf-8', errors='replace')):
-                found.append(f'{rel}: pnpm does not read `{match.group(1)}` here; set it in pnpm-workspace.yaml')
+            for match in NPMRC_KEY.finditer((root / rel).read_text(encoding='utf-8', errors='replace')):
+                key = match.group(1)
+                if not (key.startswith(('@', '//')) or key in NPMRC_READ):
+                    found.append(f'{rel}: pnpm does not read `{key}` here; move it to pnpm-workspace.yaml or delete it')
         elif rel.startswith(WORKFLOWS) and name.endswith(('.yml', '.yaml', '.sh')):
             for number, line in enumerate((root / rel).read_text(encoding='utf-8', errors='replace').splitlines(), 1):
-                if not line.lstrip().startswith('#') and NPM_USE.search(line):
-                    found.append(f'{rel}:{number}: installs or runs with npm; use pnpm')
+                if not line.lstrip().startswith('#') and NPM_USE.search(NPX_NPM.sub('npm', line)):
+                    found.append(f'{rel}:{number}: installs or runs with npm or yarn; use pnpm')
     return found
 
 
