@@ -968,6 +968,60 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
     db.drop().await;
 }
 
+/// A used credit's own pledge does not count against its debit: a 60-credit
+/// pledge on a 100-credit wallet settles in one pass and leaves 40.
+#[tokio::test]
+async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
+    let Some(db) = OwnDatabase::create("usage_own_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let chain_id: i64 = 137;
+    let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
+        chain_id,
+        head: 2_000,
+        finalized: 1_990,
+        limit: 1_000,
+        t_base: chrono::Utc::now().timestamp() - 20_000,
+        logs: vec![credit_used_log(
+            &contract,
+            1_500,
+            0,
+            &wallet.address,
+            &pledge,
+            10u128.pow(19),
+            10u128.pow(19),
+        )],
+        get_logs: 0,
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let stub = axum::Router::new()
+        .route("/", axum::routing::post(chain_rpc))
+        .with_state(chain.clone());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let index = super::usage::UsageIndex::new(
+        Credits::new(pool.clone()).with_usage_index(chain_id),
+        Outbound::for_tests(),
+        usage_settings(&rpc, chain_id, &contract, 50),
+    );
+
+    let out = index.run_pass(None, true).await.unwrap();
+    assert!(
+        out.published && out.consumed == 1 && out.failed == 0,
+        "{out:?}"
+    );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(balance_is(&pool, &wallet.address, "40").await);
+    db.drop().await;
+}
+
 /// `serve` runs the CreditUsed index through `State::spawn_jobs`, beside the other credits
 /// writers and under its restore stamps; `catalyst index` builds no credits state.
 #[tokio::test]

@@ -353,8 +353,9 @@ pub fn remainder_credits(
 impl Credits {
     /// One log's settlement in one transaction: the authorization row is
     /// locked, the kind decided from the settlements already recorded, the
-    /// debit made under an idempotency key, the settlement row inserted, the
-    /// status flipped to `consumed` and the revocation queued. A concurrent
+    /// status flipped to `consumed` (so its own pledge no longer counts as
+    /// held against the debit), the debit made under an idempotency key, the
+    /// settlement row inserted and the revocation queued. A concurrent
     /// pass loses on the settlement PK and moves nothing.
     async fn settle_usage(
         &self,
@@ -397,6 +398,15 @@ impl Credits {
         } else {
             format!("credit-used:{}:{}:{}", c.salt, c.block_number, c.log_index)
         };
+        // Out of the held set before the debit: the wallet's held sum counts
+        // `authorized` and `retired` pledges, and this credit's own pledge is
+        // the one being paid, not a hold against it. A refused debit rolls
+        // the status back with the transaction.
+        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
+            .bind(&c.salt)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
         let spent = match self
             .settle_in_tx(&mut tx, &address, &amount, &key, Some(&key))
             .await
@@ -405,7 +415,7 @@ impl Credits {
             Err(ApiError::Database(e)) => return Err(ApiError::Database(e)),
             Err(e) => {
                 tx.rollback().await?;
-                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the next pass and the reconciler");
+                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,
@@ -432,11 +442,6 @@ impl Credits {
         .bind(&key)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
-            .bind(&c.salt)
-            .bind(now())
-            .execute(&mut *tx)
-            .await?;
         if let Some(hash) = credit_hash {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
