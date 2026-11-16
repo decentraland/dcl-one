@@ -37,7 +37,8 @@ use comms::{
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
 use scene_runner::{
-    asset_preload::plugin::PreloadedGltf, permissions::Permission, update_world::animation::Clips,
+    asset_preload::plugin::PreloadedGltf, permissions::Permission,
+    scene_partition::PartitionedEmoteDownloads, update_world::animation::Clips,
 };
 
 use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
@@ -157,7 +158,14 @@ impl Plugin for AvatarAnimationPlugin {
             Update,
             (
                 (handle_trigger_emotes, broadcast_emote).before(animate),
-                (animate, play_current_emote, play_masked_emote)
+                // `file_emote_downloads` sits between choosing this frame's emotes and starting
+                // their loads, so an emote's hash has its owner when its first request is queued
+                (
+                    animate,
+                    file_emote_downloads,
+                    play_current_emote,
+                    play_masked_emote,
+                )
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
@@ -166,6 +174,67 @@ impl Plugin for AvatarAnimationPlugin {
         );
         app.add_console_command::<EmoteConsoleCommand, _>(emote_console_command);
     }
+}
+
+/// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
+/// of the emotes it plays (the full-body one and the upper-body request) go on the avatar as
+/// `PartitionedEmoteDownloads`, so the request slots rank an emote's definition, model and
+/// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
+/// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
+/// download, so neither is listed. Written only when the list changes.
+#[allow(clippy::type_complexity)]
+pub(crate) fn file_emote_downloads(
+    mut commands: Commands,
+    avatars: Query<
+        (
+            Entity,
+            &ActiveEmote,
+            Option<&MaskedEmote>,
+            Option<&PartitionedEmoteDownloads>,
+        ),
+        With<AvatarAnimPlayer>,
+    >,
+    mut emote_loader: CollectibleManager<Emote>,
+) {
+    for (entity, active, masked, filed) in &avatars {
+        let masked = masked
+            .and_then(|masked| masked.request.as_ref())
+            .map(|request| &request.urn);
+        let hashes = emote_download_hashes(std::iter::once(&active.urn).chain(masked), |urn| {
+            emote_loader.get_hash(urn).ok()
+        });
+        match (filed, hashes.is_empty()) {
+            (None, true) => {}
+            (Some(filed), false) if filed.0 == hashes => {}
+            (_, true) => {
+                commands
+                    .entity(entity)
+                    .try_remove::<PartitionedEmoteDownloads>();
+            }
+            (_, false) => {
+                commands
+                    .entity(entity)
+                    .try_insert(PartitionedEmoteDownloads(hashes));
+            }
+        }
+    }
+}
+
+/// The entity hashes behind the emotes an avatar plays, each once, sorted: `resolve` gives a
+/// collectible emote's hash once its pointer is known. Scene emotes are left out without asking,
+/// since they are no collectible and their content downloads under the scene's hash.
+pub(crate) fn emote_download_hashes<'a>(
+    urns: impl IntoIterator<Item = &'a EmoteUrn>,
+    resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
+) -> Vec<String> {
+    let mut hashes: Vec<String> = urns
+        .into_iter()
+        .filter(|urn| urn.scene_emote().is_none())
+        .filter_map(resolve)
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    hashes
 }
 
 #[derive(Component, Default)]

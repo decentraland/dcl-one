@@ -4,14 +4,16 @@ use crate::ux::{TrySteps, UserError};
 use anyhow::{Result, anyhow};
 use rolldown::Bundler;
 use rolldown_common::{
-    BundlerOptions, BundlerTransformOptions, ChecksOptions, CodeSplittingMode, Either, InputItem,
-    IsExternal, OutputFormat, Platform, RawMinifyOptions, ResolveOptions, SourceMapType, TsConfig,
+    BundlerOptions, BundlerTransformOptions, ChecksOptions, CodeSplittingMode, CommentsOptions,
+    Either, InputItem, IsExternal, OutputFormat, Platform, RawMinifyOptions, ResolveOptions,
+    SourceMapType, TsConfig,
 };
 use rolldown_utils::indexmap::FxIndexMap;
 use rolldown_utils::pattern_filter::StringOrRegex;
 use std::path::PathBuf;
 
-pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<()> {
+/// Bundle to `opts.outfile`; the files the bundler loaded come back.
+pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf>> {
     let mut bundler = Bundler::new(bundler_options(project, opts)?).map_err(|e| {
         anyhow::Error::from(
             UserError::new(
@@ -53,7 +55,11 @@ pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<()> {
         }
         tracing::warn!("rolldown {kind}: {warning}");
     }
-    Ok(())
+    Ok(bundler
+        .watch_files()
+        .iter()
+        .map(|file| PathBuf::from(file.as_str()))
+        .collect())
 }
 
 fn bundler_options(project: &Project, opts: &EsbuildOptions) -> Result<BundlerOptions> {
@@ -84,6 +90,13 @@ fn bundler_options(project: &Project, opts: &EsbuildOptions) -> Result<BundlerOp
             ..Default::default()
         }),
         minify: Some(RawMinifyOptions::Bool(opts.production)),
+        // A minified bundle is not fed to another bundler or a coverage
+        // tool, the only readers of `@__PURE__` and `istanbul ignore`.
+        comments: Some(CommentsOptions {
+            legal: true,
+            annotation: !opts.production,
+            jsdoc: !opts.production,
+        }),
         sourcemap: if opts.production {
             None
         } else {

@@ -667,8 +667,8 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
-        debug_panel::register(app, self.preview);
-        bevy_variants::build(app);
+        app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
+        app.add_plugins(bevy_variants::BevyVariantsPlugin);
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(web_cache_plugin::WebCachePlugin {
             preview: self.preview,
@@ -692,7 +692,6 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
-        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();

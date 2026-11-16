@@ -163,6 +163,34 @@ const signInit = () => {
     }
   };
 
+  // A run started with a deploy token (the URL's #token=) can be cancelled
+  // from the page too, through the same resource a program would use.
+  const cancel = $('sign-cancel');
+  const deployToken = new URLSearchParams(location.hash.replace(/^#/, '')).get('token');
+  if (cancel && deployToken) {
+    cancel.hidden = false;
+    cancel.addEventListener('click', async () => {
+      cancel.disabled = true;
+      try {
+        const res = await fetch(panel.dataset.api.replace(/\/deploy\/sign$/, '/api/deploy'), {
+          method: 'DELETE',
+          headers: { 'x-deploy-token': deployToken },
+        });
+        const state = await res.json();
+        if (res.ok) {
+          go.disabled = true;
+          status('info', state.phase === 'cancelled' ? 'Deployment cancelled.' : 'Cancelling the deployment…');
+        } else {
+          status('err', '✗ ' + (state.message || ('cannot cancel: the deployment is ' + state.phase)));
+          cancel.disabled = false;
+        }
+      } catch (e) {
+        status('err', '✗ ' + (e && e.message ? e.message : e));
+        cancel.disabled = false;
+      }
+    });
+  }
+
   go.addEventListener('click', async () => {
     try {
       if (!window.ethereum) {

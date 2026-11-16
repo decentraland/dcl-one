@@ -10,9 +10,9 @@ title: string, description: string,
  */
 thumbnail?: string, pointers: Array<string>, 
 /**
- * Absent when the metadata has none.
+ * Absent when the metadata has no such key; an explicit `null` is kept.
  */
-runtimeVersion?: string, 
+runtimeVersion?: string | null, 
 /**
  * `entity.timestamp || Date.now()`: the page's build time when missing or 0.
  */

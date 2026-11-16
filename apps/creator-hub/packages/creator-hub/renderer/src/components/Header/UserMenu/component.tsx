@@ -1,0 +1,72 @@
+import { useCallback, useState } from 'react';
+import type { AvatarFaceProps } from 'decentraland-ui2/dist/components/AvatarFace/AvatarFace.types';
+import { AvatarFace } from 'decentraland-ui2/dist/components/AvatarFace/AvatarFace';
+import { Menu, MenuItem, Button, Tooltip } from 'decentraland-ui2';
+import { t } from '/@/modules/store/translation/utils';
+import type { Props } from './types';
+
+import './styles.css';
+
+export function UserMenu({ avatar, isSignedIn, onClickSignOut, onClickSignIn }: Props) {
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
+  const handleClick = useCallback((event: React.MouseEvent<HTMLElement, MouseEvent>) => {
+    setAnchorEl(event.currentTarget);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    setAnchorEl(null);
+  }, []);
+
+  return isSignedIn ? (
+    <>
+      <Tooltip
+        title={t('navbar.user_menu.account_tooltip')}
+        placement="bottom"
+        classes={{ tooltip: 'AccountTooltip' }}
+      >
+        <Button
+          id="AvatarButton"
+          className="AvatarButton"
+          data-testid="user-menu-avatar-button"
+          aria-controls={open ? 'UserMenu' : undefined}
+          aria-haspopup="true"
+          aria-expanded={open ? 'true' : undefined}
+          onClick={handleClick}
+          disableRipple
+        >
+          <AvatarFace
+            size="medium"
+            avatar={avatar as AvatarFaceProps['avatar']}
+          />
+        </Button>
+      </Tooltip>
+      <Menu
+        id="UserMenu"
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        MenuListProps={{
+          'aria-labelledby': 'AvatarButton',
+        }}
+      >
+        <MenuItem
+          data-testid="user-menu-sign-out"
+          onClick={onClickSignOut}
+        >
+          {t('navbar.user_menu.sign_out')}
+        </MenuItem>
+      </Menu>
+    </>
+  ) : (
+    <Button
+      className="SignInButton"
+      data-testid="user-menu-sign-in"
+      onClick={onClickSignIn}
+      variant="contained"
+      disableRipple
+    >
+      {t('navbar.user_menu.sign_in')}
+    </Button>
+  );
+}

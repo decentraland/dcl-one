@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { useState } from 'react'
@@ -33,6 +33,81 @@ describe('when NavBar accepts app-owned composition controls', () => {
         </nav>
       )
     }
+  })
+
+  it('should recover unclaimed outside focus while respecting an explicitly consumed key', async () => {
+    render(
+      <>
+        <button>Outside</button>
+        <NavBar {...props} />
+      </>
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const outside = screen.getByRole('button', { name: 'Outside' })
+    outside.focus()
+    expect(fireEvent.keyDown(outside, { key: 'Tab' })).toBe(false)
+    expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+    outside.focus()
+    outside.addEventListener('keydown', (event) => event.preventDefault(), { once: true })
+    fireEvent.keyDown(outside, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(outside).toHaveFocus()
+    fireEvent.keyDown(outside, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
+  })
+
+  it('should cycle through native summary while excluding closed disclosure content', async () => {
+    render(
+      <NavBar
+        {...props}
+        accountControl={
+          <details>
+            <summary>Wallet options</summary>
+            <button>Hidden wallet action</button>
+          </details>
+        }
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    screen.getByRole('link', { name: 'Decentraland home' }).focus()
+    await user.tab({ shift: true })
+    expect(screen.getByText('Wallet options')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+  })
+
+  it('should release the reduced-motion observer when the open menu leaves', async () => {
+    const reduced = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const desktop = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('matchMedia', (query: string) =>
+      query.includes('prefers-reduced-motion') ? reduced : desktop
+    )
+    try {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(reduced.addEventListener).toHaveBeenCalledOnce()
+      const listener = reduced.addEventListener.mock.calls[0]![1]
+      await user.click(screen.getByRole('button', { name: 'Close menu' }))
+      expect(reduced.removeEventListener).toHaveBeenCalledExactlyOnceWith('change', listener)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('should keep the one real header inside the open menu modal ownership', async () => {
+    render(<NavBar {...props} />)
+    const header = screen.getByRole('navigation', { name: 'Main' })
+    const trigger = screen.getByRole('button', { name: 'Open menu' })
+    await user.click(trigger)
+    const modal = screen.getByRole('dialog', { name: 'Menu' })
+    expect(modal).toContainElement(header)
+    expect(within(modal).getAllByRole('navigation', { name: 'Main' })).toHaveLength(1)
+    expect(trigger).toHaveAccessibleName('Close menu')
+    expect(screen.queryByRole('heading', { name: 'Menu' })).not.toBeInTheDocument()
+    await user.click(trigger)
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('should retain numeric balances while replacing the standard account trigger', async () => {
@@ -84,11 +159,11 @@ describe('when NavBar accepts app-owned composition controls', () => {
     const menu = screen.getByRole('button', { name: 'Open menu' })
     await user.click(menu)
     const drawer = screen.getByRole('dialog', { name: 'Menu' })
-    const close = within(drawer).getByRole('button', { name: 'Close menu' })
+    const first = within(drawer).getByRole('link', { name: 'Decentraland home' })
     const wallet = within(drawer).getByRole('button', { name: 'Connect wallet' })
     wallet.focus()
     await user.tab()
-    expect(close).toHaveFocus()
+    expect(first).toHaveFocus()
     await user.tab({ shift: true })
     expect(wallet).toHaveFocus()
     await user.keyboard('{Escape}')
@@ -161,11 +236,11 @@ describe('when NavBar accepts app-owned composition controls', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Open menu' }))
     const drawer = screen.getByRole('dialog', { name: 'Menu' })
-    const close = within(drawer).getByRole('button', { name: 'Close menu' })
+    const first = within(drawer).getByRole('link', { name: 'Decentraland home' })
     const note = within(drawer).getByRole('textbox', { name: 'Wallet note' })
     note.focus()
     await user.tab()
-    expect(close).toHaveFocus()
+    expect(first).toHaveFocus()
     await user.tab({ shift: true })
     expect(note).toHaveFocus()
     await user.tab({ shift: true })
@@ -277,10 +352,13 @@ describe('when NavBar accepts app-owned composition controls', () => {
       )
       expect(screen.getByRole('button', { name: 'Account: Ada' })).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
-      expect(within(screen.getByRole('dialog')).getByText('Ada')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
+      expect(within(screen.getByRole('dialog')).getByText('Ada')).toBeVisible()
       expect(
         within(screen.getByRole('dialog')).getByRole('link', { name: 'Profile' })
       ).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
       await user.keyboard('{Escape}')
       rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} accountControl={value} />)
       expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()

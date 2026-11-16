@@ -5,6 +5,8 @@
 //! written only by a pass and deleted by a failure.
 
 use crate::scene::Project;
+use crate::typescript::Compiler;
+use dcl_scene_authoring::jsjson::JsValue;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 /// the rebuild that started it.
 pub const TSBUILDINFO: &str = ".dcl-cache/tsbuildinfo";
 const STAMP: &str = ".dcl-cache/tscheck.json";
+const DEPRECATIONS: &str = ".dcl-cache/tsdeprecations.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Stamp {
@@ -135,22 +138,26 @@ fn program_files(root: &Path) -> Option<Vec<String>> {
         .collect()
 }
 
-/// tsconfig.json and everything it extends; None when a link does not
-/// resolve, and then tsc runs.
-fn tsconfig_chain(project: &Project) -> Option<Vec<String>> {
+/// tsconfig.json and everything it extends, each with its path as the stamp
+/// names it; None when a link does not resolve, and then tsc runs.
+fn tsconfig_docs(project: &Project) -> Option<Vec<(String, JsValue)>> {
     let mut chain = Vec::new();
     let mut current = project.root.join("tsconfig.json");
     for _ in 0..8 {
-        chain.push(rel_str(&project.root, &current));
         let doc =
             dcl_scene_authoring::jsjson::parse(&std::fs::read_to_string(&current).ok()?).ok()?;
-        let Some(next) = doc.get("extends").and_then(|e| e.as_str()) else {
+        let next = doc
+            .get("extends")
+            .and_then(|e| e.as_str())
+            .map(str::to_string);
+        chain.push((rel_str(&project.root, &current), doc));
+        let Some(next) = next else {
             return Some(chain);
         };
         current = match next.starts_with('.') || next.starts_with('/') {
             true => current.parent()?.join(next),
             false => project
-                .node_module(next)
+                .node_module(&next)
                 .or_else(|| project.node_module(&format!("{next}/tsconfig.json")))?,
         };
         if !current.is_file() {
@@ -158,6 +165,78 @@ fn tsconfig_chain(project: &Project) -> Option<Vec<String>> {
         }
     }
     None
+}
+
+fn tsconfig_chain(project: &Project) -> Option<Vec<String>> {
+    Some(
+        tsconfig_docs(project)?
+            .into_iter()
+            .map(|(rel, _)| rel)
+            .collect(),
+    )
+}
+
+/// What TypeScript 6.x deprecated in this tsconfig when it last said so:
+/// kept so that later checks pass `--ignoreDeprecations` at once instead of
+/// failing first. It stands while the compiler and the tsconfig chain do.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Deprecations {
+    tsc: String,
+    config: Vec<Seen>,
+    options: Vec<String>,
+}
+
+/// The options a 6.x check of this scene is known to deprecate, without
+/// running it: what tsc reported for this very tsconfig, else what the
+/// tsconfig itself settles ([`crate::typescript::foreseen_deprecations`]).
+/// None when unknown, and for every other TypeScript line.
+pub fn known_deprecations(project: &Project, compiler: &Compiler) -> Option<Vec<String>> {
+    if compiler.major() != 6 {
+        return None;
+    }
+    let root = &project.root;
+    let remembered = (|| {
+        let memo: Deprecations =
+            serde_json::from_slice(&std::fs::read(root.join(DEPRECATIONS)).ok()?).ok()?;
+        let stands = fingerprint(&compiler.tsc).as_deref() == Some(memo.tsc.as_str())
+            && !memo.config.is_empty()
+            && !memo.options.is_empty()
+            && memo.config.iter().all(|f| still_same(root, f));
+        stands.then_some(memo.options)
+    })();
+    remembered.or_else(|| {
+        let docs: Vec<JsValue> = tsconfig_docs(project)?
+            .into_iter()
+            .map(|(_, doc)| doc)
+            .collect();
+        crate::typescript::foreseen_deprecations(compiler, &docs)
+    })
+}
+
+/// Best-effort, like the stamp: without it the next check fails first again.
+pub fn remember_deprecations(project: &Project, compiler: &Compiler, options: &[String]) {
+    let root = &project.root;
+    let memo = (|| {
+        Some(Deprecations {
+            tsc: fingerprint(&compiler.tsc)?,
+            config: tsconfig_chain(project)?
+                .iter()
+                .map(|rel| seen(root, rel))
+                .collect::<Option<_>>()?,
+            options: options.to_vec(),
+        })
+    })();
+    let path = root.join(DEPRECATIONS);
+    let Some(memo) = memo else {
+        let _ = std::fs::remove_file(path);
+        return;
+    };
+    if let Ok(json) = serde_json::to_vec(&memo) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, json);
+    }
 }
 
 pub fn unchanged(project: &Project, tsc: &Path) -> bool {
@@ -309,6 +388,84 @@ mod tests {
 
         forget(&p.root);
         assert!(!unchanged(&p, &tsc(&p)), "a failure leaves no stamp");
+        let _ = std::fs::remove_dir_all(&p.root);
+    }
+
+    #[test]
+    fn a_reported_deprecation_is_remembered_until_the_tsconfig_or_compiler_moves() {
+        let p = scene("deprecations");
+        let compiler = |version: &str| Compiler {
+            tsc: tsc(&p),
+            version: version.to_string(),
+        };
+        let six = compiler("6.0.3");
+        assert_eq!(known_deprecations(&p, &six), None, "nothing known yet");
+
+        let reported = vec!["moduleResolution=node10".to_string()];
+        remember_deprecations(&p, &six, &reported);
+        assert_eq!(known_deprecations(&p, &six), Some(reported.clone()));
+        assert_eq!(known_deprecations(&p, &compiler("5.9.3")), None);
+        assert_eq!(known_deprecations(&p, &compiler("7.0.2")), None);
+
+        let tsconfig = p.root.join("tsconfig.json");
+        let was = std::fs::read_to_string(&tsconfig).unwrap();
+        std::fs::write(
+            &tsconfig,
+            was.replace("\"include\"", "\"files\": [], \"include\""),
+        )
+        .unwrap();
+        assert_eq!(
+            known_deprecations(&p, &six),
+            None,
+            "an edited tsconfig asks tsc again"
+        );
+        std::fs::write(&tsconfig, &was).unwrap();
+        assert_eq!(known_deprecations(&p, &six), Some(reported.clone()));
+
+        std::fs::write(
+            p.root
+                .join("node_modules/@dcl/sdk/types/tsconfig.ecs7.json"),
+            r#"{ "compilerOptions": { "strict": false } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            known_deprecations(&p, &six),
+            None,
+            "the extended tsconfig counts"
+        );
+        remember_deprecations(&p, &six, &reported);
+
+        std::fs::write(tsc(&p), "// tsc, another build").unwrap();
+        assert_eq!(
+            known_deprecations(&p, &six),
+            None,
+            "another compiler asks again"
+        );
+        let _ = std::fs::remove_dir_all(&p.root);
+    }
+
+    #[test]
+    fn a_tsconfig_with_only_base_url_needs_no_failing_run_to_be_known() {
+        let p = scene("foreseen");
+        let six = Compiler {
+            tsc: tsc(&p),
+            version: "6.0.3".to_string(),
+        };
+        std::fs::write(
+            p.root.join("tsconfig.json"),
+            r#"{ "compilerOptions": { "baseUrl": "." }, "extends": "@dcl/sdk/types/tsconfig.ecs7.json" }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            known_deprecations(&p, &six),
+            Some(vec!["baseUrl".to_string()])
+        );
+        std::fs::write(
+            p.root.join("tsconfig.json"),
+            r#"{ "compilerOptions": { "paths": {} }, "extends": "@dcl/sdk/types/tsconfig.ecs7.json" }"#,
+        )
+        .unwrap();
+        assert_eq!(known_deprecations(&p, &six), None, "baseUrl removed");
         let _ = std::fs::remove_dir_all(&p.root);
     }
 

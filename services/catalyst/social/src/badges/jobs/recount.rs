@@ -9,8 +9,9 @@
 //! - open for business, collection half: a Polygon collection by the creator
 //!   in `shop.collections` (upstream's `collection-created`);
 //! - referral: the referrer's accepted invitations in
-//!   `social.referral_progress` (`tier_granted`), the steps set to that count
-//!   (upstream's `steps++` per event double counted a redelivery).
+//!   `social.referral_progress` (`tier_granted`), the steps raised to that
+//!   count (upstream's `steps++` per event double counted a redelivery, so
+//!   imported steps above it are kept).
 //!
 //! The mirrors are read once their first complete pass is recorded
 //! (`shop.mirror_state`). Each recount's `badge_cursors.position` counts its
@@ -102,7 +103,7 @@ impl Recount {
                 "SELECT c.address, c.n FROM (SELECT lower(referrer) AS address, count(*) AS n \
                    FROM social.referral_progress WHERE tier_granted AND lower(referrer) > $3 GROUP BY 1) c \
                  LEFT JOIN social.user_badge_progress p ON p.address = c.address AND p.badge_id = $1 \
-                 WHERE p.address IS NULL OR (p.completed_at IS NULL AND p.steps_done <> c.n) \
+                 WHERE p.address IS NULL OR (p.completed_at IS NULL AND p.steps_done < c.n) \
                  ORDER BY c.address LIMIT $2"
             }
         }
@@ -120,15 +121,7 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
 /// Batches of one recount until its pass completes (or the tick's budget);
 /// returns the wallets written.
 pub(crate) async fn run_one(pass: &Pass, recount: Recount) -> anyhow::Result<u64> {
-    let mut written = 0;
-    for _ in 0..super::MAX_BATCHES_PER_TICK {
-        let (n, more) = batch(pass, recount).await?;
-        written += n;
-        if !more {
-            break;
-        }
-    }
-    Ok(written)
+    Ok(super::drain(|| batch(pass, recount)).await?)
 }
 
 async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error> {

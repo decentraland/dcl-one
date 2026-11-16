@@ -68,8 +68,9 @@ const configSchema = z.object({
         context.addIssue({ code: 'custom', message })
     }),
   contract: contractSchema.optional(),
-  // Reviewed components promote-reviewed copies into library/ui; their preview dependencies are
-  // added automatically. Omitted: every eligible component.
+  // Synced components that supersede a hand-written mapping of the same name: check-mappings reports that
+  // mapping as superseded-by-sync or superseded-pending instead of validating it. Omitted: none. `include`
+  // cannot be empty, so remove the block to name none.
   promotion: z.object({ include: z.array(z.string().min(1)).min(1) }).optional(),
   selection: z
     .object({

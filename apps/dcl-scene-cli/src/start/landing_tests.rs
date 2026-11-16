@@ -2,7 +2,7 @@ use super::join_card::*;
 use super::layout_card::*;
 use super::*;
 use crate::scene::Project;
-use crate::start::chrome::STYLE;
+use crate::start::chrome::{STYLE, ui3};
 use serde_json::json;
 use std::sync::Mutex;
 
@@ -57,7 +57,7 @@ fn gather_state() -> AppState {
 }
 
 fn gather_knobs(query: &str) -> Knobs {
-    knobs(Some(query), &["entrance".to_string()])
+    knobs(Some(query), &["entrance".to_string()], &DEFAULT_ON)
 }
 
 fn render_local(st: &AppState, lan: Option<&str>, knobs: &Knobs) -> String {
@@ -96,7 +96,8 @@ fn the_page_renders_one_card_and_submits_every_knob() {
     ];
     let html = card(&targets, 0, true);
     assert_eq!(
-        html.matches(r#"<div class="jn "#).count() + html.matches(r#"<div class="jn">"#).count(),
+        html.matches(r#"<div class="ui-card jn "#).count()
+            + html.matches(r#"<div class="ui-card jn">"#).count(),
         1,
         "one card, the selected target: {html}"
     );
@@ -156,7 +157,7 @@ fn the_qr_rides_the_phone_card_only() {
 }
 
 fn launch_href(html: &str) -> String {
-    const OPEN: &str = r#"<a class="jn__cta" id="launch" href=""#;
+    const OPEN: &str = r#"<a class="btn btn--primary btn--lg jn__cta" id="launch" href=""#;
     let at = html.find(OPEN).expect("no launch button") + OPEN.len();
     html[at..][..html[at..].find('"').unwrap()].replace("&amp;", "&")
 }
@@ -302,7 +303,13 @@ fn page_knobs_reach_the_link_but_cannot_repoint_it() {
 #[test]
 fn the_mcp_knob_adds_exactly_the_mcp_pair() {
     let st = scene_state(json!({ "display": { "title": "Gather" } }));
-    let link = |query: &str| launch_href(&render_local(&st, None, &knobs(Some(query), &[])));
+    let link = |query: &str| {
+        launch_href(&render_local(
+            &st,
+            None,
+            &knobs(Some(query), &[], &DEFAULT_ON),
+        ))
+    };
     let (off, on) = (link("mcp=off"), link("mcp=on"));
     assert_eq!(
         on.replace(
@@ -325,7 +332,7 @@ fn the_mcp_knob_adds_exactly_the_mcp_pair() {
 #[test]
 fn the_knobs_take_only_what_the_page_offers() {
     let names = ["entrance".to_string()];
-    let tokens = |q: Option<&str>| knobs(q, &names).tokens(Carry::Loopback);
+    let tokens = |q: Option<&str>| knobs(q, &names, &DEFAULT_ON).tokens(Carry::Loopback);
     let terrain_off = ["--landscape-terrain-enabled=false".to_string()];
     assert_eq!(
         tokens(None),
@@ -365,15 +372,18 @@ fn the_knobs_take_only_what_the_page_offers() {
             "{smuggled} smuggles nothing beyond the terrain default"
         );
     }
-    assert_eq!(knobs(Some("where=lan"), &names).where_key, "lan");
     assert_eq!(
-        knobs(Some("where=%2F%2Fevil"), &names).where_key,
+        knobs(Some("where=lan"), &names, &DEFAULT_ON).where_key,
+        "lan"
+    );
+    assert_eq!(
+        knobs(Some("where=%2F%2Fevil"), &names, &DEFAULT_ON).where_key,
         "",
         "a target that is not on offer selects nothing"
     );
-    assert_eq!(knobs(Some("mcp=on"), &names).mcp, Some(true));
+    assert_eq!(knobs(Some("mcp=on"), &names, &DEFAULT_ON).mcp, Some(true));
     assert_eq!(
-        knobs(Some("mcp=maybe"), &names).mcp,
+        knobs(Some("mcp=maybe"), &names, &DEFAULT_ON).mcp,
         None,
         "the mcp knob has two states and nothing else"
     );
@@ -594,10 +604,16 @@ fn the_knob_copy_clears_aa_in_both_schemes() {
         let (a, b) = (lum(fg), lum(bg));
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
+    // Dark inks and the brand come from ui3's sheet; the light inks are the
+    // CLI's own `prefers-color-scheme` block.
     let alpha = |ink: &str| {
-        let at = STYLE.find(ink).unwrap_or_else(|| panic!("no {ink}"));
-        let open = STYLE[at..].find('(').unwrap() + at + 1;
-        let decl = &STYLE[open..][..STYLE[open..].find(')').unwrap()];
+        let sheet = match ink.contains("rgba(255") {
+            true => ui3(),
+            false => STYLE,
+        };
+        let at = sheet.find(ink).unwrap_or_else(|| panic!("no {ink}"));
+        let open = sheet[at..].find('(').unwrap() + at + 1;
+        let decl = &sheet[open..][..sheet[open..].find(')').unwrap()];
         decl.rsplit(',').next().unwrap().parse::<f64>().unwrap()
     };
     let over = |ink: (f64, f64, f64), a: f64, bg: (f64, f64, f64)| {
@@ -642,8 +658,12 @@ fn the_knob_copy_clears_aa_in_both_schemes() {
         assert!(ratio >= 4.5, "{name} is {ratio:.2}:1, under AA");
     }
     let hex = |name: &str| {
-        let at = STYLE.find(name).unwrap_or_else(|| panic!("no {name}"));
-        let h = &STYLE[at + name.len()..][..6];
+        let sheet = match STYLE.contains(name) {
+            true => STYLE,
+            false => ui3(),
+        };
+        let at = sheet.find(name).unwrap_or_else(|| panic!("no {name}"));
+        let h = &sheet[at + name.len()..][..6];
         let ch = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap() as f64;
         (ch(0), ch(2), ch(4))
     };
@@ -652,12 +672,21 @@ fn the_knob_copy_clears_aa_in_both_schemes() {
         label >= 4.5,
         "white on --brand-cta is {label:.2}:1, under AA"
     );
+    // ui3's primary button hovers to `--brand-hover`, too light for white
+    // text, so the CLI sheet points that token at its own darker red.
+    assert!(STYLE.contains(".btn--primary { --brand-hover: var(--brand-cta-hover); }"));
+    let hover = contrast(white, hex("--brand-cta-hover: #"));
+    assert!(
+        hover >= 4.5,
+        "white on the primary hover is {hover:.2}:1, under AA"
+    );
 }
 
 /// The machine-checkable form of "clean style, no extra labels".
 ///
 /// The sheet gets exactly two shouts, both brand idioms: the button that
-/// launches (the builder's SIGN IN / BUILD SCENES, tracked at .04em) and
+/// launches (the builder's SIGN IN / BUILD SCENES, tracked at .04em through
+/// the ui3 button's `--ctl-tracking`) and
 /// `.knob__k` — the join card's micro-captions ("SPAWN POINT",
 /// "DEEP-LINK FLAGS"), the Creator Hub datumtile caption brought back by
 /// the join-card mockup. Every other label stays quiet: a shouted caption
@@ -704,7 +733,7 @@ fn the_only_shouts_are_the_launch_button_and_the_knob_captions() {
     );
     assert!(
         rule(".jn__cta").contains("text-transform: uppercase")
-            && rule(".jn__cta").contains("letter-spacing: .04em"),
+            && rule(".jn__cta").contains("--ctl-tracking: .04em"),
         "the primary button, at the builder's own tracking"
     );
     assert!(
@@ -713,7 +742,7 @@ fn the_only_shouts_are_the_launch_button_and_the_knob_captions() {
         "and the knob captions, at datumtile tracking"
     );
     assert_eq!(
-        STYLE.matches("letter-spacing: .").count(),
+        STYLE.matches("letter-spacing: .").count() + STYLE.matches("--ctl-tracking: .").count(),
         2,
         "positive tracking rides those two rules and nothing else"
     );
@@ -736,9 +765,13 @@ fn the_deep_link_is_shown_not_toggled() {
     );
     assert!(!card.contains("Copy the deep link"));
     assert!(card.contains(r#"<span class="jn__url" id="deep-link">decentraland://a</span>"#));
-    assert!(card.contains(r#"<button class="deep__copy" id="copy-link" type="button" hidden>"#));
+    assert!(card.contains(
+        r#"<button class="btn btn--secondary btn--sm" id="copy-link" type="button" hidden>"#
+    ));
     assert!(
-        card.contains(r#"<div class="jn2__foot"><a class="jn__cta" id="launch""#),
+        card.contains(
+            r#"<div class="jn2__foot"><a class="btn btn--primary btn--lg jn__cta" id="launch""#
+        ),
         "the footer leads with Launch, the link line rides beside it: {card}"
     );
     assert!(
@@ -770,7 +803,7 @@ async fn the_scene_card_ships_its_editors_inert_for_the_script_to_enable() {
         "an empty description still renders, as the place to add one"
     );
     assert!(html.contains(r#"<div class="tags" id="edit-tags">"#));
-    assert!(html.contains(r#"<span class="tag tag--add">+ Add tags</span>"#));
+    assert!(html.contains(r#"<span class="u-pill u-pill--default tag--add">+ Add tags</span>"#));
     assert!(html.contains(
         r#"<input id="cover-input" type="file" accept="image/png,image/jpeg,image/webp" hidden disabled>"#
     ));
@@ -782,8 +815,8 @@ async fn the_scene_card_ships_its_editors_inert_for_the_script_to_enable() {
     assert!(html.contains(r#"id="lay-sadd" aria-pressed="false" disabled"#));
     assert!(html.contains(r#"data-spawn="0" disabled"#));
     assert!(
-        html.contains(r#"data-laytab="info" role="tab" aria-selected="true" disabled"#)
-            && html.contains(r#"data-laytab="parcels" role="tab" aria-selected="false" disabled"#),
+        html.contains(r#"data-laytab="info" id="lay-tab-info" role="tab" aria-controls="lay-pane-info" tabindex="0" aria-selected="true" disabled"#)
+            && html.contains(r#"data-laytab="parcels" id="lay-tab-parcels" role="tab" aria-controls="lay-pane-parcels" tabindex="-1" aria-selected="false" disabled"#),
         "the layout tabs ship inert, Info selected: {html}"
     );
     assert!(html.contains(r#"id="lay-base-input""#));
@@ -983,7 +1016,7 @@ fn the_layout_card_leads_with_info_and_counts_its_tabs() {
         ServerState::Off,
     );
     assert!(
-        card.contains(r#"class="jn lay lay--info" id="scene-layout""#),
+        card.contains(r#"class="ui-card jn lay lay--info" id="scene-layout""#),
         "the server's no-script default is the Info tab: {card}"
     );
     for (key, label) in [
@@ -1001,12 +1034,12 @@ fn the_layout_card_leads_with_info_and_counts_its_tabs() {
         "the scene tabs carry no counts in the harmonized design: {card}"
     );
     assert!(
-        card.contains(r#"<section class="lay__pane" data-pane="info"><article class="scene">HERO</article></section>"#),
+        card.contains(r#"<section class="lay__pane" id="lay-pane-info" role="tabpanel" aria-labelledby="lay-tab-info" data-pane="info"><article class="scene">HERO</article></section>"#),
         "the scene hero rides the Info pane: {card}"
     );
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span>"#));
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="spawns" hidden>"#));
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="perms" hidden>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-parcels" role="tabpanel" aria-labelledby="lay-tab-parcels" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-spawns" role="tabpanel" aria-labelledby="lay-tab-spawns" data-pane="spawns" hidden>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-perms" role="tabpanel" aria-labelledby="lay-tab-perms" data-pane="perms" hidden>"#));
     assert!(
         card.contains(r#"<span class="lay__size">2 parcels · 32 × 16 m</span>"#),
         "the size label counts parcels: {card}"
@@ -1036,7 +1069,7 @@ fn the_layout_card_leads_with_info_and_counts_its_tabs() {
 /// form still names its own set, so unchecking sticks.
 #[test]
 fn the_default_knobs_launch_a_second_client_straight_in() {
-    let fresh = knobs(None, &[]);
+    let fresh = knobs(None, &[], &DEFAULT_ON);
     assert_eq!(
         fresh.opts,
         ["multi-instance", "skip-auth-screen", TERRAIN],
@@ -1048,8 +1081,15 @@ fn the_default_knobs_launch_a_second_client_straight_in() {
         "the fresh page's launch link carries both; checked terrain is the client's own default"
     );
     assert!(
-        knobs(Some("where=desktop"), &[]).opts.is_empty(),
+        knobs(Some("where=desktop"), &[], &DEFAULT_ON)
+            .opts
+            .is_empty(),
         "a submitted form names its own set"
+    );
+    assert_eq!(
+        knobs(None, &[], &["skip-auth-screen"]).tokens(Carry::Loopback),
+        ["--skip-auth-screen=true"],
+        "the fresh page of a run that gave one flag turns on that parameter alone"
     );
 }
 
@@ -1061,7 +1101,7 @@ fn the_default_knobs_launch_a_second_client_straight_in() {
 fn the_multiplayer_pane_carries_the_switch_and_says_what_the_server_is_doing() {
     let off = server_pane(ServerState::Off);
     assert!(
-        off.contains(r#"<section class="lay__pane" data-pane="server" hidden>"#)
+        off.contains(r#"<section class="lay__pane" id="lay-pane-server" role="tabpanel" aria-labelledby="lay-tab-server" data-pane="server" hidden>"#)
             && off.contains(r#"<input class="sw" type="checkbox" id="mp-switch" disabled>"#),
         "off is an unchecked, inert switch: {off}"
     );
@@ -1088,5 +1128,30 @@ fn the_multiplayer_pane_carries_the_switch_and_says_what_the_server_is_doing() {
     assert!(
         SCRIPT.contains("authoritativeMultiplayer: on") && SCRIPT.contains("'mp-switch'"),
         "the script saves the switch through /scene-json"
+    );
+}
+
+/// Every page is one document: the ui3 sheets ride inline ahead of the CLI's
+/// own, and nothing in the emitted style asks the browser for another file.
+#[tokio::test]
+async fn the_ui3_sheets_are_embedded_with_nothing_left_to_fetch() {
+    for class in [
+        ".btn--primary",
+        ".u-pill--default",
+        ".ui-card",
+        ".ui-filter",
+    ] {
+        assert!(ui3().contains(class), "ui3 no longer ships {class}");
+    }
+    assert!(!ui3().contains("@import") && !STYLE.contains("@import"));
+    let html = scene_html(&scene_state(json!({}))).await;
+    let style = &html[html.find("<style>").unwrap()..html.find("</style>").unwrap()];
+    assert!(
+        !style.contains("@import"),
+        "the page style must stand alone"
+    );
+    assert!(
+        style.find(".ui-card").unwrap() < style.find("--ui-panel: var(--panel)").unwrap(),
+        "the CLI sheet follows ui3, so its tokens and light scheme win"
     );
 }

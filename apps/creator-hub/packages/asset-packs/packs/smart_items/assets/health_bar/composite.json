@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/health-bar.glb",
+            "invisibleMeshesCollisionMask": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "core::VisibilityComponent",
+      "data": {
+        "0": {
+          "json": {
+            "visible": false
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/HealthBar.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"maxHealth\":{\"type\":\"number\",\"value\":100,\"optional\":true,\"tooltip\":\"The full health value the bar represents.\"},\"startHealth\":{\"type\":\"number\",\"value\":100,\"optional\":true,\"tooltip\":\"The health value the bar starts at.\"},\"primaryColor\":{\"type\":\"string\",\"value\":\"#00FF00\",\"optional\":true,\"tooltip\":\"Hex colour of the filled part of the bar (e.g. #00FF00).\"},\"secondaryColor\":{\"type\":\"string\",\"value\":\"#FF0000\",\"optional\":true,\"tooltip\":\"Hex colour of the empty part of the bar (e.g. #FF0000).\"},\"showBar\":{\"type\":\"boolean\",\"value\":true,\"optional\":true,\"tooltip\":\"Show the floating bar. Turn off to track health without a visual.\"}},\"actions\":[{\"methodName\":\"heal\",\"description\":\"Increases health by an amount (default 1), up to the maximum.\",\"params\":{\"amount\":{\"type\":\"number\",\"value\":1,\"optional\":true}}},{\"methodName\":\"damage\",\"description\":\"Decreases health by an amount (default 1), down to zero; fires \\\"death\\\" when it reaches zero.\",\"params\":{\"amount\":{\"type\":\"number\",\"value\":1,\"optional\":true}}},{\"methodName\":\"reset\",\"description\":\"Resets health back to the maximum.\",\"params\":{}},{\"methodName\":\"remove\",\"description\":\"Removes this health bar from the scene.\",\"params\":{}}],\"events\":[\"damaged\",\"healed\",\"death\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Damage",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/HealthBar.ts\",\"methodName\":\"damage\",\"params\":{}}"
+              },
+              {
+                "name": "Heal",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/HealthBar.ts\",\"methodName\":\"heal\",\"params\":{}}"
+              },
+              {
+                "name": "Reset",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/HealthBar.ts\",\"methodName\":\"reset\",\"params\":{}}"
+              },
+              {
+                "name": "Remove",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/HealthBar.ts\",\"methodName\":\"remove\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Triggers",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "type": "on_damage",
+                "actions": [
+                  {
+                    "id": "{self:asset-packs::Actions}",
+                    "name": "Damage"
+                  }
+                ]
+              },
+              {
+                "type": "on_heal_player",
+                "actions": [
+                  {
+                    "id": "{self:asset-packs::Actions}",
+                    "name": "Heal"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
