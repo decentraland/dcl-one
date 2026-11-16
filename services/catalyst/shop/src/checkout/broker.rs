@@ -24,7 +24,7 @@ use crate::evm::errors::ApiError;
 use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::oracle::{UsdPeggedExpectation, fetch_mana_usd_rate};
-use crate::evm::signer::{DirectSigner, ReceiptOutcome, SignedTx};
+use crate::evm::signer::{DirectSigner, Rebroadcast, ReceiptOutcome, SignedTx};
 use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
 
 #[derive(Debug, Deserialize)]
@@ -629,7 +629,7 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         ..
     } = ctx;
     let row: ExistingRow = sqlx::query_as(
-        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id, signed_tx, \
+        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id, \
                 forward_signed_tx, write_ahead \
          FROM shop.broker_purchases WHERE idempotency_key = $1",
     )
@@ -669,9 +669,7 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
             let buy_tx = row.tx_hash.clone().ok_or_else(|| {
                 ApiError::Internal(format!("broker buy {key:?} is 'sent' without a tx_hash"))
             })?;
-            if let Some(raw) = row.signed_tx.as_deref() {
-                signer.rebroadcast(&buy_tx, raw).await?;
-            }
+            rebroadcast_recorded_buy(state, signer, key, &buy_tx).await?;
             let token_id_secondary = match (mode, row.token_id.as_deref()) {
                 (PurchaseMode::Secondary, Some(t)) | (PurchaseMode::Trade, Some(t)) => {
                     Some(parse_token_id(t)?)
@@ -691,8 +689,18 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                     "broker buy {key:?} is 'forwarding' without a forward_tx_hash"
                 ))
             })?;
-            if let Some(raw) = row.forward_signed_tx.as_deref() {
-                signer.rebroadcast(&fwd_tx, raw).await?;
+            if let Some(raw) = row.forward_signed_tx.as_deref()
+                && signer.rebroadcast(&fwd_tx, raw).await? == Rebroadcast::Dead
+            {
+                // The buy mined and the token is with the relayer; the recorded
+                // forward never will, so a new one is signed in its place.
+                if !release_dead_forward(state, key, &fwd_tx).await? {
+                    return Err(ApiError::Conflict(format!(
+                        "broker buy {key:?} changed state concurrently; retry"
+                    )));
+                }
+                let token_id = resume_token_id(ctx, &row).await?;
+                return drive_forward(ctx, token_id).await;
             }
             let outcome = signer.await_receipt(&fwd_tx).await?;
             match outcome {
@@ -803,7 +811,6 @@ struct ExistingRow {
     forward_tx_hash: Option<String>,
     token_id: Option<String>,
     minted_token_id: Option<String>,
-    signed_tx: Option<String>,
     forward_signed_tx: Option<String>,
     write_ahead: bool,
 }
@@ -888,7 +895,10 @@ async fn record_forward(
 }
 
 /// Re-sends the buy leg recorded under `key`, unless it already has a
-/// receipt; a claim recorded without its bytes is left to its receipt.
+/// receipt; a claim recorded without its bytes is left to its receipt. A
+/// recorded buy that can never mine (a finalized transaction holds its
+/// nonce) spent nothing: the claim is released to `error`, which the next
+/// buy request re-arms, and this call answers 409.
 pub(crate) async fn rebroadcast_recorded_buy(
     state: &SharedState,
     signer: &DirectSigner,
@@ -902,10 +912,49 @@ pub(crate) async fn rebroadcast_recorded_buy(
     .fetch_optional(&state.pool)
     .await?
     .flatten();
-    match raw {
-        Some(raw) => signer.rebroadcast(tx_hash, &raw).await,
-        None => Ok(()),
+    let Some(raw) = raw else { return Ok(()) };
+    if signer.rebroadcast(tx_hash, &raw).await? != Rebroadcast::Dead {
+        return Ok(());
     }
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', tx_hash = NULL, signed_tx = NULL, \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'sent' AND tx_hash = $2 AND write_ahead",
+    )
+    .bind(key)
+    .bind(tx_hash)
+    .execute(&state.pool)
+    .await?;
+    if released.rows_affected() > 0 {
+        tracing::error!(idempotency_key = %key, tx_hash = %tx_hash, "broker buy's recorded transaction can never mine; claim released for a new buy");
+    }
+    Err(ApiError::Conflict(format!(
+        "broker buy {key:?}'s recorded transaction {tx_hash} can never mine (a finalized \
+         transaction holds its nonce); nothing was spent, and the next buy request buys again"
+    )))
+}
+
+/// Clears a recorded forward that can never mine so a new one can be
+/// recorded: the row goes back to `bought` (the buy mined; the token is with
+/// the relayer). Fenced on the dead forward still being the recorded one.
+async fn release_dead_forward(
+    state: &SharedState,
+    key: &str,
+    fwd_tx: &str,
+) -> Result<bool, ApiError> {
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'bought', forward_tx_hash = NULL, \
+         forward_signed_tx = NULL, updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'forwarding' AND forward_tx_hash = $2",
+    )
+    .bind(key)
+    .bind(fwd_tx)
+    .execute(&state.pool)
+    .await?;
+    if released.rows_affected() > 0 {
+        tracing::error!(idempotency_key = %key, forward_tx_hash = %fwd_tx, "broker forward's recorded transaction can never mine; signing a new forward");
+    }
+    Ok(released.rows_affected() > 0)
 }
 
 /// Marks a `write_ahead` claim `error` once it has stayed `pending` with no

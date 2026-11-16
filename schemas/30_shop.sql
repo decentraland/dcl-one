@@ -16380,9 +16380,10 @@ CREATE INDEX fed_seen_nonces_expires_idx ON shop.fed_seen_nonces (expires_at);
 -- columns keep a USD-pegged trade's signed amount and the oracle rate used.
 -- A leg's signed transaction (`signed_tx`, `forward_signed_tx`) is recorded
 -- with its hash before it is broadcast, so a resume re-sends those bytes and
--- never signs a second transaction for the leg. `write_ahead` marks a claim
--- made under that rule: only such a claim with no recorded transaction is
--- ever bought afresh.
+-- signs no second transaction for the leg unless a finalized transaction
+-- holds the recorded one's nonce, so it can never mine. `write_ahead` marks
+-- a claim made under that rule: only such a claim with no recorded
+-- transaction is ever bought afresh.
 CREATE TABLE shop.broker_purchases (
     id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     idempotency_key text,

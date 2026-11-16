@@ -111,6 +111,17 @@ enum Fees {
     },
 }
 
+/// What [`DirectSigner::rebroadcast`] found for a recorded transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rebroadcast {
+    /// It already has a receipt.
+    Settled,
+    /// It had none and was re-sent (or the node already holds it).
+    Sent,
+    /// It can never mine: a finalized transaction holds its nonce.
+    Dead,
+}
+
 /// A signed transaction ready to send: its hash and its raw bytes as `0x` hex.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedTx {
@@ -358,7 +369,8 @@ impl DirectSigner {
     /// means nothing was broadcast. Once `record` succeeds, a failed send is
     /// indeterminate (the node may hold the transaction) and answers
     /// `RelayerTimeout`; the recorded bytes are re-sent with
-    /// [`Self::rebroadcast`], never replaced by a newly signed transaction.
+    /// [`Self::rebroadcast`], and replaced by a newly signed transaction
+    /// only once it provably can never mine ([`Rebroadcast::Dead`]).
     /// The send lock is held from the nonce read through the send, so the
     /// record step stays inside the nonce's critical section.
     pub async fn send_direct_call_recorded<F, Fut>(
@@ -390,14 +402,19 @@ impl DirectSigner {
     /// Re-sends a recorded transaction's exact bytes unless a receipt for
     /// `tx_hash` already exists. A send error is logged, not returned: the
     /// node answering "already known" or "nonce too low" is expected, and the
-    /// receipt alone decides the outcome. A transaction whose nonce another
-    /// transaction took can never mine: that is logged at error level and
-    /// answered `Conflict`, and the claim is left for manual reconciliation,
-    /// never replaced by a new transaction.
-    pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<(), ApiError> {
+    /// receipt alone decides the outcome.
+    ///
+    /// A transaction whose nonce another transaction took can never mine. It
+    /// is [`Rebroadcast::Dead`] only when that is final: the relayer's
+    /// `finalized` transaction count has passed the recorded nonce and,
+    /// read after it, there is still no receipt, so no reorg can mine it. The
+    /// caller may then release the leg for a new transaction. When only the
+    /// `latest` count has passed, the answer is a retryable `RelayerTimeout`
+    /// until finality decides.
+    pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<Rebroadcast, ApiError> {
         let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
         if outcome != ReceiptOutcome::Pending {
-            return Ok(());
+            return Ok(Rebroadcast::Settled);
         }
         let raw = decode_hex(raw_hex.trim()).ok_or_else(|| {
             ApiError::Internal(format!("recorded transaction {tx_hash} is not hex"))
@@ -409,25 +426,29 @@ impl DirectSigner {
             )));
         }
         if let Some(nonce) = signed_nonce(&raw)
-            && self.nonce_taken(nonce).await?
+            && self.mined_count("latest").await? > nonce
         {
-            // The relayer's mined nonce passed ours, so the slot went to another
-            // transaction; re-reading the receipt after the count rules out ours.
+            // The count is read before the receipt, so a missing receipt
+            // means another transaction holds the nonce.
+            let finalized = self.mined_count("finalized").await.ok();
             let (outcome, _) = self.fetch_receipt_once(tx_hash).await?;
-            if outcome == ReceiptOutcome::Pending {
+            if outcome != ReceiptOutcome::Pending {
+                return Ok(Rebroadcast::Settled);
+            }
+            if finalized.is_some_and(|count| count > nonce) {
                 tracing::error!(
                     tx_hash = %tx_hash,
                     nonce,
                     relayer = %self.relayer_address,
-                    "recorded transaction can never mine: another transaction took its nonce; \
-                     its claim needs manual reconciliation"
+                    "recorded transaction can never mine: another finalized transaction holds its nonce"
                 );
-                return Err(ApiError::Conflict(format!(
-                    "recorded transaction {tx_hash} can never mine (nonce {nonce} was taken by \
-                     another transaction); not re-sending \u{2014} reconcile manually"
-                )));
+                return Ok(Rebroadcast::Dead);
             }
-            return Ok(());
+            tracing::warn!(tx_hash = %tx_hash, nonce, "another transaction holds the recorded nonce; waiting for finality");
+            return Err(ApiError::RelayerTimeout(format!(
+                "recorded transaction {tx_hash}'s nonce {nonce} is held by another transaction \
+                 that is not yet final; retry to settle"
+            )));
         }
         match self.send_raw(raw_hex.trim()).await {
             Ok(_) => tracing::info!(tx_hash = %tx_hash, "re-sent recorded transaction"),
@@ -435,23 +456,21 @@ impl DirectSigner {
                 tracing::warn!(tx_hash = %tx_hash, error = %e, "re-send of recorded transaction refused; its receipt decides")
             }
         }
-        Ok(())
+        Ok(Rebroadcast::Sent)
     }
 
-    /// Whether the relayer's mined transaction count (`latest`) has passed
-    /// `nonce`, so a transaction signed with it either mined or never will.
-    async fn nonce_taken(&self, nonce: u64) -> Result<bool, ApiError> {
-        let count = self
-            .chain
+    /// The relayer's transaction count at `block` (`latest`, `finalized`):
+    /// every nonce below it is used by a transaction mined at that block.
+    async fn mined_count(&self, block: &str) -> Result<u64, ApiError> {
+        self.chain
             .rpc()
             .call_hex(
                 "eth_getTransactionCount",
-                json!([format!("{:#x}", self.relayer_address), "latest"]),
+                json!([format!("{:#x}", self.relayer_address), block]),
             )
             .await
             .and_then(|hex| parse_quantity_u64(&hex))
-            .map_err(|e| ApiError::RelayerFailed(format!("eth_getTransactionCount failed: {e}")))?;
-        Ok(count > nonce)
+            .map_err(|e| ApiError::RelayerFailed(format!("eth_getTransactionCount failed: {e}")))
     }
 
     /// Estimates, reads the pending nonce and the fees, and signs. Callers

@@ -3276,7 +3276,8 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
 /// sends, the next `drop_sends` `eth_sendRawTransaction` calls fail without
 /// the node taking the transaction (as a crash between the record and the
 /// send leaves it); `taken_nonces` counts transactions of other senders that
-/// used the relayer's nonces. An accepted transaction mines at once; its
+/// used the relayer's nonces, `finalized_taken_nonces` those of them already
+/// final (the `finalized` count). An accepted transaction mines at once; its
 /// receipt carries a mint of [`SCRIPTED_TOKEN`] on `mint`'s collection to
 /// its recipient when set.
 #[derive(Default)]
@@ -3285,6 +3286,7 @@ struct ScriptedChain {
     pass_sends: std::sync::atomic::AtomicU32,
     drop_sends: std::sync::atomic::AtomicU32,
     taken_nonces: std::sync::atomic::AtomicU32,
+    finalized_taken_nonces: std::sync::atomic::AtomicU32,
     accepted: Mutex<Vec<Vec<u8>>>,
     mint: Mutex<Option<(Address, Address)>>,
 }
@@ -3339,7 +3341,12 @@ async fn spawn_scripted_chain(chain: Arc<ScriptedChain>) -> String {
                 if ScriptedChain::take(&chain.fail_nonce_reads) {
                     return fail("header not found");
                 }
-                let taken = chain.taken_nonces.load(std::sync::atomic::Ordering::SeqCst) as usize;
+                let taken = if req["params"][1] == "finalized" {
+                    &chain.finalized_taken_nonces
+                } else {
+                    &chain.taken_nonces
+                };
+                let taken = taken.load(std::sync::atomic::Ordering::SeqCst) as usize;
                 ok(json!(format!(
                     "{:#x}",
                     chain.accepted.lock().unwrap().len() + taken
@@ -3821,10 +3828,12 @@ async fn a_recorded_forward_that_was_not_broadcast_is_resent_by_the_key_only_res
 }
 
 /// A recorded transaction whose nonce another transaction took can never
-/// mine: the retry neither re-sends it nor signs a new one, answers 409 and
-/// leaves the claim `sent` for manual reconciliation.
+/// mine. While that other transaction is not final, the retry neither
+/// re-sends nor re-signs (a reorg could still mine ours) and answers 504.
+/// Once it is final, nothing was spent: the claim is released (409) and the
+/// next request buys with a new transaction, the only one the chain mines.
 #[tokio::test]
-async fn a_recorded_transaction_whose_nonce_was_taken_is_left_for_reconciliation() {
+async fn a_recorded_transaction_whose_nonce_was_finally_taken_is_released_and_bought_again() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
@@ -3839,18 +3848,104 @@ async fn a_recorded_transaction_whose_nonce_was_taken_is_left_for_reconciliation
 
     let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
     assert_eq!(status, 504, "{reply}");
-    let recorded = recorded_purchase(&pool, &key).await.tx_hash;
+    let dead = recorded_purchase(&pool, &key).await.tx_hash.unwrap();
 
     chain
         .taken_nonces
         .store(1, std::sync::atomic::Ordering::SeqCst);
     let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
-    assert_eq!(status, 409, "a dead transaction is not re-sent: {reply}");
+    assert_eq!(status, 504, "not final yet: wait, never re-sign: {reply}");
     let row = recorded_purchase(&pool, &key).await;
-    assert_eq!((row.status.as_str(), row.tx_hash), ("sent", recorded));
-    assert!(
-        chain.accepted_hashes().is_empty(),
-        "nothing was sent or re-signed"
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("sent", Some(dead.as_str()))
+    );
+    assert!(chain.accepted_hashes().is_empty());
+
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "a final dead transaction releases the claim: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash, row.signed_tx),
+        ("error", None, None)
+    );
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the released claim is bought again: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let bought = row.tx_hash.unwrap();
+    assert_ne!(bought, dead);
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(
+        chain.accepted_hashes(),
+        vec![bought],
+        "one transaction mined for the claim"
     );
     delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A recorded forward whose nonce a final transaction took can never mine;
+/// the buy did, so the key-only resume signs one new forward in its place
+/// and settles the claim.
+#[tokio::test]
+async fn a_recorded_forward_that_can_never_mine_is_replaced_by_one_new_forward() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .pass_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let (buy, dead) = (row.tx_hash.unwrap(), row.forward_tx_hash.unwrap());
+
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let forward = crate::checkout::broker::resume(&state, &key).await.unwrap();
+    assert_ne!(forward, dead);
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(row.forward_tx_hash.as_deref(), Some(forward.as_str()));
+    assert_eq!(
+        chain.accepted_hashes(),
+        vec![buy, forward],
+        "one buy, one forward mined"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
 }
