@@ -24,7 +24,7 @@ use thiserror::Error;
 use crate::auth::AuthError as ChainError;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::signed_fetch::{
-    LegacyPayload, SignatureRefusal, SignedRequest, SkewError, check_symmetric_skew,
+    LegacyPayload, SignatureRefusal, SignedRequest, SkewError, check_timestamp_window,
     parse_metadata, verify_signature,
 };
 use crate::shared::identity::Address;
@@ -111,7 +111,7 @@ pub async fn verify_auth_frame(
         .get(AUTH_METADATA_HEADER)
         .and_then(|v| v.as_str())
         .unwrap_or("{}");
-    check_symmetric_skew(ts, now, FIVE_MINUTES).map_err(|e| match e {
+    check_timestamp_window(ts, now, FIVE_MINUTES).map_err(|e| match e {
         SkewError::InvalidTimestamp(ts) => {
             AuthError::MalformedChain(format!("invalid timestamp: {ts:?}"))
         }

@@ -1,0 +1,124 @@
+import { useCallback, useRef, useState } from 'react';
+import AddIcon from '@mui/icons-material/Add';
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
+import { MenuItem, Tooltip } from 'decentraland-ui2';
+
+import arrowDown from '/assets/images/arrow-down.svg';
+import { useMatchMedia } from '/@/hooks/useMatchMedia';
+import { useWorkspace } from '/@/hooks/useWorkspace';
+import { t } from '/@/modules/store/translation/utils';
+import { CreateProject } from '../Modals/CreateProject';
+
+import { ICON_ONLY_QUERY } from './breakpoints';
+import {
+  StyledButtonRow,
+  StyledLabelButton,
+  StyledLabelText,
+  StyledMenu,
+  StyledToggleButton,
+} from './component.styled';
+import type { CreateProjectValue, NewProjectPayload } from './types';
+
+export function CreateButton() {
+  const { createProject, getAvailableProject, importProject } = useWorkspace();
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [newProject, setNewProject] = useState<NewProjectPayload | undefined>();
+  const iconOnly = useMatchMedia(ICON_ONLY_QUERY);
+
+  const handleOpenMenu = useCallback(() => setOpen(true), []);
+  const handleCloseMenu = useCallback(() => setOpen(false), []);
+
+  const handleClickNewScene = useCallback(async () => {
+    setOpen(false);
+    const [error, data] = await getAvailableProject();
+    if (error) return;
+    const { name, path } = data;
+    setNewProject({
+      name,
+      path: path.endsWith(name) ? path.slice(0, -name.length) : path,
+    });
+  }, [getAvailableProject]);
+
+  const handleClickImportScene = useCallback(() => {
+    setOpen(false);
+    importProject();
+  }, [importProject]);
+
+  const handleCreateProject = useCallback(
+    (value: CreateProjectValue) => {
+      if (!newProject) return;
+      createProject({ ...newProject, ...value });
+      setNewProject(undefined);
+    },
+    [createProject, newProject],
+  );
+
+  return (
+    <>
+      <StyledButtonRow ref={anchorRef}>
+        <Tooltip
+          title={iconOnly ? t('navbar.create.label') : ''}
+          placement="bottom"
+          classes={{ tooltip: 'AccountTooltip' }}
+        >
+          <StyledLabelButton
+            variant="contained"
+            disableRipple
+            data-testid="create-button"
+            startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+            onClick={handleClickNewScene}
+          >
+            <StyledLabelText>{t('navbar.create.label')}</StyledLabelText>
+          </StyledLabelButton>
+        </Tooltip>
+        <StyledToggleButton
+          variant="contained"
+          disableRipple
+          data-testid="create-button-toggle"
+          aria-label={t('navbar.create.options')}
+          aria-haspopup="menu"
+          aria-expanded={open ? 'true' : undefined}
+          onClick={handleOpenMenu}
+        >
+          <img
+            src={arrowDown}
+            alt=""
+            width={11}
+            height={8}
+          />
+        </StyledToggleButton>
+      </StyledButtonRow>
+      <StyledMenu
+        anchorEl={anchorRef.current}
+        open={open}
+        onClose={handleCloseMenu}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <MenuItem
+          data-testid="create-button-new-scene"
+          onClick={handleClickNewScene}
+        >
+          <AddIcon fontSize="small" />
+          {t('navbar.create.new_scene')}
+        </MenuItem>
+        <MenuItem
+          data-testid="create-button-import-scene"
+          onClick={handleClickImportScene}
+        >
+          <FileDownloadOutlinedIcon fontSize="small" />
+          {t('navbar.create.import_scene')}
+        </MenuItem>
+      </StyledMenu>
+      {newProject && (
+        <CreateProject
+          open
+          initialValue={newProject}
+          onClose={() => setNewProject(undefined)}
+          onSubmit={handleCreateProject}
+        />
+      )}
+    </>
+  );
+}

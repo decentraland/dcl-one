@@ -9,8 +9,8 @@ use serde_json::json;
 use crate::evm::SharedState;
 use crate::evm::errors::ApiError;
 use crate::evm::transaction::{
-    MetaTxSender, ReservationDisposition, TransactionRow, parse_send_transaction_request,
-    reservation_disposition,
+    MetaTxSender, ReservationDisposition, TransactionRow, is_paid_call,
+    parse_send_transaction_request, reservation_disposition,
 };
 use crate::evm::upstream::UpstreamForwarder;
 
@@ -38,17 +38,33 @@ pub async fn send_transaction(
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    state
-        .transaction
-        .reserve_quota(
-            state.settings.max_transactions_per_day,
-            &sender,
-            &session_id,
-            state.settings.collections_chain_id,
-            &tx.params[0],
-            crate::evm::now(),
-        )
-        .await?;
+    // Sales and credits spends are never held back by the free-call budget.
+    if is_paid_call(&state.settings, &tx) {
+        state
+            .transaction
+            .reserve_quota(
+                state.settings.max_transactions_per_day,
+                &sender,
+                &session_id,
+                state.settings.collections_chain_id,
+                &tx.params[0],
+                crate::evm::now(),
+            )
+            .await?;
+    } else {
+        state
+            .transaction
+            .reserve_free_call(
+                state.settings.max_transactions_per_day,
+                state.settings.max_relayed_transactions_per_day,
+                &sender,
+                &session_id,
+                state.settings.collections_chain_id,
+                &tx.params[0],
+                crate::evm::now(),
+            )
+            .await?;
+    }
 
     if let Some(upstream) = state.transaction.upstream_route() {
         return forward_upstream(&state, upstream, &headers, &body, &sender, &session_id).await;

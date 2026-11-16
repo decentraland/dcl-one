@@ -16,6 +16,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use dcl_scene_authoring::jsjson::JsValue;
 
 use crate::scene::Project;
 
@@ -96,9 +97,56 @@ fn flagged_options(report: &str, codes: &[&str]) -> Vec<String> {
     names
 }
 
-/// Said when a 6.x check needed [`IGNORE_DEPRECATIONS_6`].
-pub fn deprecation_message(compiler: &Compiler, report: &str) -> String {
-    let names = flagged_options(report, &DEPRECATED);
+/// The options a 6.x report deprecates, as it names them.
+pub fn deprecated_options(report: &str) -> Vec<String> {
+    flagged_options(report, &DEPRECATED)
+}
+
+/// What a 6.x check of this tsconfig will deprecate, when the files settle
+/// it: `baseUrl` and nothing else, the scene template's case, which then
+/// costs one tsc run instead of a failing one and its repeat. `chain` is the
+/// scene's tsconfig, then each one it extends. `None` leaves it to tsc: no
+/// `baseUrl`, a silenced deprecation, or anything else 6.x deprecates, whose
+/// name in the note is tsc's to give.
+pub fn foreseen_deprecations(compiler: &Compiler, chain: &[JsValue]) -> Option<Vec<String>> {
+    if compiler.major() != 6 || chain.first()?.get("references").is_some() {
+        return None;
+    }
+    // The nearest tsconfig that sets an option wins; tsc reads option names
+    // and values without regard to case.
+    let option = |name: &str| {
+        chain
+            .iter()
+            .find_map(|doc| match doc.get("compilerOptions")? {
+                JsValue::Object(options) => options
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value),
+                _ => None,
+            })
+    };
+    let set = |name: &str| option(name).is_some_and(|value| *value != JsValue::Null);
+    let off = |name: &str| option(name) == Some(&JsValue::Bool(false));
+    let is = |name: &str, values: &[&str]| {
+        option(name)
+            .and_then(JsValue::as_str)
+            .is_some_and(|value| values.iter().any(|v| value.eq_ignore_ascii_case(v)))
+    };
+    let others = off("alwaysStrict")
+        || off("esModuleInterop")
+        || off("allowSyntheticDefaultImports")
+        || set("outFile")
+        || set("downlevelIteration")
+        || is("target", &["es5"])
+        || is("moduleResolution", &["node", "node10", "classic"])
+        || is("module", &["none", "amd", "umd", "system"]);
+    let base_url = option("baseUrl").and_then(JsValue::as_str).is_some();
+    (base_url && !others && option("ignoreDeprecations").is_none())
+        .then(|| vec!["baseUrl".to_string()])
+}
+
+/// Said when a 6.x check needed [`IGNORE_DEPRECATIONS_6`] for `names`.
+pub fn deprecation_message(compiler: &Compiler, names: &[String]) -> String {
     let what = match names.is_empty() {
         true => "options".to_string(),
         false => names.join(", "),
@@ -200,7 +248,7 @@ mod tests {
             flagged_options(TS6_VALUES, &DEPRECATED),
             ["target=ES5", "moduleResolution=node10"]
         );
-        let note = deprecation_message(&compiler("6.0.3"), TS6_VALUES);
+        let note = deprecation_message(&compiler("6.0.3"), &deprecated_options(TS6_VALUES));
         assert!(note.contains("moduleResolution=node10"), "{note}");
         assert!(note.contains("target=ES5"), "{note}");
         let steps = config_steps(TS7_VALUES);
@@ -229,7 +277,7 @@ mod tests {
 
     #[test]
     fn the_deprecation_note_names_the_options_and_the_flag() {
-        let note = deprecation_message(&compiler("6.0.3"), TS6);
+        let note = deprecation_message(&compiler("6.0.3"), &deprecated_options(TS6));
         assert!(note.contains("baseUrl"), "{note}");
         assert!(note.contains("TypeScript 6.0.3"), "{note}");
         assert!(note.contains("--ignoreDeprecations 6.0"), "{note}");
@@ -246,6 +294,87 @@ mod tests {
         assert!(steps[1].contains("./"), "{steps:?}");
         assert!(config_steps(TS6).is_empty());
         assert!(config_steps(TYPES).is_empty());
+    }
+
+    fn chain(docs: &[&str]) -> Vec<JsValue> {
+        docs.iter()
+            .map(|doc| dcl_scene_authoring::jsjson::parse(doc).unwrap())
+            .collect()
+    }
+
+    /// The SDK's base tsconfig, as far as 6.x's deprecations read it.
+    const SDK_BASE: &str = r#"{ "compilerOptions": { "target": "es2020", "module": "esnext",
+        "moduleResolution": "bundler", "allowSyntheticDefaultImports": true, "alwaysStrict": true } }"#;
+
+    #[test]
+    fn the_template_tsconfig_is_known_to_need_the_flag_before_tsc_runs() {
+        let template = r#"{ "compilerOptions": { "strict": true, "baseUrl": ".", "paths": {} },
+            "extends": "@dcl/sdk/types/tsconfig.ecs7.json" }"#;
+        let foreseen =
+            |version: &str, docs: &[&str]| foreseen_deprecations(&compiler(version), &chain(docs));
+        assert_eq!(
+            foreseen("6.0.3", &[template, SDK_BASE]),
+            Some(vec!["baseUrl".to_string()])
+        );
+        assert_eq!(
+            foreseen("6.0.3", &[r#"{ "compilerOptions": { "BaseUrl": "." } }"#]),
+            Some(vec!["baseUrl".to_string()]),
+            "tsc reads option names without regard to case"
+        );
+        assert_eq!(
+            foreseen(
+                "6.0.3",
+                &[r#"{ "extends": "./base.json" }"#, template, SDK_BASE]
+            ),
+            Some(vec!["baseUrl".to_string()]),
+            "an inherited baseUrl counts"
+        );
+        assert_eq!(foreseen("5.9.3", &[template, SDK_BASE]), None);
+        assert_eq!(foreseen("7.0.2", &[template, SDK_BASE]), None);
+        assert_eq!(foreseen("6.0.3", &[]), None);
+        for (why, docs) in [
+            (
+                "no baseUrl",
+                vec![r#"{ "compilerOptions": { "strict": true } }"#, SDK_BASE],
+            ),
+            (
+                "fixed since",
+                vec![r#"{ "compilerOptions": { "baseUrl": null } }"#, template],
+            ),
+            (
+                "already silenced",
+                vec![r#"{ "compilerOptions": { "baseUrl": ".", "ignoreDeprecations": "6.0" } }"#],
+            ),
+            (
+                "a second deprecation is tsc's to name",
+                vec![r#"{ "compilerOptions": { "baseUrl": ".", "moduleResolution": "Node" } }"#],
+            ),
+            (
+                "one inherited too",
+                vec![template, r#"{ "compilerOptions": { "target": "ES5" } }"#],
+            ),
+            (
+                "an option turned off",
+                vec![r#"{ "compilerOptions": { "baseUrl": ".", "esModuleInterop": false } }"#],
+            ),
+            (
+                "project references",
+                vec![r#"{ "compilerOptions": { "baseUrl": "." }, "references": [] }"#],
+            ),
+        ] {
+            assert_eq!(foreseen("6.0.3", &docs), None, "{why}");
+        }
+        assert_eq!(
+            foreseen(
+                "6.0.3",
+                &[
+                    r#"{ "compilerOptions": { "baseUrl": ".", "target": "es2020" } }"#,
+                    r#"{ "compilerOptions": { "target": "es5" } }"#
+                ]
+            ),
+            Some(vec!["baseUrl".to_string()]),
+            "the nearer tsconfig's value wins"
+        );
     }
 
     #[test]
