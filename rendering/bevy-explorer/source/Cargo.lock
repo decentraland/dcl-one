@@ -1434,6 +1434,7 @@ dependencies = [
  "input_manager",
  "ipfs",
  "naga_oil",
+ "pipeline_test",
  "platform",
  "rand 0.8.8",
  "rapier3d-f64",
@@ -1746,7 +1747,6 @@ dependencies = [
 [[package]]
 name = "bevy_atmosphere"
 version = "0.13.0"
-source = "git+https://github.com/robtfm/bevy_atmosphere?branch=0.16-2#d18523c8fdecb1847b4f6f82a597752207373cc2"
 dependencies = [
  "bevy",
  "bevy_atmosphere_macros",
@@ -1756,7 +1756,6 @@ dependencies = [
 [[package]]
 name = "bevy_atmosphere_macros"
 version = "0.8.0"
-source = "git+https://github.com/robtfm/bevy_atmosphere?branch=0.16-2#d18523c8fdecb1847b4f6f82a597752207373cc2"
 dependencies = [
  "bevy_macro_utils 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "proc-macro-crate",
@@ -1782,7 +1781,6 @@ dependencies = [
 [[package]]
 name = "bevy_console"
 version = "0.14.0"
-source = "git+https://github.com/robtfm/bevy-console?branch=0.16#4a48b6bd3b85c87e26d0f80c837cedfc6c4ec34d"
 dependencies = [
  "ansi-parser",
  "bevy",
@@ -1796,7 +1794,6 @@ dependencies = [
 [[package]]
 name = "bevy_console_derive"
 version = "0.5.0"
-source = "git+https://github.com/robtfm/bevy-console?branch=0.16#4a48b6bd3b85c87e26d0f80c837cedfc6c4ec34d"
 dependencies = [
  "better-bae",
  "proc-macro2",
@@ -1860,7 +1857,6 @@ dependencies = [
 [[package]]
 name = "bevy_dui"
 version = "0.1.0"
-source = "git+https://github.com/robtfm/bevy_dui?branch=0.16#3a66d2583a205daf4fd07c9bcf92d7f3d7f04ca2"
 dependencies = [
  "anyhow",
  "bevy",
@@ -1908,7 +1904,6 @@ dependencies = [
 [[package]]
 name = "bevy_ecss"
 version = "0.7.0"
-source = "git+https://github.com/robtfm/bevy_ecss?branch=0.16#1192869a8a56d3fe9e7812215b71fcdcd1093d99"
 dependencies = [
  "ahash",
  "bevy",
@@ -2114,7 +2109,6 @@ dependencies = [
 [[package]]
 name = "bevy_kira_audio"
 version = "0.23.0"
-source = "git+https://github.com/robtfm/bevy_kira_audio?branch=0.16-2#a399357a9d8b0a155727086a26ad75970886d52a"
 dependencies = [
  "anyhow",
  "bevy",
@@ -2433,7 +2427,6 @@ dependencies = [
 [[package]]
 name = "bevy_simple_text_input"
 version = "0.11.1"
-source = "git+https://github.com/robtfm/bevy_simple_text_input?branch=0.16#f63341739ea3c14dc1e98395115dc58969469297"
 dependencies = [
  "bevy",
  "copypwasmta",
@@ -2978,7 +2971,6 @@ dependencies = [
 [[package]]
 name = "boimp"
 version = "0.1.1"
-source = "git+https://github.com/robtfm/boimp?branch=feat%2Fcomposite-bake-via-storage-texture#dd1953bf0ccb1cbf692b75b000b940fbfeb34f72"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -3288,6 +3280,7 @@ dependencies = [
  "bevy",
  "cef",
  "cef-dll-sys",
+ "directories",
  "libc",
  "objc",
  "raw-window-handle",
@@ -3784,7 +3777,6 @@ dependencies = [
 [[package]]
 name = "copypwasmta"
 version = "0.1.0"
-source = "git+https://github.com/robtfm/copypwasmta#586bfd836b98aadc87ad4e30d65174ad4c9ac7a5"
 dependencies = [
  "async-trait",
  "clipboard-win",
@@ -4283,7 +4275,6 @@ checksum = "41b319d1b62ffbd002e057f36bebd1f42b9f97927c9577461d855f3513c4289f"
 [[package]]
 name = "dcl-rpc"
 version = "2.3.7"
-source = "git+https://github.com/decentraland/rpc-rust?branch=feat%2Fwasm-compat#cc6f792e91873f3aee65d19a5ed7e7f1352b73a1"
 dependencies = [
  "async-channel 1.9.0",
  "async-trait",
@@ -4533,6 +4524,7 @@ dependencies = [
  "naga_oil",
  "nft",
  "once_cell",
+ "opener",
  "parking_lot",
  "particle_system",
  "perf_output",
@@ -4571,7 +4563,6 @@ dependencies = [
  "web-time",
  "wgpu",
  "windows 0.58.0",
- "winit",
  "world_ui",
  "zip 2.4.2",
 ]
@@ -4579,7 +4570,6 @@ dependencies = [
 [[package]]
 name = "deno_console"
 version = "0.168.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
 ]
@@ -4587,7 +4577,6 @@ dependencies = [
 [[package]]
 name = "deno_core"
 version = "0.307.0"
-source = "git+https://github.com/robtfm/deno_core?branch=0_307_hotfix#9b59a4e33f4729799409c20f85a80764f1d447e5"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4624,7 +4613,6 @@ checksum = "a13951ea98c0a4c372f162d669193b4c9d991512de9f2381dd161027f34b26b1"
 [[package]]
 name = "deno_fetch"
 version = "0.192.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "base64 0.21.7",
  "bytes",
@@ -4669,7 +4657,6 @@ dependencies = [
 [[package]]
 name = "deno_net"
 version = "0.160.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
  "deno_permissions",
@@ -4686,7 +4673,6 @@ dependencies = [
 [[package]]
 name = "deno_ops"
 version = "0.183.0"
-source = "git+https://github.com/robtfm/deno_core?branch=0_307_hotfix#9b59a4e33f4729799409c20f85a80764f1d447e5"
 dependencies = [
  "proc-macro-rules",
  "proc-macro2",
@@ -4700,7 +4686,6 @@ dependencies = [
 [[package]]
 name = "deno_permissions"
 version = "0.28.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
  "deno_terminal",
@@ -4726,7 +4711,6 @@ dependencies = [
 [[package]]
 name = "deno_tls"
 version = "0.155.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
  "deno_native_certs",
@@ -4753,7 +4737,6 @@ dependencies = [
 [[package]]
 name = "deno_url"
 version = "0.168.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
  "urlpattern",
@@ -4762,7 +4745,6 @@ dependencies = [
 [[package]]
 name = "deno_web"
 version = "0.199.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "async-trait",
  "base64-simd 0.8.0",
@@ -4780,7 +4762,6 @@ dependencies = [
 [[package]]
 name = "deno_webidl"
 version = "0.168.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
 ]
@@ -4788,7 +4769,6 @@ dependencies = [
 [[package]]
 name = "deno_websocket"
 version = "0.173.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "bytes",
  "deno_core",
@@ -4810,7 +4790,6 @@ dependencies = [
 [[package]]
 name = "deno_webstorage"
 version = "0.163.0"
-source = "git+https://github.com/robtfm/deno?branch=1_46_hotfix#3ee34819c57653610521dc6501ddf8e2cf0c5aaa"
 dependencies = [
  "deno_core",
  "deno_web",
@@ -4906,7 +4885,6 @@ dependencies = [
 [[package]]
 name = "device-info"
 version = "0.1.1"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "core-foundation 0.10.1",
  "jni 0.21.1",
@@ -5092,12 +5070,10 @@ dependencies = [
 [[package]]
 name = "dpi"
 version = "0.1.1"
-source = "git+https://github.com/robtfm/winit?branch=v0.30.x#b7ec4cf9cd448f68e9ddc10d01e93a92a7177b63"
 
 [[package]]
 name = "draco-nd-vector"
 version = "0.1.0-alpha.9"
-source = "git+https://github.com/robtfm/draco-oxide?branch=fix%2Fwasm32-rans-refill#5acfcf680d4bd17222d910b74ff8bf76a8161575"
 dependencies = [
  "quote",
  "seq-macro",
@@ -5107,7 +5083,6 @@ dependencies = [
 [[package]]
 name = "draco-oxide-core"
 version = "0.1.0-alpha.9"
-source = "git+https://github.com/robtfm/draco-oxide?branch=fix%2Fwasm32-rans-refill#5acfcf680d4bd17222d910b74ff8bf76a8161575"
 dependencies = [
  "draco-nd-vector",
  "kiddo",
@@ -5122,7 +5097,6 @@ dependencies = [
 [[package]]
 name = "draco-oxide-decoder"
 version = "0.1.0-alpha.9"
-source = "git+https://github.com/robtfm/draco-oxide?branch=fix%2Fwasm32-rans-refill#5acfcf680d4bd17222d910b74ff8bf76a8161575"
 dependencies = [
  "draco-oxide-core",
  "remain",
@@ -5507,7 +5481,6 @@ dependencies = [
 [[package]]
 name = "fastwebsockets"
 version = "0.8.1"
-source = "git+https://github.com/robtfm/fastwebsockets?branch=0_8_hotfix#1db2dbc2d1db519e6ba76741fd76f13519ab76f7"
 dependencies = [
  "base64 0.21.7",
  "bytes",
@@ -5565,7 +5538,6 @@ dependencies = [
 [[package]]
 name = "ffmpeg-next"
 version = "6.1.1"
-source = "git+https://github.com/robtfm/rust-ffmpeg?branch=audio-linesize-0-6.1#140c74769d0ecceff78997542392afac95fe6ca3"
 dependencies = [
  "bitflags 1.3.2",
  "ffmpeg-sys-next",
@@ -7119,7 +7091,6 @@ name = "imposters"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-fs",
  "bevy",
  "bevy_console",
@@ -7131,6 +7102,7 @@ dependencies = [
  "futures-lite",
  "ipfs",
  "naga_oil",
+ "pipeline_test",
  "platform",
  "reqwest",
  "scene_material",
@@ -7721,7 +7693,6 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.54"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "cxx",
  "jni 0.21.1",
@@ -7783,7 +7754,6 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.9.7"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "bmrng",
  "bytes",
@@ -7811,7 +7781,6 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.9.1"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "http 1.5.0",
  "livekit-protocol",
@@ -7829,7 +7798,6 @@ dependencies = [
 [[package]]
 name = "livekit-common"
 version = "0.1.6"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "livekit-protocol",
 ]
@@ -7837,7 +7805,6 @@ dependencies = [
 [[package]]
 name = "livekit-data-stream"
 version = "0.1.9"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "async-compression",
  "bmrng",
@@ -7859,7 +7826,6 @@ dependencies = [
 [[package]]
 name = "livekit-datatrack"
 version = "0.2.4"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "anyhow",
  "bytes",
@@ -7877,7 +7843,6 @@ dependencies = [
 [[package]]
 name = "livekit-net"
 version = "0.1.4"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "async-trait",
  "base64 0.21.7",
@@ -7894,7 +7859,6 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.8.2"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "pbjson",
  "pbjson-types",
@@ -7905,7 +7869,6 @@ dependencies = [
 [[package]]
 name = "livekit-region"
 version = "0.1.1"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "serde",
 ]
@@ -7913,7 +7876,6 @@ dependencies = [
 [[package]]
 name = "livekit-rpc"
 version = "0.1.5"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "livekit-common",
  "livekit-data-stream",
@@ -7929,7 +7891,6 @@ dependencies = [
 [[package]]
 name = "livekit-signaling"
 version = "0.1.7"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "base64 0.21.7",
  "device-info",
@@ -7952,7 +7913,6 @@ dependencies = [
 [[package]]
 name = "livekit-token"
 version = "0.3.1"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "hmac",
  "jsonwebtoken",
@@ -8377,7 +8337,6 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "24.0.0"
-source = "git+https://github.com/robtfm/wgpu?branch=24.0.5-dcl#e25f3d4b0d7f478ea12105984270a25bbeeb0a64"
 dependencies = [
  "arrayvec",
  "bit-set 0.8.0",
@@ -8399,7 +8358,6 @@ dependencies = [
 [[package]]
 name = "naga_oil"
 version = "0.17.1"
-source = "git+https://github.com/robtfm/naga_oil?branch=fix%2Fdeterministic-override-emit-order#9007b2ffe3e8f509ffc9b1481f039de78cf31699"
 dependencies = [
  "bit-set 0.5.3",
  "codespan-reporting 0.11.1",
@@ -9279,7 +9237,6 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "opener"
 version = "0.8.2"
-source = "git+https://github.com/robtfm/opener#973658fe4501ad9d9b4338e4fe192036277ba0fb"
 dependencies = [
  "bstr",
  "normpath",
@@ -9459,7 +9416,6 @@ dependencies = [
 [[package]]
 name = "parry3d-f64"
 version = "0.25.3"
-source = "git+https://github.com/robtfm/parry?branch=fix-bvh-negative-scale-0.25#1d3d84559da96ae6033035a17ac57b36cc447416"
 dependencies = [
  "approx",
  "arrayvec",
@@ -9720,6 +9676,14 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "pipeline_test"
+version = "0.1.0"
+dependencies = [
+ "assets",
+ "bevy",
+]
 
 [[package]]
 name = "piper"
@@ -11005,9 +10969,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -11199,12 +11163,12 @@ dependencies = [
 name = "scene_material"
 version = "0.1.0"
 dependencies = [
- "assets",
  "bevy",
  "boimp",
  "common",
  "naga_oil",
  "nonmax",
+ "pipeline_test",
 ]
 
 [[package]]
@@ -11545,7 +11509,6 @@ dependencies = [
 [[package]]
 name = "serde_v8"
 version = "0.216.0"
-source = "git+https://github.com/robtfm/deno_core?branch=0_307_hotfix#9b59a4e33f4729799409c20f85a80764f1d447e5"
 dependencies = [
  "num-bigint",
  "serde",
@@ -11556,9 +11519,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -11576,9 +11539,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -13675,6 +13638,7 @@ dependencies = [
  "ipfs",
  "naga_oil",
  "noise",
+ "pipeline_test",
  "scene_material",
  "scene_runner",
  "serde_json",
@@ -14100,7 +14064,6 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.51"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "cc",
  "cxx",
@@ -14114,7 +14077,6 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.21"
-source = "git+https://github.com/robtfm/client-sdk-rust?branch=decentraland-0.9.7#7f9ed8515625f5149dc074d13bd50e451a442a59"
 dependencies = [
  "anyhow",
  "fs2",
@@ -14134,7 +14096,6 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "24.0.5"
-source = "git+https://github.com/robtfm/wgpu?branch=24.0.5-dcl#e25f3d4b0d7f478ea12105984270a25bbeeb0a64"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.1",
@@ -14159,7 +14120,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "24.0.5"
-source = "git+https://github.com/robtfm/wgpu?branch=24.0.5-dcl#e25f3d4b0d7f478ea12105984270a25bbeeb0a64"
 dependencies = [
  "arrayvec",
  "bit-vec 0.8.0",
@@ -14183,7 +14143,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "24.0.4"
-source = "git+https://github.com/robtfm/wgpu?branch=24.0.5-dcl#e25f3d4b0d7f478ea12105984270a25bbeeb0a64"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -14228,7 +14187,6 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "24.0.0"
-source = "git+https://github.com/robtfm/wgpu?branch=24.0.5-dcl#e25f3d4b0d7f478ea12105984270a25bbeeb0a64"
 dependencies = [
  "bitflags 2.13.1",
  "js-sys",
@@ -14736,7 +14694,6 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.12"
-source = "git+https://github.com/robtfm/winit?branch=v0.30.x#b7ec4cf9cd448f68e9ddc10d01e93a92a7177b63"
 dependencies = [
  "android-activity",
  "atomic-waker",

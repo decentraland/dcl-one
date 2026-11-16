@@ -2,6 +2,7 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
 import { ColorPicker } from './ColorPicker'
@@ -11,6 +12,12 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
+import { AnchoredMenu } from './AnchoredMenu'
+import { MaskIcon } from './MaskIcon'
+import reelShareIcon from '../assets/camera-reel/share-x.png'
+import reelLinkIcon from '../assets/camera-reel/copy-link.png'
+import reelDownloadIcon from '../assets/camera-reel/download.png'
+import reelDeleteIcon from '../assets/camera-reel/delete.png'
 import { CountBadge } from './CountBadge'
 import { SwapLabel } from './SwapLabel'
 import { KebabMenu } from './KebabMenu'
@@ -153,6 +160,40 @@ function Swatch({ name, hex, token, dark }: { name: string; hex: string; token?:
   )
 }
 
+function AnchoredMenuDemo(): React.JSX.Element {
+  const [anchor, setAnchor] = useState<{ x: number; y: number; opener: Element } | null>(null)
+  const [pub, setPub] = useState(true)
+  return (
+    <>
+      <Button
+        variant="secondary"
+        onClick={(e) => {
+          const box = e.currentTarget.getBoundingClientRect()
+          setAnchor(anchor == null ? { x: box.left + box.width / 2, y: box.top + box.height / 2, opener: e.currentTarget } : null)
+        }}
+      >
+        Open the photo options
+      </Button>
+      {anchor != null && (
+        <AnchoredMenu
+          anchor={anchor}
+          ignore={anchor.opener}
+          onClose={() => setAnchor(null)}
+          aria-label="Photo options"
+          items={[
+            { kind: 'toggle', label: 'Set as Public', checked: pub, onChange: setPub },
+            { kind: 'separator' },
+            { label: 'Share on X', icon: <MaskIcon src={reelShareIcon} size={18} />, onClick: () => {} },
+            { label: 'Copy Link', icon: <MaskIcon src={reelLinkIcon} size={18} />, onClick: () => {} },
+            { label: 'Download', icon: <MaskIcon src={reelDownloadIcon} size={18} />, onClick: () => {} },
+            { label: 'Delete', icon: <MaskIcon src={reelDeleteIcon} size={18} />, onClick: () => {} }
+          ]}
+        />
+      )}
+    </>
+  )
+}
+
 export function Showcase(): React.JSX.Element {
   const [on, setOn] = useState(true)
   const [vol, setVol] = useState(60)
@@ -220,6 +261,23 @@ export function Showcase(): React.JSX.Element {
           <Button size="row" variant="secondary">Row</Button>
           <Button size="md">Medium</Button>
           <Button size="lg">Large</Button>
+        </div>
+      </Section>
+
+      <Section title="Button (bare: a translucent fill, sized by the caller)">
+        <div style={row}>
+          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear'] as const).map((variant) => (
+            <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
+              {variant}
+            </Button>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Skeleton">
+        <div style={row}>
+          <Skeleton style={{ width: 126, height: 126 }} />
+          <Skeleton tone="band" style={{ width: 200, height: 22 }} />
         </div>
       </Section>
 
@@ -502,6 +560,10 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)">
+        <AnchoredMenuDemo />
       </Section>
 
       <Section title="SwapLabel (hover the button)">

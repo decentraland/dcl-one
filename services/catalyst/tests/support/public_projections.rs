@@ -78,14 +78,6 @@ impl Projection {
             state.gatekeeper.clone(),
         ));
         social.start_topology(&jobs, state.feed.topology.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let public = catalyst::comms::archipelago::mounts(state.clone(), true)
-            .stats
-            .merge(catalyst::comms::presence::router(
-                state.gatekeeper.presence.clone(),
-            ));
-        tokio::spawn(async move { axum::serve(listener, public).await.unwrap() });
         let files = std::env::temp_dir().join(format!(
             "catalyst-public-projections-{}",
             uuid::Uuid::new_v4()
@@ -103,6 +95,20 @@ impl Projection {
         content
             .sync
             .set_state(catalyst::content::SyncState::Syncing);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let public = catalyst::comms::archipelago::mounts(
+            state.clone(),
+            true,
+            Default::default(),
+            catalyst::comms::stats::http::test_support::matcher(),
+            content.denylist.clone(),
+        )
+        .stats
+        .merge(catalyst::comms::presence::router(
+            state.gatekeeper.presence.clone(),
+        ));
+        tokio::spawn(async move { axum::serve(listener, public).await.unwrap() });
         let about = Arc::new(catalyst::content::about_comms::AboutCommsState::new(
             catalyst::content::about_comms::Settings {
                 protocol: "v3".into(),
@@ -114,7 +120,7 @@ impl Projection {
                 offline_when_unreachable: false,
             },
         ));
-        assert!(about.attach_core(state.clone()));
+        assert!(about.attach_core(state.statistics.clone()));
         assert!(content.attach_about_comms(about));
         let sources = catalyst::explore::api::Sources {
             lists: String::new(),
@@ -294,10 +300,18 @@ async fn baseline_pulse_startup_fallback_preserves_room_flow() {
     // The established hot-scenes endpoint counts positional connector peers,
     // independently of LiveKit world/scene occupancy and Pulse transport choice.
     sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', 'projection-genesis', $1, timezone('UTC', now()), ARRAY['0,0'], timezone('UTC', now()), '[]'::json)")
-        .bind(json!({"scene":{"base":"0,0","parcels":["0,0"]},"display":{"title":"Genesis"}}))
+        .bind(json!({"v":{"scene":{"base":"0,0","parcels":["0,0"]},"display":{"title":"Genesis"}}}))
         .execute(&fixture.db.pool).await.unwrap();
     sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ('0,0', 'projection-genesis', 'scene')")
         .execute(&fixture.db.pool).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.state.statistics.snapshot().peers.is_empty() {
+            fixture.world.pass();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("complete statistics publication follows authenticated observation");
     let hot = fixture.get("/hot-scenes").await;
     assert_eq!(hot[0]["id"], "projection-genesis");
     assert_eq!(hot[0]["usersTotalCount"], 1);
@@ -307,9 +321,9 @@ async fn baseline_pulse_startup_fallback_preserves_room_flow() {
     }));
     let peer = fixture.get(&format!("/peers/{address}")).await;
     assert!(peer.to_string().contains(&address));
-    wait_for(|| fixture.state.core_status().0).await;
+    wait_for(|| fixture.state.statistics.core_status().0).await;
     assert_eq!(
-        fixture.state.core_status().1,
+        fixture.state.statistics.core_status().1,
         0,
         "discovery advertises native board load; bridge-only topology has no native transport peer"
     );
@@ -441,6 +455,16 @@ async fn baseline_empty_topology_differs_from_feed_loss() {
     .await
     .expect("valid produced empty clears before receipt TTL");
     assert!(empty_started.elapsed() < catalyst::comms::topology::TOPOLOGY_RECEIPT_TTL);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !catalyst::comms::stats::render::public_islands(&fixture.state.statistics.snapshot())
+            .is_empty()
+        {
+            fixture.world.pass();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("complete statistical topology eventually publishes empty");
     assert_eq!(fixture.get("/islands").await["islands"], json!([]));
     fixture.world.place(0, wallet, session);
     fixture.world.pass();
@@ -525,7 +549,7 @@ async fn advertised_counts_follow_produced_native_discovery() {
         "0x00000000000000000000000000000000000000dd",
     );
     tokio::time::timeout(Duration::from_secs(8), async {
-        while fixture.state.core_status() != (true, 1) {
+        while fixture.state.statistics.core_status() != (true, 1) {
             fixture.world.pass();
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -535,7 +559,8 @@ async fn advertised_counts_follow_produced_native_discovery() {
     fixture.advertised(true, 1, 0).await;
     fixture.world.remove(0);
     tokio::time::timeout(Duration::from_secs(8), async {
-        while fixture.state.core_status() != (true, 0) || !fixture.state.parcel_counts().is_empty()
+        while fixture.state.statistics.core_status() != (true, 0)
+            || !fixture.state.statistics.parcel_counts().is_empty()
         {
             fixture.world.pass();
             tokio::time::sleep(Duration::from_millis(50)).await;

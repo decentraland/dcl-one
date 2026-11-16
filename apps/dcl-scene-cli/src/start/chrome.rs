@@ -211,12 +211,14 @@ pub(crate) fn document(
   <div class="bar__mark"><span class="bar__dot"></span>DCL Scene CLI <span id="preview-connection" data-health-url="{health_url}" role="status" aria-live="polite"></span></div>
   {nav}
 </header>
+<section id="preview-problems" class="problems" data-problems-url="{problems_url}" aria-label="Preview problems" aria-live="polite" hidden></section>
 <div class="page-feedback"><div id="page-errors" role="alert" aria-atomic="true"></div><div id="page-feedback" role="status" aria-live="polite" aria-atomic="true"></div></div>
 {body}
 </body>
 </html>
 "##,
         health_url = esc(&format!("{prefix}/about")),
+        problems_url = esc(&format!("{prefix}{}", super::PROBLEMS_PATH)),
         ui3 = ui3(),
         t = esc(title),
         nav = nav.map(|n| pgnav(prefix, n)).unwrap_or_default(),

@@ -6,39 +6,43 @@
 
 use std::env;
 
-/// What is left of the clustering config now that Pulse owns cluster composition: how long a
-/// silent peer stays in this replica's directory, and how often the two sweeps run.
+/// Connected-wallet moderation cadence; statistics have no peer expiry.
 #[derive(Clone, Debug)]
 pub struct ClusterConfig {
-    pub heartbeat_timeout_secs: u64,
-    pub peer_expiry_interval_secs: u64,
     pub ban_sweep_interval_secs: u64,
 }
 
 impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
-            heartbeat_timeout_secs: 30,
-            peer_expiry_interval_secs: 2,
             ban_sweep_interval_secs: 30,
         }
     }
 }
 
+pub const DEFAULT_MAX_SOCKETS_PER_IP: u32 = 64;
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub max_sockets: u32,
+    /// `WS_MAX_SOCKETS_PER_IP`: sockets one client address may hold, pending handshakes
+    /// included; 0 is unlimited.
+    pub max_sockets_per_ip: u32,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: proxies whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// `ISLAND_CHANGED_DEDUP_MS`: the window inside which the same room handed to the same socket
     /// twice is the client's own assignment arriving again through the re-announce path; it
     /// already holds a token for it.
-    pub island_changed_dedup_ms: u64,
+    pub island_changed_dedup_ms: f64,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             max_sockets: 3000,
-            island_changed_dedup_ms: 10_000,
+            max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
+            trusted_proxy_cidrs: Vec::new(),
+            island_changed_dedup_ms: 10_000.0,
         }
     }
 }
@@ -69,8 +73,6 @@ pub struct Settings {
     pub cluster: ClusterConfig,
     pub server: ServerConfig,
     pub auth: AuthConfig,
-    /// The content server clients fetch thumbnails from (`/hot-scenes`).
-    pub content_base_url: String,
     pub commit_hash: String,
 }
 
@@ -80,20 +82,23 @@ pub struct Settings {
 pub struct RawSettings {
     /// WS_MAX_SOCKETS; zero is not an unlimited mode.
     pub max_sockets: u32,
+    /// `WS_MAX_SOCKETS_PER_IP`; zero is unlimited.
+    pub max_sockets_per_ip: u32,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// `HANDSHAKE_TIMEOUT` in ms; 0 keeps the default.
     pub handshake_timeout_ms: u64,
     /// `DENY_LIST_URL`.
     pub deny_list_url: Option<String>,
     /// `ISLAND_CHANGED_DEDUP_MS`.
-    pub island_changed_dedup_ms: u64,
+    pub island_changed_dedup_ms: f64,
     /// `COMMIT_HASH`.
     pub commit_hash: Option<String>,
 }
 
 impl Settings {
-    /// The checked settings from `Config`'s values and the content URL from the content
-    /// settings.
-    pub fn resolve(raw: RawSettings, content_base_url: &str) -> Self {
+    /// The checked settings from `Config`'s values.
+    pub fn resolve(raw: RawSettings) -> Self {
         let mut auth = AuthConfig::default();
         if raw.handshake_timeout_ms > 0 {
             auth.handshake_timeout_ms = raw.handshake_timeout_ms;
@@ -104,13 +109,14 @@ impl Settings {
             .filter(|v| !v.is_empty());
         let server = ServerConfig {
             max_sockets: raw.max_sockets.max(1),
+            max_sockets_per_ip: raw.max_sockets_per_ip,
+            trusted_proxy_cidrs: raw.trusted_proxy_cidrs,
             island_changed_dedup_ms: raw.island_changed_dedup_ms,
         };
         Self {
             cluster: ClusterConfig::default(),
             server,
             auth,
-            content_base_url: content_base_url.trim_end_matches('/').to_string(),
             commit_hash: raw.commit_hash.unwrap_or_default(),
         }
     }
@@ -121,16 +127,14 @@ impl Settings {
             cluster: ClusterConfig::default(),
             server: ServerConfig::default(),
             auth: AuthConfig::default(),
-            content_base_url: String::new(),
             commit_hash: "deadbeef".into(),
         }
     }
 
     /// The connector environment names: `HANDSHAKE_TIMEOUT`,
     /// `DENY_LIST_URL`, `ISLAND_CHANGED_DEDUP_MS` and
-    /// `COMMIT_HASH`; the content URL comes from the content settings, and LiveKit and the
-    /// broker (`NATS_URL`) are the gatekeeper's.
-    pub fn from_env(content_base_url: &str) -> anyhow::Result<Self> {
+    /// `COMMIT_HASH`; LiveKit and the broker (`NATS_URL`) are the gatekeeper's.
+    pub fn from_env() -> anyhow::Result<Self> {
         let mut auth = AuthConfig::default();
         if let Ok(v) = env::var("HANDSHAKE_TIMEOUT") {
             match v.trim().parse::<u64>() {
@@ -154,20 +158,13 @@ impl Settings {
                 .ok_or_else(|| anyhow::anyhow!("WS_MAX_SOCKETS must be a positive integer"))?;
         }
         if let Ok(v) = env::var("ISLAND_CHANGED_DEDUP_MS") {
-            match v.trim().parse::<u64>() {
-                Ok(ms) => server.island_changed_dedup_ms = ms,
-                Err(_) => {
-                    return Err(anyhow::anyhow!(
-                        "ISLAND_CHANGED_DEDUP_MS must be a whole number of milliseconds, got {v:?}"
-                    ));
-                }
-            }
+            server.island_changed_dedup_ms =
+                catalyst_config::parse_island_changed_dedup_ms(&v).map_err(anyhow::Error::msg)?;
         }
         Ok(Self {
             cluster: ClusterConfig::default(),
             server,
             auth,
-            content_base_url: content_base_url.trim_end_matches('/').to_string(),
             commit_hash: env::var("COMMIT_HASH").unwrap_or_default(),
         })
     }

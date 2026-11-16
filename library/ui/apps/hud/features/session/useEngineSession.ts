@@ -58,6 +58,8 @@ import { streamHere } from '../voiceChat/streamHere'
 import { resolveMapApi, setMapApiTransport } from '@explorer-core/features/map/mapApi'
 import { homeOf, homeStore } from '@explorer-core/features/map/home'
 import { nearbyPlayers, scenePins, travelCount } from '@explorer-core/features/map/scenePins'
+import { eventAnalytics } from '../events/eventFormat'
+import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
 import type { DonatePlace } from '@explorer-core/hostContract'
 import type {
@@ -88,8 +90,11 @@ import type {
   Friend,
   FriendAction,
   FriendRequest,
+  GalleryMessage,
   GalleryPhoto,
   GalleryPhotoMeta,
+  GalleryWriteMessage,
+  ExternalUrlOpenedMessage,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -97,6 +102,7 @@ import type {
   NearbyMember,
   OutfitSlot,
   OutfitsMetadata,
+  PageToScene,
   PermissionLevelChoice,
   PermissionRequestMessage,
   PermissionRuleLevel,
@@ -435,10 +441,22 @@ export interface PlacesState {
   toggle: () => void
 }
 
-// Events browses the public events API over HTTP, like Places.
+/** What opened the Events page: its key, the menu's top bar, or the sidebar. */
+export type EventsOpenSource = 'shortcut' | 'start_menu' | 'sidebar'
+
+export interface EventCommunity {
+  id: string
+  name: string
+  thumbnail: string
+}
+
+// Events reads the events service through the bridge, signed, so each event carries the user's
+// reminder.
 export interface EventsState {
   open: boolean
-  toggle: () => void
+  toggle: (source?: EventsOpenSource) => void
+  data: EventsData
+  memberOf: EventCommunity[]
 }
 
 // The Shop browses the public marketplace catalog over HTTP, like Places and Events.
@@ -473,22 +491,35 @@ export interface PhotoModeState {
   take: () => void
 }
 
-export interface GalleryState {
-  /** The local player's camera-reel photos (newest first by dateTime). */
-  list: GalleryPhoto[]
-  /** Storage usage — `current` of `max` photos (0 until the gallery first loads). */
-  current: number
+/** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
+ *  the owner's storage limit. `received` counts the images the service sent, url-less ones included
+ *  (`photos.length` when absent). */
+export interface ReelPage {
+  ok: boolean
+  photos: GalleryPhoto[]
+  total: number
   max: number
-  /** False until the first gallery response arrives (spinner vs empty state). */
-  loaded: boolean
+  received?: number
+}
+
+/** The outcome of a camera-reel write; a delete also reports the storage usage that follows it. */
+export interface ReelWrite {
+  ok: boolean
+  current?: number
+  max?: number
+}
+
+export interface GalleryState {
   open: boolean
   toggle: () => void
+  /** One page of the local player's own reel (signed, so private photos are included). */
+  fetchPage: (offset: number, limit: number) => Promise<ReelPage>
   /** Per-photo metadata cache (place + people), filled lazily when a detail view opens. */
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
-  /** Delete one of the player's photos (re-emits the gallery). */
-  remove: (id: string) => void
+  setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
+  remove: (id: string) => Promise<ReelWrite>
 }
 
 export interface EmotesState {
@@ -828,6 +859,11 @@ const AUTH_PROFILE_WAIT_MS = 30_000
 const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
+export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+// camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
+export const GALLERY_DELETE_TIMEOUT_MS = 60_000
+
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1027,6 +1063,8 @@ export interface EngineSession {
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
+  /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
+  openExternalUrl: (url: string) => Promise<boolean>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: 'map' | 'avatarPreview' | 'lobby',
@@ -1447,10 +1485,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
+  const eventsOpenSource = useRef<EventsOpenSource | null>(null)
+  const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
-  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
-  const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
-  const [galleryLoaded, setGalleryLoaded] = useState(false)
+  const bridgeRequestRef = useRef(0)
+  const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
@@ -2121,6 +2160,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           seedProfiles(memberProfiles(msg.members))
           setCommunityDetail(msg)
           break
+        case 'events':
+        case 'eventAttending':
+        case 'eventPlaces':
+          eventsData.onMessage(msg)
+          break
         case 'communityChannels': {
           // the user's communities, in the order they already have (new ones last)
           setCommunityConvos((prev) => {
@@ -2353,10 +2397,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           nearbyPlayers.receive(msg.players)
           break
         case 'gallery':
-          setGalleryPhotos([...msg.photos].sort((a, b) => photoTime(b.dateTime) - photoTime(a.dateTime)))
-          setGalleryStorage({ current: msg.current, max: msg.max })
-          setGalleryLoaded(true)
+        case 'galleryWrite':
+        case 'externalUrlOpened': {
+          const resolve = bridgePendingRef.current.get(msg.requestId)
+          bridgePendingRef.current.delete(msg.requestId)
+          resolve?.(msg)
           break
+        }
         case 'galleryPhoto':
           setGalleryMetas((prev) => ({ ...prev, [msg.id]: msg.meta }))
           break
@@ -2651,7 +2698,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // re-emit fresh data through the relay, so we never need to re-pull on reopen. Avoids
   // hammering the catalyst every time a menu is reopened.
   const ensure = useCallback(
-    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities' | 'getGallery') => {
+    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities') => {
       if (fetchedRef.current.has(kind)) return
       fetchedRef.current.add(kind)
       driverRef.current?.send({ kind })
@@ -2870,7 +2917,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
-  const toggleEvents = useCallback(() => exclusive(setEventsOpen), [exclusive])
+  const toggleEvents = useCallback(
+    (source?: EventsOpenSource) => {
+      // a click handler may pass its event here
+      eventsOpenSource.current = typeof source === 'string' ? source : null
+      exclusive(setEventsOpen)
+    },
+    [exclusive]
+  )
+  const clearEvents = eventsData.clear
+  useEffect(() => {
+    if (!eventsOpen) {
+      // nothing is kept between visits: the page reads again each time it opens
+      clearEvents()
+      return
+    }
+    if (eventsOpenSource.current != null) track('events_section_opened', { source: eventsOpenSource.current })
+    eventsOpenSource.current = null
+  }, [eventsOpen, clearEvents])
+  const eventCommunities = useMemo(() => communityConvos.map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail })), [communityConvos])
   // The in-world Shop's try-on dresses the current look, so opening it asks for the look the way the
   // Backpack does (where this host runs that Shop).
   const toggleShop = useCallback(
@@ -2949,7 +3014,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       clearInterval(id)
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
-  const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
   }, [])
@@ -2959,12 +3024,61 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
-  const removeGalleryPhoto = useCallback((id: string) => {
-    driverRef.current?.send({ kind: 'deleteGalleryPhoto', id })
-    // Optimistically drop it; the bridge re-emits the full gallery to confirm.
-    setGalleryPhotos((list) => list.filter((p) => p.id !== id))
-    setGalleryStorage((s) => ({ ...s, current: Math.max(0, s.current - 1) }))
-  }, [])
+  // A reply that never comes (the bridge scene reloaded mid-request) resolves null after
+  // `timeoutMs`, so a page never waits for good.
+  const bridgeCall = useCallback(
+    <K extends BridgeReply['kind']>(
+      kind: K,
+      build: (requestId: number) => PageToScene,
+      timeoutMs = BRIDGE_CALL_TIMEOUT_MS
+    ): Promise<Extract<BridgeReply, { kind: K }> | null> => {
+      const driver = driverRef.current
+      if (driver == null) return Promise.resolve(null)
+      const requestId = ++bridgeRequestRef.current
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }, timeoutMs)
+        bridgePendingRef.current.set(requestId, (msg) => {
+          clearTimeout(timer)
+          resolve(msg.kind === kind ? (msg as Extract<BridgeReply, { kind: K }>) : null)
+        })
+        try {
+          driver.send(build(requestId))
+        } catch (e) {
+          console.error(`[bridge] ${kind} request could not be sent`, e)
+          clearTimeout(timer)
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }
+      })
+    },
+    []
+  )
+  const fetchGalleryPage = useCallback(
+    async (offset: number, limit: number): Promise<ReelPage> => {
+      const msg = await bridgeCall('gallery', (requestId) => ({ kind: 'getGallery', requestId, offset, limit }))
+      return msg == null
+        ? { ok: false, photos: [], total: 0, max: 0 }
+        : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max, received: msg.received }
+    },
+    [bridgeCall]
+  )
+  const openExternalUrl = useCallback(
+    async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const setGalleryPhotoPublic = useCallback(
+    async (id: string, isPublic: boolean): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
+    [bridgeCall]
+  )
+  const removeGalleryPhoto = useCallback(
+    async (id: string): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
+    [bridgeCall]
+  )
   const teleport = useCallback((x: number, y: number) => {
     setLobbyOpen(false)
     driverRef.current?.send({ kind: 'teleport', x, y })
@@ -4440,6 +4554,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     : mapOpen ? 'Map'
     : placesOpen ? 'Places'
     : galleryOpen ? 'Gallery'
+    : eventsOpen ? 'Events'
     : null
   useEffect(() => {
     if (phase !== 'world' && phase !== 'entering' && phase !== 'lobby' && phase !== 'welcome') return
@@ -4516,6 +4631,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
+      case 'Events': toggleEvents('shortcut'); break
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
@@ -4668,7 +4784,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
-    events: { open: eventsOpen, toggle: toggleEvents },
+    events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {
@@ -4679,14 +4795,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       take: takePhoto
     },
     gallery: {
-      list: galleryPhotos,
-      current: galleryStorage.current,
-      max: galleryStorage.max,
-      loaded: galleryLoaded,
       open: galleryOpen,
       toggle: toggleGallery,
+      fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },
     permissions: {
@@ -4709,6 +4823,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
+    openExternalUrl,
     setEngineViewport,
     setInteractableArea,
     logout,

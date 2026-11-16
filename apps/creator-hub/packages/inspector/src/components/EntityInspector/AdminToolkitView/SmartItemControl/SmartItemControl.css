@@ -1,0 +1,11 @@
+.SmartItemControl {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.SmartItemControl .AddButton {
+  width: 100%;
+  margin-top: 8px;
+}

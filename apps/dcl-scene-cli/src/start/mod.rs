@@ -57,7 +57,7 @@ use proxy::{
 };
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
@@ -104,9 +104,15 @@ pub struct StartOptions {
     /// Raw tokens after a standalone `--`, forwarded into the deep link as
     /// query params.
     pub explorer_params: Vec<String>,
+    /// `--multi-instance` and `--skip-auth-screen`: see `link_defaults`.
+    pub multi_instance: bool,
+    pub skip_auth_screen: bool,
     pub data_layer: bool,
     pub tunnel: Option<String>,
     pub tunnel_token: Option<String>,
+    /// `--public-url`: the address a reverse proxy or a custom domain serves
+    /// this preview at.
+    pub public_url: Option<String>,
     /// Skip the authoritative-server isolate a scene.json
     /// `authoritativeMultiplayer: true` attaches (upstream parity).
     pub no_host: bool,
@@ -150,6 +156,85 @@ fn talk_web_explorer() -> String {
 /// run before the server takes requests. It reaches that gate only: the
 /// data-layer upgrade keeps to `DCL_SCENE_CLI_ALLOWED_ORIGINS`.
 static TALK_ORIGIN: OnceLock<String> = OnceLock::new();
+
+/// `--public-url`, parsed: what a request for that host is answered as when
+/// the proxy in front says nothing about the scheme or the path it serves.
+static PUBLIC_URL: OnceLock<PublicUrl> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublicUrl {
+    https: bool,
+    /// `host[:port]`, lowercase, the scheme's default port left out.
+    authority: String,
+    /// The path the proxy serves the preview under: empty, or `/p` with no
+    /// trailing slash.
+    prefix: String,
+}
+
+impl PublicUrl {
+    pub(crate) fn parse(raw: &str) -> Result<Self> {
+        let bad = |why: &str| {
+            UserError::new(
+                format!("--public-url {raw:?} is not an address a preview can be served at"),
+                TrySteps::one("pass the address people open, scheme included: --public-url https://preview.example.com")
+                    .and("a path prefix is allowed (https://example.com/preview); a query or a fragment is not"),
+            )
+            .why(why.to_string())
+        };
+        let url = url::Url::parse(raw.trim()).map_err(|e| bad(&e.to_string()))?;
+        let https = match url.scheme() {
+            "https" => true,
+            "http" => false,
+            other => return Err(bad(&format!("the scheme is {other}, not http or https")).into()),
+        };
+        let Some(host) = url.host_str() else {
+            return Err(bad("it names no host").into());
+        };
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err(bad("it carries a query or a fragment").into());
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(bad("it carries credentials").into());
+        }
+        let authority = match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        }
+        .to_ascii_lowercase();
+        Ok(PublicUrl {
+            https,
+            authority,
+            prefix: url.path().trim_end_matches('/').to_string(),
+        })
+    }
+
+    pub(crate) fn origin(&self) -> String {
+        let scheme = if self.https { "https" } else { "http" };
+        format!("{scheme}://{}{}", self.authority, self.prefix)
+    }
+
+    /// Whether a request names this address: `X-Forwarded-Host` when a proxy
+    /// sent one, else `Host`, compared without the scheme's default port.
+    fn names(&self, headers: &HeaderMap) -> bool {
+        let default_port = if self.https { ":443" } else { ":80" };
+        forwarded_host(headers)
+            .or_else(|| {
+                headers
+                    .get(header::HOST)
+                    .and_then(|h| h.to_str().ok())
+                    .map(str::to_string)
+            })
+            .is_some_and(|host| {
+                let host = host.trim().to_ascii_lowercase();
+                host.strip_suffix(default_port).unwrap_or(&host) == self.authority
+            })
+    }
+}
+
+/// The `--public-url` a request arrived for, if it did.
+fn public_url_of(headers: &HeaderMap) -> Option<&'static PublicUrl> {
+    PUBLIC_URL.get().filter(|public| public.names(headers))
+}
 
 /// The site the embedded player's HUD reads its services from
 /// (`play_embed::PlayConfig`): the origin of the player `--player` or
@@ -279,7 +364,12 @@ pub(crate) struct AppState {
     /// Set: `/about` hands out `signed-login:` and the signed endpoints mint
     /// LiveKit tokens; unset: mini-comms ws-rooms on this server. Read it
     /// through [`AppState::voice`], which a hosted scene overrides.
-    livekit: Option<crate::livekit::Livekit>,
+    /// Set once: at startup for a server named on the command line, or when
+    /// the built-in one, started beside the initial build, has answered.
+    livekit: OnceLock<crate::livekit::Livekit>,
+    /// True while the built-in livekit-server is still starting; see
+    /// [`AppState::voice_settled`].
+    voice_starting: tokio::sync::watch::Receiver<bool>,
     /// `--no-host`: scene.json's `authoritativeMultiplayer` attaches nothing.
     no_host: bool,
     /// The first project's server isolate; [`host_slot`] keeps it on the flag.
@@ -309,6 +399,9 @@ pub(crate) struct AppState {
     /// would fall through to a real deploy against a real content server.
     deploy_dry_run: bool,
     explorer_params: Vec<String>,
+    /// The parameters that the printed deep link and the first visit of the
+    /// landing page turn on.
+    link_defaults: Vec<&'static str>,
     /// Shown on the landing page.
     recent_requests: Mutex<VecDeque<(String, u16, Instant)>>,
     deploy: deploy_page::DeployState,
@@ -336,7 +429,8 @@ impl AppState {
             machine: machine_id(),
             reload_tx,
             offline_comms: false,
-            livekit: None,
+            livekit: OnceLock::new(),
+            voice_starting: tokio::sync::watch::channel(false).1,
             no_host: false,
             host: Mutex::new(None),
             port,
@@ -351,6 +445,7 @@ impl AppState {
             position: None,
             deploy_dry_run: false,
             explorer_params: Vec::new(),
+            link_defaults: landing::DEFAULT_ON.to_vec(),
             recent_requests: Mutex::new(VecDeque::new()),
             deploy: deploy_page::DeployState::default(),
             token: mint_token(),
@@ -622,6 +717,22 @@ fn browser_marked(headers: &HeaderMap) -> bool {
     headers.contains_key("sec-fetch-site") || headers.contains_key(header::ORIGIN)
 }
 
+/// Where a page, an editor or a script reads what is wrong with the running
+/// preview: the warnings `start` printed that still hold.
+pub(crate) const PROBLEMS_PATH: &str = "/api/problems";
+
+/// `GET /api/problems`: the open build, type-check, scene and preview
+/// problems, each with the steps the terminal printed. `revision` moves when
+/// the list does, so a poller redraws only on a change.
+async fn problems() -> Response {
+    let (revision, problems) = ux::problems();
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({ "revision": revision, "problems": problems })),
+    )
+        .into_response()
+}
+
 /// The URL `--talk` hands the browser opener: `/talk` on this preview,
 /// which redirects a top-level navigation to the player with the token in
 /// the fragment. The opener's argv — readable by every local user in
@@ -689,6 +800,20 @@ fn lock_cache(st: &AppState) -> MutexGuard<'_, HashMap<PathBuf, (Instant, Value)
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The deep-link parameters a run turns on. With neither flag, both
+/// parameters; with a flag, only the parameters of the given flags, as
+/// upstream does.
+fn link_defaults(multi_instance: bool, skip_auth_screen: bool) -> Vec<&'static str> {
+    if !multi_instance && !skip_auth_screen {
+        return landing::DEFAULT_ON.to_vec();
+    }
+    [multi_instance, skip_auth_screen]
+        .into_iter()
+        .zip(landing::DEFAULT_ON)
+        .filter_map(|(given, key)| given.then_some(key))
+        .collect()
+}
+
 pub async fn start(opts: StartOptions) -> Result<()> {
     joinblock::set_dclenv(&opts.dclenv);
     let trunk_url = opts
@@ -696,10 +821,20 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         .as_deref()
         .map(crate::tunnel::normalize_trunk_url)
         .transpose()?;
+    let public_url = opts
+        .public_url
+        .as_deref()
+        .filter(|raw| !raw.trim().is_empty())
+        .map(PublicUrl::parse)
+        .transpose()?;
+    if let Some(public) = &public_url {
+        let _ = PUBLIC_URL.set(public.clone());
+    }
     let workspace = Workspace::load(&opts.dir)?;
     let first = workspace.projects[0].clone();
     crate::deploy::forget_remembered_target(&first.root);
-    let (port, listener) = bind_preview_port(opts.port).await?;
+    let (port, listener) =
+        bind_preview_port("start", Ipv4Addr::UNSPECIFIED.into(), opts.port).await?;
 
     // The embedded player's page names the site its HUD reads services from;
     // set once, before the first /play/ request splices it in.
@@ -743,9 +878,8 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     // tunnel, which forwards the preview port alone and never media ports.
     // A scene with a server stays on the ws-room too: see `host_slot`.
     let hosts_scene = !opts.no_host && crate::entrypoint::authoritative_multiplayer(&first);
-    let mut livekit = opts.livekit.clone();
-    let mut livekit_server = None;
-    if opts.embedded_livekit && livekit.is_none() && !opts.offline_comms {
+    let mut embed_livekit = false;
+    if opts.embedded_livekit && opts.livekit.is_none() && !opts.offline_comms {
         crate::livekit::validate_room(&opts.livekit_room)?;
         if hosts_scene {
             host_slot::note_voice_off();
@@ -754,16 +888,13 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                 "voice off over a tunnel: the built-in livekit-server is reachable from this machine and its LAN only; \
                  pass --livekit-url with a LiveKit server the tunnel's peers can reach",
             );
-        } else if let Some(running) =
-            crate::livekit_server::spawn(crate::livekit_server::DEFAULT_PORT).await
-        {
-            livekit = Some(crate::livekit::Livekit::embedded(
-                running.port,
-                crate::livekit_server::API_KEY,
-                running.api_secret(),
-                &opts.livekit_room,
-            )?);
-            livekit_server = Some(running);
+        } else if public_url.as_ref().is_some_and(|public| public.https) {
+            ux::note(
+                "voice off behind an https --public-url: a page served over https cannot open the built-in livekit-server's ws:// port; \
+                 pass --livekit-url with a wss:// LiveKit server to keep voice",
+            );
+        } else {
+            embed_livekit = true;
         }
     }
 
@@ -775,9 +906,9 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                  (npm install --save-dev @dcl/inspector to get /inspector/ too)"
             );
         }
-        let port_rx = data_layer::spawn(&first.root).await?;
+        let host_rx = data_layer::spawn(&first.root).await?;
         Some(DataLayerState {
-            port_rx,
+            host_rx,
             public_dir,
         })
     } else {
@@ -787,7 +918,11 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     let mut state = AppState::new(workspace.projects.clone(), port, broadcast::channel(32).0);
     state.project_watch = !opts.no_watch;
     state.offline_comms = opts.offline_comms;
-    state.livekit = livekit.clone();
+    if let Some(named) = opts.livekit.clone() {
+        let _ = state.livekit.set(named);
+    }
+    let (voice_ready, voice_starting) = tokio::sync::watch::channel(embed_livekit);
+    state.voice_starting = voice_starting;
     state.no_host = opts.no_host;
     state.data_layer = data_layer;
     state.local_ab = opts.local_ab;
@@ -796,6 +931,7 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     state.allow_remote_deploy = opts.allow_remote_deploy;
     state.position = opts.position;
     state.explorer_params = opts.explorer_params.clone();
+    state.link_defaults = link_defaults(opts.multi_instance, opts.skip_auth_screen);
     let state = Arc::new(state);
     let talk_link = talk_link.map(|(url, open)| {
         let _ = state.talk_url.set(url.clone());
@@ -811,6 +947,52 @@ pub async fn start(opts: StartOptions) -> Result<()> {
 
     let comms_state = Arc::new(crate::comms::CommsState::default());
 
+    // The built-in livekit-server starts beside the build and the preview
+    // does not wait for it: pages, content and reloads are served at once,
+    // and only what names the comms transport holds its answer until the
+    // server has answered or been given up on (`AppState::voice_settled`).
+    // The task's handle keeps the server's process for the session.
+    let voice_note = |st: &AppState, server: String| {
+        let Some(lk) = st.voice() else { return };
+        let rooms = st
+            .projects()
+            .iter()
+            .map(|project| lk.scene_room(&scene_id_for(project, &st.machine)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ux::note_arrow(format!("Voice: comms on {server}, {rooms}"));
+    };
+    let livekit_server = embed_livekit.then(|| {
+        let state = state.clone();
+        let room = opts.livekit_room.clone();
+        tokio::spawn(async move {
+            let running = crate::livekit_server::spawn(crate::livekit_server::DEFAULT_PORT).await;
+            if let Some(running) = &running {
+                match crate::livekit::Livekit::embedded(
+                    running.port,
+                    crate::livekit_server::API_KEY,
+                    running.api_secret(),
+                    &room,
+                ) {
+                    Ok(lk) => {
+                        let _ = state.livekit.set(lk);
+                        voice_note(&state, format!("0.0.0.0:{}", running.port));
+                    }
+                    Err(e) => ux::report_watch(&e.context("voice off")),
+                }
+            }
+            let _ = voice_ready.send(false);
+            running
+        })
+    });
+
+    // Opened beside the build, which leaves the database alone: creating it
+    // and its schema costs as much as bundling a small scene.
+    let storage_target = {
+        let root = first.root.clone();
+        tokio::task::spawn_blocking(move || crate::storage::open(&root).and_then(|db| db.target()))
+    };
+
     let mut steps = if workspace.is_multi() {
         prepare_members(&opts, &workspace, &state).await?
     } else {
@@ -819,22 +1001,16 @@ pub async fn start(opts: StartOptions) -> Result<()> {
 
     let app = build_router(state.clone(), comms_state);
 
-    if let Some(lk) = state.voice() {
-        let server = match &livekit_server {
-            Some(running) => format!("0.0.0.0:{}", running.port),
-            None => lk.describe_url(),
-        };
-        let rooms = workspace
-            .projects
-            .iter()
-            .map(|project| lk.scene_room(&scene_id_for(project, &state.machine)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        ux::note_arrow(format!("Voice: comms on {server}, {rooms}"));
+    if !embed_livekit && let Some(lk) = state.voice() {
+        voice_note(&state, lk.describe_url());
     }
 
     // where Storage/EnvVar reads and writes go, before the host that uses them
-    match crate::storage::open(&first.root).and_then(|db| db.target()) {
+    match storage_target
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|target| target)
+    {
         Ok(target) => ux::note_arrow(storage_page::start_line(
             &target,
             storage_page::signer(&state).as_ref(),
@@ -879,7 +1055,8 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         let unreachable = probe_unreachable(&ifaces, port).await;
         let mut params = banner_state.explorer_params.clone();
         params.extend(
-            landing::DEFAULT_ON
+            banner_state
+                .link_defaults
                 .iter()
                 .map(|flag| format!("--{flag}=true")),
         );
@@ -915,29 +1092,48 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         }
         steps.done(block.heading());
         if ux::verbose() {
-            println!("{}", block.body());
+            ux::say(block.body());
         } else {
-            println!("{}", block.compact_body());
+            ux::say(block.compact_body());
         }
         for line in play_lines(port, netinfo::share_ip(&block.ifaces).is_some()) {
             ux::note_arrow(line);
         }
+        let mut launches = Vec::new();
         if let Some((url, open_browser)) = talk_link {
-            ux::note_arrow(format!("Talk: {url}"));
+            // Under --json this text is on stderr, which a parent program
+            // can copy to a log: the opener URL has no token in it.
+            let shown = match ux::events() {
+                true => talk_opener_url(port),
+                false => url,
+            };
+            ux::note_arrow(format!("Talk: {shown}"));
             if open_browser {
-                crate::linker::spawn_browser(&talk_opener_url(port));
+                launches.push(open_client("talk", "the Talk page", &talk_opener_url(port)));
             }
         }
         if launch_desktop {
             let link = block.local_desktop_link();
             ux::note_arrow(format!("Desktop client: {link}"));
-            crate::linker::spawn_browser(&link);
+            launches.push(open_client("desktop", "the desktop client", &link));
         }
         if launch_web {
             let url = block.local_web_url();
             ux::note_arrow(format!("Web explorer: {url}"));
-            crate::linker::spawn_browser(&url);
+            launches.push(open_client("web", "the web explorer", &url));
         }
+        let started = |client| {
+            let found = launches
+                .iter()
+                .any(|(c, opener)| *c == client && opener.is_ok());
+            (found, client)
+        };
+        ux::event(&ready_event(
+            &block,
+            &banner_state,
+            [started("talk"), started("desktop"), started("web")],
+        ));
+        report_launches(launches);
         if let Some(trunk_url) = trunk_url {
             let events = crate::tunnel::spawn(crate::tunnel::AgentConfig {
                 trunk_url,
@@ -945,6 +1141,12 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                 local_port: port,
             });
             spawn_tunnel_printer(events, block.clone());
+        }
+        if let Some(public) = &public_url {
+            ux::say(block.public_section(
+                "Join at the PUBLIC address \u{2014} --public-url",
+                &public.origin(),
+            ));
         }
         ux::set_session_note(session_note(port));
     });
@@ -957,9 +1159,118 @@ pub async fn start(opts: StartOptions) -> Result<()> {
     };
     crate::asset_bundles::kill_sidecar_group();
     crate::livekit_server::kill_group();
-    drop(livekit_server);
+    if let Some(task) = livekit_server {
+        task.abort();
+    }
     state.release_host();
     result
+}
+
+/// The line a `start --json` run prints once the preview serves and its
+/// links are known. `token` is the run's bearer, which `/data-layer` asks
+/// for: the process that reads this stdout can open the editor's socket.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadyEvent {
+    event: &'static str,
+    port: u16,
+    url: String,
+    /// `None` without `--data-layer`, or with no editor UI installed.
+    editor_url: Option<String>,
+    /// `None` when the web explorer address does not parse.
+    web_url: Option<String>,
+    deep_link: String,
+    /// `None` without `--data-layer`.
+    data_layer_url: Option<String>,
+    token: String,
+    /// The clients whose opener process started; empty when none did.
+    clients_opened: Vec<&'static str>,
+}
+
+/// A client this run handed to the system opener, and the start of the
+/// opener.
+type Launch = (&'static str, std::io::Result<std::process::Child>);
+
+/// Starts the system opener on `url` for `client`. A start that fails prints
+/// the note of the text form, with `name` in it.
+fn open_client(client: &'static str, name: &str, url: &str) -> Launch {
+    let opener = crate::linker::spawn_opener(url);
+    if opener.is_err() {
+        ux::note(format!(
+            "could not open {name} automatically \u{2014} open the URL above manually"
+        ));
+    }
+    (client, opener)
+}
+
+/// `start --json`: the launch of `client` failed. `message` has no URL in it.
+#[derive(serde::Serialize)]
+struct ClientFailedEvent {
+    event: &'static str,
+    client: &'static str,
+    message: String,
+}
+
+fn client_failed(client: &'static str, message: String) {
+    ux::event(&ClientFailedEvent {
+        event: "client-failed",
+        client,
+        message,
+    });
+}
+
+/// After the `ready` line. Waits for each opener that started, in the text
+/// form too, so no ended opener stays as a process entry. `start --json`
+/// gets one `client-failed` line for each opener that did not start, and one
+/// for each opener that ends with an exit status that is not 0, when it
+/// ends. An opener that a signal ended gives no line: a signal is not a
+/// result of the launch. The wait has no limit: an opener can stay until the
+/// application it started exits, and its status is then the status of that
+/// application. The status of the Windows opener is not read, because it is
+/// not a result of the launch.
+fn report_launches(launches: Vec<Launch>) {
+    let opener = crate::linker::OPENER;
+    for (client, launch) in launches {
+        match launch {
+            Err(e) => client_failed(client, format!("{opener} did not start: {e}")),
+            Ok(_) if cfg!(windows) => {}
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    if let Ok(status) = child.wait()
+                        && status.code().is_some_and(|code| code != 0)
+                    {
+                        client_failed(client, format!("{opener} ended with {status}"));
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn ready_event(block: &JoinBlock, st: &AppState, opened: [(bool, &'static str); 3]) -> ReadyEvent {
+    let port = block.port;
+    let url = format!("http://127.0.0.1:{port}");
+    ReadyEvent {
+        event: "ready",
+        port,
+        editor_url: st
+            .data_layer
+            .as_ref()
+            .and_then(|dl| dl.public_dir.as_ref())
+            .map(|_| format!("{url}/inspector/")),
+        web_url: Some(block.local_web_url()).filter(|url| !url.is_empty()),
+        deep_link: block.local_desktop_link(),
+        data_layer_url: st
+            .data_layer
+            .as_ref()
+            .map(|_| format!("ws://127.0.0.1:{port}/data-layer")),
+        token: st.token.clone(),
+        clients_opened: opened
+            .into_iter()
+            .filter_map(|(on, client)| on.then_some(client))
+            .collect(),
+        url,
+    }
 }
 
 /// A CLI publish waiting on its wallet signature, served as the normal preview
@@ -968,7 +1279,7 @@ pub async fn start(opts: StartOptions) -> Result<()> {
 /// after the browser publish completes and the user stops the preview.
 pub(crate) async fn serve_signing(
     dir: &Path,
-    port: Option<u16>,
+    (signing, port): (crate::linker::SigningBind, Option<u16>),
     open_browser: bool,
     timeout: Duration,
     programmatic: bool,
@@ -976,10 +1287,14 @@ pub(crate) async fn serve_signing(
     rx: tokio::sync::oneshot::Receiver<Result<Published>>,
 ) -> Result<Published> {
     let workspace = Workspace::load(dir)?;
-    let bound = bind_preview_port(port).await?;
+    let (port, listener) = bind_preview_port("deploy", signing.addr, port).await?;
     serve_signing_on(
         workspace,
-        bound,
+        SigningListener {
+            port,
+            listener,
+            signing,
+        },
         open_browser,
         timeout,
         programmatic,
@@ -991,7 +1306,12 @@ pub(crate) async fn serve_signing(
 
 /// The one line a programmatic run reads to drive the deploy: where the
 /// signing page and the API are, the token that cancels, the id to sign.
-fn programmatic_ready(port: u16, url: &str, signer: &Arc<crate::linker::LinkerState>) -> String {
+fn programmatic_ready(
+    origin: &str,
+    port: u16,
+    url: &str,
+    signer: &Arc<crate::linker::LinkerState>,
+) -> String {
     let (entity_id, delete_payload) = match signer.minted() {
         Ok((id, delete)) => (Some(id), delete),
         Err(_) => (None, None),
@@ -1000,7 +1320,7 @@ fn programmatic_ready(port: u16, url: &str, signer: &Arc<crate::linker::LinkerSt
         "event": "ready",
         "port": port,
         "url": url,
-        "api": format!("http://localhost:{port}{}", deploy_api::RESOURCE_PATH),
+        "api": format!("{origin}{}", deploy_api::RESOURCE_PATH),
         "deployToken": signer.deploy_token(),
         "entityId": entity_id,
         "deleteScenesFromWorldPayload": delete_payload,
@@ -1008,28 +1328,54 @@ fn programmatic_ready(port: u16, url: &str, signer: &Arc<crate::linker::LinkerSt
     .to_string()
 }
 
-/// [`serve_signing`] on a listener already bound to `port`.
+/// The origin the signing URLs name. A listener on IPv4 loopback or on every
+/// address answers `localhost`; one on another address is named by it.
+pub(crate) fn signing_origin(bound: SocketAddr) -> String {
+    if bound.ip() == Ipv4Addr::LOCALHOST || bound.ip().is_unspecified() {
+        return format!("http://localhost:{}", bound.port());
+    }
+    format!("http://{bound}")
+}
+
+/// The listener of the signing server, bound to `port`, and the
+/// [`crate::linker::SigningBind`] of the run: whether its signing routes
+/// answer a peer that is not this machine, and the note on another device.
+struct SigningListener {
+    port: u16,
+    listener: tokio::net::TcpListener,
+    signing: crate::linker::SigningBind,
+}
+
+/// [`serve_signing`] on a listener already bound.
 async fn serve_signing_on(
     workspace: Workspace,
-    (port, listener): (u16, tokio::net::TcpListener),
+    SigningListener {
+        port,
+        listener,
+        signing,
+    }: SigningListener,
     open_browser: bool,
     timeout: Duration,
     programmatic: bool,
     signer: Arc<crate::linker::LinkerState>,
     rx: tokio::sync::oneshot::Receiver<Result<Published>>,
 ) -> Result<Published> {
-    let allow_remote = crate::linker::linker_bind_host() != "127.0.0.1";
     let mut state = AppState::new(workspace.projects.clone(), port, broadcast::channel(32).0);
-    state.allow_remote_deploy = allow_remote;
+    state.allow_remote_deploy = signing.remote;
     let state = Arc::new(state);
     deploy_page::adopt_cli_signing(&state, signer.clone());
     let app = build_router(state.clone(), Arc::new(crate::comms::CommsState::default()));
+    let origin = signing_origin(
+        listener
+            .local_addr()
+            .context("reading the address of the signing server")?,
+    );
     let url = format!(
-        "http://localhost:{port}/deploy{}",
+        "{origin}/deploy{}",
         crate::linker::linker_fragment(signer.deploy_token())
     );
     if programmatic {
-        println!("{}", programmatic_ready(port, &url, &signer));
+        println!("{}", programmatic_ready(&origin, port, &url, &signer));
     } else {
         // Under --json stdout is the result document alone: the prompt
         // goes to stderr, where the notes below already are not (quiet).
@@ -1041,10 +1387,8 @@ async fn serve_signing_on(
         prompt("Sign the deployment with your wallet in a browser:");
         prompt(&format!("  {url}"));
         ux::note("the same server previews the scene at / while you decide");
-        if !allow_remote {
-            ux::note("to sign from another device, re-run with DCL_SCENE_CLI_LINKER_HOST=0.0.0.0");
-        } else {
-            ux::note("from another device, replace localhost with this machine's address");
+        if let Some(note) = signing.other_device_note() {
+            ux::note(note);
         }
         if open_browser {
             crate::linker::spawn_browser(&url);
@@ -1162,6 +1506,7 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
         .route("/inspector/", get(inspector_index))
         .route("/inspector/{*path}", get(inspector_asset))
         .route("/talk", get(talk_redirect))
+        .route(PROBLEMS_PATH, get(problems))
         .with_state(state.clone())
         .merge(crate::comms::routes(comms_state))
         .layer(tower_http::cors::CorsLayer::permissive())
@@ -1190,6 +1535,7 @@ fn build_router(state: Arc<AppState>, comms_state: Arc<crate::comms::CommsState>
                 )
                 .route("/api/info", get(deploy_api::info))
                 .route("/api/files", get(deploy_api::files))
+                .route("/api/catalyst-pointers", get(deploy_api::catalyst_pointers))
                 .route("/scene-json", post(edit::scene_json))
                 .route("/scene-thumbnail", post(edit::thumbnail))
                 .merge(storage_page::routes())
@@ -1223,6 +1569,9 @@ async fn play_hosted(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Res
                 .map(|p| joinblock::base_coords(&p.scene_json))
         })
         .unwrap_or((0, 0));
+    if let Some(blocked) = joinblock::web_blocked(&joinblock::web_explorer_base(), &realm) {
+        return (axum::http::StatusCode::CONFLICT, format!("{blocked}\n")).into_response();
+    }
     let url = joinblock::web_join_url(&joinblock::web_explorer_base(), &realm, position);
     if url.is_empty() {
         return (axum::http::StatusCode::NOT_FOUND, play_embed::NOT_EMBEDDED).into_response();
@@ -1333,7 +1682,7 @@ fn spawn_tunnel_printer(
                     if announced.as_deref() == Some(public_url.as_str()) {
                         ux::note("tunnel reconnected \u{2014} public URL unchanged");
                     } else {
-                        println!("{}", block.internet_section(&public_url));
+                        ux::say(block.internet_section(&public_url));
                         announced = Some(public_url);
                     }
                 }
@@ -1501,7 +1850,7 @@ async fn watch_or_retry(
 /// Reports the build error the way the re-build loop does (keeping the
 /// compiler diagnostic in the inner `why`), then that the session survived it.
 fn report_initial_failure(e: &anyhow::Error) {
-    ux::report_watch(e);
+    ux::report_build(e);
     ux::note(
         "the preview server and watcher are still running \u{2014} save any file to retry the initial build",
     );
@@ -1519,12 +1868,14 @@ async fn retry_initial_build(
     state: Arc<AppState>,
 ) {
     loop {
-        if fs.next_batch().await.is_none() {
+        let Some(batch) = fs.next_batch().await else {
             return;
-        }
+        };
         let mut steps = ux::Steps::new(if initial_build { 3 } else { 0 });
+        let started = Instant::now();
         match WatchSession::create(project.clone(), &build_opts, initial_build, &mut steps).await {
             Ok(session) => {
+                crate::watch::rebuild_event(session.project(), &batch, started.elapsed());
                 notify_reload(&root, &scene, &state, ReloadEvent::Scene);
                 run_watch(session, fs, root, scene, state).await;
                 return;
@@ -1610,14 +1961,20 @@ async fn probe_unreachable(ifaces: &[Iface], port: u16) -> Vec<std::net::Ipv4Add
 /// An explicit port must bind exactly, and 0 takes any free port (the one
 /// bound is the preview's port); the default scans 8000 upward and falls back
 /// to an ephemeral port, so `start` never dies because 8000 is taken.
-async fn bind_preview_port(requested: Option<u16>) -> Result<(u16, tokio::net::TcpListener)> {
+/// `command` is the subcommand that listens (`start`, `deploy`): the steps of
+/// a failure name its `--port`.
+async fn bind_preview_port(
+    command: &str,
+    host: IpAddr,
+    requested: Option<u16>,
+) -> Result<(u16, tokio::net::TcpListener)> {
     const DEFAULT_PORT: u16 = 8000;
     const SCAN: u16 = 20;
-    let wide = |port: u16| SocketAddr::from(([0, 0, 0, 0], port));
+    let wide = |port: u16| SocketAddr::new(host, port);
     if let Some(port) = requested {
         return match tokio::net::TcpListener::bind(wide(port)).await {
             Ok(l) => Ok((l.local_addr().map_or(port, |a| a.port()), l)),
-            Err(e) => Err(bind_error(port, wide(port), e)),
+            Err(e) => Err(bind_error(command, port, wide(port), e)),
         };
     }
     for port in DEFAULT_PORT..DEFAULT_PORT + SCAN {
@@ -1629,12 +1986,12 @@ async fn bind_preview_port(requested: Option<u16>) -> Result<(u16, tokio::net::T
                 return Ok((port, l));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => continue,
-            Err(e) => return Err(bind_error(port, wide(port), e)),
+            Err(e) => return Err(bind_error(command, port, wide(port), e)),
         }
     }
     let listener = tokio::net::TcpListener::bind(wide(0))
         .await
-        .map_err(|e| bind_error(0, wide(0), e))?;
+        .map_err(|e| bind_error(command, 0, wide(0), e))?;
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
     ux::note(format!(
         "ports {DEFAULT_PORT}\u{2013}{} are busy — serving on {port}",
@@ -1643,15 +2000,16 @@ async fn bind_preview_port(requested: Option<u16>) -> Result<(u16, tokio::net::T
     Ok((port, listener))
 }
 
-fn bind_error(port: u16, addr: SocketAddr, e: std::io::Error) -> anyhow::Error {
+fn bind_error(command: &str, port: u16, addr: SocketAddr, e: std::io::Error) -> anyhow::Error {
     let next = port.checked_add(1).unwrap_or(8001);
     match e.kind() {
         std::io::ErrorKind::AddrInUse => UserError::new(
             format!("port {port} is already in use"),
-            TrySteps::one(format!("dcl-scene-cli start --port {next}"))
+            TrySteps::one(format!("dcl-scene-cli {command} --port {next}"))
                 .and(format!("or stop the other process (lsof -i :{port})")),
         )
         .why(format!("something else is listening on {addr}"))
+        .code("port-in-use")
         .caused_by(e)
         .into(),
         std::io::ErrorKind::PermissionDenied => UserError::new(
@@ -1659,7 +2017,7 @@ fn bind_error(port: u16, addr: SocketAddr, e: std::io::Error) -> anyhow::Error {
             TrySteps::one(
                 "ports below 1024 need elevated rights \u{2014} pick a higher port with --port",
             )
-            .and("dcl-scene-cli start --port 8001"),
+            .and(format!("dcl-scene-cli {command} --port 8001")),
         )
         .why(format!("binding {addr} was denied"))
         .caused_by(e)
@@ -1713,7 +2071,11 @@ fn forwarded_proto(headers: &HeaderMap) -> &'static str {
         .and_then(|v| v.to_str().ok())
     {
         Some(p) if p.trim().eq_ignore_ascii_case("https") => "https",
-        _ => "http",
+        Some(_) => "http",
+        None => match public_url_of(headers) {
+            Some(public) if public.https => "https",
+            _ => "http",
+        },
     }
 }
 
@@ -1726,6 +2088,7 @@ fn forwarded_prefix(headers: &HeaderMap) -> String {
             p.starts_with('/') && !p.starts_with("//") && !p.contains(':') && !p.contains('\\')
         })
         .map(str::to_string)
+        .or_else(|| public_url_of(headers).map(|public| public.prefix.clone()))
         .unwrap_or_default()
 }
 
@@ -1751,7 +2114,9 @@ fn authority_of(origin: &str) -> Option<String> {
 /// plus the `--talk` origin.
 fn allowed_editor_origins() -> Vec<String> {
     editor_origins(
-        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS").ok().as_deref(),
+        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
+            .ok()
+            .as_deref(),
         TALK_ORIGIN.get().map(String::as_str),
     )
 }
@@ -1761,7 +2126,9 @@ fn allowed_editor_origins() -> Vec<String> {
 /// `/api/project/*` and nothing wider.
 fn data_layer_origins() -> Vec<String> {
     editor_origins(
-        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS").ok().as_deref(),
+        std::env::var("DCL_SCENE_CLI_ALLOWED_ORIGINS")
+            .ok()
+            .as_deref(),
         None,
     )
 }

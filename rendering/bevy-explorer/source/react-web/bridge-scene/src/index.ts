@@ -30,6 +30,7 @@ import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
+import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerMapApi } from './domains/mapApi'
 import { registerMapPins } from './domains/mapPins'
@@ -76,6 +77,7 @@ export function main(): void {
     registerNotifications(ctx)
     registerSettings(ctx)
     registerCommunities(ctx)
+    registerEvents(ctx)
     registerGallery(ctx)
     registerMapApi(ctx)
     registerMapPins(ctx)

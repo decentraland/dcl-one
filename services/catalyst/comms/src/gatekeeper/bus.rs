@@ -23,7 +23,8 @@ pub type NatsHandler = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishOutcome {
-    /// The SDK accepted the command while the same ready outer-link revision was observed.
+    /// The SDK accepted the command under the invoked publication policy. Ordinary publication
+    /// requires the same ready outer-link revision; statistical disconnects do not.
     /// Local submission only: no broker receipt, subject acceptance or subscriber delivery is
     /// confirmed. A later connection loss can lose it; bounded SDK-buffered commands may also
     /// be delivered after reconnect. Application-queue rejection does not purge SDK-accepted work.
@@ -108,9 +109,43 @@ pub trait NatsBus: Send + Sync {
     /// or ambiguity. Periodic readiness fences do not acknowledge earlier publications.
     async fn publish(&self, subject: &str, payload: Vec<u8>) -> PublishOutcome;
 
+    /// Statistical removal only: production waits for bounded queue/SDK capacity without an
+    /// admission-readiness fence. Cancellation prevents an unstarted attempt; SDK submission
+    /// is not a broker or application acknowledgment, and a started attempt is never replayed.
+    async fn publish_statistical_disconnect(
+        &self,
+        payload: Vec<u8>,
+        deadline: tokio::time::Instant,
+    ) -> PublishOutcome {
+        if tokio::time::Instant::now() >= deadline {
+            return PublishOutcome::Failed;
+        }
+        tokio::time::timeout_at(
+            deadline,
+            self.publish(
+                crate::protocol::bus::statistics::OBSERVATIONS_SUBJECT,
+                payload,
+            ),
+        )
+        .await
+        .unwrap_or(PublishOutcome::Unconfirmed)
+    }
+
+    /// Correlated statistics registration only. Begin/Confirm may mutate Pulse's
+    /// observation fence; this capability never grants room or admission authority.
+    async fn statistics_control(&self, _payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        Err(RequestError::NoResponders)
+    }
+
     /// A bounded, correlated read-only exchange on one ready connection incarnation. A timeout
     /// says nothing about source ownership and must never authorize a cached fallback or a write.
     async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError>;
+
+    /// Fence publications already submitted on this link during orderly shutdown.
+    /// A successful broker flush is not an application-consumption acknowledgment.
+    async fn flush(&self) -> bool {
+        !self.is_enabled()
+    }
 }
 
 /// Matches a NATS subject against a subscription pattern: `*` stands for exactly one token, `>`
@@ -154,6 +189,8 @@ struct InProcessShared {
     refuse: AtomicBool,
     unconfirmed: AtomicBool,
     responder: Mutex<Option<NatsResponder>>,
+    #[cfg(any(test, feature = "test-support"))]
+    statistics: Mutex<crate::pulse::statistics::Statistics>,
 }
 
 impl SubscriptionRegistry for InProcessShared {
@@ -186,6 +223,8 @@ impl InProcessBus {
                 refuse: AtomicBool::new(false),
                 unconfirmed: AtomicBool::new(false),
                 responder: Mutex::new(None),
+                #[cfg(any(test, feature = "test-support"))]
+                statistics: Mutex::new(crate::pulse::statistics::Statistics::default()),
             }),
         }
     }
@@ -258,6 +297,9 @@ impl InProcessBus {
 
 #[async_trait::async_trait]
 impl NatsBus for InProcessBus {
+    async fn flush(&self) -> bool {
+        self.is_connected()
+    }
     fn is_enabled(&self) -> bool {
         true
     }
@@ -310,6 +352,29 @@ impl NatsBus for InProcessBus {
             PublishOutcome::Unconfirmed
         } else {
             PublishOutcome::Submitted
+        }
+    }
+
+    async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            if !self.is_ready() {
+                return Err(RequestError::NoConnection);
+            }
+            let request = crate::protocol::bus::statistics::ProducerRequest::decode(&payload)
+                .ok_or(RequestError::Invalid)?;
+            self.shared
+                .statistics
+                .lock()
+                .unwrap()
+                .control(request)
+                .encode()
+                .ok_or(RequestError::Invalid)
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            let _ = payload;
+            Err(RequestError::NoResponders)
         }
     }
 
