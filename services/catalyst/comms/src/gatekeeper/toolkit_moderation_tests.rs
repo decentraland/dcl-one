@@ -342,6 +342,14 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
     let mut state = comms_state(pool, Settings::for_tests());
     state.scenes = Arc::new(ToolkitScenes);
     let app = super::super::router(Arc::new(state));
+    let mut authorized = comms_state(lazy_pool(), Settings::for_tests());
+    authorized.scenes = Arc::new(ToolkitScenes);
+    authorized.policy = Arc::new(ActorPolicy {
+        pool: None,
+        unavailable: false,
+        protected: BTreeSet::new(),
+    });
+    let authorized = super::super::router(Arc::new(authorized));
     let exact = metadata("CoLoN.dcl.eth", "Cid:Case", "2,2");
     let mut no_parcel = exact.clone();
     no_parcel.as_object_mut().unwrap().remove("parcel");
@@ -368,12 +376,24 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
                 "valid world scene must reach actor authorization: {meta} {method} {path}: {value}"
             );
         }
-        for path in ["/scene-admin", "/scene-bans", "/scene-bans/addresses"] {
+        let (status, value) = call(&app, "GET", "/scene-admin", &meta, Value::Null, KEY).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "valid signed world scene must reach the deliberately closed store: {meta}: {value}"
+        );
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
             let (status, value) = call(&app, "GET", path, &meta, Value::Null, KEY).await;
             assert_eq!(
                 status,
+                StatusCode::UNAUTHORIZED,
+                "valid signed world scene must reach actor authorization: {meta} {path}: {value}"
+            );
+            let (status, value) = call(&authorized, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "valid signed world scene must reach the deliberately closed store: {meta} {path}: {value}"
+                "an authorized signer must reach the deliberately closed store: {meta} {path}: {value}"
             );
         }
         let (status, value) = call(
@@ -473,6 +493,13 @@ impl AccessPolicy for ActorPolicy {
         let mut addresses = self.protected.clone();
         addresses.insert(Address::parse(&address_of(KEY)).unwrap());
         Ok(addresses)
+    }
+    async fn world_grantees(
+        &self,
+        _: &WorldName,
+        _: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        Ok(self.protected.clone())
     }
 }
 
@@ -798,6 +825,155 @@ async fn toolkit_ban_listings_bind_unsigned_selectors_to_the_signed_scene() {
         let (status, value) = call(&app, "GET", path, &meta, Value::Null, KEY).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {value}");
     }
+}
+
+/// Both ban listings, on a world scene and a Genesis scene: an authorized
+/// signer reaches the (closed) store, any other signer gets the upstream 401,
+/// and an authority that cannot be decided stays 503.
+#[tokio::test]
+async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
+    let app = |unavailable| {
+        let mut state = comms_state(lazy_pool(), Settings::for_tests());
+        state.scenes = Arc::new(ToolkitScenes);
+        state.policy = Arc::new(ActorPolicy {
+            pool: None,
+            unavailable,
+            protected: BTreeSet::new(),
+        });
+        super::super::router(Arc::new(state))
+    };
+    let (decided, undetermined) = (app(false), app(true));
+    for meta in [
+        metadata("MiXeD.dcl.eth", "SceneB", "1,1"),
+        metadata("main", "GenesisA", "42,42"),
+    ] {
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
+            let (status, value) = call(&decided, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{meta} {path}: {value}"
+            );
+            let (status, value) =
+                call(&decided, "GET", path, &meta, Value::Null, OUTSIDER_KEY).await;
+            assert_eq!(
+                (status, value),
+                (
+                    StatusCode::UNAUTHORIZED,
+                    json!({"error":"User does not have permission to list scene bans"})
+                ),
+                "{meta} {path}"
+            );
+            let (status, value) = call(&undetermined, "GET", path, &meta, Value::Null, KEY).await;
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{meta} {path}: {value}"
+            );
+        }
+    }
+}
+
+/// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
+/// holders to the ban listings: a world deployment or streaming grantee, a
+/// LAND operator and a lease holder reach the store, an outsider and a
+/// stale stored owner still get 401, and grants that cannot be read are 503.
+#[tokio::test]
+async fn toolkit_ban_listings_admit_extended_holders() {
+    let holder = address_of(KEY);
+    let lease = axum::Router::new().route(
+        "/authorizations.json",
+        axum::routing::get({
+            let holder = holder.clone();
+            move || async move { Json(json!([{ "addresses": [holder], "plots": ["42,42"] }])) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lease_url = format!(
+        "http://{}/authorizations.json",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    let app = |policy: StubPolicy, lease_url: Option<String>| {
+        let settings = Settings {
+            lease_authorizations_url: lease_url,
+            ..Settings::for_tests()
+        };
+        let mut state = comms_state(lazy_pool(), settings);
+        state.scenes = Arc::new(ToolkitScenes);
+        state.policy = Arc::new(policy);
+        super::super::router(Arc::new(state))
+    };
+    let world = metadata("MiXeD.dcl.eth", "SceneB", "1,1");
+    let genesis = metadata("main", "GenesisA", "42,42");
+    let grantee = StubPolicy {
+        grantees: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
+        ..StubPolicy::default()
+    };
+    // The ban-protection set still names a previous NAME holder when the
+    // owner lookup faults; the listing never reads it.
+    let stale_owner = StubPolicy {
+        protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
+        ..StubPolicy::default()
+    };
+    let operator = StubPolicy {
+        land: Ok(Some(Arc::new(Some(LandOperators {
+            owner: "0x000000000000000000000000000000000000dead".into(),
+            operator: Some(holder.clone()),
+            ..Default::default()
+        })))),
+        ..StubPolicy::default()
+    };
+    let unreadable = StubPolicy {
+        grantees: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: "world permissions",
+            reason_for_operators: "fixture".into(),
+        }),
+        ..StubPolicy::default()
+    };
+    for (case, app, meta, outcome) in [
+        (
+            "world grantee",
+            app(grantee, None),
+            &world,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "LAND operator",
+            app(operator, None),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "lease holder",
+            app(StubPolicy::default(), Some(lease_url.clone())),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "stale stored owner",
+            app(stale_owner, None),
+            &world,
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "unreadable world grants",
+            app(unreadable, None),
+            &world,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ] {
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
+            let (status, value) = call(&app, "GET", path, meta, Value::Null, KEY).await;
+            assert_eq!(status, outcome, "{case} {path}: {value}");
+            if outcome == StatusCode::INTERNAL_SERVER_ERROR {
+                let (status, value) =
+                    call(&app, "GET", path, meta, Value::Null, OUTSIDER_KEY).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{case} {path}: {value}");
+            }
+        }
+    }
+    server.abort();
 }
 
 #[tokio::test]

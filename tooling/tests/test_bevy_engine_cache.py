@@ -228,15 +228,17 @@ class EngineCacheTests(unittest.TestCase):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
         self.assertNotIn(rebuild, calls)
-        self.assertNotIn(('npm', 'run', 'test:shared-inputs', '--prefix', 'react-web'), calls)
+        self.assertNotIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
-        self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
+        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'test'), calls)
+        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'build'), calls)
         self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
         self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
                        'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
                        str(self.source / 'react-web/bridge-scene')), calls)
+        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
