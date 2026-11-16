@@ -92,10 +92,15 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
 completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter); when
 that share is full a new socket closes the oldest pending one instead of being refused, so
-handshakes held open cannot refuse new joins; each client source, counted like the per-source
-socket cap, holds at most `WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0
-unlimited), beyond that 429; a socket must send its challenge
-request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
+handshakes held open cannot refuse new joins. An evicted handshake closes without a close frame,
+like one past its deadline; the Explorer (`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
+treats that, a 503 on the upgrade and any other handshake failure alike as transient and
+reconnects after 1, 2, 4, then 5 s, and does not read `Retry-After` on `/ws`.
+`comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
+share is too small for the join rate) and `comms_ws_pending_handshakes` the sockets in the
+handshake. Each client source, counted like the per-source socket cap, holds at most
+`WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0 unlimited), beyond that 429;
+a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
 within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
 `WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
 attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that

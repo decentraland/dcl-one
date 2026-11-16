@@ -85,12 +85,14 @@ impl PendingHandshakes {
             && let Some((_, oldest)) = inner.held.pop_first()
         {
             oldest.cancel();
+            crate::gatekeeper::admission::cluster::metrics::ws_pending_eviction();
             tracing::debug!("evicting the oldest pending /ws handshake: the pending share is full");
         }
         let id = inner.next;
         inner.next += 1;
         let evicted = tokio_util::sync::CancellationToken::new();
         inner.held.insert(id, evicted.clone());
+        crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
         PendingSlot {
             set: Arc::clone(self),
             id,
@@ -111,7 +113,9 @@ impl PendingHandshakes {
 impl Drop for PendingSlot {
     fn drop(&mut self) {
         let mut inner = self.set.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.held.remove(&self.id);
+        if inner.held.remove(&self.id).is_some() {
+            crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
+        }
     }
 }
 
