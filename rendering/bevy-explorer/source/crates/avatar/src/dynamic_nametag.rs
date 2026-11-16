@@ -8,7 +8,12 @@ use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::AvatarAnchorPointType;
 use scene_runner::{
-    initialize_scene::SuperUserScene, update_world::scene_ui::UiCanvas, SceneEntity,
+    initialize_scene::SuperUserScene,
+    update_world::{
+        scene_ui::UiCanvas,
+        transform_and_parent::{AvatarAttachStage, ParentPositionSync},
+    },
+    SceneEntity,
 };
 
 /// where the nametag sits while a player's ghost stands in for their avatar
@@ -40,11 +45,7 @@ impl Plugin for DynamicNametagPlugin {
                     kind: DebugInputKind::Toggle,
                 }],
             })
-            .add_systems(
-                Update,
-                sync_nametag_visibility
-                    .run_if(|visible: Res<NametagsVisible>| !visible.0 || visible.is_changed()),
-            );
+            .add_systems(Update, sync_nametag_visibility);
     }
 }
 
@@ -74,21 +75,36 @@ struct HiddenNametag(Visibility);
 
 /// The HUD's label is a UiCanvas plane immediately beneath its name-tag anchor.
 /// Hide only that plane. SDK attachments share the anchor on the avatar skeleton.
+///
+/// The label is hidden when nametags are off, and when its player is hidden (a modifier area,
+/// a block or a scene ban): the HUD sets the label's visibility itself, so it does not follow
+/// the anchor's as other attachments do.
+#[allow(clippy::type_complexity)]
 fn sync_nametag_visibility(
     mut commands: Commands,
     visible: Res<NametagsVisible>,
     hud: Query<(), With<SuperUserScene>>,
-    attachments: Query<(&AvatarAttachment, &SceneEntity)>,
+    attachments: Query<(
+        &AvatarAttachment,
+        &SceneEntity,
+        Option<&ParentPositionSync<AvatarAttachStage>>,
+    )>,
+    anchors: Query<&InheritedVisibility>,
     mut canvases: Query<
         (Entity, &ChildOf, &mut Visibility, Option<&HiddenNametag>),
         With<UiCanvas>,
     >,
 ) {
     for (entity, parent, mut visibility, hidden) in &mut canvases {
-        let hide = !visible.0
-            && attachments.get(parent.parent()).is_ok_and(|(a, scene)| {
+        let hide = attachments
+            .get(parent.parent())
+            .is_ok_and(|(a, scene, sync)| {
                 a.0.anchor_point_id() == AvatarAnchorPointType::AaptNameTag
                     && hud.contains(scene.root)
+                    && (!visible.0
+                        || sync.is_some_and(|sync| {
+                            anchors.get(sync.sync_to).is_ok_and(|anchor| !anchor.get())
+                        }))
             });
         if hide {
             if hidden.is_none() {
