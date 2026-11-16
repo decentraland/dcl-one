@@ -86,6 +86,27 @@ describe('when a caller supplies a Places filter panel', () => {
     ).toBe(true)
   })
 })
+for (const variant of ['backpack', 'places'])
+  describe('when the ' + variant + ' fixture opens its filter popup', () => {
+    for (const width of [390, 768, 1032, 1440])
+      it(
+        'should keep the panel and every control inside the viewport at ' + width + 'px',
+        async () => {
+          await navigate(variant, width)
+          await browser.evaluate(
+            `(async()=>{if(!document.getElementById('fixture-filters'))document.querySelector('[aria-expanded=false]').click();for(let n=0;n<50&&!document.getElementById('fixture-filters');n++)await new Promise(r=>setTimeout(r,20))})()`
+          )
+          const boxes = await browser.evaluate<{ left: number; right: number }[]>(
+            `[document.getElementById('fixture-filters'),...document.querySelectorAll('#fixture-filters input')].map(e=>{const r=e.getBoundingClientRect();return{left:r.left,right:r.right-innerWidth}})`
+          )
+          expect(boxes.length).toBe(4)
+          for (const box of boxes) {
+            expect(box.left).toBeGreaterThanOrEqual(0)
+            expect(box.right).toBeLessThanOrEqual(0)
+          }
+        }
+      )
+  })
 describe('when a section is selected', () => {
   it('should keep its source-orange background and a readable text contrast', async () => {
     await navigate('settings')

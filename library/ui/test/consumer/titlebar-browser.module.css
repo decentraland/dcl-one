@@ -123,8 +123,9 @@
   .floating {
     position: absolute;
     top: calc(100% + var(--dcl-space-12));
-    right: 0;
+    left: 0;
     width: 240px;
+    max-width: calc(100vw - 40px);
     z-index: 1;
   }
   .popup {
