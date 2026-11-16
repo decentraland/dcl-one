@@ -927,8 +927,8 @@ pub(crate) fn hill_reach(distance_m: f32) -> f32 {
     distance_m.max(ground_extent(TERRAIN_RINGS))
 }
 
-/// Origin of a ground ring with `cell`-sized cells (Unity x/z): the corner of the player's cell,
-/// so the ring moves only in whole cells. terrain_vertex.wgsl's `ring_origin` does the same.
+/// Origin of a ground ring with `cell`-sized cells (x and -bevy z): the corner of the player's
+/// cell, so the ring moves only in whole cells. terrain_vertex.wgsl's `ring_origin` does the same.
 pub(crate) fn ring_origin(player: Vec2, cell: f32) -> Vec2 {
     (player / cell).floor() * cell
 }
