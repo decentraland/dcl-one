@@ -1687,7 +1687,7 @@ async fn only_mark_read_accepts_the_pre_6_signed_payload() {
 mod ingest {
     use super::*;
     use crate::notifications::ingest::{
-        MAX_BODY_BYTES, MAX_ITEMS, MAX_METADATA_BYTES, Producer, dedup, validate,
+        MAX_BODY_BYTES, MAX_METADATA_BYTES, Producer, dedup, validate,
     };
     use crate::notifications::store::test_support::delivery_state;
 
@@ -1851,10 +1851,6 @@ mod ingest {
                 with("metadata", json!({ "pad": "x".repeat(MAX_METADATA_BYTES) })),
                 "\"[0].metadata\" must be less than or equal to 16384 bytes",
             ),
-            (
-                json!(vec![ok.clone(); MAX_ITEMS + 1]),
-                "\"value\" must contain less than or equal to 10000 items",
-            ),
         ] {
             assert_eq!(
                 validate(&body, Producer::Governance, NOW).unwrap_err(),
@@ -1878,7 +1874,14 @@ mod ingest {
         assert!(validate(&at_skew, Producer::Governance, NOW).is_ok());
         let mut big = ok.clone();
         big["metadata"] = json!({ "pad": "x".repeat(MAX_METADATA_BYTES - 10) });
-        assert!(validate(&json!(vec![big; MAX_ITEMS]), Producer::Governance, NOW).is_ok());
+        assert!(validate(&json!([big]), Producer::Governance, NOW).is_ok());
+        // No item cap: more than the old 10,000 small items pass.
+        assert_eq!(
+            validate(&json!(vec![ok.clone(); 20_000]), Producer::Governance, NOW)
+                .unwrap()
+                .len(),
+            20_000
+        );
     }
 
     #[test]
@@ -2043,6 +2046,77 @@ mod ingest {
             Some((json!({ "title": "new" }), 1_700_000_500_000, true))
         );
         assert_eq!(delivery_state(state.store.pool(), id).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_failing_chunk_leaves_the_earlier_chunks_committed() {
+        use crate::notifications::ingest::upsert;
+        let Some(pool) = crate::notifications::store::test_support::private_pool("ing-chunk").await
+        else {
+            return;
+        };
+        let to = fresh_address();
+        let kind = "governance_proposal_enacted";
+        let body: Vec<Value> = (0..1_500)
+            .map(|i| entry(kind, &to, &format!("c{i}"), 1_700_000_000_000))
+            .collect();
+        let mut batch = validate(&json!(body), Producer::Governance, NOW).unwrap();
+        // Chunks follow id order, so the largest id is in the second chunk.
+        let last = batch.iter_mut().max_by_key(|n| n.id()).unwrap();
+        last.metadata = json!({ "title": "boom" });
+        sqlx::query("ALTER TABLE social.notifications ADD CONSTRAINT ingest_chunk_test CHECK (metadata->>'title' IS DISTINCT FROM 'boom')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(upsert(&pool, batch).await.is_err());
+        let (rows, deliveries): (i64, i64) = sqlx::query_as(
+            "SELECT count(*), count(d.notification_id) FROM social.notifications n LEFT JOIN social.notification_deliveries d ON d.notification_id = n.id WHERE n.address = $1",
+        )
+        .bind(&to)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (rows, deliveries),
+            (1_000, 1_000),
+            "the first chunk committed alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_counts_new_and_updated_notifications() {
+        use crate::notifications::ingest::{Upserted, upsert};
+        let Some(state) = producers().await else {
+            return;
+        };
+        let (a, b) = (fresh_address(), fresh_address());
+        let kind = "governance_proposal_enacted";
+        let key = format!("count-{}", Uuid::new_v4());
+        let batch = |ts: i64| {
+            validate(
+                &json!([entry(kind, &a, &key, ts), entry(kind, &b, &key, ts)]),
+                Producer::Governance,
+                NOW,
+            )
+            .unwrap()
+        };
+        let pool = state.store.pool();
+        let first = upsert(pool, batch(1_700_000_000_000)).await.unwrap();
+        assert_eq!(
+            first,
+            Upserted {
+                inserted: 2,
+                updated: 0
+            }
+        );
+        let again = upsert(pool, batch(1_700_000_100_000)).await.unwrap();
+        assert_eq!(
+            again,
+            Upserted {
+                inserted: 0,
+                updated: 2
+            }
+        );
     }
 
     #[tokio::test]
@@ -2498,6 +2572,17 @@ mod ingest {
                 .await
                 .unwrap();
         assert_eq!(written, 2_000, "every chunk of the batch is written");
+        let delivered: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.notification_deliveries d JOIN social.notifications n ON n.id = d.notification_id WHERE n.address = $1",
+        )
+        .bind(&to)
+        .fetch_one(state.store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            delivered, 2_000,
+            "each chunk commits its rows' delivery rows"
+        );
         let req = Request::builder()
             .method("POST")
             .uri(PATH)

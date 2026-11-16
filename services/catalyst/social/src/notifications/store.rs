@@ -148,9 +148,8 @@ pub(crate) fn details_flag(path: &str, default: bool) -> String {
 /// The `email` delivery row of every notification a CTE named `ins`
 /// (columns `id, address, type`) inserted: `pending` when the type has a
 /// template and the recipient can receive it, else `skipped` with the
-/// reason (pruned with the other terminal rows). `rows_affected` of the
-/// whole statement is therefore the number of notifications inserted. A
-/// type absent from `message_type` emails, as the old `autoMigrate` defaults.
+/// reason (pruned with the other terminal rows). A type absent from
+/// `message_type` emails, as the old `autoMigrate` defaults.
 pub(super) static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         r#"
@@ -175,6 +174,24 @@ pub(super) static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
         details_flag("->'message_type'->n.type->'email'", true),
     )
 });
+
+/// Follows an `ups` CTE (`id, address, type, inserted`): delivery rows for the
+/// new rows only, then the count of new rows.
+static UPSERT_TAIL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "ins AS (SELECT id, address, type FROM ups WHERE inserted),
+        delivered AS ({})
+        SELECT count(*) FROM ins",
+        *DELIVERY_ROWS_SQL
+    )
+});
+
+/// A repeated broadcast key refreshes the wallet's row like upstream's upsert.
+const BROADCAST_REFRESH: &str =
+    "ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
+        SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+        WHERE t.type = EXCLUDED.type
+    RETURNING id, address, type, (xmax = 0) AS inserted";
 
 type ListRow = (
     Uuid,
@@ -210,8 +227,9 @@ impl NewNotification {
     }
 }
 
-/// Inserts the batch (`ON CONFLICT (id) DO NOTHING`) with its delivery
-/// rows in one statement; returns how many were new.
+/// Inserts the batch with its delivery rows in one statement; returns how
+/// many were new. A repeated id refreshes metadata and time and keeps the
+/// read state; only a new row gets a delivery row, so a repeat never emails.
 pub async fn insert_notifications<'e, E>(
     executor: E,
     batch: &[NewNotification],
@@ -236,7 +254,8 @@ where
 }
 
 /// One notification deduplicated per `(address, broadcast_key)` (the
-/// source's event key) instead of its id, with its delivery row.
+/// source's event key) instead of its id, with its delivery row. A repeat of
+/// the same type refreshes metadata and time like [`insert_notifications`].
 pub async fn insert_keyed_notification<'e, E>(
     executor: E,
     broadcast_key: &str,
@@ -247,26 +266,28 @@ where
 {
     let sql = format!(
         r#"
-        WITH ins AS (
-            INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+        WITH ups AS (
+            INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
             VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
-            RETURNING id, address, type
-        )
-        {delivery}
+            ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.type = EXCLUDED.type
+            RETURNING id, address, type, (xmax = 0) AS inserted
+        ),
+        {tail}
         "#,
-        delivery = *DELIVERY_ROWS_SQL
+        tail = *UPSERT_TAIL
     );
-    let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(notification.id)
         .bind(&notification.address)
         .bind(&notification.kind)
         .bind(&notification.metadata)
         .bind(broadcast_key)
         .bind(notification.occurred_at)
-        .execute(executor)
+        .fetch_one(executor)
         .await?;
-    Ok(res.rows_affected())
+    Ok(inserted as u64)
 }
 
 async fn insert_batch<'e, E>(
@@ -280,6 +301,13 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
+    // DO UPDATE may touch a row once per statement: the last of a repeated id
+    // wins; id order keeps overlapping batches locking rows in one order.
+    let mut seen = std::collections::HashSet::new();
+    let mut unique: Vec<&NewNotification> =
+        batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
+    unique.sort_by_key(|n| n.id);
+    let batch = unique;
     let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
     let addresses: Vec<&str> = batch.iter().map(|n| n.address.as_str()).collect();
     let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
@@ -287,8 +315,8 @@ where
     let occurred: Vec<NaiveDateTime> = batch.iter().map(|n| n.occurred_at).collect();
     let sql = format!(
         r#"
-        WITH ins AS (
-            INSERT INTO social.notifications (id, address, type, metadata, occurred_at, in_app, read, read_at)
+        WITH ups AS (
+            INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at, in_app, read, read_at)
             SELECT n.*, v.visible, NOT v.visible,
                    CASE WHEN NOT v.visible THEN timezone('UTC', now()) END
             FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
@@ -300,25 +328,28 @@ where
                     AND {in_app}
                 ) AS visible
             ) v
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id, address, type
-        )
-        {delivery}
+            ORDER BY n.id
+            ON CONFLICT (id) DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
+            RETURNING id, address, type, (xmax = 0) AS inserted
+        ),
+        {tail}
         "#,
-        delivery = *DELIVERY_ROWS_SQL,
+        tail = *UPSERT_TAIL,
         ignore_all = details_flag("->'ignore_all_in_app'", false),
         in_app = details_flag("->'message_type'->n.type->'in_app'", true),
     );
-    let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(&ids)
         .bind(&addresses)
         .bind(&kinds)
         .bind(&metadata)
         .bind(&occurred)
         .bind(event_preferences)
-        .execute(executor)
+        .fetch_one(executor)
         .await?;
-    Ok(res.rows_affected())
+    Ok(inserted as u64)
 }
 
 #[derive(Debug)]
@@ -475,7 +506,8 @@ impl NotificationsStore {
     }
 
     /// One row per recipient (every subscription, or the explicit list),
-    /// idempotent per `(address, broadcast_key)`; returns the new rows.
+    /// one per `(address, broadcast_key)`: a repeat refreshes metadata and time,
+    /// keeps the read state and never emails again; returns the new rows.
     pub async fn broadcast(
         &self,
         broadcast_key: &str,
@@ -487,52 +519,58 @@ impl NotificationsStore {
         let Some(list) = addresses else {
             let sql = format!(
                 r#"
-                WITH ins AS (
-                    INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+                WITH ups AS (
+                    INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
                     SELECT gen_random_uuid(), address, $1, $2, $3, $4 FROM social.subscriptions
-                    ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
-                    RETURNING id, address, type
-                )
-                {delivery}
+                    ORDER BY address
+                    {BROADCAST_REFRESH}
+                ),
+                {tail}
                 "#,
-                delivery = *DELIVERY_ROWS_SQL
+                tail = *UPSERT_TAIL
             );
-            let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+            let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                 .bind(kind)
                 .bind(metadata)
                 .bind(broadcast_key)
                 .bind(now)
-                .execute(&self.pool)
+                .fetch_one(&self.pool)
                 .await?;
-            return Ok(res.rows_affected());
+            return Ok(inserted as u64);
         };
         if list.is_empty() {
             return Ok(0);
         }
-        let ids: Vec<Uuid> = (0..list.len()).map(|_| Uuid::new_v4()).collect();
-        let targets: Vec<&str> = list.iter().map(Address::as_str).collect();
+        // One row per address (DO UPDATE touches a row once), in lock order.
+        let targets: Vec<&str> = list
+            .iter()
+            .map(Address::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let ids: Vec<Uuid> = (0..targets.len()).map(|_| Uuid::new_v4()).collect();
         let sql = format!(
             r#"
-            WITH ins AS (
-                INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            WITH ups AS (
+                INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
                 SELECT u.id, u.address, $3, $4, $5, $6 FROM UNNEST($1::uuid[], $2::text[]) AS u(id, address)
-                ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
-                RETURNING id, address, type
-            )
-            {delivery}
+                ORDER BY u.address
+                {BROADCAST_REFRESH}
+            ),
+            {tail}
             "#,
-            delivery = *DELIVERY_ROWS_SQL
+            tail = *UPSERT_TAIL
         );
-        let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(&ids)
             .bind(&targets)
             .bind(kind)
             .bind(metadata)
             .bind(broadcast_key)
             .bind(now)
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await?;
-        Ok(res.rows_affected())
+        Ok(inserted as u64)
     }
 
     pub async fn mark_read(&self, address: &Address, ids: &[Uuid]) -> Result<u64, ApiError> {
@@ -1219,7 +1257,7 @@ mod pg_tests {
     }
 
     #[tokio::test]
-    async fn broadcast_is_idempotent_per_recipient_and_writes_delivery_rows() {
+    async fn broadcast_is_one_row_per_recipient_refreshed_on_repeat_with_delivery_rows() {
         let Some(c) = store().await else { return };
         let pool = c.pool().clone();
         let (a, b) = (fresh_address(), fresh_address());
@@ -1279,9 +1317,23 @@ mod pg_tests {
         // the lib tests share one scratch database, so a sibling test can add
         // a subscription between the two calls and the re-run legitimately
         // inserts one row for that new subscriber.
-        c.broadcast(&key_all, "bid_received", &meta, None)
+        let refreshed = serde_json::json!({"title": "again"});
+        c.broadcast(&key_all, "bid_received", &refreshed, None)
             .await
             .unwrap();
+        let metas: Vec<Json> = sqlx::query_scalar(
+            "SELECT metadata FROM social.notifications WHERE broadcast_key = $1 AND address = ANY($2)",
+        )
+        .bind(&key_all)
+        .bind(vec![a.as_str(), b.as_str()])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            metas,
+            vec![refreshed.clone(), refreshed],
+            "a re-run refreshes the payload"
+        );
         let again: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id = n.id
              WHERE n.broadcast_key = $1 AND n.address = ANY($2)",
@@ -1321,6 +1373,36 @@ mod pg_tests {
         );
         let listed = c.list(&a, 50, None, false).await.unwrap();
         assert_eq!(listed.len(), 2);
+
+        // A repeat refreshes the payload, keeps the read state, adds no delivery row.
+        let first: Uuid = sqlx::query_scalar(
+            "SELECT id FROM social.notifications WHERE broadcast_key = $1 AND address = $2",
+        )
+        .bind(&key_some)
+        .bind(&a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        c.mark_read(&a, &[first]).await.unwrap();
+        let newer = serde_json::json!({"title": "updated"});
+        c.broadcast(
+            &key_some,
+            "bid_received",
+            &newer,
+            Some(std::slice::from_ref(&a)),
+        )
+        .await
+        .unwrap();
+        let row: (Uuid, Json, bool, i64) = sqlx::query_as(
+            "SELECT n.id, n.metadata, n.read, (SELECT count(*) FROM social.notification_deliveries d WHERE d.notification_id = n.id)
+             FROM social.notifications n WHERE n.broadcast_key = $1 AND n.address = $2",
+        )
+        .bind(&key_some)
+        .bind(&a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, (first, newer, true, 1));
     }
 
     #[tokio::test]
@@ -1425,6 +1507,121 @@ mod pg_tests {
             state(3).await.unwrap(),
             ("skipped".into(), 0, Some("no confirmed email".into()))
         );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_id_refreshes_metadata_and_time_keeps_read_and_never_re_emails() {
+        let Some(c) = store().await else { return };
+        let pool = c.pool().clone();
+        let a = fresh_address();
+        sqlx::query(
+            "INSERT INTO social.subscriptions (address, email) VALUES ($1, 'r@example.com')",
+        )
+        .bind(&a)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut first =
+            NewNotification::now(a.clone(), "bid_received", serde_json::json!({ "v": 1 }));
+        first.occurred_at = ms_to_naive(1_700_000_000_000).unwrap();
+        assert_eq!(
+            insert_notifications(&pool, std::slice::from_ref(&first))
+                .await
+                .unwrap(),
+            1
+        );
+        c.mark_read(&a, &[first.id]).await.unwrap();
+        let read_at = || {
+            sqlx::query_scalar::<_, Option<NaiveDateTime>>(
+                "SELECT read_at FROM social.notifications WHERE id = $1",
+            )
+            .bind(first.id)
+            .fetch_one(&pool)
+        };
+        let read_before = read_at().await.unwrap();
+        assert!(read_before.is_some());
+        sqlx::query("DELETE FROM social.notification_deliveries WHERE notification_id = $1")
+            .bind(first.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut again = first.clone();
+        again.metadata = serde_json::json!({ "v": 2 });
+        again.occurred_at = ms_to_naive(1_700_000_500_000).unwrap();
+        let mut stale = again.clone();
+        stale.metadata = serde_json::json!({ "v": 0 });
+        // A repeated id inside one batch keeps the last.
+        assert_eq!(
+            insert_notifications(&pool, &[stale, again]).await.unwrap(),
+            0
+        );
+        let row: (serde_json::Value, i64, bool) = sqlx::query_as(
+            "SELECT metadata, (extract(epoch FROM occurred_at) * 1000)::bigint, read FROM social.notifications WHERE id = $1",
+        )
+        .bind(first.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            (serde_json::json!({ "v": 2 }), 1_700_000_500_000, true)
+        );
+        assert_eq!(read_at().await.unwrap(), read_before);
+        assert_eq!(delivery_state(&pool, first.id).await, None);
+        let mut other_type = first.clone();
+        other_type.kind = "bid_accepted".into();
+        other_type.metadata = serde_json::json!({ "v": 3 });
+        insert_notifications(&pool, &[other_type]).await.unwrap();
+        let kept: serde_json::Value =
+            sqlx::query_scalar("SELECT metadata FROM social.notifications WHERE id = $1")
+                .bind(first.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            kept,
+            serde_json::json!({ "v": 2 }),
+            "an id never changes type"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_key_refreshes_the_keyed_row_without_a_second_delivery() {
+        let Some(c) = store().await else { return };
+        let pool = c.pool().clone();
+        let a = fresh_address();
+        let key = format!("k-{}", Uuid::new_v4());
+        let first = NewNotification::now(a.clone(), "bid_received", serde_json::json!({ "v": 1 }));
+        assert_eq!(
+            insert_keyed_notification(&pool, &key, &first)
+                .await
+                .unwrap(),
+            1
+        );
+        let mut again =
+            NewNotification::now(a.clone(), "bid_received", serde_json::json!({ "v": 2 }));
+        again.occurred_at = first.occurred_at + chrono::Duration::seconds(5);
+        assert_eq!(
+            insert_keyed_notification(&pool, &key, &again)
+                .await
+                .unwrap(),
+            0
+        );
+        let rows: Vec<(Uuid, serde_json::Value)> =
+            sqlx::query_as("SELECT id, metadata FROM social.notifications WHERE address = $1")
+                .bind(&a)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows, vec![(first.id, serde_json::json!({ "v": 2 }))]);
+        let deliveries: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.notification_deliveries WHERE notification_id = $1",
+        )
+        .bind(first.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(deliveries, 1);
     }
 
     #[tokio::test]

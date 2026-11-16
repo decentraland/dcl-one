@@ -1,6 +1,6 @@
 # ADR: Pulse owns Archipelago statistics
 
-- Status: Accepted for ownership, process boundaries and metric constraints
+- Status: Accepted for ownership, process boundaries, metric constraints and connector retention capacity
 - Date: 2026-11-10
 
 ## Decision
@@ -73,21 +73,28 @@ Connector observations carry a Pulse incarnation and a Pulse-issued generation.
 On its first authenticated local observation, a connector obtains that incarnation
 through the correlated statistics control capability, requests a candidate grant,
 then confirms its exact random challenge. Pulse retains one active generation and
-cursor, the latest outgoing one, plus one candidate, rather than a lifetime set of
-connector UUIDs. A checked
-monotonic counter issues generations; exhaustion fails closed. Beginning a candidate
-does not replace the active writer, and an overwritten candidate cannot confirm.
-Confirmation is idempotent without resetting the cursor. After a handover the
-outgoing generation keeps its cursor until the next one, so the most recent
-outgoing connector's heartbeats and disconnects still apply, as upstream Stats
-takes every connector's events. The retiring slot has no time limit. Only one
-outgoing generation drains: after A→B→C, A's events are rejected while A still has
-sockets, and its wallets stay in the population until they heartbeat through C or
-Pulse restarts. As upstream, a disconnect from the draining connector also removes
-a wallet that has already reconnected through the active one, until that wallet's
-next heartbeat restores it. Older generations cannot publish, and no outgoing
-generation can confirm again. Old-incarnation controls and events are rejected
-after Pulse restart. This is a writer fence, not leader election or peer expiry.
+cursor, up to 4,096 outgoing generations with their cursors, and one candidate.
+Each confirmed handover retains the outgoing generation without expiry or eviction,
+so all admitted connectors can continue publishing heartbeats and disconnects.
+At the outgoing-generation limit, Pulse rejects new statistics registrations until
+it restarts. Rejection preserves existing grants, cursors, candidates and peers;
+active registration and confirmation remain idempotent. This finite capacity and
+refusal policy is accepted. It does not impose a peer population limit or change
+socket admission, native ownership or room authority. A new connector whose
+statistics registration is refused cannot contribute to the legacy projection.
+Pulse exposes the outgoing-generation count and capacity-refusal count without
+producer labels. Reaching the limit emits one warning with the restart remedy;
+repeated refused registrations do not emit further warnings.
+
+A checked monotonic counter issues generations; exhaustion fails closed. Beginning
+a candidate does not replace the active writer, and an overwritten candidate cannot
+confirm. Confirmation is idempotent without resetting the cursor. An outgoing
+generation cannot confirm again. Every observation must match its retained producer,
+generation and current Pulse incarnation, and advance that generation's cursor.
+A disconnect from any admitted connector removes a wallet that has already
+reconnected through another one, until its next heartbeat restores it.
+Old-incarnation controls and events are rejected after Pulse restart. This is a
+writer fence, not leader election or peer expiry.
 Pulse records rejected observations in one counter without producer or reason
 labels. This exposes malformed, stale or fenced input without per-event warnings,
 delivery acknowledgments or automatic writer reclamation.
@@ -169,8 +176,11 @@ existing public HTTP paths to stay on the shared API process. Moving credentials
 or content SQL into Pulse would expand its responsibilities without helping the
 statistics contract.
 
-Compatibility is assessed against pinned contracts for both the statistics and
-connector surfaces, including methods, headers, errors and socket lifecycle.
+Compatibility evidence for Stats pins `decentraland/archipelago-workers` at
+`64dc515987175c679e4009fe557ea60fdf50bc6c` in
+`services/catalyst/comms/src/stats/source-runtime-lock.json`. Connector evidence
+records its own source revision. Comparisons cover methods, headers, errors and
+socket lifecycle.
 Unknown or divergent behavior must remain visible in review evidence. Source
 inspection and this ownership decision do not establish a compatibility or release
 verdict. Rollout requires matching producer and reader protocols and NATS subject

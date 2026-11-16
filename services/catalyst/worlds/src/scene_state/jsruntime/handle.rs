@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::scene_state::crdt::{CrdtEngine, decode_batch};
 use crate::scene_state::runtime::{
@@ -60,8 +61,15 @@ pub struct SharedState {
     pub running: AtomicBool,
 
     /// Bounded, recycled client indices. Shared with the scene thread, which
-    /// releases a slot only once it has reclaimed that client's entity range.
+    /// releases a slot only once it has reclaimed that client's entity range;
+    /// once the runtime stopped, `JsRuntime::on_client_close` releases it. A
+    /// slot is never freed while its client's socket may still be open.
     pub slots: Arc<ClientSlots>,
+
+    /// Each connected client's close request (its `Client::cancel`). A runtime
+    /// that stops cancels them all, so the host closes every socket and frees
+    /// each slot through its normal removal.
+    pub closes: dashmap::DashMap<u32, CancellationToken>,
 
     /// Client bytes queued toward the scene thread and not yet read.
     pub inbound: Arc<InboundBudget>,
@@ -74,6 +82,40 @@ pub struct SharedState {
 
     /// Clients this scene closed after too many dropped frames.
     pub desynced_closes: AtomicU64,
+}
+
+impl SharedState {
+    /// Asks the host to close every client of a stopped runtime. Called after
+    /// `running` is cleared: a client opened concurrently either is seen here
+    /// or sees the runtime stopped (`JsRuntime::on_client_open`).
+    pub(super) fn close_clients(&self) {
+        for close in self.closes.iter() {
+            close.cancel();
+        }
+    }
+}
+
+/// Held by the scene thread: a panic that unwinds out of it stops the
+/// runtime as [`finish`] does (`running` cleared, every client asked to
+/// close), so clients never stay connected to a thread that is gone. A panic
+/// inside a V8 callback aborts the process instead and never reaches it.
+pub(super) struct StopOnPanic {
+    pub(super) shared: Arc<SharedState>,
+    pub(super) watchdog: Arc<Watchdog>,
+    pub(super) scene_hash: String,
+}
+
+impl Drop for StopOnPanic {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        self.shared.running.store(false, Ordering::SeqCst);
+        self.watchdog.stopped.store(true, Ordering::SeqCst);
+        self.shared.close_clients();
+        *self.watchdog.isolate.lock() = None;
+        tracing::error!(scene = %self.scene_hash, "scene JS thread panicked; runtime stopped");
+    }
 }
 
 pub(super) struct Watchdog {
@@ -216,6 +258,7 @@ pub fn spawn(
         outbound_meters: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
+        closes: dashmap::DashMap::new(),
         inbound: Arc::new(InboundBudget::new(&limits)),
         parked: AtomicBool::new(false),
         inbound_drops: AtomicU64::new(0),
@@ -255,6 +298,11 @@ pub fn spawn(
     let join = std::thread::Builder::new()
         .name(format!("scene-js-{scene_hash}"))
         .spawn(move || {
+            let _stop_on_panic = StopOnPanic {
+                shared: Arc::clone(&thread_shared),
+                watchdog: Arc::clone(&thread_watchdog),
+                scene_hash: thread_hash.clone(),
+            };
             run_scene_thread(
                 SceneScript {
                     scene_hash: thread_hash,
@@ -366,7 +414,7 @@ unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8:
             PARKED.add(scene);
             shared.parked.store(true, Ordering::SeqCst);
             shared.running.store(false, Ordering::SeqCst);
-            shared.slots.clear();
+            shared.close_clients();
             watchdog.stopped.store(true, Ordering::SeqCst);
         }
         None => {
@@ -388,7 +436,7 @@ pub(super) fn finish(
     shared.running.store(false, Ordering::SeqCst);
     watchdog.stopped.store(true, Ordering::SeqCst);
 
-    shared.slots.clear();
+    shared.close_clients();
 
     *watchdog.isolate.lock() = None;
     if let Some(j) = wd_thread {
@@ -1744,5 +1792,40 @@ mod tests {
         parked.add("a");
         parked.add("");
         assert_eq!((parked.count(), parked.contains("a")), (2, true));
+    }
+
+    /// A panic that unwinds out of the scene thread stops the runtime and
+    /// asks every client to close; a normal exit leaves that to `finish`.
+    #[test]
+    fn a_panicking_scene_thread_stops_the_runtime_and_closes_its_clients() {
+        let handle = spawn(
+            "panicking-scene".into(),
+            "registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } }, function (ev) {});".into(),
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let close = CancellationToken::new();
+        handle.shared.closes.insert(0, close.clone());
+        let guard = |handle: &JsRuntimeHandle| StopOnPanic {
+            shared: Arc::clone(&handle.shared),
+            watchdog: Arc::clone(&handle.watchdog),
+            scene_hash: handle.scene_hash.clone(),
+        };
+
+        drop(guard(&handle));
+        assert!(handle.shared.running.load(Ordering::SeqCst));
+        assert!(!close.is_cancelled());
+
+        let held = guard(&handle);
+        let thread = std::thread::spawn(move || {
+            let _held = held;
+            panic!("scene thread bug");
+        });
+        assert!(thread.join().is_err());
+        assert!(!handle.shared.running.load(Ordering::SeqCst));
+        assert!(handle.watchdog.stopped.load(Ordering::SeqCst));
+        assert!(close.is_cancelled(), "every client is asked to close");
     }
 }

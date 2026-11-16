@@ -2941,14 +2941,14 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     db.drop().await;
 }
 
-/// `catalyst index` attaches `rentals-index` only when switched on and a
-/// chain-1 endpoint is configured.
+/// `catalyst index` attaches `rentals-index` whenever a chain-1 endpoint is
+/// configured, unless switched off.
 #[tokio::test]
 async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let attached = |state: &SharedState, enabled: bool| {
+    let attached = |state: &SharedState, enabled: Option<bool>| {
         let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
         crate::rentals::index::spawn_job(state, &jobs, enabled);
         let names: Vec<_> = jobs.report().into_iter().map(|j| j.name).collect();
@@ -2960,8 +2960,9 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
         IndexSettings::default(),
         false,
     );
-    let (off, on_without_switch) = attached(&with_rpc, false);
-    let (on, on_with_switch) = attached(&with_rpc, true);
+    let (off, on_switched_off) = attached(&with_rpc, Some(false));
+    let (on, on_with_switch) = attached(&with_rpc, Some(true));
+    let (unset, on_by_default) = attached(&with_rpc, None);
     let mut no_rpc = state_over(
         db.pool.clone(),
         "https://rpc.example.org/",
@@ -2973,9 +2974,11 @@ async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint()
         .settings
         .market
         .trade_rpc_urls = RpcEndpoints::from_env(None);
-    let (bare, on_without_rpc) = attached(&no_rpc, true);
-    assert!(!on_without_switch && on_with_switch && !on_without_rpc);
-    for jobs in [off, on, bare] {
+    let (bare, on_without_rpc) = attached(&no_rpc, Some(true));
+    let (bare_unset, on_by_default_without_rpc) = attached(&no_rpc, None);
+    assert!(!on_switched_off && on_with_switch && on_by_default);
+    assert!(!on_without_rpc && !on_by_default_without_rpc);
+    for jobs in [off, on, unset, bare, bare_unset] {
         assert!(
             jobs.shutdown(std::time::Duration::from_secs(5))
                 .await
