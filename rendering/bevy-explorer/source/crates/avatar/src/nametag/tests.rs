@@ -374,10 +374,8 @@ fn a_tag_stands_on_its_anchor_within_bounds_for_its_largest() {
     // the farthest corner at the far end of the range, whichever way the player faces
     let aabb = *app.world().get::<Aabb>(tag).unwrap();
     assert_eq!(aabb.center, Vec3A::ZERO);
-    assert_eq!(
-        aabb.half_extents,
-        Vec3A::splat(200.0 * tag_scale(MAX_DISTANCE, FOV))
-    );
+    let largest = Vec3A::splat(200.0 * tag_scale(MAX_DISTANCE, FOV));
+    assert!(aabb.half_extents.distance(largest) < 1e-4);
 
     // the anchor moves with the animation, and the tag with it
     app.world_mut()

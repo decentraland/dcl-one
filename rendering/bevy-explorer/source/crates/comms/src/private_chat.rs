@@ -7,7 +7,7 @@
 //! The room is deliberately not a [`Transport`](crate::Transport): nothing broadcast to the
 //! realm's transports can reach it, and its participants never touch the avatar store.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::relationship::Relationship, prelude::*};
