@@ -41,15 +41,15 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the nametags as JSON: `visible` (the nametags toggle), `shown`, `sceneAvatars` (of
-/// those shown, the ones over a scene's avatars) and `pooled` (tag counts), `atlas` (the glyph atlas' distance-field and colour page sizes in pixels, 0 for
-/// a page not made), `bubbles` (the chat bubble setting) and `tags`, one per shown tag:
-/// `player` (an address, or `local`, or null for an avatar with no wallet), `sceneAvatar`
-/// (the tag is over an avatar a scene made), `name`, `suffix`,
-/// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` in
-/// metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit), `position`
-/// (world, metres), `headOffset` (how far over the head bone the tag sits, in metres; null
-/// until the avatar is built) and `bubble` (null, or its `kind`, `mention` and message `length`; never
-/// the message).
+/// those shown, the ones over a scene's avatars) and `pooled` (tag counts), `atlas` (the glyph
+/// atlas' distance-field and colour page sizes in pixels, 0 for a page not made), `bubbles`
+/// (the chat bubble setting) and `tags`, one per shown tag: `player` (an address, or `local`,
+/// or null for an avatar with no wallet), `sceneAvatar` (the tag is over an avatar a scene
+/// made), `name`, `suffix`, `verified`, `official`, `voice` (`off`, `idle`, `speaking`,
+/// `hushed`), `distance` in metres from the camera, `opacity` (0 to 1), `scale` (metres per
+/// tag unit), `position` (world, metres), `headOffset` (how far over the head bone the tag
+/// sits, in metres for an avatar at a scale of one; null until the avatar is built) and
+/// `bubble` (null, or its `kind`, `mention` and message `length`; never the message).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;

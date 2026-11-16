@@ -233,8 +233,8 @@ State, in every build:
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
   avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position`, `headOffset` (metres over the head bone;
-  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `opacity`, `scale` (metres per tag unit), `position`, `headOffset` (metres over the head bone for
+  an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`

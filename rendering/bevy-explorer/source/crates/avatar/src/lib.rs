@@ -1795,11 +1795,13 @@ fn process_avatar(
             .entity(avatar_ent)
             .try_insert((AvatarProcessed, Visibility::Inherited));
 
-        // the head bone's units, in metres
+        // the head bone's units, in the avatar's own: a scene's scale of the avatar is in both
+        // global scales, and the nametag's anchor applies it again
+        let avatar_scale = root_gt.compute_transform().scale.y;
         let head_scale = target_armature_entities
             .get("avatar_head")
             .and_then(|head| instance_ents.get(*head).ok())
-            .map(|(_, _, gt, ..)| gt.compute_transform().scale.y);
+            .map(|(_, _, gt, ..)| gt.compute_transform().scale.y / avatar_scale);
         commands.entity(root_player_entity.parent()).try_insert((
             AvatarMaterials(instance_scene_materials.values().map(|h| h.id()).collect()),
             NametagHeadOffset::above_head(
@@ -2229,7 +2231,11 @@ fn remove_attach_points_from_avatar_shape(
         for attach_point in attach_points.entities() {
             commands.entity(attach_point).try_despawn();
         }
-        commands.entity(entity).try_remove::<AttachPoints>();
+        // the offset was measured on the body that goes with the shape: the next body's
+        // nametag waits for its own
+        commands
+            .entity(entity)
+            .try_remove::<(AttachPoints, NametagHeadOffset)>();
     }
 }
 

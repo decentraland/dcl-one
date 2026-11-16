@@ -430,9 +430,10 @@ fn resolve_content(
     }
 }
 
-/// Names the avatars a scene made, once they are built: until then the tag would sit at
-/// their feet. A scene entity that only restyles a player has no [`AvatarSelection`] and gets
-/// no tag, and nor do the avatars the HUD previews, which a system scene makes.
+/// Names the avatars a scene made, while they have a body that is built: without one the tag
+/// would sit at their feet. A scene entity that only restyles a player has no
+/// [`AvatarSelection`] and gets no tag, and nor do the avatars the HUD previews, which a system
+/// scene makes.
 #[allow(clippy::type_complexity)]
 fn resolve_scene_avatar_content(
     mut commands: Commands,
@@ -456,7 +457,11 @@ fn resolve_scene_avatar_content(
         Entity,
         (
             With<SceneAvatarNametag>,
-            Or<(Without<AvatarShape>, Without<AvatarSelection>)>,
+            Or<(
+                Without<AvatarShape>,
+                Without<AvatarSelection>,
+                Without<NametagHeadOffset>,
+            )>,
         ),
     >,
 ) {

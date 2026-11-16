@@ -170,7 +170,7 @@ export interface NametagTag {
   /** Metres per tag unit. */
   scale: number
   position: [number, number, number]
-  /** Metres over the head bone; null until the avatar is built. */
+  /** Metres over the head bone for an avatar at a scale of one; null until the avatar is built. */
   headOffset: number | null
   bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
 }

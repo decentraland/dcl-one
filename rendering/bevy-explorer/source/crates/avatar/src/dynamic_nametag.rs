@@ -57,12 +57,15 @@ fn nametags_command(mut cmd: ConsoleCommand<Nametags>, mut visible: ResMut<Namet
     cmd.reply_ok(serde_json::json!({"visible": visible.0}).to_string());
 }
 
-/// On a player: how far above the head bone their nametag sits, clear of what they wear.
+/// On an avatar: how far above the head bone their nametag sits, clear of what they wear, in
+/// the avatar's own units (metres at a scale of one). It is there while the avatar has a body
+/// it was measured on.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct NametagHeadOffset(pub f32);
 
 impl NametagHeadOffset {
-    /// From how far the avatar's meshes reach above the head bone, in metres. A reach that
+    /// From how far the avatar's meshes reach above the head bone, in the avatar's units. A
+    /// reach that
     /// doesn't clear a bare head is not a measurement of one: the default stands in.
     pub fn above_head(top: f32) -> Self {
         let offset = top + HEAD_OFFSET_BUFFER;
@@ -76,9 +79,9 @@ impl NametagHeadOffset {
     }
 }
 
-/// How high above the avatar's root its nametag goes: over the head, or over whichever of the
-/// toes and hips an animation has lifted above it. `head_scale` is the head bone's own scale,
-/// which enlarges what the head wears with it.
+/// How high above the avatar's root its nametag goes, in the avatar's units: over the head, or
+/// over whichever of the toes and hips an animation has lifted above it. `head_scale` is the
+/// head bone's own scale, which enlarges what the head wears with it.
 fn nametag_height(head: f32, head_scale: f32, others: [f32; 3], offset: f32, gliding: bool) -> f32 {
     let other = others.into_iter().map(FloatOrd).max().map_or(head, |y| y.0);
     let height = if head >= other {
@@ -109,27 +112,24 @@ pub(crate) fn dynamic_nametag_position(
         let Ok(position_gt) = global_transforms.get(attach_points.position) else {
             continue;
         };
-        let position = position_gt.compute_transform();
+        let origin = position_gt.translation();
+        // a scene can scale, turn and tilt an avatar. Heights are the world's, straight up,
+        // counted in the avatar's units, so the offsets grow and shrink with it
+        let scale = position_gt.compute_transform().scale.y;
+        // the anchor is the avatar's child: what is placed in the world goes back through the
+        // avatar's whole transform. An avatar scaled to nothing has no such way back
+        let to_avatar = position_gt.affine().matrix3.inverse();
+        if scale <= f32::EPSILON || !to_avatar.is_finite() {
+            continue;
+        }
         let head_position = global_transforms
             .get(attach_points.head)
             .unwrap_or(position_gt)
             .translation();
-        // the anchor is a child of the avatar, so what is measured in the world goes back into
-        // the avatar's own units: a scene can scale an avatar, and the anchor scales with it
-        let unscale = |world: f32, scale: f32| {
-            if scale > f32::EPSILON {
-                world / scale
-            } else {
-                world
-            }
-        };
         let height_of = |point: Entity| {
-            global_transforms.get(point).map_or(0.0, |gt| {
-                unscale(
-                    gt.translation().y - position.translation.y,
-                    position.scale.y,
-                )
-            })
+            global_transforms
+                .get(point)
+                .map_or(0.0, |gt| (gt.translation().y - origin.y) / scale)
         };
 
         // the head attach point only reaches the head once the avatar is built; the ghost stands
@@ -160,15 +160,11 @@ pub(crate) fn dynamic_nametag_position(
         let Ok(mut nametag_transform) = transforms.get_mut(attach_points.nametag) else {
             continue;
         };
-        let position_rotation = {
-            let (axis, angle) = position.rotation.to_axis_angle();
-            Quat::from_axis_angle(axis, -angle)
-        };
-        nametag_transform.translation = position_rotation
+        nametag_transform.translation = to_avatar
             * Vec3::new(
-                unscale(head_position.x - position.translation.x, position.scale.x),
-                height,
-                unscale(head_position.z - position.translation.z, position.scale.z),
+                head_position.x - origin.x,
+                height * scale,
+                head_position.z - origin.z,
             );
     }
 }
@@ -225,6 +221,26 @@ mod tests {
         assert!(
             (anchor - Vec3::new(0.0, 1.9, 0.0)).length() < 1e-4,
             "{anchor}"
+        );
+
+        // turned, tilted and stretched: the tag stays straight over the head in the world, by
+        // the offset at the avatar's height scale
+        let stretched = Transform::from_xyz(3.0, 1.0, -2.0)
+            .with_rotation(Quat::from_euler(EulerRot::YXZ, 1.0, 0.4, 0.0))
+            .with_scale(Vec3::new(0.5, 2.0, 3.0));
+        app.world_mut().entity_mut(avatar).insert(stretched);
+        app.update();
+        app.update();
+        let world = |entity| {
+            app.world()
+                .get::<GlobalTransform>(entity)
+                .unwrap()
+                .translation()
+        };
+        let over_head = world(nametag) - world(head);
+        assert!(
+            (over_head - Vec3::new(0.0, 0.3 * 2.0, 0.0)).length() < 1e-3,
+            "{over_head}"
         );
     }
 

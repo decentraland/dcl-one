@@ -266,6 +266,37 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
 }
 
 #[test]
+fn a_scene_avatar_made_again_waits_for_its_new_body() {
+    let mut app = scene_avatar_app();
+    app.add_observer(crate::add_attach_points_to_avatar_shape)
+        .add_observer(crate::remove_attach_points_from_avatar_shape);
+    let scene = app.world_mut().spawn_empty().id();
+    let guide_shape = shape("guide-0001", Some("Guide"));
+    let guide = spawn_scene_avatar(&mut app, scene, &guide_shape);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Guide"));
+
+    // the scene removes the shape and gives it back: the body the offset was measured on is
+    // gone, and the tag would sit at the feet of the next until it is built
+    app.world_mut().entity_mut(guide).remove::<AvatarShape>();
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(AvatarShape(guide_shape));
+    app.update();
+    assert!(app.world().get::<NametagHeadOffset>(guide).is_none());
+    assert_eq!(name_of(&app, guide), None);
+
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Guide"));
+}
+
+#[test]
 fn previews_and_restyled_players_get_no_scene_avatar_tag() {
     let mut app = scene_avatar_app();
     let npc_shape = shape("guide-0001", None);
