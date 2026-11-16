@@ -42,8 +42,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
 TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
-# tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>;
-# `bevy` is no workspace crate, so the manifest survives its pruning.
+# tooling/bevy-target-cache.py keeps every .fingerprint directory, so the manifest stays in the cache.
 MANIFEST = 'bevy-mtimes.json'
 
 
