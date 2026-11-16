@@ -1,15 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
-import { CatalogCard, CollectibleBadges } from "@dcl/one-ui/apps/sites/provisional/CatalogCard/CatalogCard";
-import { EmptyState } from "@dcl/one-ui/apps/sites/provisional/EmptyState/EmptyState";
-import { FilterChip, FilterChipGroup } from "@dcl/one-ui/apps/sites/provisional/FilterChip/FilterChip";
-import {
-  ProfileCollectibles,
-  ProfileCollectiblesItem,
-  ProfileNameCard,
-  type ProfileCollectiblesState,
-} from "@dcl/one-ui/apps/sites/provisional/profile/ProfileCollectibles";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Button } from "@dcl/one-ui";
 import {
   BackpackUpperBody,
   GeneralGrid,
@@ -22,8 +13,23 @@ import { assetPage } from "@/core/lib/shop/redirects";
 import type { AssetCategory, ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { catalogueTotal, CollectibleLink, loadedRows, loadMore, receivedAny, useFocusNewRows } from "./collectibles";
+import {
+  catalogueTotal,
+  CollectibleBadges,
+  CollectibleCard,
+  CollectiblesItem,
+  CollectiblesPanel,
+  loadedRows,
+  loadMore,
+  NameRow,
+  receivedAny,
+  useCategoryTabs,
+  useFocusNewRows,
+  type CategoryOption,
+  type CollectiblesState,
+} from "./collectibles";
 import { useProfileAssets } from "./hooks";
+import { EmptyMessage } from "./EmptyMessage";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
 /** Where the owner's empty Assets sends them: the Shop. */
@@ -38,12 +44,23 @@ export type ProfileAssetsScreenProps = {
   onTab: (id: string) => void;
 };
 
-const CATEGORY_FILTERS: { value: AssetCategory; label: string; icon: ReactNode }[] = [
-  { value: "wearable", label: "Wearables", icon: <BackpackUpperBody /> },
-  { value: "emote", label: "Emotes", icon: <GeneralSecondaryBarEmotes /> },
-  { value: "ens", label: "Names", icon: <GeneralName /> },
-  { value: "parcel", label: "Lands", icon: <GeneralMapPin /> },
-  { value: "estate", label: "Estates", icon: <GeneralGrid /> },
+const ICON = { size: 20, "aria-hidden": true } as const;
+
+const CATEGORY_TABS: CategoryOption<AssetCategory | null>[] = [
+  { value: null, label: "All" },
+  {
+    value: "wearable",
+    label: "Wearables",
+    icon: <BackpackUpperBody {...ICON} />,
+  },
+  {
+    value: "emote",
+    label: "Emotes",
+    icon: <GeneralSecondaryBarEmotes {...ICON} />,
+  },
+  { value: "ens", label: "Names", icon: <GeneralName {...ICON} /> },
+  { value: "parcel", label: "Lands", icon: <GeneralMapPin {...ICON} /> },
+  { value: "estate", label: "Estates", icon: <GeneralGrid {...ICON} /> },
 ];
 
 function countLabel(total: number): string {
@@ -71,7 +88,7 @@ function NameActions({ asset }: { asset: ProfileAsset }) {
 function AssetCard({ asset }: { asset: ProfileAsset }) {
   const href = tokenHref(asset);
   return (
-    <CatalogCard
+    <CollectibleCard
       title={asset.name}
       imageUrl={asset.image}
       // The catalogue has no image for a NAME.
@@ -84,12 +101,11 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
         asset.category === "ens" ? (
           <NameActions asset={asset} />
         ) : (
-          <Button href={href} aria-label={`View ${asset.name}`}>
+          <Button href={href} size="sm" aria-label={`View ${asset.name}`}>
             View
           </Button>
         )
       }
-      LinkComponent={CollectibleLink}
     />
   );
 }
@@ -101,22 +117,9 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   const rows = query.data ? loadedRows(query.data) : [];
   const focus = useFocusNewRows(rows.length, query.dataUpdatedAt + query.errorUpdatedAt);
 
-  const filters = (
-    <FilterChipGroup label="Assets shown">
-      <FilterChip label="All" active={category === null} onSelect={() => setCategory(null)} />
-      {CATEGORY_FILTERS.map((option) => (
-        <FilterChip
-          key={option.value}
-          icon={option.icon}
-          label={option.label}
-          active={category === option.value}
-          onSelect={() => setCategory(option.value)}
-        />
-      ))}
-    </FilterChipGroup>
-  );
+  const { filters, panel } = useCategoryTabs("Assets shown", CATEGORY_TABS, category, setCategory);
 
-  let state: ProfileCollectiblesState;
+  let state: CollectiblesState;
   // With no data yet, a Try again refetch puts the query back to pending, so it shows as loading.
   if (query.isError && !query.data) {
     state = {
@@ -125,6 +128,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
       action: (
         <Button
           variant="secondary"
+          size="md"
           onClick={() => {
             focus.expectRowsFrom(0);
             void query.refetch();
@@ -153,15 +157,22 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
                 kind: "empty",
                 label: "No assets yet",
                 children: (
-                  <EmptyState
-                    icon={<BackpackUpperBody />}
+                  <EmptyMessage
+                    icon={<BackpackUpperBody size={56} />}
                     title="No assets yet"
                     subtitle="Go to the Shop and start creating your unique look"
-                    action={<Button href={SHOP_HREF}>Go to the Shop</Button>}
+                    action={
+                      <Button href={SHOP_HREF} size="md">
+                        Go to the Shop
+                      </Button>
+                    }
                   />
                 ),
               }
-            : { kind: "empty-note", message: "Wearables, names and lands you own will appear here." };
+            : {
+                kind: "empty-note",
+                message: "Wearables, names and lands you own will appear here.",
+              };
     } else {
       const names = category === "ens";
       state = {
@@ -169,13 +180,13 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
         count: countLabel(catalogueTotal(query.data)),
         layout: names ? "rows" : "grid",
         children: rows.map((asset) => (
-          <ProfileCollectiblesItem key={asset.id}>
+          <CollectiblesItem key={asset.id}>
             {names ? (
-              <ProfileNameCard name={asset.name} actions={<NameActions asset={asset} />} />
+              <NameRow name={asset.name} actions={<NameActions asset={asset} />} />
             ) : (
               <AssetCard asset={asset} />
             )}
-          </ProfileCollectiblesItem>
+          </CollectiblesItem>
         )),
         listRef: focus.listRef,
         more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
@@ -185,7 +196,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="assets" onTab={onTab}>
-      <ProfileCollectibles filters={filters} state={state} panelRef={focus.panelRef} />
+      <CollectiblesPanel filters={filters} panel={panel} state={state} panelRef={focus.panelRef} />
     </ProfileShell>
   );
 }

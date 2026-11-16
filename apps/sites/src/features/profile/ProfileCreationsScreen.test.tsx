@@ -174,11 +174,48 @@ describe("profile creations", () => {
     show();
     await screen.findByRole("link", { name: "Hat 0" });
 
-    await user.click(screen.getByRole("button", { name: "Emotes" }));
+    await user.click(screen.getByRole("tab", { name: "Emotes" }));
 
     expect(await screen.findByRole("link", { name: "Dance" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Hat 0" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Emotes" }).getAttribute("aria-pressed")).toBe("true");
+    const emotes = screen.getByRole("tab", { name: "Emotes" });
+    expect(emotes.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(emotes.id);
+    expect(emotes.getAttribute("aria-controls")).toBe(screen.getByRole("tabpanel").id);
+  });
+
+  it("moves between categories with the arrow keys, wrapping at the ends", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileCreations.mockImplementation(async (_a: string, params: { category: string }) =>
+      page(params.category === "emote" ? [creation(9, { name: "Dance" })] : [creation(0)]),
+    );
+    show();
+    await screen.findByRole("link", { name: "Hat 0" });
+    const wearables = screen.getByRole("tab", { name: "Wearables" });
+    // Only the selected tab is in the tab order.
+    expect(wearables.tabIndex).toBe(0);
+    expect(screen.getByRole("tab", { name: "Emotes" }).tabIndex).toBe(-1);
+
+    act(() => wearables.focus());
+    await user.keyboard("{ArrowRight}");
+    expect(await screen.findByRole("link", { name: "Dance" })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Emotes" }));
+
+    await user.keyboard("{ArrowRight}");
+    expect(await screen.findByRole("link", { name: "Hat 0" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("makes the panel a tab stop only while it holds nothing to focus", async () => {
+    let resolve: (value: ReturnType<typeof page>) => void = () => {};
+    net.fetchProfileCreations.mockReturnValue(new Promise((r) => (resolve = r)));
+    show();
+
+    expect(screen.getByRole("tabpanel").tabIndex).toBe(0);
+
+    await act(async () => resolve(page([creation(0)])));
+    await screen.findByRole("link", { name: "Hat 0" });
+    expect(screen.getByRole("tabpanel").tabIndex).toBe(-1);
   });
 
   it("tells a visitor the member has created nothing", async () => {

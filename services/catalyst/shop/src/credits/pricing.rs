@@ -119,6 +119,10 @@ pub struct ListingRow {
     pub token_id: Option<String>,
     pub trade_id: Option<String>,
     pub price_wei: String,
+    /// The listing's owner, who is paid when it fills.
+    pub seller: String,
+    /// A v3 listing's beneficiary, paid instead of the seller when set.
+    pub payee: Option<String>,
 }
 
 /// The catalogue, the order book, the trade book and the MANA spot, as the
@@ -261,6 +265,8 @@ impl Market for LocalMarket {
                 token_id: o.token_id,
                 trade_id: o.trade_id,
                 price_wei: o.price,
+                seller: o.owner,
+                payee: o.payee,
             })
             .collect())
     }
@@ -271,9 +277,14 @@ impl Market for LocalMarket {
         }
         // A named trade resolves whatever its copy's age: the chain checks
         // the purchase against the signature, its expiry and cancellations.
-        let Some(trade) = crate::market::trades::get_trade_by_id(&self.pool, trade_id, None)
-            .await
-            .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
+        let Some(trade) = crate::market::trades::get_trade_by_id(
+            &self.pool,
+            trade_id,
+            None,
+            crate::market::trades::TradeScope::Served,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("trades read failed: {e}")))?
         else {
             return Ok(TradeLookup::NotFound);
         };
@@ -337,26 +348,32 @@ impl Market for LocalMarket {
                     "no MANA price snapshot on this node yet (mana-price-poll)",
                 )
             })?;
-        let usd = snapshot
-            .mana_usd
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
-        let last_updated_at = snapshot
-            .source_updated_at
-            .unwrap_or(snapshot.taken_at)
-            .timestamp();
-        let now = chrono::Utc::now().timestamp();
-        if is_stale(last_updated_at, now, self.max_staleness_secs) {
-            return Err(ApiError::service_unavailable(format!(
-                "MANA/USD oracle is stale (age {}s exceeds {}s)",
-                now - last_updated_at,
-                self.max_staleness_secs
-            )));
-        }
-        serde_json::Number::from_f64(usd)
-            .map(|n| n.to_string())
-            .ok_or_else(|| ApiError::Internal("price snapshot 'usd' is not a finite number".into()))
+        snapshot_usd(&snapshot, chrono::Utc::now(), self.max_staleness_secs)
     }
+}
+
+/// A price snapshot's MANA/USD as a decimal string, refused once it is
+/// older than `max_staleness_secs`. Its age is the price module's
+/// (`PriceSnapshot::age_at`): from the provider's quote, or from the poll
+/// when that is earlier, as every other spot reader measures it.
+fn snapshot_usd(
+    snapshot: &crate::price::store::PriceSnapshot,
+    now: chrono::DateTime<chrono::Utc>,
+    max_staleness_secs: i64,
+) -> Result<String, ApiError> {
+    let usd = snapshot
+        .mana_usd
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
+    let age = i64::try_from(snapshot.age_at(now).as_secs()).unwrap_or(i64::MAX);
+    if age > max_staleness_secs {
+        return Err(ApiError::service_unavailable(format!(
+            "MANA/USD oracle is stale (age {age}s exceeds {max_staleness_secs}s)"
+        )));
+    }
+    serde_json::Number::from_f64(usd)
+        .map(|n| n.to_string())
+        .ok_or_else(|| ApiError::Internal("price snapshot 'usd' is not a finite number".into()))
 }
 
 fn check_category(item: ItemInfo) -> Result<ItemInfo, ApiError> {
@@ -493,11 +510,13 @@ impl Pricing {
 
     /// The charge bases of many pairs: one catalogue batch and one order-book
     /// read. Element `i` answers `pairs[i]`; a batch-level failure is the outer error.
+    /// `buyer`'s own listings are never picked.
     pub async fn fetch_charge_bases_batch(
         &self,
         pairs: &[(String, String)],
         mode: &str,
         max_pages: usize,
+        buyer: Option<&str>,
     ) -> Result<Vec<Result<ChargeBasis, ApiError>>, ApiError> {
         let infos = self.fetch_items_batch(pairs).await?;
         let wants_listing = mode == "secondary" || mode == "auto";
@@ -511,7 +530,7 @@ impl Pricing {
             })
             .collect();
         let listings = if wants_listing && !listing_pairs.is_empty() {
-            self.fetch_open_listings_batch(&listing_pairs, max_pages, true)
+            self.fetch_open_listings_batch(&listing_pairs, max_pages, true, buyer)
                 .await?
         } else {
             HashMap::new()
@@ -545,9 +564,10 @@ impl Pricing {
         pairs: &[(String, String)],
         mode: &str,
         max_pages: usize,
+        buyer: Option<&str>,
     ) -> Result<Vec<Result<PricedItem, ApiError>>, ApiError> {
         let bases = self
-            .fetch_charge_bases_batch(pairs, mode, max_pages)
+            .fetch_charge_bases_batch(pairs, mode, max_pages, buyer)
             .await?;
         let weis: Vec<String> = bases
             .iter()
@@ -584,10 +604,11 @@ impl Pricing {
         &self,
         collection: &str,
         item_id: &str,
+        buyer: &str,
     ) -> Result<Option<OpenOrder>, ApiError> {
         let pairs = [(collection.to_ascii_lowercase(), item_id.to_string())];
         let listings = self
-            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false)
+            .fetch_open_listings_batch(&pairs, ORDER_SCAN_MAX_PAGES, false, Some(buyer))
             .await?;
         Ok(listings
             .get(&pairs[0])
@@ -610,6 +631,7 @@ impl Pricing {
         pairs: &[(String, String)],
         max_pages: usize,
         include_trades: bool,
+        buyer: Option<&str>,
     ) -> Result<HashMap<(String, String), Option<OpenListing>>, ApiError> {
         let mut out: HashMap<(String, String), Option<OpenListing>> = HashMap::new();
         let mut asked: Vec<(String, String)> = Vec::new();
@@ -629,7 +651,7 @@ impl Pricing {
             .await?;
         let now_ms = chrono::Utc::now().timestamp_millis();
         for (key, slot) in out.iter_mut() {
-            *slot = select_listing_for_pair(&orders, &key.0, &key.1, now_ms, include_trades);
+            *slot = select_listing_for_pair(&orders, &key.0, &key.1, now_ms, include_trades, buyer);
         }
         Ok(out)
     }
@@ -761,9 +783,19 @@ pub fn select_cheapest_listing(
     item_id: &str,
     now_ms: i64,
     include_trades: bool,
+    buyer: Option<&str>,
 ) -> Option<OpenListing> {
     let mut best: Option<(u128, OpenListing)> = None;
     for o in orders {
+        // Credits never pay a wallet for its own listing, as seller or payee.
+        if buyer.is_some_and(|b| {
+            o.seller.eq_ignore_ascii_case(b)
+                || o.payee
+                    .as_deref()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(b))
+        }) {
+            continue;
+        }
         let is_v2 = o
             .marketplace_address
             .eq_ignore_ascii_case(MARKETPLACE_V2_POLYGON);
@@ -831,18 +863,18 @@ fn select_listing_for_pair(
     item_id: &str,
     now_ms: i64,
     include_trades: bool,
+    buyer: Option<&str>,
 ) -> Option<OpenListing> {
     let mine: Vec<ListingRow> = orders
         .iter()
         .filter(|o| o.contract_address.eq_ignore_ascii_case(collection))
         .cloned()
         .collect();
-    select_cheapest_listing(&mine, item_id, now_ms, include_trades)
+    select_cheapest_listing(&mine, item_id, now_ms, include_trades, buyer)
 }
 
 fn is_decimal_item_id(item_id: &str) -> bool {
-    let s = item_id.trim();
-    !s.is_empty() && s.len() <= 77 && s.bytes().all(|b| b.is_ascii_digit())
+    crate::types::parse_decimal(item_id.trim()).is_ok()
 }
 
 fn token_matches_item(token_id: &str, item_id: &str) -> bool {
@@ -863,10 +895,6 @@ fn token_matches_item(token_id: &str, item_id: &str) -> bool {
 
 fn json_as_i64(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
-}
-
-pub fn is_stale(last_updated_at: i64, now: i64, max_secs: i64) -> bool {
-    (now as i128 - last_updated_at as i128) > max_secs as i128
 }
 
 #[cfg(all(test, feature = "ts"))]
@@ -900,6 +928,42 @@ mod ts_peg_export {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_ages_from_its_earlier_timestamp() {
+        let now = chrono::Utc::now();
+        let snapshot =
+            |taken_ago: i64, quoted_ago: Option<i64>| crate::price::store::PriceSnapshot {
+                mana_usd: Some(0.25),
+                mana_eth: None,
+                mana_btc: None,
+                market_cap_usd: None,
+                volume_24h_usd: None,
+                price_change_24h_pct: None,
+                source_updated_at: quoted_ago.map(|s| now - chrono::Duration::seconds(s)),
+                taken_at: now - chrono::Duration::seconds(taken_ago),
+            };
+        assert_eq!(
+            snapshot_usd(&snapshot(100, None), now, 900).unwrap(),
+            "0.25"
+        );
+        assert_eq!(
+            snapshot_usd(&snapshot(100, Some(800)), now, 900).unwrap(),
+            "0.25"
+        );
+        assert!(snapshot_usd(&snapshot(100, Some(901)), now, 900).is_err());
+        assert!(snapshot_usd(&snapshot(900, None), now, 900).is_ok());
+        assert!(snapshot_usd(&snapshot(901, None), now, 900).is_err());
+        // A provider quote time ahead of the poll does not make the rate
+        // fresher than the poll that took it.
+        let skewed = snapshot(1000, Some(0));
+        assert_eq!(skewed.age_at(now).as_secs(), 1000);
+        let err = snapshot_usd(&skewed, now, 900).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("age 1000s exceeds 900s"),
+            "{err:?}"
+        );
+    }
 
     fn info(price_wei: &str, store_mintable: bool) -> ItemInfo {
         ItemInfo {
@@ -982,6 +1046,8 @@ mod tests {
     const ITEM_TOKEN_ID: &str =
         "421249166674228746791672110734681729275580381602196445017243910144";
 
+    const SELLER: &str = "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+
     fn row(contract: &str, mkt: &str, price: &str, trade: Option<&str>) -> ListingRow {
         ListingRow {
             contract_address: contract.into(),
@@ -991,6 +1057,8 @@ mod tests {
             token_id: Some(ITEM_TOKEN_ID.into()),
             trade_id: trade.map(str::to_string),
             price_wei: price.into(),
+            seller: SELLER.into(),
+            payee: None,
         }
     }
 
@@ -1013,7 +1081,7 @@ mod tests {
                 Some("t-1"),
             ),
         ];
-        let picked = select_listing_for_pair(&rows, c, "4", 0, true).unwrap();
+        let picked = select_listing_for_pair(&rows, c, "4", 0, true, None).unwrap();
         assert_eq!(picked.price_wei, "1000000000000000000");
         assert_eq!(
             picked.venue,
@@ -1023,14 +1091,34 @@ mod tests {
         );
         let mut expired = rows.clone();
         expired[2].expires_at_ms = 1;
-        let picked = select_listing_for_pair(&expired, c, "4", 1_700_000_000_000, false).unwrap();
+        let picked =
+            select_listing_for_pair(&expired, c, "4", 1_700_000_000_000, false, None).unwrap();
         assert_eq!(
             picked.price_wei, "2000000000000000000",
             "an expired order and (without trades) the trade are skipped"
         );
         assert!(
-            select_listing_for_pair(&rows, c, "5", 0, true).is_none(),
+            select_listing_for_pair(&rows, c, "5", 0, true, None).is_none(),
             "another item's token never matches"
+        );
+        let mut own = rows.clone();
+        own[2].seller = "0xB0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0".into();
+        let picked = select_listing_for_pair(
+            &own,
+            c,
+            "4",
+            0,
+            false,
+            Some("0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"),
+        )
+        .unwrap();
+        assert_eq!(
+            picked.price_wei, "2000000000000000000",
+            "the buyer's own cheaper listing is skipped for the next one"
+        );
+        assert!(
+            select_listing_for_pair(&own[2..3], c, "4", 0, false, Some(&own[2].seller)).is_none(),
+            "only the buyer's own listing: none to fill from"
         );
     }
 
@@ -1043,7 +1131,10 @@ mod tests {
         assert!(ensure_charge_covers_payment("10", "0").is_err());
         assert!(ensure_charge_covers_payment("0", "0").is_ok());
         assert!(ensure_charge_covers_payment("10", "3").is_ok());
-        assert!(is_stale(100, 401, 300) && !is_stale(100, 400, 300));
         assert!(is_decimal_item_id("12") && !is_decimal_item_id("0xab") && !is_decimal_item_id(""));
+        let max = alloy_primitives::U256::MAX.to_string();
+        assert_eq!(max.len(), 78);
+        assert!(is_decimal_item_id(&max) && is_decimal_item_id(&format!(" {max} ")));
+        assert!(!is_decimal_item_id(&format!("{max}0")) && !is_decimal_item_id("1_0"));
     }
 }

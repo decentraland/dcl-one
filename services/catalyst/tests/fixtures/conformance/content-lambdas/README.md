@@ -40,9 +40,9 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 | [lambdas-items.md](lambdas-items.md) | `/users/:a/{wearables,emotes,third-party-wearables}`, `/third-party-integrations`, `/explorer/:a/*`, `/nfts/collections`, `/collections/*` | 12 | 0 | 0 | 12 | 0 | LI-1..32 |
 | [lambdas-land.md](lambdas-land.md) | `/users/:a/{names,lands,lands-permissions}`, `/names/:n/owner`, `/users/:a/parcels/:x/:y/permissions`, `/parcels/:x/:y/operators` | 6 | 0 | 0 | 6 | 0 | LL-1..24 |
 | **total** | | **51** | **3** | **2** | **45** | **1** | **150** (11 with no work, 139 open) |
-| [asset-bundle-registry.md](asset-bundle-registry.md) (not in the total) | ABR content routes: `/profiles`, `/profiles/metadata`, `/entities/{active,versions,status}`, `/worlds/:n/manifest`, `/denylist`; admin routes listed | 14 | 1 | 3 | 1 | 9 | AB-1..16 |
+| [asset-bundle-registry.md](asset-bundle-registry.md) (not in the total) | ABR content routes: `/profiles`, `/profiles/metadata`, `/entities/{active,versions,status}`, `/worlds/:n/manifest`, `/denylist`; admin routes listed | 14 | 2 | 5 | 2 | 4 | AB-1..16 |
 
-The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 1, GAP 3, DIVERGENT 1, MISSING 9, 5 of the MISSING outside catalyst parity), 16 backlog items (3 with no work, 13 open), one P0, AB-10: Decentraland's moderation denylist is not applied, so a mirror serves content production hides (pending fix: `decentraland/dcl-one#275`).
+The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 2, GAP 5, DIVERGENT 2, MISSING 4, the four ABR admin routes outside catalyst parity; `/queues/status` is forwarded, outside parity scope), 16 backlog items (7 with no work, 9 open), no P0.
 
 Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
 `/about` exists here.
@@ -52,9 +52,8 @@ lists its own dcl-one-only routes at the end.
 
 ## P0: a client breaks or the data is wrong
 
-No backlog item of the six areas in the total is P0 in this tree; the asset-bundle-registry area has
-one, AB-10 (above). These items keep their ids with "Status: MATCH, no work": CR-1, CR-13,
-CS-01, LP-01, LP-15, LI-1, LI-3, LI-4, LL-1 and LL-2.
+No backlog item is P0 in this tree, the asset-bundle-registry area included. These items keep their
+ids with "Status: MATCH, no work": CR-1, CR-13, CS-01, LP-01, LP-15, LI-1, LI-3, LI-4, LL-1 and LL-2.
 
 The largest open items:
 

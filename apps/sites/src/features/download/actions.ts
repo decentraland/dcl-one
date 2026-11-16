@@ -2,14 +2,9 @@ import type {
   DownloadActionsProps,
   StoreBadgeProps,
 } from "@dcl/one-ui/apps/sites/download/DownloadActions";
+import { downloadSuccessHref } from "./installers";
 import { viewportOffers, type DetectedPlatform } from "./options";
 
-const INSTALLERS = {
-  windows:
-    "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.exe",
-  macos:
-    "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
-} as const;
 export const STORES = {
   app_store:
     "https://apps.apple.com/app/apple-store/id6478403840?pt=126284288&ct=Decentraland%20Home%20iOS&mt=8",
@@ -17,7 +12,7 @@ export const STORES = {
     "https://play.google.com/store/apps/details?id=org.decentraland.godotexplorer",
 } as const;
 
-/** Direct installers retain the pinned native artifact contract without a success-page dependency. */
+/** Desktop actions show installation guidance before requesting the pinned native artifact. */
 export function downloadActions(
   platform: DetectedPlatform,
   downloads: string,
@@ -32,7 +27,7 @@ export function downloadActions(
             label: "Download for",
             os: wide.primary.os,
             osName: name(wide.primary.os),
-            href: INSTALLERS[wide.primary.os],
+            href: downloadSuccessHref(wide.primary),
           }
         : undefined,
       epic: {
@@ -46,7 +41,7 @@ export function downloadActions(
             {
               icon: wide.secondary.os,
               label: `Download for ${name(wide.secondary.os)}`,
-              href: INSTALLERS[wide.secondary.os],
+              href: downloadSuccessHref(wide.secondary),
             },
           ]
         : [],

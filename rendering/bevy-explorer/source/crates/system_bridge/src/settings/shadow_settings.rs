@@ -3,15 +3,13 @@ use bevy::{
         lifetimeless::{SQuery, SRes, Write},
         SystemParamItem,
     },
-    pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, ShadowFilteringMethod},
+    pbr::{CascadeShadowConfig, ShadowFilteringMethod},
     platform::collections::HashSet,
     prelude::*,
 };
-use common::structs::{AppConfig, PrimaryCameraRes, ShadowSetting};
+use common::structs::{sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting};
 
 use super::{AppSetting, EnumAppSetting, IntAppSetting};
-
-const MIN_CASCADE: f32 = 0.1;
 
 impl EnumAppSetting for ShadowSetting {
     fn variants() -> Vec<Self> {
@@ -43,8 +41,8 @@ impl AppSetting for ShadowSetting {
         format!("How shadows are rendered in the world.\n\n{}", 
         match self {
             ShadowSetting::Off => "Off: No shadows are rendered. Fastest",
-            ShadowSetting::Low => "Low: Low quality shadows. Uses a single pass shadow map and low quality hardward 2x2 filtering. Gives blocky shadow outlines, particularly with high shadow draw distances, but is pretty fast.",
-            ShadowSetting::High => "High: Higher quality shadows. Uses a set of cascaded shadow maps and higher quality filtering for softer shadow outlines and better quality at higher shadow draw distances, but is more GPU intensive.",
+            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
+            ShadowSetting::High => "High: Four cascaded soft shadow maps for sharper shadows near the player and better quality at higher shadow distances, but more GPU intensive.",
         })
     }
 
@@ -101,39 +99,13 @@ fn apply_shadows(
     distance: f32,
     lights: &mut Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
 ) {
-    let value = if distance == 0.0 {
-        ShadowSetting::Off
-    } else {
-        setting
-    };
-
     for (mut light, mut cascades) in lights.iter_mut() {
-        match value {
-            ShadowSetting::Off => {
-                light.shadows_enabled = false;
-            }
-            ShadowSetting::Low => {
+        match sun_cascades(setting, distance) {
+            Some(config) => {
                 light.shadows_enabled = true;
-                *cascades = CascadeShadowConfigBuilder {
-                    num_cascades: 1,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: distance.max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: distance.max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build()
+                *cascades = config;
             }
-            ShadowSetting::High => {
-                light.shadows_enabled = true;
-                *cascades = CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: distance.max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: (distance / 15.0).max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build()
-            }
+            None => light.shadows_enabled = false,
         }
     }
 }
@@ -269,7 +241,7 @@ impl AppSetting for ShadowCasterCountSetting {
     }
 
     fn description(&self) -> String {
-        "Shadow Caster Count\n\nMaximum number of scene lights (excluding the global sun light) that will cast shadows. Lights that cast shadows are expensive in GPU time and memory, the cost scales linearly with the number of shadow-casting lights. Reduce this if scenes with a large number of shadow-casting lights cause slowdown.\n\nLights from currently active scenes, closest to the player, will have shadows enabled first.".to_owned()
+        "Shadow Caster Count\n\nMaximum number of scene lights (excluding the global sun light) that will cast shadows. Lights that cast shadows are expensive in GPU time and memory, the cost scales linearly with the number of shadow-casting lights. Reduce this if scenes with a large number of shadow-casting lights cause slowdown.\n\nOnly spot lights within 20 m of the player cast shadows, nearest first.".to_owned()
     }
 
     fn load(config: &AppConfig) -> Self {

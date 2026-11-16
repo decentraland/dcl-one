@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -19,12 +19,11 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
 }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
 
-import { CatalogCard } from "@dcl/one-ui/apps/sites/provisional/CatalogCard/CatalogCard";
-
 import type { ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { PROFILE_COLLECTIBLES_PAGE, profileKeys } from "@/data/lib/profile/queries";
 
+import { CollectibleCard } from "./collectibles";
 import { ProfileAssetsScreen } from "./ProfileAssetsScreen";
 
 const A = "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b";
@@ -88,7 +87,7 @@ describe("profile assets", () => {
     expect(link.getAttribute("href")).toBe("/shop/token/0xabc/1");
     expect(net.fetchProfileAssets.mock.calls[0]?.[1]).toMatchObject({ category: undefined, skip: 0, first: PROFILE_COLLECTIBLES_PAGE });
     expect(screen.getByText("3431 assets")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
     const token = card("Power Up 1");
     expect(within(token).getByText("Epic")).toBeTruthy();
     expect(within(token).getByRole("img", { name: "Top Head" })).toBeTruthy();
@@ -121,7 +120,9 @@ describe("profile assets", () => {
 
   it("drops a card image that fails to load, showing its glyph instead", () => {
     const { container } = render(
-      <CatalogCard title="Broken" href="/shop/token/0xabc/1" imageUrl="https://example.com/missing.png" placeholder={<svg data-glyph="" />} />,
+      <MemoryRouter>
+        <CollectibleCard title="Broken" href="/shop/token/0xabc/1" imageUrl="https://example.com/missing.png" placeholder={<svg data-glyph="" />} />
+      </MemoryRouter>,
     );
 
     fireEvent.error(container.querySelector("img") as HTMLImageElement);
@@ -140,12 +141,12 @@ describe("profile assets", () => {
     show();
     await screen.findByRole("link", { name: "Power Up 1" });
 
-    await user.click(screen.getByRole("button", { name: "Lands" }));
+    await user.click(screen.getByRole("tab", { name: "Lands" }));
     const parcel = await screen.findByRole("link", { name: "Parcel 162,-133" }).then(() => card("Parcel 162,-133"));
     expect(within(parcel).getByRole("link", { name: "View Parcel 162,-133" }).getAttribute("href")).toBe("/shop/token/0xabc/3");
     expect(within(parcel).queryByText("Common")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Estates" }));
+    await user.click(screen.getByRole("tab", { name: "Estates" }));
     const plot = await screen.findByRole("link", { name: "Estate" }).then(() => card("Estate"));
     expect(within(plot).getByRole("link", { name: "View Estate" }).getAttribute("href")).toBe("/shop/token/0xabc/4");
   });
@@ -158,7 +159,7 @@ describe("profile assets", () => {
     show();
     await screen.findByRole("link", { name: "Power Up 1" });
 
-    await user.click(screen.getByRole("button", { name: "Names" }));
+    await user.click(screen.getByRole("tab", { name: "Names" }));
 
     expect(await screen.findByText(".dcl.eth")).toBeTruthy();
     expect(screen.getByText("brai")).toBeTruthy();
@@ -175,7 +176,7 @@ describe("profile assets", () => {
     show();
     await screen.findByRole("link", { name: "Power Up 1" });
 
-    await user.click(screen.getByRole("button", { name: "Estates" }));
+    await user.click(screen.getByRole("tab", { name: "Estates" }));
 
     expect(await screen.findByText("0 assets")).toBeTruthy();
     expect(screen.queryByText("No assets yet")).toBeNull();

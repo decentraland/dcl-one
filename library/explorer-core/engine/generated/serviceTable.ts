@@ -45,6 +45,13 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "abgenCdn",
+    "value": "http",
+    "scheme": "https",
+    "sub": "abgen-cdn",
+    "path": ""
+  },
+  {
     "name": "storage",
     "value": "http",
     "scheme": "https",
@@ -140,6 +147,27 @@ export const SERVICES: ServiceDef[] = [
     "value": "http",
     "scheme": "https",
     "sub": "autotranslate-server",
+    "path": ""
+  },
+  {
+    "name": "dclLists",
+    "value": "http",
+    "scheme": "https",
+    "sub": "dcl-lists",
+    "path": ""
+  },
+  {
+    "name": "archipelagoStats",
+    "value": "http",
+    "scheme": "https",
+    "sub": "archipelago-ea-stats",
+    "path": ""
+  },
+  {
+    "name": "builderApi",
+    "value": "http",
+    "scheme": "https",
+    "sub": "builder-api",
     "path": ""
   },
   {

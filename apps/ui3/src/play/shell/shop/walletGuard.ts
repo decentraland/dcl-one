@@ -59,9 +59,11 @@ const MAX_CALL_LIFETIME_S = 2 * 24 * 60 * 60
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
 const short = (a: string): string => `${a.slice(0, 6)}…${a.slice(-4)}`
-const sameKeys = (o: unknown, keys: string[]): boolean =>
+/** Whether `o` is a plain object with exactly `keys`. */
+export const sameKeys = (o: unknown, keys: string[]): boolean =>
   o != null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every((k) => k in o)
-const sameFields = (fields: unknown, expected: readonly { name: string; type: string }[]): boolean =>
+/** Whether an EIP-712 type lists exactly `expected`'s fields, in order. */
+export const sameFields = (fields: unknown, expected: readonly { name: string; type: string }[]): boolean =>
   Array.isArray(fields) &&
   fields.length === expected.length &&
   fields.every((f, i) => sameKeys(f, ['name', 'type']) && (f as { name: string }).name === expected[i].name && (f as { type: string }).type === expected[i].type)

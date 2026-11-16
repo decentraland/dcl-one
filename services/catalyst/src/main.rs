@@ -58,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         command: CommunitiesCommand,
     },
+    /// Camera reel operator commands.
+    CameraReel {
+        #[command(subcommand)]
+        command: CameraReelCommand,
+    },
     /// Explore (places, events) operator commands.
     Explore {
         #[command(subcommand)]
@@ -113,6 +118,53 @@ enum ExploreCommand {
         /// The export; `-` reads standard input.
         #[arg(long)]
         file: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CameraReelCommand {
+    /// Copy camera-reel-service's photos into `camera_reel.images`
+    /// (`camera_reel::import`; runbook: docs/camera-reel.md): pages the old
+    /// service's `images` table by `(created_at, id)`, fetches each photo and
+    /// thumbnail from its bucket (`<bucket-url>/<key>`, the key ending the
+    /// row's `url`/`thumbnail_url`), generates the 640x360 thumbnail when the
+    /// row has none or the bucket lacks it, stores both blobs by hash and
+    /// inserts the row under the same id, owner, document, visibility and
+    /// `created_at`, unmoderated, with no ranking count and no photo event,
+    /// and without `MAX_IMAGES_PER_USER`. Re-running is safe and resumes: a
+    /// photo already imported is not fetched again, only its visibility and
+    /// document follow the source while it is unmoderated. A row the local
+    /// table refuses or whose objects are missing is skipped and reported;
+    /// the run goes on. Prints the outcome as JSON. Not behind
+    /// CREATE_WRITES_ENABLED: an import is operator data.
+    Import {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// camera-reel-service's database (read only).
+        #[arg(long, env = "CAMERA_REEL_SOURCE_DATABASE_URL", hide_env_values = true)]
+        source_database_url: String,
+        /// camera-reel-service's public bucket (its `BUCKET_URL`).
+        #[arg(long, env = "CAMERA_REEL_SOURCE_BUCKET_URL", hide_env_values = true)]
+        bucket_url: String,
+        #[arg(
+            long,
+            env = "STORAGE_ROOT_FOLDER",
+            default_value = "/var/lib/catalyst/content"
+        )]
+        storage_root_folder: String,
+        /// Source rows per page.
+        #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(i64).range(1..=10_000))]
+        batch: i64,
+        /// Photos fetched at once.
+        #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u16).range(1..=256))]
+        concurrency: u16,
+        /// Fetch and check every photo; write no blob and no row.
+        #[arg(long)]
+        dry_run: bool,
+        /// After the pass, delete the imported photos the source no longer
+        /// has (photos uploaded here are never touched).
+        #[arg(long)]
+        prune: bool,
     },
 }
 
@@ -332,11 +384,52 @@ fn main() -> anyhow::Result<()> {
     // The posture writes the environment clap reads, so it expands first,
     // while this is the only thread.
     posture::apply_to_process_env()?;
+    // The complete clap tree exceeds the default Windows debug stack. This
+    // parser-only thread returns plain values and finishes before V8 or runtime
+    // initialization; it never owns engine state or serves matcher work.
+    let parsed = std::thread::Builder::new()
+        .name("cli-parser".into())
+        .stack_size(64 << 20)
+        .spawn(|| -> Result<(Cli, clap::ArgMatches), clap::Error> {
+            let matches = <Cli as clap::CommandFactory>::command().try_get_matches()?;
+            let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
+            Ok((cli, matches))
+        })
+        .context("creating CLI parser thread")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("CLI parser thread panicked"))?;
+    let (mut cli, matches) = parsed.unwrap_or_else(|error| error.exit());
+    let prepared = match &mut cli.command {
+        Command::Serve(config) => {
+            if let Some(arguments) = matches.subcommand_matches("serve") {
+                config.refuse_argv_secrets(arguments)?;
+            }
+            check_posture(config)?;
+            catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
+            // SAFETY: This startup thread performs the first common initialization.
+            // All runtime/blocking workers descend from it afterwards. Prepared
+            // state never escapes this runtime; its drop joins canceled blocking
+            // work, and final handles are destroyed within this permitted subtree.
+            Some(unsafe {
+                catalyst::metrics_matcher::prepare(
+                    catalyst::comms::stats::http::Settings::from_env(),
+                )?
+            })
+        }
+        Command::Index(config) => {
+            if let Some(arguments) = matches.subcommand_matches("index") {
+                config.refuse_argv_secrets(arguments)?;
+            }
+            check_posture(config)?;
+            None
+        }
+        _ => None,
+    };
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("building the tokio runtime")?
-        .block_on(run())
+        .block_on(run(cli, prepared))
 }
 
 /// The refusals of [`posture::check`] against this process's environment.
@@ -344,25 +437,17 @@ fn check_posture(config: &Config) -> anyhow::Result<()> {
     posture::check(config, &|key: &str| std::env::var(key).ok())
 }
 
-async fn run() -> anyhow::Result<()> {
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
-    let cli =
-        <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+async fn run(
+    cli: Cli,
+    prepared: Option<catalyst::metrics_matcher::PreparedStats>,
+) -> anyhow::Result<()> {
     match cli.command {
-        Command::Serve(mut config) => {
-            if let Some(serve_matches) = matches.subcommand_matches("serve") {
-                config.refuse_argv_secrets(serve_matches)?;
-            }
-            check_posture(&config)?;
-            catalyst::serve::serve(*config).await
+        Command::Serve(config) => {
+            let prepared =
+                prepared.context("serve metrics must be prepared before runtime creation")?;
+            catalyst::serve::serve(*config, prepared).await
         }
-        Command::Index(mut config) => {
-            if let Some(index_matches) = matches.subcommand_matches("index") {
-                config.refuse_argv_secrets(index_matches)?;
-            }
-            check_posture(&config)?;
-            catalyst::index::run(*config).await
-        }
+        Command::Index(config) => catalyst::index::run(*config).await,
         Command::Schema {
             command: SchemaCommand::Apply { database_url },
         } => {
@@ -590,6 +675,64 @@ async fn run() -> anyhow::Result<()> {
             if !out.complete {
                 anyhow::bail!("communities mirror pass incomplete (the next run resumes it)");
             }
+            Ok(())
+        }
+        Command::CameraReel {
+            command:
+                CameraReelCommand::Import {
+                    database_url,
+                    source_database_url,
+                    bucket_url,
+                    storage_root_folder,
+                    batch,
+                    concurrency,
+                    dry_run,
+                    prune,
+                },
+        } => {
+            use catalyst::camera_reel::import;
+            tracing_subscriber::fmt().with_target(false).init();
+            // Neither URL is echoed: either may carry credentials.
+            let bucket_url = url::Url::parse(&bucket_url)
+                .ok()
+                .filter(|u| matches!(u.scheme(), "http" | "https") && !u.cannot_be_a_base())
+                .context("CAMERA_REEL_SOURCE_BUCKET_URL is not an http(s) URL")?;
+            let concurrency = usize::from(concurrency);
+            let target = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: concurrency.min(16) as u32 + 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&target).await?;
+            let source = db::connect_pool(
+                &source_database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to CAMERA_REEL_SOURCE_DATABASE_URL")?;
+            let storage = storage::Storage::from_config(Path::new(&storage_root_folder))
+                .await
+                .with_context(|| format!("opening STORAGE_ROOT_FOLDER {storage_root_folder}"))?;
+            let client = http::Outbound::new(
+                http::HttpClientCfg::default().with_total_timeout(import::FETCH_TIMEOUT),
+            )
+            .context("building the HTTP client")?;
+            let options = import::ImportOptions {
+                bucket_url,
+                batch,
+                concurrency,
+                dry_run,
+                prune,
+            };
+            let report = import::run(&source, &target, &storage, &client, &options).await?;
+            println!("{}", serde_json::to_string(&report)?);
             Ok(())
         }
         Command::Posture {

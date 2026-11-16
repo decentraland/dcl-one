@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -33,8 +33,6 @@ vi.mock("../components/auth/signin-store", async (original) => ({
   ...(await original<typeof import("../components/auth/signin-store")>()),
   openSignIn: net.openSignIn,
 }));
-
-import { SceneCard } from "@dcl/one-ui/apps/sites/provisional/SceneCard/SceneCard";
 
 import type { ProfilePlace } from "@/data/lib/catalyst/places/profile-places";
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
@@ -73,7 +71,7 @@ function show(vm: ProfileVM, { own = false, profileReady = true } = {}) {
   return client;
 }
 
-const chip = (name: string) => screen.getByRole("button", { name });
+const chip = (name: string) => screen.getByRole("tab", { name });
 
 beforeEach(() => {
   auth.state = { identity: null, isConnected: false, address: null };
@@ -94,10 +92,14 @@ describe("profile places, a member's profile", () => {
     expect(card.getAttribute("href")).toBe("/places/p1");
     expect(screen.getByRole("link", { name: "Medieval Plaza" }).getAttribute("href")).toBe("/places/abcdcl.dcl.eth");
     expect(screen.getAllByRole("link", { name: "Alice" })[0]?.getAttribute("href")).toBe(`/profile/${A}`);
-    expect(screen.getByRole("link", { name: "Jump in to -31,-27" }).getAttribute("href")).toContain("position=-31%2C-27");
-    expect(screen.getByRole("link", { name: "Jump in to abcdcl.dcl.eth" }).getAttribute("href")).toContain("realm=abcdcl.dcl.eth");
+    expect(screen.getByText("-31,-27")).toBeTruthy();
+    expect(screen.getByText("abcdcl.dcl.eth")).toBeTruthy();
+    const [sceneJump, worldJump] = screen.getAllByRole("link", { name: "Jump in" });
+    expect(sceneJump?.getAttribute("href")).toContain("position=-31%2C-27");
+    expect(worldJump?.getAttribute("href")).toContain("realm=abcdcl.dcl.eth");
     // The view switch is the owner's only.
-    expect(screen.queryByRole("group", { name: "Places shown" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Places shown" })).toBeNull();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
     expect(net.fetchFavoritePlaces).not.toHaveBeenCalled();
     expect(net.fetchCommunityProfiles).not.toHaveBeenCalled();
   });
@@ -115,7 +117,7 @@ describe("profile places, a member's profile", () => {
 
     show(profile());
 
-    const card = (await screen.findByRole("link", { name: "Medieval Plaza" })).closest("article") as HTMLElement;
+    const card = (await screen.findByRole("link", { name: "Medieval Plaza" })).closest("li") as HTMLElement;
     expect(within(card).queryByText("0,0")).toBeNull();
     expect(within(card).queryByRole("link", { name: /jump in/i })).toBeNull();
   });
@@ -168,6 +170,35 @@ describe("profile places, a member's profile", () => {
       { place_id: "p1", launch_url: jump.getAttribute("href") },
       context,
     );
+  });
+
+  it("records a world's Jump In with its realm launch link", async () => {
+    net.fetchProfilePlaces.mockResolvedValue(page([world]));
+    show(profile());
+    const jump = await screen.findByRole("link", { name: "Jump in" });
+    jump.addEventListener("click", (event) => event.preventDefault());
+
+    await userEvent.click(jump);
+
+    expect(jump.getAttribute("href")).toContain("realm=abcdcl.dcl.eth");
+    expect(net.track).toHaveBeenCalledWith(
+      "jump_in_completed",
+      { place_id: world.id, launch_url: jump.getAttribute("href") },
+      { sid: "sid-1", story: "jump-in" },
+    );
+  });
+
+  it("records no Jump In when the card opens the place page or the owner's profile instead", async () => {
+    net.fetchProfilePlaces.mockResolvedValue(page([scene]));
+    show(profile());
+    const title = await screen.findByRole("link", { name: "ABC Clubhouse" });
+    const owner = screen.getByRole("link", { name: "Alice" });
+    for (const link of [title, owner]) link.addEventListener("click", (event) => event.preventDefault());
+
+    await userEvent.click(title);
+    await userEvent.click(owner);
+
+    expect(net.track).not.toHaveBeenCalled();
   });
 
   it("shows the visitor's note, not the owner's call to action, when the member has none", async () => {
@@ -243,7 +274,7 @@ describe("profile places, the owner's empty My Places", () => {
 });
 
 describe("profile places, the owner's favourites", () => {
-  it("does not read favourites until the owner picks them, then marks the chip pressed", async () => {
+  it("does not read favourites until the owner picks them, then selects that tab", async () => {
     auth.state = { identity, isConnected: true, address: A };
     net.fetchProfilePlaces.mockResolvedValue(page([scene]));
     net.fetchFavoritePlaces.mockResolvedValue(page([]));
@@ -251,14 +282,31 @@ describe("profile places, the owner's favourites", () => {
     show(profile(), { own: true });
     await screen.findByText("1 place");
     expect(net.fetchFavoritePlaces).not.toHaveBeenCalled();
-    expect(chip("My Places").getAttribute("aria-pressed")).toBe("true");
+    expect(chip("My Places").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(chip("My Places").id);
 
     await userEvent.click(chip("Favourites"));
 
-    expect(chip("Favourites").getAttribute("aria-pressed")).toBe("true");
+    expect(chip("Favourites").getAttribute("aria-selected")).toBe("true");
+    expect(chip("My Places").getAttribute("aria-selected")).toBe("false");
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(chip("Favourites").id);
     expect(await screen.findByText("Nothing saved yet", { selector: "p" })).toBeTruthy();
     expect(net.fetchFavoritePlaces).toHaveBeenCalledWith(identity, expect.anything(), expect.anything());
     expect(screen.getByRole("link", { name: "Explore places" }).getAttribute("href")).toBe("/places");
+  });
+
+  it("switches the view from the keyboard, as a tab list does", async () => {
+    auth.state = { identity, isConnected: true, address: A };
+    net.fetchProfilePlaces.mockResolvedValue(page([scene]));
+    net.fetchFavoritePlaces.mockResolvedValue(page([]));
+    show(profile(), { own: true });
+    await screen.findByText("1 place");
+
+    chip("My Places").focus();
+    await userEvent.keyboard("{ArrowRight}");
+
+    expect(document.activeElement).toBe(chip("Favourites"));
+    expect(await screen.findByText("Nothing saved yet", { selector: "p" })).toBeTruthy();
   });
 
   it("goes back to the owned places when the viewer stops being the owner", async () => {
@@ -281,7 +329,7 @@ describe("profile places, the owner's favourites", () => {
         <RouterProvider router={router} />
       </QueryClientProvider>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Favourites" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Favourites" }));
     expect(await screen.findByText("Nothing saved yet", { selector: "p" })).toBeTruthy();
 
     await userEvent.click(screen.getByRole("button", { name: "sign out" }));
@@ -313,6 +361,20 @@ describe("profile places, the owner's favourites", () => {
 
     expect(await screen.findByText("Your favourites are unavailable right now.")).toBeTruthy();
     expect(screen.queryByText("Nothing saved yet")).toBeNull();
+  });
+
+  it("recovers the favourites on Try again after a failed read", async () => {
+    auth.state = { identity, isConnected: true, address: A };
+    net.fetchProfilePlaces.mockResolvedValue(page([]));
+    net.fetchFavoritePlaces.mockRejectedValueOnce(new Error("503")).mockResolvedValueOnce(page([scene]));
+    net.fetchCommunityProfiles.mockResolvedValue({});
+    show(profile(), { own: true });
+
+    await userEvent.click(chip("Favourites"));
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("link", { name: "ABC Clubhouse" })).toBeTruthy();
+    expect(screen.queryByText("Your favourites are unavailable right now.")).toBeNull();
   });
 
   it("names each saved place's owner from one batch read", async () => {
@@ -352,27 +414,6 @@ describe("profile places, the owner's favourites", () => {
 
     expect(await screen.findByRole("link", { name: "ABC Clubhouse" })).toBeTruthy();
     await waitFor(() => expect(net.fetchCommunityProfiles).toHaveBeenCalled());
-    expect(screen.queryByText(/^by/)).toBeNull();
-  });
-});
-
-describe("scene card", () => {
-  it("shows no image, no owner row and no Jump In when it has none, and still opens the scene", () => {
-    const { container } = render(<SceneCard title="Bare" href="/places/x" location="1,2" />);
-
-    expect(container.querySelector("img")).toBeNull();
-    expect(screen.queryByText(/^by/)).toBeNull();
-    expect(screen.queryByRole("link", { name: /jump in/i })).toBeNull();
-    // Without a Jump In the location is a label, not a link.
-    expect(screen.getByText("1,2").closest("a")).toBeNull();
-    expect(screen.getByRole("link", { name: "Bare" }).getAttribute("href")).toBe("/places/x");
-  });
-
-  it("drops an image that fails to load instead of showing a broken one", () => {
-    const { container } = render(<SceneCard title="Broken" href="/places/x" imageUrl="https://example.com/missing.png" />);
-
-    fireEvent.error(container.querySelector("img") as HTMLImageElement);
-
-    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByText(/^By\b/)).toBeNull();
   });
 });

@@ -31,3 +31,7 @@ if (!window.matchMedia) {
       }
     }) as unknown as MediaQueryList
 }
+
+// jsdom doesn't play media; the sign-in music (features/startup/useLoginMusic.ts) plays on mount.
+HTMLMediaElement.prototype.play = () => Promise.resolve()
+HTMLMediaElement.prototype.pause = () => {}

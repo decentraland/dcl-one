@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use ban_block::{BanBlock, Blocks};
 use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
@@ -27,11 +28,8 @@ use comms::{
 };
 use console::PendingConsoleResponses;
 use platform::{DmHistoryEntry, DmHistoryReaction};
-use social::SocialClient;
 use system_bridge::{DmHistoryEntryData, DmReactionData, SystemApi};
 use wallet::Wallet;
-
-use super::dm_state::blocked_either_way;
 
 enum DmStoreOp {
     Append {
@@ -134,19 +132,18 @@ fn visible_history(
 }
 
 /// Everyone the local user blocked or who blocked them, as history stores authors.
-fn blocked_authors(social: &SocialClient) -> HashSet<String> {
-    social
-        .0
-        .as_ref()
-        .map(|client| {
-            client
-                .blocked
-                .iter()
-                .chain(client.blocked_by.iter())
-                .map(|address| format!("{address:#x}"))
-                .collect()
-        })
-        .unwrap_or_default()
+fn blocked_authors(ban_block: &BanBlock) -> HashSet<String> {
+    match ban_block.blocks() {
+        Blocks::Live {
+            blocked,
+            blocked_by,
+        } => blocked
+            .iter()
+            .chain(blocked_by.iter())
+            .map(|address| format!("{address:#x}"))
+            .collect(),
+        Blocks::Unavailable { .. } => HashSet::new(),
+    }
 }
 
 /// The stored DMs, oldest first, each with the reactions recorded after it.
@@ -239,7 +236,7 @@ pub fn record_dms(
     mut reactions: EventReader<ChatReactionEvent>,
     player: Query<Entity, With<PrimaryUser>>,
     wallet: Res<Wallet>,
-    social: Res<SocialClient>,
+    ban_block: BanBlock,
     mut store: ResMut<DmStore>,
 ) {
     let Some(account) = wallet.address().map(|a| format!("{a:#x}")) else {
@@ -271,7 +268,7 @@ pub fn record_dms(
         ));
     }
     for dm in received.read() {
-        if blocked_either_way(&social, dm.from) {
+        if ban_block.is_blocked_either_way(dm.from) {
             continue;
         }
         let partner = format!("{:#x}", dm.from);
@@ -302,7 +299,7 @@ pub fn record_dms(
         let Some(partner) = history_key(&ev.channel) else {
             continue;
         };
-        if !partner.starts_with(CHANNEL_PREFIX) && blocked_either_way(&social, ev.from) {
+        if !partner.starts_with(CHANNEL_PREFIX) && ban_block.is_blocked_either_way(ev.from) {
             continue;
         }
         entries.push((
@@ -346,7 +343,7 @@ pub fn record_dms(
 pub fn handle_dm_history_requests(
     mut requests: EventReader<SystemApi>,
     wallet: Res<Wallet>,
-    social: Res<SocialClient>,
+    ban_block: BanBlock,
     mut store: ResMut<DmStore>,
 ) {
     for request in requests.read() {
@@ -360,7 +357,7 @@ pub fn handle_dm_history_requests(
                 };
                 // the read runs on the IO pool, so it takes the block lists as they are now
                 let hidden = if partner.starts_with(CHANNEL_PREFIX) {
-                    blocked_authors(&social)
+                    blocked_authors(&ban_block)
                 } else {
                     HashSet::new()
                 };

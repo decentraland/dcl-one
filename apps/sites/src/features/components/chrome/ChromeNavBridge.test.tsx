@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { ReactNode } from "react";
 import { renderToString } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
+import SitesChrome from "@ui/web/frames/SitesChrome";
+import SiteLayout from "@ui/web/frames/SiteLayout";
 import DclTopBar from "@ui/web/frames/DclTopBar";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useChromeNav } from "@ui/web/frames/chrome-nav";
@@ -79,10 +83,10 @@ describe("ChromeNavBridge", () => {
   it("provides the chrome navigator so the top bar renders discoverable in-app links", () => {
     const html = renderToString(
       <MemoryRouter initialEntries={["/blog"]}>
-        <ChromeNavBridge>
+        <QueryClientProvider client={new QueryClient()}><ChromeNavBridge>
           <Probe />
           <DclTopBar variant="sites" active="learn" signedIn={false} />
-        </ChromeNavBridge>
+        </ChromeNavBridge></QueryClientProvider>
       </MemoryRouter>,
     );
     expect(html).toContain("bridged");
@@ -94,4 +98,29 @@ describe("ChromeNavBridge", () => {
     expect(html).not.toContain("data-discover");
     expect(html).toContain('href="/shop"');
   });
+});
+
+
+it("selects overlay geometry only for the explicit native header policy", () => {
+  const legacy = renderToString(<SiteLayout overlayNavigation>Hero</SiteLayout>);
+  expect(legacy).not.toContain('data-header-overlay');
+  const native = renderToString(<MemoryRouter><ChromeNavBridge><SiteLayout overlayNavigation>Hero</SiteLayout></ChromeNavBridge></MemoryRouter>);
+  expect(native).toContain('data-header-layout="native"');
+  expect(native).toContain('data-header-overlay="true"');
+});
+
+
+it("keeps a legacy overlay flag in flow unless the native header surface is explicitly selected", () => {
+  const shell = (children: ReactNode) => renderToString(<QueryClientProvider client={new QueryClient()}><MemoryRouter><ChromeNavBridge>{children}</ChromeNavBridge></MemoryRouter></QueryClientProvider>);
+  for (const active of ["legal", "whatson", "play"] as const) {
+    const ordinary = shell(<SitesChrome active={active} overlayNav>Page</SitesChrome>);
+    expect(ordinary).toContain('data-header-layout="native"');
+    expect(ordinary).not.toContain('data-header-overlay');
+    expect(ordinary).toContain('data-surface="solid"');
+  }
+  const home = shell(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
+  expect(home).toContain('data-header-overlay="true"');
+  expect(home).toContain('data-surface="overlay"');
+  const fallback = renderToString(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
+  expect(fallback).not.toContain('data-header-overlay');
 });

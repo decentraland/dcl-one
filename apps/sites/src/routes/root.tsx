@@ -11,6 +11,7 @@ import {
 } from "react-router";
 
 import "@ui/atoms/primitives.css";
+import "@dcl/one-ui/foundations.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
 import SignInModalHost from "@/features/components/auth/SignInModalHost";

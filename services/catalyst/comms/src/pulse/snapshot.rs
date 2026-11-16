@@ -421,13 +421,23 @@ impl PeerSnapshotPublisher<'_> {
 /// of the peer's auth chain (the wallet itself when the chain carries no delegation): distinct per
 /// device, stable across one device's reconnects, and what the cluster feed addresses a takeover
 /// by. Written and cleared together with the wallet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRegistration {
+    pub peer: u32,
+    pub session: String,
+    pub registration: u64,
+}
+
+pub(crate) type NativeCurrent = Arc<std::sync::Mutex<HashMap<String, NativeRegistration>>>;
+
 #[derive(Default)]
 pub struct IdentityBoard {
     registration_counter: u64,
     registration_by_peer: Vec<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     wallets_by_peer: Vec<Option<String>>,
     sessions_by_peer: Vec<Option<String>>,
-    peers_by_wallet: HashMap<String, u32>,
+    current: NativeCurrent,
+    assignments: std::sync::Weak<crate::pulse::cluster::feed::CurrentAssignments>,
 }
 
 impl IdentityBoard {
@@ -439,7 +449,8 @@ impl IdentityBoard {
                 .collect(),
             wallets_by_peer: vec![None; max_peers],
             sessions_by_peer: vec![None; max_peers],
-            peers_by_wallet: HashMap::new(),
+            current: Default::default(),
+            assignments: Default::default(),
         }
     }
 
@@ -449,14 +460,56 @@ impl IdentityBoard {
         self.set_with_session(id, wallet, session);
     }
 
+    /// Attach before native authentication, sharing the existing wallet-current owner.
+    pub(crate) fn attach_assignments(
+        &mut self,
+        assignments: Arc<crate::pulse::cluster::feed::CurrentAssignments>,
+    ) {
+        assert!(
+            self.current.lock().unwrap().is_empty(),
+            "attach before native registration"
+        );
+        self.current = assignments.native_current();
+        self.assignments = Arc::downgrade(&assignments);
+    }
+
     pub fn set_with_session(&mut self, id: u32, wallet: String, session: String) {
-        self.remove(id);
         let Some(epoch) = self.registration_counter.checked_add(1) else {
             return;
         };
+        let Ok(mut current) = self.current.lock() else {
+            return;
+        };
+        let assignments = self.assignments.upgrade();
+        let mut view = match assignments.as_ref() {
+            Some(assignments) => match assignments.lifecycle_view() {
+                Some(view) => Some(view),
+                None => return,
+            },
+            None => None,
+        };
+        if let Some(view) = view.as_mut() {
+            view.invalidate_legacy(&wallet.to_ascii_lowercase());
+        }
+        if let Some(old) = self.wallets_by_peer[id as usize].as_ref() {
+            let key = old.to_ascii_lowercase();
+            if current
+                .get(&key)
+                .is_some_and(|r| r.peer == id && r.registration == self.registration_by_peer(id))
+            {
+                current.remove(&key);
+            }
+        }
         self.registration_counter = epoch;
         self.registration_by_peer[id as usize].store(epoch, std::sync::atomic::Ordering::SeqCst);
-        self.peers_by_wallet.insert(wallet.to_lowercase(), id);
+        current.insert(
+            wallet.to_ascii_lowercase(),
+            NativeRegistration {
+                peer: id,
+                session: session.to_ascii_lowercase(),
+                registration: epoch,
+            },
+        );
         self.wallets_by_peer[id as usize] = Some(wallet);
         self.sessions_by_peer[id as usize] = Some(session);
     }
@@ -478,18 +531,28 @@ impl IdentityBoard {
     }
 
     pub fn peer_by_wallet(&self, wallet: &str) -> Option<u32> {
-        self.peers_by_wallet.get(&wallet.to_lowercase()).copied()
+        self.current
+            .lock()
+            .ok()?
+            .get(&wallet.to_ascii_lowercase())
+            .map(|r| r.peer)
     }
 
     pub fn remove(&mut self, id: u32) {
-        self.registration_by_peer[id as usize].store(0, std::sync::atomic::Ordering::SeqCst);
-        self.sessions_by_peer[id as usize] = None;
+        let Ok(mut current) = self.current.lock() else {
+            return;
+        };
         if let Some(w) = self.wallets_by_peer[id as usize].take() {
-            let key = w.to_lowercase();
-            if self.peers_by_wallet.get(&key) == Some(&id) {
-                self.peers_by_wallet.remove(&key);
+            let key = w.to_ascii_lowercase();
+            if current
+                .get(&key)
+                .is_some_and(|r| r.peer == id && r.registration == self.registration_by_peer(id))
+            {
+                current.remove(&key);
             }
         }
+        self.registration_by_peer[id as usize].store(0, std::sync::atomic::Ordering::SeqCst);
+        self.sessions_by_peer[id as usize] = None;
     }
 }
 
@@ -768,10 +831,11 @@ mod registration_tests {
         assert_eq!(guard.load(std::sync::atomic::Ordering::SeqCst), 0);
         board.set_with_session(0, "wallet".into(), "session".into());
         assert!(board.registration_by_peer(0) > first);
+        let second = board.registration_by_peer(0);
         board.registration_counter = u64::MAX;
         board.set_with_session(0, "wallet".into(), "session".into());
-        assert!(board.wallet_by_peer(0).is_none());
-        assert_eq!(board.registration_by_peer(0), 0);
+        assert_eq!(board.wallet_by_peer(0), Some("wallet"));
+        assert_eq!(board.registration_by_peer(0), second);
         assert_eq!(board.registration_counter, u64::MAX);
     }
 }

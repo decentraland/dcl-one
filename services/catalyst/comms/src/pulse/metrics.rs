@@ -70,6 +70,28 @@ pub fn cluster_lookup_submitted() {
     counter!(CLUSTER_LOOKUP_REPLIES).increment(1);
 }
 
+/// Refused observations are visible without per-producer labels or acknowledgments.
+pub fn statistics_observation_rejected() {
+    counter!("pulse_statistics_observations_rejected_total").increment(1);
+}
+
+/// Expose both statistics capacity series before any handover or refusal.
+pub fn register_statistics_capacity_series() {
+    statistics_retained_connector_generations(0);
+    let _ = counter!("pulse_statistics_registration_capacity_refused_total");
+}
+
+/// Retained outgoing connector generations, independent of the peer population.
+/// Initialized at Pulse startup so the capacity gauge is visible before handovers.
+pub fn statistics_retained_connector_generations(retained: usize) {
+    gauge!("pulse_statistics_retained_connector_generations").set(retained as f64);
+}
+
+/// Counts capacity refusals without producer or generation labels.
+pub fn statistics_registration_capacity_refused() {
+    counter!("pulse_statistics_registration_capacity_refused_total").increment(1);
+}
+
 const NATS_PUBLISHED: &str = "pulse_nats_published_total";
 const NATS_PUBLISH_FAILED: &str = "pulse_nats_publish_failed_total";
 const NATS_DROPPED: &str = "pulse_nats_dropped_total";

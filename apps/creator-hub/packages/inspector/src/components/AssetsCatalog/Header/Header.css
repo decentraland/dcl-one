@@ -1,0 +1,10 @@
+.assets-catalog-header {
+  display: flex;
+  flex: none;
+  width: 100%;
+}
+
+.assets-catalog-header .Assets-toolbar {
+  flex: 1;
+  padding: 0;
+}
