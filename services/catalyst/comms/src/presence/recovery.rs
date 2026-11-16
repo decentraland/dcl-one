@@ -135,7 +135,12 @@ impl Presence {
             .await?;
         let mut out = Vec::new();
         let mut refused = Vec::new();
+        // A scoped read classifies only the names that could hold its
+        // participants; every other name is left out of it either way.
         for source in rooms {
+            if scope.is_some_and(|scope| !scope.may_hold(&source.name)) {
+                continue;
+            }
             let classification = self
                 .operation(background, async {
                     crate::rooms::classify_room_name(scenes, &source.name)
@@ -144,8 +149,10 @@ impl Presence {
                 })
                 .await?;
             match classification {
+                // A scoped read reaches here only for a name that may hold
+                // its participants (filtered above).
                 RoomClassification::Canonical(room) if room.room != source.name => {
-                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
+                    if scope.is_some() {
                         return Err(RecoveryFailure::Unresolved);
                     }
                     refused.push(source.name);
@@ -179,7 +186,7 @@ impl Presence {
                 // lossy event projection; it keeps undetermined only the scope
                 // whose participants it could hold.
                 RoomClassification::RelevantRefused { .. } => {
-                    if scope.is_some_and(|scope| scope.may_hold(&source.name)) {
+                    if scope.is_some() {
                         return Err(RecoveryFailure::Unresolved);
                     }
                     refused.push(source.name);

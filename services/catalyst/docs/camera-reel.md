@@ -13,7 +13,7 @@ CAMERA_REEL_SOURCE_DATABASE_URL=... CAMERA_REEL_SOURCE_BUCKET_URL=... \
 
 Both source settings may also be passed as `--source-database-url` and `--bucket-url`; neither value is printed. `STORAGE_ROOT_FOLDER` names the blob store, as for `serve`.
 
-- Each photo keeps its id, owner (lowercased), document, visibility and `created_at`. Its image and thumbnail are fetched from `<bucket>/<key>`, the key ending the row's `url` and `thumbnail_url`, and stored by hash. A row with no `thumbnail_url`, or whose thumbnail object is missing, gets the 640x360 thumbnail an upload generates.
+- Each photo keeps its id, owner (lowercased), document, visibility and `created_at`. Its image and thumbnail are fetched from `<bucket>/<key>`, the key ending the row's `url` and `thumbnail_url`, and stored by hash; the image key's `<file>` is kept as the photo's file name. A row with no `thumbnail_url`, or whose thumbnail object is missing, gets the 640x360 thumbnail an upload generates.
 - An imported photo is unmoderated (`review_status` `ok`), records no photo event and does not count again toward a community's photos. `MAX_IMAGES_PER_USER` is not applied: the old service enforced it when the photos were taken.
 - Re-running is safe and resumes: a photo already imported is not fetched again. While it is unmoderated, its visibility and document follow the source. A photo a moderator flagged or rejected here keeps its state, and a photo uploaded here is never changed.
 - A row the local table refuses (an owner that is not the document's `userAddress`, a document that is not the photo document, no `created_at`) or whose image is missing in the bucket is skipped; the run goes on. Objects are fetched with timeouts and retried with backoff.
@@ -24,7 +24,7 @@ The command prints one JSON object: `read`, `imported`, `updated`, `unchanged`, 
 
 ## URLs
 
-Reads answer `url` and `thumbnailUrl` as `<API_URL>/api/images/<hash>`. The URLs the old service handed out, `<API_URL>/api/images/<id>-<file>` and `<id>-thumbnail-<file>`, keep resolving on this node: the route looks the photo up by the id the key starts with and serves its image or thumbnail by the same rules as a hash.
+An imported photo keeps its file name (`original_filename`), so reads answer its `url` and `thumbnailUrl` as the old service did: `<API_URL>/api/images/<id>-<file>` and `<API_URL>/api/images/<id>-thumbnail-<file>`. A source row whose thumbnail key is not `<id>-thumbnail-<file>` for its image's `<file>` is skipped (`thumbnail_key`). `GET /api/images/<key>` redirects to `CAMERA_REEL_BUCKET_URL/<key>` when that is set, and otherwise to `<API_URL>/api/files/<key>`, which serves the imported bytes from this node. Leave `CAMERA_REEL_BUCKET_URL` unset (or point it at `/api/files`) once the old bucket is no longer the source of truth.
 
 ## Cutover
 

@@ -86,6 +86,10 @@ impl PeerLink {
         self.tx.close();
     }
 
+    pub(crate) fn while_open(&self, apply: impl FnOnce()) -> bool {
+        self.tx.while_open(apply)
+    }
+
     pub fn needs_assignment(&self) -> bool {
         !self.is_closed() && !self.assignment_sent.load(Ordering::SeqCst)
     }
@@ -486,27 +490,25 @@ impl PeersRegistry {
     ) -> bool {
         self.with_control_position_permit(permit, || {})
     }
-    /// Keeps the local owner guard through synchronous enforcement bookkeeping.
+    /// Keeps exact ownership and closure guards through a synchronous action.
     pub(crate) fn with_control_position_permit(
         &self,
         permit: &ControlPositionPermit,
         apply: impl FnOnce(),
     ) -> bool {
         let held = self.v4_peers.lock();
-        let current = !permit.close
-            && held.get(&permit.address).is_some_and(|peers| {
-                peers.iter().any(|peer| {
-                    peer.realm_owner
-                        && peer.raw_session == permit.session
-                        && peer.connection_epoch == permit.epoch
-                        && peer.link.id == permit.link_id
-                        && !peer.link.is_closed()
+        !permit.close
+            && held
+                .get(&permit.address)
+                .and_then(|peers| {
+                    peers.iter().find(|peer| {
+                        peer.realm_owner
+                            && peer.raw_session == permit.session
+                            && peer.connection_epoch == permit.epoch
+                            && peer.link.id == permit.link_id
+                    })
                 })
-            });
-        if current {
-            apply();
-        }
-        current
+                .is_some_and(|peer| peer.link.while_open(apply))
     }
     pub(crate) fn with_session_link(
         &self,
@@ -520,10 +522,7 @@ impl PeersRegistry {
                 .iter()
                 .any(|peer| peer.id == link.id && !peer.is_closed())
         });
-        if current {
-            apply();
-        }
-        current
+        current && link.while_open(apply)
     }
     pub(crate) fn while_wallet_absent(&self, address: &str, apply: impl FnOnce()) {
         let legacy = self.peers.lock();

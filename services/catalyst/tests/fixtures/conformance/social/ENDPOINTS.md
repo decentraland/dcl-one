@@ -275,7 +275,7 @@ the moderator role.
 | --- | --- | --- | --- | --- |
 | GET | `/status` | | yes | `status` |
 | GET | `/notifications` | `from` (ms), `limit` 1-50 (default 20), `onlyUnread` (presence); signed | yes (signed) | `notifications-unauth` (400, the body `auth-error-production.json` pins), `-signed`, `-signed-filters`, `-expired-timestamp` (401), `-bad-signature` (401) |
-| POST | `/notifications` | bearer `NOTIFICATIONS_GOVERNANCE_TOKEN` (`governance_*` types) or `NOTIFICATIONS_REWARDS_TOKEN` (`reward_*` types), unset = producer disabled; `[{type, address?, eventKey, metadata, timestamp, optOutScope?}]` -> 204, body up to 16 MiB, at most 10,000 items, `metadata` up to 16 KiB serialized, `timestamp` at most 5 minutes ahead of the server clock; 400 in the upstream Joi words (another prefix's or an unknown type: `Invalid notification type: <type>`), 401 `Authorization header is missing` / `Invalid authorization header`, 413, 503 while social writes are off. Id = v5 (namespace `3f8a52d4-9c1e-4b07-a62d-71e05c9318bb`) over the JSON `["<type>","<lowercased address>","<eventKey>"]`: a repeat updates `metadata` and `timestamp`, keeps the read state and emails only on first insert. Only `governance_announcement` may omit `address` (else `"[i].address" is required`), and then without `optOutScope`: a broadcast stored once (`social.broadcast_notifications`, id over `["<type>",null,"<eventKey>"]`), listed by `GET /notifications` for every wallet with `address: null` and per-wallet read state while younger than `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (90; pruned after, unlike upstream), never emailed | no: write | |
+| POST | `/notifications` | bearer `NOTIFICATIONS_GOVERNANCE_TOKEN` (`governance_*` types) or `NOTIFICATIONS_REWARDS_TOKEN` (`reward_*` types), unset = producer disabled; `[{type, address?, eventKey, metadata, timestamp, optOutScope?}]` -> 204, body up to 16 MiB, `metadata` up to 16 KiB serialized, `timestamp` at most 5 minutes ahead of the server clock; 400 in the upstream Joi words (another prefix's or an unknown type: `Invalid notification type: <type>`), 401 `Authorization header is missing` / `Invalid authorization header`, 413, 503 while social writes are off. Id = v5 (namespace `3f8a52d4-9c1e-4b07-a62d-71e05c9318bb`) over the JSON `["<type>","<lowercased address>","<eventKey>"]`: a repeat updates `metadata` and `timestamp`, keeps the read state and emails only on first insert. Only `governance_announcement` may omit `address` (else `"[i].address" is required`), and then without `optOutScope`: a broadcast stored once (`social.broadcast_notifications`, id over `["<type>",null,"<eventKey>"]`), listed by `GET /notifications` for every wallet with `address: null` and per-wallet read state kept forever as upstream, unless `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 0, off) is set: then listed while younger and pruned after, never emailed | no: write | |
 | PUT | `/notifications/read` | signed; a broadcast id records this wallet's read (`social.broadcast_reads`), counted in `updated` | no: write | |
 | POST | `/notifications/email` | bearer `NOTIFICATION_SERVICE_TOKEN`; `{email, subject, content, title?, titleHighlight?}` -> 204 | no: write | |
 | GET | `/subscription` | signed | yes (signed) | `subscription-unauth`, `-signed` (the default document; `address` volatile) |
@@ -409,36 +409,28 @@ and port 5461 with the environment (bounded outfits/emote sync from
 Logs: `replay-<service>.log` in the run's scratchpad; the node and its
 database were stopped and dropped after the run.
 
-## In-process replay of camera-reel (2026-11-13)
+## In-process replay of camera-reel
 
 `camera-reel/src/tests/captures.rs`, test
-`the_camera_reel_host_answers_as_its_captures`, on `eea971036` with legacy
-key resolution added, with `CATALYST_TEST_DATABASE_URL` set. It mounts the router under
+`the_camera_reel_host_answers_as_its_captures`, mounts the router under
 `/camera-reel-service` as `serve` does and replays all 21 captures through
-`social::test_fixtures::replay` (status, recorded headers, body by the shared
-diff). It seeds the captured photos from the captured bodies: documents,
-place ids, public flag and `created_at` from `dateTime`. Filler rows bring
-the corpus place to its 523 public photos and the item gallery to its 12.
-The shared diff skips `id` and `url` leaves. The test therefore checks the
-ids, their order and the hash URLs of the five photo answers separately.
-The blobs of the photo the image captures ask for are stored (its id as
-text, 36 bytes, and a thumbnail), and the test fetches both legacy URLs of
-its captured document.
+`social::test_fixtures::replay` (status, recorded headers and body).
+It seeds the captured photos from their recorded documents, place ids,
+public flag, original filenames and `created_at` from `dateTime`. Filler
+rows bring the corpus place to its 523 public photos and the item gallery
+to its 12. The API and bucket origins come from the captures; requests stay
+in process and never contact those origins.
 
-13 of 21 are identical. The other 8 differ only by the deliberate
-differences in `camera-reel/src/lib.rs` or upstream additions after the
-capture, each listed in the test:
-
-| fixture | difference | reason |
-| --- | --- | --- |
-| `image-file-redirect` | 200 with the image bytes instead of 307 to the legacy bucket key `{id}-{ts}.jpg` (no `location`) | the legacy key names the row's image hash, served from the blob store; with `CAMERA_REEL_BUCKET_URL` set it is a 307 to `<bucket>/<hash>` instead |
-| `image-redirect` | 404 `{"message":"image not found"}` (29 B) instead of 307 to the bucket key `{id}` | a bare photo id is neither a hash nor a legacy key; upstream's redirect names a key no upload writes (keys are `{id}-{file}`) |
-| `image-metadata`, `place-images`, `place-images-page2`, `places-images-batch`, `wearable-images` | `url` and `thumbnailUrl` are `<api_url>/api/images/<hash>` instead of `.../api/images/<id>-[thumbnail-]<ts>.jpg` | the same hash addressing; ids, order, counts and every other field are identical |
-| `docs-openapi` | `components.schemas.ScreenRect` and `User.properties.screenRect` extra | added by camera-reel-service `3e8bd0b` (#61) after the capture |
-| `docs-openapi` | `components.schemas.GalleryImageWithPlace` extra | the captured document references this component but never defines it |
+The replay passed with PostgreSQL on 2026-11-13: 20 of 21 captures match.
+Only `docs-openapi` differs from the 2026-09-25 capture: the `ScreenRect`
+schema and nullable `User.screenRect` property were added in upstream
+`3e8bd0b`. Both redirects match their captured status, headers and empty
+body. The shared diff skips `id` and `url` leaves, so the test separately
+checks exact photo ids, order, original URLs and thumbnail URLs for all five
+photo answers.
 
 `docs::tests::the_spec_is_the_captured_one_plus_the_later_upstream_screen_rect`
-compares the whole document with the capture under these three additions.
-The `ScreenRect` schema follows the `3e8bd0b` struct (four required `float`
-numbers). Its generated text was not compared because the upstream document
-at that revision was not built.
+compares the whole pinned document with the capture under those two
+additions. `GalleryImageWithPlace` remains undefined, as in the pinned
+upstream document. The companion test checks the wire fields and every
+path parameter. All three regressions passed in the 134-test Camera suite.

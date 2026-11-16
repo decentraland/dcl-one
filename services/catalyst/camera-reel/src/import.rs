@@ -9,9 +9,12 @@
 //! photo at the key ending its `url` (`{id}-{file}`) and the thumbnail at the
 //! key ending its `thumbnail_url` (`{id}-thumbnail-{file}`). A photo keeps
 //! its id, owner (lowercased), document, visibility and `created_at`; its
-//! bytes land in the ONE store by hash, and its legacy URLs keep resolving
-//! through `GET /api/images/{key}` ([`crate::db::LegacyKey`]), so the file
-//! name is not stored.
+//! bytes land in the ONE store by hash and `{file}` is kept as its
+//! `original_filename`, so its URLs stay `{api_url}/api/images/{id}-{file}`
+//! and `{id}-thumbnail-{file}` and resolve as an upload's do
+//! ([`crate::db::Database::image_blob_for_name`]). Its `image_content_type`
+//! stays NULL, as for other rows whose object metadata is unknown, so a
+//! download sniffs the stored bytes.
 //!
 //! What an imported row is not: an upload. It is inserted with
 //! `review_status = 'ok'` and `ranking_published = true` (the old service's
@@ -91,7 +94,8 @@ pub enum SkipReason {
     OwnerMismatch,
     /// `url` does not end with this photo's key `{id}-{file}`.
     ImageKey,
-    /// `thumbnail_url` is set and does not end with a key of this photo.
+    /// `thumbnail_url` is set and does not end with this photo's
+    /// `{id}-thumbnail-{file}` key, `{file}` being the image key's.
     ThumbnailKey,
     /// The bucket answered 403/404/410 for the image.
     ImageMissing,
@@ -280,12 +284,12 @@ fn check(row: &SourceRow) -> Result<(), Skip> {
     Ok(())
 }
 
-/// The bucket key a stored URL ends with, when it is one of this photo's
-/// (`{id}-...` with a non-empty rest).
-fn key_of(id: Uuid, url: &str) -> Option<&str> {
+/// The bucket key a stored URL ends with and its file part, when it is one
+/// of this photo's (`{id}-{file}` with a non-empty `file`).
+fn key_of(id: Uuid, url: &str) -> Option<(&str, &str)> {
     let key = url.rsplit('/').next()?;
     let rest = key.strip_prefix(&id.to_string())?.strip_prefix('-')?;
-    (!rest.is_empty() && !rest.contains('\\')).then_some(key)
+    (!rest.is_empty() && !rest.contains('\\')).then_some((key, rest))
 }
 
 async fn import_page(
@@ -421,16 +425,19 @@ async fn import_one(
             detail,
         })
     };
-    let Some(image_key) = key_of(row.id, &row.url) else {
+    let Some((image_key, file)) = key_of(row.id, &row.url) else {
         outcome.result = skip(SkipReason::ImageKey, None);
         return Ok(outcome);
     };
+    // The thumbnail's alias is derived from the stored file name, so a
+    // thumbnail key other than `{id}-thumbnail-{file}` could not be served
+    // at its old URL.
     let thumbnail_key = if row.thumbnail_url.is_empty() {
         None
     } else {
         match key_of(row.id, &row.thumbnail_url) {
-            Some(key) => Some(key),
-            None => {
+            Some((key, rest)) if rest.strip_prefix("thumbnail-") == Some(file) => Some(key),
+            _ => {
                 outcome.result = skip(SkipReason::ThumbnailKey, None);
                 return Ok(outcome);
             }
@@ -460,14 +467,17 @@ async fn import_one(
         }
         Fetched::Missing => {
             let image = image.clone();
-            match tokio::task::spawn_blocking(move || crate::handlers::images::thumbnail_of(&image))
-                .await?
+            match tokio::task::spawn_blocking(move || {
+                let format = image::guess_format(&image).ok()?;
+                crate::handlers::images::thumbnail_of(&image, format).ok()
+            })
+            .await?
             {
-                Ok(bytes) => {
+                Some(bytes) => {
                     outcome.generated = true;
                     bytes
                 }
-                Err(_) => {
+                None => {
                     outcome.result = skip(SkipReason::ImageUndecodable, None);
                     return Ok(outcome);
                 }
@@ -504,7 +514,7 @@ async fn import_one(
         }
     }
 
-    match insert(target, &row, &image_hash, &thumbnail_hash).await {
+    match insert(target, &row, file, &image_hash, &thumbnail_hash).await {
         Ok(true) => {}
         Ok(false) => outcome.result = Imported::AlreadyThere,
         Err(e) => match refused(&e) {
@@ -520,6 +530,7 @@ async fn import_one(
 async fn insert(
     target: &PgPool,
     row: &SourceRow,
+    file: &str,
     image_hash: &str,
     thumbnail_hash: &str,
 ) -> anyhow::Result<bool> {
@@ -527,8 +538,8 @@ async fn insert(
     let inserted = sqlx::query(
         "INSERT INTO camera_reel.images \
          (id, user_address, image_hash, thumbnail_hash, is_public, review_status, \
-          ranking_published, metadata, created_at) \
-         VALUES ($1, $2, $3, $4, $5, 'ok', true, $6, $7) \
+          ranking_published, metadata, created_at, original_filename) \
+         VALUES ($1, $2, $3, $4, $5, 'ok', true, $6, $7, $8) \
          ON CONFLICT (id) DO NOTHING",
     )
     .bind(row.id)
@@ -538,6 +549,7 @@ async fn insert(
     .bind(row.is_public)
     .bind(&row.metadata)
     .bind(row.created_at)
+    .bind(file)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -640,7 +652,8 @@ fn is_retryable(e: &reqwest::Error) -> bool {
 /// through the delete path (the blobs are withheld, as for an owner's
 /// delete). Returns how many it deleted, or would delete on a dry run.
 async fn prune(target: &PgPool, seen: &HashSet<Uuid>, dry_run: bool) -> anyhow::Result<u64> {
-    let db = crate::db::Database::new(target.clone(), "");
+    // Only the delete path is used: no URLs, and a cache that holds nothing.
+    let db = crate::db::Database::new(target.clone(), "", 0, 0);
     let mut pruned = 0u64;
     let mut after = Uuid::nil();
     loop {
@@ -680,13 +693,15 @@ mod tests {
     fn a_key_is_the_last_url_segment_of_this_photo() {
         let id: Uuid = "e9659dd5-0f87-4169-a9a6-1ec0d5faf051".parse().unwrap();
         let base = "https://camera-reel-service.decentraland.org/api/images";
+        let image = format!("{id}-1790074770.jpg");
         assert_eq!(
-            key_of(id, &format!("{base}/{id}-1790074770.jpg")),
-            Some(format!("{id}-1790074770.jpg").as_str())
+            key_of(id, &format!("{base}/{image}")),
+            Some((image.as_str(), "1790074770.jpg"))
         );
+        let thumbnail = format!("{id}-thumbnail-1790074770.jpg");
         assert_eq!(
-            key_of(id, &format!("{base}/{id}-thumbnail-1790074770.jpg")),
-            Some(format!("{id}-thumbnail-1790074770.jpg").as_str())
+            key_of(id, &format!("{base}/{thumbnail}")),
+            Some((thumbnail.as_str(), "thumbnail-1790074770.jpg"))
         );
         assert_eq!(key_of(id, &format!("{base}/{id}-")), None);
         assert_eq!(key_of(id, &format!("{base}/{id}")), None);

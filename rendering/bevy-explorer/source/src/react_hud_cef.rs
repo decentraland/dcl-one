@@ -96,7 +96,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
-        diagnostics::register(app);
+        app.add_plugins(diagnostics::CefHudDiagnosticsPlugin);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -694,6 +694,14 @@ fn on_page_envelope(
                 ) {
                     state.prefs.insert(key.to_owned(), value.to_owned());
                     write_prefs(&state.prefs);
+                }
+            }
+            // The page names no path: only the folder the download handler saves to is opened.
+            Some("openDownloads") => {
+                if let Some(dir) = cef_offscreen::prelude::downloads_dir() {
+                    if let Err(e) = opener::open(&dir) {
+                        warn!("[react-hud-cef] could not open {}: {e}", dir.display());
+                    }
                 }
             }
             _ => {}

@@ -36,7 +36,14 @@ async fn server(cap: u32) -> (u16, AppState) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        use catalyst::comms::archipelago::ws::raw_transport;
+        let app = app.layer(axum::middleware::from_fn(raw_transport::connection_info));
+        axum::serve(
+            raw_transport::Listener(listener),
+            app.into_make_service_with_connect_info::<raw_transport::Connection>(),
+        )
+        .await
+        .unwrap();
     });
     (port, state)
 }
@@ -619,6 +626,10 @@ async fn claimed_deny_and_verified_deny_or_ban_fail_before_admission() {
 }
 
 async fn raw_upgrade(port: u16) -> Socket {
+    raw_upgrade_with_prefix(port, &[]).await
+}
+
+async fn raw_upgrade_with_prefix(port: u16, prefix: &[u8]) -> Socket {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -627,7 +638,9 @@ async fn raw_upgrade(port: u16) -> Socket {
         "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
     );
     eprintln!("CLOSE_WIRE request={request:?}");
-    tcp.write_all(request.as_bytes()).await.unwrap();
+    let mut request = request.into_bytes();
+    request.extend_from_slice(prefix);
+    tcp.write_all(&request).await.unwrap();
     let mut response = vec![];
     tokio::time::timeout(Duration::from_secs(3), async {
         while !response.ends_with(b"\r\n\r\n") {
@@ -648,6 +661,39 @@ async fn raw_upgrade(port: u16) -> Socket {
         None,
     )
     .await
+}
+
+#[tokio::test]
+async fn initial_http_read_ahead_preserves_partial_frame_and_ordinary_challenge() {
+    use tokio::io::AsyncWriteExt;
+    let (port, state) = server(1).await;
+    // The request and first frame byte enter the same HTTP read-ahead buffer.
+    let mut socket = raw_upgrade_with_prefix(port, &[0x89]).await;
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+        panic!("plaintext test transport expected")
+    };
+    // Complete a masked Ping only after receiving the HTTP upgrade response.
+    tcp.write_all(&[0x81, 1, 2, 3, 4, b'p' ^ 1]).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Pong(b"p".to_vec().into())
+    );
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: "0x0000000000000000000000000000000000000001".into(),
+            },
+        )))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive(&mut socket).await,
+        server_packet::Message::ChallengeResponse(_)
+    ));
+    let (bytes, ended) = raw_peer_close(&mut socket, "read-ahead").await;
+    assert_eq!(&bytes[..2], &[0x88, 12]);
+    assert!(ended.is_ok());
+    wait(|| state.sockets.available_permits() == 1).await;
 }
 
 // Write the masked control frame directly and keep TCP open until the server ends it.
@@ -741,7 +787,7 @@ async fn clean_peer_close_echoes_exact_reason_and_ends_tcp_at_each_application_s
                 socket
                     .send(packet(client_packet::Message::ChallengeRequest(
                         ChallengeRequestMessage {
-                            address: "0x0000000000000000000000000000000000000001".into(),
+                            address: "0x0000000000000000000000000000000000000101".into(),
                         },
                     )))
                     .await
@@ -1115,7 +1161,7 @@ async fn pending_contract(port: u16, delegated: bool) -> (Socket, String, String
     pending_contract_as(
         port,
         delegated,
-        "0x0000000000000000000000000000000000000001".into(),
+        "0x0000000000000000000000000000000000000101".into(),
         PrivateKeySigner::random(),
     )
     .await
@@ -1130,7 +1176,7 @@ async fn pending_contract_as(
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
         .await
         .unwrap();
-    let address = "0x0000000000000000000000000000000000000001".to_string();
+    let address = "0x0000000000000000000000000000000000000101".to_string();
     socket
         .send(packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage { address: claim },
@@ -1248,7 +1294,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 let (socket, _, session, _, _) = pending_contract_as(
                     port,
                     true,
-                    "0x0000000000000000000000000000000000000001".into(),
+                    "0x0000000000000000000000000000000000000101".into(),
                     if index == 0 || same_session {
                         device.clone()
                     } else {
@@ -1260,7 +1306,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 sockets.push(socket);
                 sessions.push(session);
             }
-            let address = "0x0000000000000000000000000000000000000001";
+            let address = "0x0000000000000000000000000000000000000101";
             assert_eq!(state.registry.authenticated_count(), 0);
             validator.gates[order[0]].add_permits(1);
             assert!(matches!(
@@ -1435,6 +1481,7 @@ fn heartbeat(x: f32) -> Message {
 #[ignore = "requires PULSE_NATS_SERVER_BIN; real broker and Pulse statistics publisher"]
 async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     use catalyst::comms::gatekeeper::bus::{BrokerBus, NatsBus};
+    use catalyst::comms::protocol::bus::statistics::{ProducerReply, ProducerRequest};
     use catalyst::comms::pulse::cluster::nats::{NatsClusterFeed, NatsFeedOptions};
     use std::sync::Arc;
     let broker = nats_broker::Broker::start(&std::env::var("PULSE_NATS_SERVER_BIN").unwrap(), None);
@@ -1461,6 +1508,23 @@ async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     })
     .await
     .unwrap();
+    // The connector drops an observation when Pulse does not answer its producer Status request,
+    // and Pulse subscribes asynchronously after spawn. A Status reply proves the producer subject
+    // (installed after the observation subject) is live before the only heartbeat is sent.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let status = ProducerRequest::Status.encode().unwrap();
+        while !matches!(
+            bus.statistics_control(status.clone())
+                .await
+                .ok()
+                .and_then(|reply| ProducerReply::decode(&reply)),
+            Some(ProducerReply::Status { .. })
+        ) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Pulse never answered the producer Status request");
     let port = archipelago::serve(state.clone()).await;
     let (mut socket, address) = authenticated(port).await;
     socket.send(heartbeat(42.)).await.unwrap();
@@ -1623,7 +1687,7 @@ async fn baseline_v4_authentication_is_not_exposed() {
     // Echoing a protocol name does not enable extended offer or typed-auth fields.
     // ChallengeRequest.address followed by the reserved ConnectionOffer tag.
     let mut challenge = vec![0x0a, 42];
-    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000001");
+    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000101");
     challenge.extend_from_slice(&[0x12, 0]);
     let mut frame = vec![0x0a, challenge.len() as u8];
     frame.extend(challenge);
@@ -1771,7 +1835,7 @@ async fn source_contract_challenge_has_32_random_bytes() {
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1828,7 +1892,7 @@ async fn source_contract_text_data_uses_the_same_protobuf_decoder() {
         .unwrap();
     let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
         ChallengeRequestMessage {
-            address: "0x0000000000000000000000000000000000000001".into(),
+            address: "0x0000000000000000000000000000000000000101".into(),
         },
     )) else {
         unreachable!()
@@ -1903,7 +1967,7 @@ async fn source_contract_negotiates_first_offered_protocol_without_selecting_aut
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1951,7 +2015,7 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
             .unwrap();
         let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage {
-                address: "0x0000000000000000000000000000000000000001".into(),
+                address: "0x0000000000000000000000000000000000000101".into(),
             },
         )) else {
             unreachable!()

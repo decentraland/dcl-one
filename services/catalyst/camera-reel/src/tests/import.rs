@@ -3,7 +3,7 @@
 //! (@ 3e8bd0b `migrations/`, the table's DDL in their order), a fake bucket
 //! on the loopback, two passes (the second changes nothing), a refresh, a
 //! moderated row left alone, a photo uploaded here left alone, a prune, and
-//! the legacy URLs served from the imported rows.
+//! the old service's URLs served from the imported rows' file names.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -197,12 +197,13 @@ struct Row {
     ranking_published: bool,
     metadata: Value,
     created_at: chrono::NaiveDateTime,
+    original_filename: Option<String>,
 }
 
 async fn row(pool: &PgPool, id: Uuid) -> Option<Row> {
     sqlx::query_as(
         "SELECT user_address, image_hash, thumbnail_hash, is_public, review_status, \
-                ranking_published, metadata, created_at \
+                ranking_published, metadata, created_at, original_filename \
          FROM camera_reel.images WHERE id = $1",
     )
     .bind(id)
@@ -241,7 +242,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
         .replacen("0X", "0x", 1);
     let owner = checksummed.to_lowercase();
     let place = Uuid::new_v4().to_string();
-    let ids: Vec<Uuid> = (0..10).map(|_| Uuid::new_v4()).collect();
+    let ids: Vec<Uuid> = (0..11).map(|_| Uuid::new_v4()).collect();
     let [
         full,
         no_thumb_url,
@@ -253,6 +254,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
         undated,
         bad_shape,
         uploaded_here,
+        thumb_other_file,
     ] = ids[..].try_into().unwrap();
     let image_full = png(64, 48, 1);
     let thumb_full = png(32, 24, 2);
@@ -332,8 +334,23 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
         )
         .await;
 
+    // A thumbnail key whose file is not the image's could not be served at
+    // its old URL, which is derived from the stored file name.
+    source
+        .insert(
+            thumb_other_file,
+            &owner,
+            &format!("{OLD_API}/{thumb_other_file}-shot.png"),
+            &format!("{OLD_API}/{thumb_other_file}-thumbnail-other.png"),
+            &doc,
+            Some(&at(6)),
+            true,
+        )
+        .await;
+
     let expected_skips = {
         let mut v = vec![
+            (thumb_other_file, "thumbnail_key"),
             (image_missing, "image_missing"),
             (wrong_owner, "owner_mismatch"),
             (not_object, "metadata_not_object"),
@@ -348,7 +365,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     let dry = import(&source, &s, &bucket_url, true, false).await;
     assert_eq!(
         (dry.read, dry.imported, dry.thumbnails_generated),
-        (9, 4, 2)
+        (10, 4, 2)
     );
     assert_eq!(skipped(&dry), expected_skips);
     for id in &ids {
@@ -363,7 +380,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     let first = import(&source, &s, &bucket_url, false, false).await;
     assert_eq!(
         (first.read, first.imported, first.updated, first.unchanged),
-        (9, 4, 0, 0),
+        (10, 4, 0, 0),
         "{first:#?}"
     );
     assert_eq!(first.thumbnails_generated, 2);
@@ -385,12 +402,14 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
             metadata: doc.clone(),
             created_at: chrono::NaiveDateTime::parse_from_str(&at(1), "%Y-%m-%d %H:%M:%S%.f")
                 .unwrap(),
+            original_filename: Some("shot.png".into()),
         }
     );
     for (id, image) in [(no_thumb_url, &image_b), (thumb_missing, &image_c)] {
         let r = row(&pool, id).await.unwrap();
         assert_eq!(r.image_hash, hash_bytes_v1(image));
-        let generated = crate::handlers::images::thumbnail_of(image).unwrap();
+        let generated =
+            crate::handlers::images::thumbnail_of(image, image::ImageFormat::Png).unwrap();
         assert_eq!(r.thumbnail_hash, hash_bytes_v1(&generated));
         let thumb = image::load_from_memory(&generated).unwrap();
         assert_eq!((thumb.width(), thumb.height()), (640, 360));
@@ -439,7 +458,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
             second.updated,
             second.unchanged
         ),
-        (9, 0, 0, 4),
+        (10, 0, 0, 4),
         "{second:#?}"
     );
     assert_eq!(skipped(&second), expected_skips);
@@ -454,47 +473,52 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     );
     assert_eq!(row(&pool, full).await.unwrap(), a);
 
-    // The legacy URLs resolve to the imported blobs, by the hash route's rules.
+    // The old service's URLs keep working: `/api/images/{id}-{file}`
+    // redirects as upstream did, and the local byte route resolves the
+    // stored file name to the imported blobs.
     let app = s.app();
-    let get = |key: String| {
+    let get = |path: String| {
         let app = app.clone();
-        async move {
-            send(
-                app,
-                "GET",
-                &format!("{PREFIX}/api/images/{key}"),
-                vec![],
-                None,
-            )
-            .await
-        }
+        async move { send(app, "GET", &format!("{PREFIX}{path}"), vec![], None).await }
     };
-    let (status, headers, body) = get(format!("{full}-shot.png")).await;
+    let (status, headers, _) = get(format!("/api/images/{full}-shot.png")).await;
+    assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("{API_URL}/api/files/{full}-shot.png").as_str()
+    );
+    let (status, headers, body) = get(format!("/api/files/{full}-shot.png")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[header::CONTENT_TYPE], "image/png");
     assert_eq!(body, image_full);
-    let (status, _, body) = get(format!("{full}-thumbnail-shot.png")).await;
+    let (status, _, body) = get(format!("/api/files/{full}-thumbnail-shot.png")).await;
     assert_eq!((status, body), (StatusCode::OK, thumb_full.clone()));
-    let (status, _, body) = get(format!("{flaky}-a%20b.png")).await;
+    let (status, _, body) = get(format!("/api/files/{flaky}-a%20b.png")).await;
     assert_eq!((status, body), (StatusCode::OK, image_g.clone()));
-    // The file part is not stored, so any file after the id resolves.
-    let (status, _, body) = get(format!("{full}-1790074770.jpg")).await;
-    assert_eq!((status, body), (StatusCode::OK, image_full.clone()));
-    let (status, _, body) = get(a.image_hash.clone()).await;
+    let (status, _, body) = get(format!("/api/files/{flaky}-thumbnail-a%20b.png")).await;
+    assert_eq!((status, body), (StatusCode::OK, thumb_g.clone()));
+    let (status, _, body) = get(format!("/api/files/{}", a.image_hash)).await;
     assert_eq!((status, body), (StatusCode::OK, image_full.clone()));
     for missing in [
+        // The file name is stored and compared.
+        format!("{full}-1790074770.jpg"),
         format!("{image_missing}-shot.png"),
         format!("{}-shot.png", Uuid::new_v4()),
         full.to_string(),
     ] {
-        let (status, _, body) = get(missing.clone()).await;
+        let (status, _, _) = get(format!("/api/files/{missing}")).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({ "message": "image not found" })
-        );
     }
-    // With the store's bucket configured, the redirect names the hash.
+    // The photo's metadata hands out the URLs the old service did.
+    let (status, _, body) = get(format!("/api/images/{full}/metadata")).await;
+    assert_eq!(status, StatusCode::OK);
+    let wire: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(wire["url"], format!("{API_URL}/api/images/{full}-shot.png"));
+    assert_eq!(
+        wire["thumbnailUrl"],
+        format!("{API_URL}/api/images/{full}-thumbnail-shot.png")
+    );
+    // With a bucket origin configured, the redirect keeps the old key.
     let mut with_bucket = Settings::new(API_URL);
     with_bucket.bucket_url = Some("https://blobs.example/store/".into());
     let redirecting = axum::Router::new().nest(
@@ -517,7 +541,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(
         headers[header::LOCATION],
-        format!("https://blobs.example/store/{}", a.thumbnail_hash).as_str()
+        format!("https://blobs.example/store/{full}-thumbnail-shot.png").as_str()
     );
 
     // The source stays the authority for visibility and the document of an
@@ -563,7 +587,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
             third.unchanged,
             third.kept_moderated
         ),
-        (10, 0, 1, 2, 1),
+        (11, 0, 1, 2, 1),
         "{third:#?}"
     );
     let a3 = row(&pool, full).await.unwrap();

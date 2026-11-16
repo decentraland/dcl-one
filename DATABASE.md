@@ -107,7 +107,13 @@ admitted under advisory locks (deployer, world, node budget); the per-world
 count and byte sums read `pending_scenes (world_name, created_at)`. The blob
 collector keeps every file a pending row names, and a leased job reclaims
 expired uploads under the exclusive store lock, unlinking only files a
-batch of that upload wrote (`pending_scene_files.written`).
+batch of that upload wrote (`pending_scene_files.written`). Local content
+deploys (`POST /entities` and partial publication) and world scene deploys
+take that lock's shared side in their write transaction and re-check every
+file they name, so an unlink batch never removes a file such a deployment
+references; a content deploy waits at most 5 s for it and answers 503 past
+that. Synced content writes do not take it and rely on the collector's age
+floor.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
@@ -495,6 +501,19 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
+The anonymous Registry `GET /denylist` feed reads `content.denylist` through the
+existing content pool: `id`, `added_by` and `added_at`, ordered newest first.
+Expected lists contain hundreds of rows; the read checks overflow at 100,001 rows
+and refuses lists above 100,000. The shared Explore API state retains local
+rows for five seconds and coalesces concurrent refreshes. Database failures are
+retained for the same interval and return 500; a failed refresh never serves an
+expired successful list. Operator edits become visible on the next read after
+expiry, and process restart rebuilds on demand. Source moderation responses are
+validated on every request and never cached here. Merge and serialization remain
+per-request work; the cache bounds table-read frequency, not total endpoint CPU
+or response bytes. No table, index or pool is added. The public feed intentionally
+publishes every local id kind and `added_by` as the operator's `created_by` wallet.
+
 The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
 recurrence selector and exact date window; catalogue page offsets and accounts
@@ -558,12 +577,15 @@ catalyst schema status
 
 `--release` refuses while any other client session is connected to the database,
 including sessions of roles whose activity the migrator cannot read, and reports
-their count and application names; it changes nothing then. It is a best-effort
-guard: the release locks its own tables, not every table. A connection pooler or
-monitoring agent that holds sessions open also blocks it. Exit 5 reflects the
-stamp only; the release's own checks (mixed layout, receipts, destination,
-pending wallets) can still refuse it inside the transaction. A database already
-at version 3 takes the plain migrate.
+their count and application names; it changes nothing then. Server processes
+without a role, such as autovacuum workers, are not sessions and do not block it.
+Background workers that run as another role, such as parallel workers,
+logical-replication workers and logical WAL senders, still count and block it.
+It is a best-effort guard: the release locks its own tables, not every table.
+A connection pooler or monitoring agent that holds sessions open also blocks it.
+Exit 5 reflects the stamp only; the release's own checks (mixed layout,
+receipts, destination, pending wallets) can still refuse it inside the
+transaction. A database already at version 3 takes the plain migrate.
 The binary embeds `schemas/releases/v3-private-voice-pending.sql` with its includes
 (`db::RELEASE_SQL`). The same file still runs through psql, followed by
 `catalyst schema migrate`:
@@ -810,6 +832,38 @@ Both have a leading community-id index. The raw notification key and the ranking
 receipt's `(kind,event_key,community_id)` key serve different access patterns.
 Synthetic warm measurements and insertion costs are recorded in `METRICS.md`;
 they are not production capacity measurements.
+
+Camera uploads retain their multipart basename in `camera_reel.images.original_filename`.
+Gallery URLs concatenate the configured API base, row UUID and basename literally;
+thumbnail names add `thumbnail-`. Reserved filename characters remain raw in JSON
+and redirect Location values, as in the pinned source. To request a complete
+filename containing `?`, `#` or `%`, clients must percent-encode its path segment.
+Alias downloads extract the UUID and use the existing primary key to resolve the
+shared image or thumbnail hash. The nullable column adds no index or backfill:
+existing rows retain their hash URLs. Migration `0045_camera_reel_original_filename`
+adds the column without replacing rows or blob bytes. Local `/api/files` downloads
+apply the camera row's review state and the shared blob denylist. Image redirects
+preserve the requested filename without querying the database. After storing both
+blobs, a new upload releases previous deletion withholding for those hashes only
+when a live non-rejected photo references them and no rejected photo does. It
+retains moderation rejections and operator or remote denials. Configure
+`CAMERA_REEL_BUCKET_URL` as the public API base plus `/api/files` to use this virtual
+origin, or route the existing image origin to that handler. A hash-only origin
+needs an ingress/configuration adjustment before cutover; it cannot serve the
+filename aliases directly. An external public origin is responsible for restricting
+its own copies. The local byte route serves complete GET responses, without Range
+or ETag support; HEAD returns 404. It does not implement the S3 object API.
+
+Camera upload MIME is retained per photo in nullable
+`camera_reel.images.image_content_type`, constrained to the source's accepted
+`image/png` and `image/jpeg` values. Both object aliases return that claimed MIME,
+including when their detected encoding differs. An upload adds this short string
+to its existing row insert; alias downloads select it with the existing UUID
+primary-key lookup. The column adds no index, table, pool or extra read query.
+Migration `0044_camera_reel_image_content_type` preserves existing rows without
+inventing an object MIME backfill. Legacy NULL values and raw hash URLs retain byte-format sniffing. An import
+can populate the per-photo value from object metadata; a raw hash alone does not
+identify which photo's claimed MIME to use.
 
 New camera uploads start with `ranking_published=false`. After both blobs are
 written, one transaction marks the row and applies local photo contributions.
@@ -1320,12 +1374,13 @@ row per finalised upload, written in the transaction that sets
 statement that changes it. `payload` is the upstream body `{type: "camera",
 subType, key, timestamp, metadata}`. Writes follow the upload rate.
 
-Readers are in-process consumers (`camera_reel::events::read_after`): each
-pages `id > $cursor ORDER BY id LIMIT n` on the primary key and keeps its
-cursor in its own schema, committed with its own effects; the outbox holds no
-consumer state. No consumer reads it yet; the credits program reads it for
-its photo goals once it has one. The community photo counts are applied
-directly in the upload's finalising transaction and do not read the outbox.
+The Credits photo-goal worker reads committed `photo-taken` rows lacking a
+receipt in `credits.photo_goal_receipts`. Receipt and effects commit together;
+the outbox holds no consumer state. This anti-join also sees transactions
+that commit after a higher event ID has already been processed. A sequence
+ID alone is not a safe consumer watermark. The community photo counts are
+applied directly in the upload's finalising transaction and do not read the
+outbox.
 
 Invariants: rows are never updated; the leased
 `camera-photo-events-retention` job deletes rows older than 30 days, 1000 per
@@ -1334,6 +1389,62 @@ so the table holds about 30 days of events and a consumer further behind
 misses events. `user_address` is the photo's owner, lowercase. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
+
+## Seasonal photo rewards workload
+
+`shop::credits::goals` reads Camera photo facts and Social subscription facts
+using the existing database pool. `credits.seasons` and `credits.season_goals`
+hold season windows, MANA limits and the `take-photo` assignment. These tables
+have no active monetary seed. `credits.program_opt_outs` records enrollment
+withdrawal separately from the paid wallet's identity.
+
+The worker writes one durable `credits.photo_goal_receipts` row per processed
+photo, including terminal ineligibility decisions. Eligible photos update
+`credits.goal_progress`, keyed by wallet, season, week and goal. Completion
+creates one `credits.goal_grants` row with immutable signature terms and one
+keyed Social notification with its delivery records. All four effects share
+one transaction. A failed signature or notification rolls back progress and
+the receipt so the event can be retried. No network call runs inside this
+transaction. Per-wallet advisory locks serialize progress and enrollment;
+claim serialization enforces the weekly and season limits.
+
+MANA amounts use integer wei in `numeric(78,0)` and exact integer arithmetic.
+The signed grant binds wallet, chain, manager, amount, expiry and salt.
+`credits.usages` supplies consumption by the same chain, manager and credit
+hash. Goal grants never credit or settle the paid USD ledger. Wallet-scoped
+reads use the progress and grant primary-key prefixes. The partial receipt
+index on `(address, season_id, week_id, ordinal)` for counted photos serves
+the ordered `photosTaken` lookup; the pending-photo query uses the unique
+receipt identity. `METRICS.md` records the synthetic access-path measurement.
+Production volume and latency remain unmeasured.
+
+The `credits-reminders` job reads progress rows of the current week and grants
+for its weekly reminders by the progress and grant primary keys. Its usage
+reminders read claimed grants expiring within seven days or one day through
+the partial index on `credits.goal_grants (expires_at) WHERE claimed_at IS NOT
+NULL`, which the object pass creates on existing databases. Notifications are
+keyed per wallet, season and week, so a rerun inserts nothing.
+
+The worker runs through the existing leased job registry under the Ops write
+gate. Receipts survive photo deletion and event retention; changing visibility
+does not undo a reward. The Camera event retention window still bounds crash
+recovery: a worker more than 30 days behind cannot recover deleted facts.
+These new relations are created by the schema object pass on existing
+databases, without resetting wallet, photo or notification data.
+
+Credits keeps its own in-memory feature-flag snapshots, fetched with the
+configured Credits audience outside SQL transactions. Social's persisted
+`dapps` answer and Explorer's site answer cannot authorize these rewards.
+Local flag overrides remain in `explore_api.feature_flags_local`; missing
+remote policy is retryable rather than a completed photo decision.
+
+`credits.captcha_attempts` holds a wallet's failure count and most recent
+failure time. Three failures block claims for 24 hours from the last failure;
+a successful solve clears the row. The existing `credits.captcha_challenges`
+table records `generated_at` for the minimum solve-time check and keeps a
+two-hour challenge lifetime. Both challenge and failure updates take the
+same wallet lock. The additive `0043_credits_captcha_generated_at` step
+preserves existing challenges and establishes their solve-time baseline.
 
 ## Camera reel import workload
 
@@ -1528,6 +1639,23 @@ on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is up
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
 
+The `friend_first_wear` notification producer
+(`social/src/notifications/first_wear.rs`, leased `friend-first-wear`) reads
+`content.deployments` by `id` through the same id cursor and gap records,
+under source `friend_first_wear`: the signer's `entity_timestamp` is not
+storage order (a local deploy may be signed up to 15 minutes ahead, a synced
+one long before), and a cursor on it would skip every profile stored after
+one signed later and every tie past a page edge. Its first pass starts at the
+head. A batch seeds baselines and claims first wears (`social.worn_history`)
+in the transaction that advances the cursor, and notifies after it commits,
+so a restart never re-notifies a claim. Its batch is
+`BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
+(600 s), and it publishes the same lag and gap gauges under its source. A profile the
+node stored more than 24 hours after its entity timestamp is history a
+syncing node caught up on and is passed without effect; the lag is measured
+at storage, so a stalled producer still works through its backlog.
+`social.first_wear_cursor` is no longer read.
+
 ### Presence badges flow
 
 Input is every verified LiveKit join and leave (the gatekeeper's
@@ -1654,3 +1782,135 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Player report intake workload
+
+The player report intake (the node area `/report-user`,
+`services/catalyst/comms/src/gatekeeper/reports.rs`) serves a human writing a
+handful of rows into `social.player_reports` and
+`social.player_report_evidence` (`schemas/40_social.sql`). The Sites report
+form (`/report`, `apps/sites/src/data/lib/catalyst/landings/report.ts`) posts
+to `/comms/reports/players`, which the node does not serve, so the intake has
+no caller in this tree; pointing the form at
+`/report-user/api/reports/players` is the next work. The order is
+slots first, report last, so the tables share no FK: a presign inserts one
+to five evidence slots under a fresh report id (`report_id`, `evidence_key`
+`<position>-<sanitized filename>`, `reporter_address`, the declared type and
+size, the client address bucket `source_key`) in one transaction; each
+evidence `PUT` (at most 5 MiB, the node's cap and half the form's 10 MB;
+exactly the declared size, the declared type in the header and a first bytes
+that match that type) claims the slot under its row lock (`content_hash` and
+`uploaded_at`, set only while they are empty) and then stores the bytes in
+the shared hash-addressed blob store; the filing locks the slots
+(`FOR UPDATE`), checks every planned key is claimed with its bytes in the
+store and inserts the `player_reports` row (`status`
+`open`, `evidence_keys` the slot keys in order). Volume is a few reports a
+day; every statement of these three steps is a primary-key read or write,
+beside the limit counts below. The moderator read
+(`GET /api/reports`, the moderator token or a listed moderator wallet) lists
+filed reports newest first (`player_reports_created_idx`), optionally for one
+reported wallet (`player_reports_reported_idx`), and loads their evidence
+rows with one `= ANY` by report id, in `evidence_keys` order (50 reports a
+page, at most 200, so one answer holds at most 1,000 evidence rows); the
+evidence bytes come from the store by `content_hash`, as a download the
+browser neither sniffs nor runs (`nosniff`, `Content-Disposition:
+attachment`, `Content-Security-Policy: sandbox`).
+
+Limits, each checked under a per-reporter transaction advisory lock so two
+concurrent requests cannot both pass: a wallet files at most 5 reports per
+rolling hour (`REPORTS_PER_HOUR`, counted on `player_reports_reporter_idx`;
+the presign refuses early and the filing refuses again, both `429`; a person
+writes each report by hand, and five an hour is above the node's volume of a
+day), and holds at most 25 unfiled slots minted in the last 24 hours, the
+evidence of one hour's reports
+(`PENDING_SLOTS_PER_REPORTER`, counted on
+`player_report_evidence_reporter_idx` against `NOT EXISTS` of the report
+row; `429` at presign). Slots older than that window no longer count, so an
+abandoned form never locks a wallet out for good.
+
+A fresh key is a new wallet, so the wallet limits alone bound nothing. Each
+client address (the one `serve` pins to the socket peer or takes from a
+trusted proxy, IPv6 by its /64) therefore has two budgets that no key
+escapes, both buckets that refill over a day, held in the memory of each
+`serve` process: 100 presigned slots (`SOURCE_SLOTS_PER_DAY`, four wallets'
+pending quotas, for the people one address stands for) and 500 MiB sent to
+the store (`SOURCE_KIB_PER_DAY`, those slots filled once at the file cap;
+every `PUT` of the declared size and type spends its size, also one the slot
+then refuses). Both refuse with `429`.
+
+A sender with many addresses has as many budgets, and a process that
+restarts forgets them, so one bound holds for the whole node, and each
+client address bucket has a share of it. Workload: one more read per
+presign, after the wallet quotas and the address budget pass: the sum of
+`greatest(declared_size, 262144)` over the slots that count, for the node
+and, as a `FILTER` of the same statement, for the presign's `source_key`. A
+slot counts while it holds a file and is younger than 24 hours (a range read
+on the partial index `player_report_evidence_uploaded_idx`), or while it
+holds none and is younger than 15 minutes (`RESERVATION_MINUTES`; a range
+read on `player_report_evidence_created_idx`); a normal day has a few rows
+in both. The first `PUT` of a slot adds one lock and no read. The 15 minutes
+are a policy, not a measurement: the form sends its files right after the
+presign, and five files at the cap in that time need less than 230 kbit/s.
+Invariants: the presign takes one transaction advisory lock
+(`player-report-evidence:node`) before the sum and holds it over its
+inserts, and the first `PUT` of a slot takes the same lock before its claim,
+so every `serve` process counts the same rows and no two requests pass
+together; the claim is refused (`410`) when the slot is older than the 15
+minutes on the statement clock read under that lock, so a slot that left the
+sum never takes a file; a slot takes one body of its declared size (below),
+so the stored bytes of the slots created in any 24 hours never pass the sum;
+the sum plus the new slots never passes `REPORT_EVIDENCE_DAILY_MIB` (default
+2,048 MiB; the value is the operator's policy for the store space reports
+may take in a day, not a measurement; 0 accepts no evidence); the slots of
+one address bucket plus the new ones never pass that address's share, a
+sixteenth of the bound (`NODE_SHARE_DIVISOR`; 128 MiB at the default, the
+evidence of one wallet's hour) and at least one report's files at the cap
+(`NODE_SHARE_FLOOR_BYTES`, 25 MiB), so fewer than sixteen addresses never
+close the intake to another one (a policy, not a measurement); the sweep
+deletes no slot younger than the 24 hours; each slot counts for at least
+256 KiB (`NODE_SLOT_FLOOR_BYTES`), so each of the two ranges holds at most
+the bound divided by that floor (8,192 rows at the default), which is the
+most the sum reads. The node lock is the last lock a request takes: after
+the reporter lock in a presign, after the slot's row lock in a `PUT`. At the
+bound or at the share a presign answers `429` and keeps the address's
+spend. Filed reports keep their evidence without a time limit: no code moves
+a report out of `open`, so no retention rule exists yet.
+
+`source_key` is the bucket key of the presign's client address and nothing
+more of the request: an IPv4 address as it is, an IPv6 address cut to its
+/64, empty when `serve` has no address. Only the sum above reads it; no
+route returns it. Each presign clears it on up to 100 slots that hold a file
+and are older than the 24 hours (oldest first on the partial index
+`player_report_evidence_source_idx`, `FOR UPDATE SKIP LOCKED`), and a slot
+without a file loses it when the sweep below deletes the slot. So a key
+stays for 24 hours and then until the next presigns; a node that receives no
+presign clears nothing. The step `0046_player_report_evidence_source_key`
+adds the column; the slots from before it keep `NULL` and count for the node
+and for no address.
+
+Each presign then deletes up to 100 unfiled slots older than the 24 hours
+(`SWEEP_BATCH`, twenty presigns' worth), oldest first on
+`player_report_evidence_created_idx`, so the store's collector frees their
+bytes. It locks the slots it takes with `FOR UPDATE SKIP LOCKED` and deletes
+them in a second statement that checks `NOT EXISTS` of the report row again:
+a filing holds its slots' locks until its report row is committed, so the
+sweep never deletes the evidence of a filed report. The scan passes the
+slots of filed reports older than the window (one primary-key probe each),
+which at a few reports a day stays a small range. A report not filed within
+the 24 hours is gone: its `PUT` and its filing answer `404`.
+
+Invariants: a slot's `reporter_address` is the wallet that signed the
+presign and never changes; an evidence `PUT` and the filing are refused for
+any other signer (`403`), and once the report row exists (`409`); a filing
+names exactly the presigned keys, all uploaded, so a filed report has
+complete evidence; the reason is one of the form's five values and the texts
+keep the form's 500-character limits; a slot takes one body: the claim sets
+`content_hash` only while it is empty and only the claiming `PUT` writes to
+the store, the same bytes again answer `200` (`409` until the first write
+ends), other bytes answer `409`, and a store that fails clears the claim, so
+the slot takes a `PUT` again in its 15 minutes. Slots whose client never files are deleted by the sweep
+above; the queue reads filed reports only. The
+bytes are content-addressed and rooted by `content_hash`
+(`services/catalyst/storage/src/gc.rs`), so two reports attaching the same
+file share one blob and a report's deletion never removes bytes another one
+references.
