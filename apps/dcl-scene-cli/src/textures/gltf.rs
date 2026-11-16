@@ -306,12 +306,10 @@ pub fn image_source(
 /// normal maps, everything else is data.
 fn slot_mode(key: &str) -> ColorMode {
     match key {
-        "baseColorTexture"
-        | "emissiveTexture"
-        | "diffuseTexture"
-        | "sheenColorTexture"
-        | "specularColorTexture"
-        | "specularGlossinessTexture" => ColorMode::Srgb,
+        // every `*ColorTexture` is colour: base, sheen, specular, and the material
+        // extensions' (`KHR_materials_diffuse_transmission`'s `diffuseTransmissionColorTexture`)
+        key if key.ends_with("ColorTexture") => ColorMode::Srgb,
+        "emissiveTexture" | "diffuseTexture" | "specularGlossinessTexture" => ColorMode::Srgb,
         "normalTexture" | "clearcoatNormalTexture" => ColorMode::Normal,
         _ => ColorMode::Linear,
     }
@@ -841,6 +839,28 @@ mod tests {
     #[test]
     fn colour_modes_follow_material_slots() {
         use ColorMode::*;
+        for key in [
+            "baseColorTexture",
+            "sheenColorTexture",
+            "specularColorTexture",
+            "diffuseTransmissionColorTexture",
+            "emissiveTexture",
+            "diffuseTexture",
+            "specularGlossinessTexture",
+        ] {
+            assert_eq!(slot_mode(key), Srgb, "{key}");
+        }
+        for key in ["normalTexture", "clearcoatNormalTexture"] {
+            assert_eq!(slot_mode(key), Normal, "{key}");
+        }
+        for key in [
+            "metallicRoughnessTexture",
+            "occlusionTexture",
+            "diffuseTransmissionTexture",
+            "thicknessTexture",
+        ] {
+            assert_eq!(slot_mode(key), Linear, "{key}");
+        }
         assert_eq!(resolve_mode(&[Srgb]), (Srgb, false));
         assert_eq!(resolve_mode(&[Normal]), (Normal, false));
         assert_eq!(resolve_mode(&[Normal, Normal]), (Normal, false));
