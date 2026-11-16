@@ -51,6 +51,29 @@ class InventoryTests(unittest.TestCase):
                     with self.subTest(target=target, name=name), self.assertRaises(ValueError):
                         guard.verify(required, changed, ignored, str(target))
 
+    def test_maintenance_review_regressions_resolve_exact_source_and_inventory(self):
+        cases = {
+            "comms/src/gatekeeper/admission/cluster/fence.rs": ("gatekeeper::admission::cluster::fence::tests::", [
+                "selected_replay_rotates_beyond_queue_capacity_without_a_global_tick_and_retains_old_sources",
+                "healthy_owned_replay_waits_for_renewal_but_a_new_desire_is_due_immediately",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/tests.rs": ("gatekeeper::admission::cluster::subscriber::tests::", [
+                "shutdown_settles_all_selected_targets_independently_of_due_maintenance_filter",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/wallet_queue/tests.rs": ("gatekeeper::admission::cluster::subscriber::wallet_queue::tests::", [
+                "maintenance_has_lifetime_credit_item_and_running_bounds_with_event_headroom",
+                "maintenance_credit_remains_charged_until_uncertain_mutation_settles",
+                "maintenance_capacity_notifications_refill_more_than_the_global_queue_without_a_timer",
+                "an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_wallet_work",
+            ]),
+        }
+        required = guard.MANDATORY_ARCHIPELAGO[("catalyst_comms", "lib")]
+        for path, (prefix, names) in cases.items():
+            source = (ROOT / "services/catalyst" / path).read_text()
+            for name in names:
+                self.assertEqual(len(re.findall(r"\bfn\s+" + name + r"\s*\(", source)), 1)
+                self.assertEqual(required.count(prefix + name), 1)
+
     def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
         cases = [
             ("tests/pulse_cluster_lookup.rs", "", [

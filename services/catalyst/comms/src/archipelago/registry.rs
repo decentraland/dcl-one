@@ -95,6 +95,24 @@ struct LegacyRoomState {
     bindings: HashMap<u64, ControlPositionPermit>,
 }
 
+const LEGACY_SAMPLE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn freshest_live_link<'a>(
+    sessions: &'a [PeerLink],
+    rooms: &LegacyRoomState,
+) -> Option<&'a PeerLink> {
+    sessions
+        .iter()
+        .filter(|peer| {
+            !peer.is_closed()
+                && rooms
+                    .samples
+                    .get(&peer.id)
+                    .is_some_and(|sample| sample.updated.elapsed() < LEGACY_SAMPLE_TTL)
+        })
+        .max_by_key(|peer| peer.id)
+}
+
 struct V4Peer {
     raw_session: String,
     connection_id: String,
@@ -454,21 +472,13 @@ impl PeersRegistry {
             .filter(|p| !p.is_closed())
             .map(|p| p.id)
             .collect();
-        rooms.samples.retain(|id, sample| {
-            live.contains(id) && sample.updated.elapsed() < std::time::Duration::from_secs(10)
-        });
+        rooms
+            .samples
+            .retain(|id, sample| live.contains(id) && sample.updated.elapsed() < LEGACY_SAMPLE_TTL);
         let candidates: Vec<_> = peers
             .iter()
             .filter_map(|(address, sessions)| {
-                let link = sessions
-                    .iter()
-                    .filter(|p| {
-                        !p.is_closed()
-                            && rooms.samples.get(&p.id).is_some_and(|sample| {
-                                sample.updated.elapsed() < std::time::Duration::from_secs(10)
-                            })
-                    })
-                    .max_by_key(|p| p.id)?;
+                let link = freshest_live_link(sessions, &rooms)?;
                 let sample = rooms.samples.get(&link.id)?;
                 Some(LegacyCandidate {
                     address: address.clone(),
@@ -493,17 +503,9 @@ impl PeersRegistry {
         }
         let peers = self.peers.lock();
         let mut rooms = self.legacy_rooms.lock();
-        let selected = peers.get(&candidate.address).and_then(|sessions| {
-            sessions
-                .iter()
-                .filter(|p| {
-                    !p.is_closed()
-                        && rooms.samples.get(&p.id).is_some_and(|sample| {
-                            sample.updated.elapsed() < std::time::Duration::from_secs(10)
-                        })
-                })
-                .max_by_key(|p| p.id)
-        });
+        let selected = peers
+            .get(&candidate.address)
+            .and_then(|sessions| freshest_live_link(sessions, &rooms));
         if !selected.is_some_and(|p| p.id == candidate.link.id) {
             return false;
         }
@@ -525,17 +527,7 @@ impl PeersRegistry {
         rooms.candidates.get(address) == Some(&(link_id, epoch))
             && peers
                 .get(address)
-                .and_then(|sessions| {
-                    sessions
-                        .iter()
-                        .filter(|p| {
-                            !p.is_closed()
-                                && rooms.samples.get(&p.id).is_some_and(|sample| {
-                                    sample.updated.elapsed() < std::time::Duration::from_secs(10)
-                                })
-                        })
-                        .max_by_key(|p| p.id)
-                })
+                .and_then(|sessions| freshest_live_link(sessions, &rooms))
                 .is_some_and(|p| p.id == link_id && p.session == session)
     }
 
@@ -756,7 +748,7 @@ impl PeersRegistry {
             let current = !permit.close && rooms.bindings.get(&permit.link_id) == Some(permit)
                 && permit.binding.as_ref().is_some_and(|(_, stamp)| stamp.selected_origin != crate::gatekeeper::admission::cluster::fence::SelectedRoomOrigin::LegacyIntentV2
                     || (rooms.candidates.get(&permit.address) == Some(&(permit.link_id, stamp.selected_identity))
-                        && peers.get(&permit.address).and_then(|sessions| sessions.iter().filter(|p| !p.is_closed() && rooms.samples.get(&p.id).is_some_and(|sample| sample.updated.elapsed() < std::time::Duration::from_secs(10))).max_by_key(|p| p.id)).is_some_and(|p| p.id == permit.link_id)));
+                        && peers.get(&permit.address).and_then(|sessions| freshest_live_link(sessions, &rooms)).is_some_and(|p| p.id == permit.link_id)));
             return current && link.while_open(apply);
         }
         let held = self.v4_peers.lock();

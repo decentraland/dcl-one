@@ -312,3 +312,211 @@ async fn retained_mutation_credit_survives_work_completion_and_can_schedule_its_
     drop(others);
     assert_eq!(queue.credits.available_permits(), MAX_TOTAL_WORK);
 }
+
+#[tokio::test]
+async fn maintenance_has_lifetime_credit_item_and_running_bounds_with_event_headroom() {
+    let queue = Arc::new(WalletQueue::default());
+    let owner = Arc::new(WorkOwner::default());
+    let done = Arc::new(AtomicUsize::new(0));
+    for index in 0..MAX_COLD_MAINTENANCE_WORK {
+        assert!(queue.enqueue_maintenance(
+            owner.clone(),
+            &format!("maintenance-{index}"),
+            Box::pin(futures::future::pending()),
+            completion(&done),
+            None
+        ));
+    }
+    assert_eq!(queue.running_work(), MAX_RUNNING_COLD_MAINTENANCE);
+    for index in MAX_COLD_MAINTENANCE_WORK..MAX_MAINTENANCE_WORK {
+        assert!(queue.enqueue_maintenance_class(
+            owner.clone(),
+            &format!("urgent-{index}"),
+            Box::pin(futures::future::pending()),
+            completion(&done),
+            None,
+            MaintenanceClass::Urgent
+        ));
+    }
+    assert_eq!(queue.running_work(), MAX_RUNNING_MAINTENANCE);
+    assert!(!queue.enqueue_maintenance(
+        owner.clone(),
+        "overflow",
+        Box::pin(async {}),
+        completion(&done),
+        None
+    ));
+    for index in 0..MAX_RUNNING_WORK - MAX_RUNNING_MAINTENANCE {
+        assert!(queue.enqueue_scoped(
+            owner.clone(),
+            &format!("event-{index}"),
+            Box::pin(futures::future::pending()),
+            completion(&done)
+        ));
+    }
+    assert_eq!(queue.running_work(), MAX_RUNNING_WORK);
+    queue.cancel(&owner);
+    owner.settle().await;
+    assert_eq!(queue.outstanding_work(), 0);
+    assert_eq!(queue.maintenance_capacity(), MAX_MAINTENANCE_WORK);
+}
+
+#[tokio::test]
+async fn maintenance_credit_remains_charged_until_uncertain_mutation_settles() {
+    let queue = Arc::new(WalletQueue::default());
+    let owner = Arc::new(WorkOwner::default());
+    let done = Arc::new(AtomicUsize::new(0));
+    let (tx, mut rx) = mpsc::channel(MAX_MAINTENANCE_WORK);
+    for index in 0..MAX_COLD_MAINTENANCE_WORK {
+        let tx = tx.clone();
+        assert!(queue.enqueue_maintenance(
+            owner.clone(),
+            &format!("uncertain-{index}"),
+            Box::pin(async move {
+                tx.send(current_work_credit().unwrap()).await.unwrap();
+            }),
+            completion(&done),
+            None
+        ));
+    }
+    let mut retained = Vec::new();
+    for _ in 0..MAX_COLD_MAINTENANCE_WORK {
+        retained.push(rx.recv().await.unwrap());
+    }
+    completed(&done, MAX_COLD_MAINTENANCE_WORK).await;
+    assert_eq!(queue.cold_credits.available_permits(), 0);
+    assert_eq!(
+        queue.maintenance_credits.available_permits(),
+        MAX_MAINTENANCE_WORK - MAX_COLD_MAINTENANCE_WORK
+    );
+    assert!(queue.enqueue_maintenance_class(
+        owner.clone(),
+        "urgent-owned",
+        Box::pin(async {}),
+        completion(&done),
+        None,
+        MaintenanceClass::Urgent
+    ));
+    assert!(!queue.enqueue_maintenance(
+        owner.clone(),
+        "new-maintenance",
+        Box::pin(async {}),
+        completion(&done),
+        None
+    ));
+    assert!(queue.enqueue_scoped(
+        owner.clone(),
+        "new-event",
+        Box::pin(async {}),
+        completion(&done)
+    ));
+    assert!(queue.enqueue_maintenance(
+        owner.clone(),
+        "uncertain-0",
+        Box::pin(async {}),
+        completion(&done),
+        Some(retained[0].clone())
+    ));
+    completed(&done, MAX_COLD_MAINTENANCE_WORK + 4).await;
+    drop(retained);
+    assert_eq!(
+        queue.maintenance_credits.available_permits(),
+        MAX_MAINTENANCE_WORK
+    );
+    owner.settle().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn maintenance_capacity_notifications_refill_more_than_the_global_queue_without_a_timer() {
+    let queue = Arc::new(WalletQueue::default());
+    let owner = Arc::new(WorkOwner::default());
+    let done = Arc::new(AtomicUsize::new(0));
+    let started = Instant::now();
+    let mut admitted = 0;
+    while admitted < 1400 {
+        while queue.cold_maintenance_capacity() > 0 && admitted < 1400 {
+            assert!(queue.enqueue_maintenance(
+                owner.clone(),
+                &format!("fast-{admitted}"),
+                Box::pin(async {}),
+                completion(&done),
+                None
+            ));
+            admitted += 1;
+        }
+        if admitted < 1400 {
+            queue.capacity_changed().await;
+        }
+    }
+    completed(&done, 1400).await;
+    assert_eq!(Instant::now(), started);
+    assert_eq!(queue.outstanding_work(), 0);
+    assert_eq!(queue.maintenance_capacity(), MAX_MAINTENANCE_WORK);
+}
+
+#[tokio::test]
+async fn an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_wallet_work() {
+    let queue = Arc::new(WalletQueue::default());
+    let owner = Arc::new(WorkOwner::default());
+    let done = Arc::new(AtomicUsize::new(0));
+    let (credit_tx, mut credit_rx) = mpsc::channel(1);
+    assert!(queue.enqueue_maintenance(
+        owner.clone(),
+        "wallet",
+        Box::pin(async move {
+            credit_tx
+                .send(current_work_credit().unwrap())
+                .await
+                .unwrap();
+        }),
+        completion(&done),
+        None
+    ));
+    let retained = credit_rx.recv().await.unwrap();
+    completed(&done, 1).await;
+    let (release_tx, release_rx) = oneshot::channel();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let first = order.clone();
+    assert!(queue.enqueue_maintenance(
+        owner.clone(),
+        "wallet",
+        Box::pin(async move {
+            release_rx.await.unwrap();
+            first.lock().unwrap().push(1);
+        }),
+        completion(&done),
+        Some(retained.clone())
+    ));
+    let second = order.clone();
+    assert!(queue.enqueue_maintenance_class(
+        owner.clone(),
+        "wallet",
+        Box::pin(async move {
+            second.lock().unwrap().push(2);
+        }),
+        completion(&done),
+        Some(retained.clone()),
+        MaintenanceClass::Urgent
+    ));
+    assert_eq!(queue.running_work(), 1);
+    assert_eq!(
+        queue.cold_credits.available_permits(),
+        MAX_COLD_MAINTENANCE_WORK - 1
+    );
+    assert_eq!(
+        queue.maintenance_credits.available_permits(),
+        MAX_MAINTENANCE_WORK - 1
+    );
+    release_tx.send(()).unwrap();
+    completed(&done, 3).await;
+    assert_eq!(*order.lock().unwrap(), vec![1, 2]);
+    assert_eq!(
+        queue.cold_credits.available_permits(),
+        MAX_COLD_MAINTENANCE_WORK - 1
+    );
+    drop(retained);
+    assert_eq!(
+        queue.cold_credits.available_permits(),
+        MAX_COLD_MAINTENANCE_WORK
+    );
+}

@@ -227,8 +227,10 @@ impl IslandSockets for AppStateInner {
         &self,
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
     ) -> bool {
-        snapshot.selected_origin == 1
-            || (snapshot.selected_origin == 3
+        use crate::gatekeeper::admission::cluster::fence::SelectedRoomOrigin;
+        let origin = SelectedRoomOrigin::from_wire(snapshot.selected_origin);
+        origin == SelectedRoomOrigin::Native
+            || (origin == SelectedRoomOrigin::LegacyIntentV2
                 && snapshot.selected_identity.is_some_and(|epoch| {
                     self.registry.selected_legacy_is_current(
                         &snapshot.wallet,
@@ -335,7 +337,15 @@ pub struct ControlPositionAnnouncement {
     payload: Vec<u8>,
     permit: Option<ControlPositionPermit>,
     subject: &'static str,
-    legacy: Option<(String, String, u64, u64, bool)>,
+    legacy: Option<LegacyAnnouncement>,
+}
+
+struct LegacyAnnouncement {
+    address: String,
+    session: String,
+    link_id: u64,
+    epoch: u64,
+    close: bool,
 }
 
 impl ControlPositionAnnouncement {
@@ -359,13 +369,13 @@ impl ControlPositionAnnouncement {
             payload: record.encode()?,
             permit: None,
             subject: crate::protocol::bus::control_position::LegacyRoomIntent::SUBJECT,
-            legacy: Some((
-                record.wallet,
-                record.session,
+            legacy: Some(LegacyAnnouncement {
+                address: record.wallet,
+                session: record.session,
                 link_id,
-                record.candidate_epoch,
-                record.position.is_none(),
-            )),
+                epoch: record.candidate_epoch,
+                close: record.position.is_none(),
+            }),
         })
     }
 }
@@ -455,12 +465,23 @@ pub(crate) fn start(state: &AppState, jobs: &Jobs) -> bool {
     jobs.spawn("archipelago-feed", move |ctx| async move {
         tokio::select! {
             _ = run(&state, rx) => {}
+            _ = run_legacy_producer(&state) => {}
             _ = ctx.cancel.cancelled() => {}
         }
         drop(subscriptions);
         Ok(())
     });
     true
+}
+
+async fn run_legacy_producer(state: &AppState) {
+    let mut producer = crate::archipelago::ws::control_position::LegacyProducer::default();
+    let mut positions = tokio::time::interval(Duration::from_millis(500));
+    positions.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        positions.tick().await;
+        producer.publish_current(state).await;
+    }
 }
 
 /// Drains the outbox one publish at a time and runs the reconciliation cycle, until the job is
@@ -474,9 +495,6 @@ async fn run(state: &AppState, mut rx: mpsc::Receiver<ControlPositionAnnouncemen
     let bus = state.gatekeeper.bus.as_ref();
     let mut pending = Reconciliation::new(Instant::now());
     let mut linked = false;
-    let mut producer = crate::archipelago::ws::control_position::LegacyProducer::default();
-    let mut positions = tokio::time::interval(Duration::from_millis(500));
-    positions.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut next_announcement = Instant::now();
     let mut readiness = tokio::time::interval(READINESS_POLL);
     readiness.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -492,9 +510,6 @@ async fn run(state: &AppState, mut rx: mpsc::Receiver<ControlPositionAnnouncemen
             state.feed.link_observed.store(linked, Ordering::Release);
         }
         tokio::select! {
-            _ = positions.tick() => {
-                producer.publish_current(state).await;
-            }
             _ = readiness.tick() => {
                 sample(state, &mut linked, &mut pending);
             }
@@ -547,8 +562,14 @@ fn control_position_announcement_is_current(
     registry: &PeersRegistry,
     announcement: &ControlPositionAnnouncement,
 ) -> bool {
-    if let Some((address, session, id, epoch, close)) = &announcement.legacy {
-        return *close || registry.legacy_candidate_is_current(address, session, *id, *epoch);
+    if let Some(legacy) = &announcement.legacy {
+        return legacy.close
+            || registry.legacy_candidate_is_current(
+                &legacy.address,
+                &legacy.session,
+                legacy.link_id,
+                legacy.epoch,
+            );
     }
     announcement.permit.as_ref().is_some_and(|permit| {
         permit.is_close() || registry.control_position_permit_is_current(permit)

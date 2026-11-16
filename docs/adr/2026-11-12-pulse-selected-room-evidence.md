@@ -111,8 +111,20 @@ facts cease renewal while the finite lease remains; foreign rows are untouched.
 This reclaims the bounded selected capacity across departures under one continuing
 Pulse incarnation. A restarted source cannot prove an old source's departure;
 cross-incarnation retirement and reconstruction of lost unchanged native hints
-remain unresolved. Unknown evidence retains the obligation and can exhaust the
-finite bound until current-source evidence supersedes it.
+remain unresolved. A Pulse-only restart can leave old-source slots
+retained until current-source evidence supersedes them; enough such residual wallets
+exhaust the selected bound and new wallets are refused island credentials. This is
+an unresolved rollout blocker. Slot occupancy and cap refusals are exposed as
+`comms_cluster_selected_slots` and `comms_cluster_selected_slot_refused_total`.
+Maintenance retries rotate with bounded item, lifetime-credit and running reservations;
+event and durable takeover lanes retain headroom. Cold hint-only work is limited to
+112 of 128 maintenance items and lifetime credits and eight of 16 maintenance runners;
+known-owned and unfinished targets retain the remaining reserve, run first and rotate
+separately without overtaking earlier work in the same wallet. Healthy exact owned targets wait
+until their 30-second renewal is due, while unknown or unfinished targets retry after
+five seconds. Capacity notifications refill batches without a global five-second
+throughput limit. The full shutdown settlement scan remains independent of due filtering.
+These bounds do not establish cross-incarnation retirement or measured useful throughput.
 
 These paths cannot fence an unrestricted older SQL writer. Deployment still needs
 reader readiness, old writer and backend quiescence, actual allocator-domain proof

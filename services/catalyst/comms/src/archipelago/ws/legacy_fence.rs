@@ -33,7 +33,7 @@ impl LegacyFence {
             "SELECT owner_epoch, assignment_revision, fencing_token, assignment_json
             FROM social.archipelago_v4_assignments
             WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'
-              AND owner_session=$3 AND updated_at>=clock_timestamp()-interval '90 seconds'",
+              AND owner_session=$3 AND updated_at>=timezone('UTC',clock_timestamp())-interval '90 seconds'",
         )
         .bind(audience)
         .bind(address)

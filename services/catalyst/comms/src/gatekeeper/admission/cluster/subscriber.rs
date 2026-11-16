@@ -505,6 +505,19 @@ impl ClusterSubscriber {
     where
         F: FnOnce(Arc<Self>) -> futures::future::BoxFuture<'static, ()> + Send + 'static,
     {
+        self.spawn_class(owner, wallet, work, false)
+    }
+
+    fn spawn_class<F>(
+        self: &Arc<Self>,
+        owner: Arc<WorkOwner>,
+        wallet: String,
+        work: F,
+        maintenance: bool,
+    ) -> bool
+    where
+        F: FnOnce(Arc<Self>) -> futures::future::BoxFuture<'static, ()> + Send + 'static,
+    {
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         let me = self.clone();
         let queued: QueuedWork = Box::pin(async move { work(me.clone()).await });
@@ -513,16 +526,26 @@ impl ClusterSubscriber {
             .assignment_fence
             .as_ref()
             .and_then(|fence| fence.retained_work_credit(&wallet));
-        self.queue.enqueue_scoped_with_credit(
-            owner,
-            &wallet,
-            queued,
-            Box::new(move || {
-                settled.in_flight.fetch_sub(1, Ordering::SeqCst);
-                settled.idle.notify_waiters();
-            }),
-            retained,
-        )
+        let done: wallet_queue::Completion = Box::new(move || {
+            settled.in_flight.fetch_sub(1, Ordering::SeqCst);
+            settled.idle.notify_waiters();
+        });
+        if maintenance {
+            let class = if self
+                .assignment_fence
+                .as_ref()
+                .is_some_and(|fence| fence.selected_maintenance_urgent(&wallet))
+            {
+                wallet_queue::MaintenanceClass::Urgent
+            } else {
+                wallet_queue::MaintenanceClass::Cold
+            };
+            self.queue
+                .enqueue_maintenance_class(owner, &wallet, queued, done, retained, class)
+        } else {
+            self.queue
+                .enqueue_scoped_with_credit(owner, &wallet, queued, done, retained)
+        }
     }
 
     /// Validates a decoded event before invalidating recovery or queuing its work.
@@ -579,6 +602,10 @@ impl ClusterSubscriber {
     /// a currently recovering session are coalesced, so a slow mint is not starved by periodic
     /// retries.
     pub fn announce_connect(self: &Arc<Self>, wallet: &str, session: &str) {
+        self.announce_class(wallet, session, false);
+    }
+
+    fn announce_class(self: &Arc<Self>, wallet: &str, session: &str, maintenance: bool) {
         let lifecycle = self.lifecycle.lock().unwrap();
         let Some(owner) = lifecycle.owner.clone() else {
             return;
@@ -594,9 +621,14 @@ impl ClusterSubscriber {
             return;
         };
         let for_wallet = wallet.clone();
-        self.spawn_scoped(owner, wallet, move |me| {
-            Box::pin(async move { me.recover_guarded(&for_wallet, &session, ticket).await })
-        });
+        self.spawn_class(
+            owner,
+            wallet,
+            move |me| {
+                Box::pin(async move { me.recover_guarded(&for_wallet, &session, ticket).await })
+            },
+            maintenance,
+        );
     }
 
     /// The one gate in this service that fails open: a background feed has no caller to return an
@@ -1766,32 +1798,40 @@ impl ClusterSubscriber {
     }
 }
 impl ClusterSubscriber {
+    pub(crate) async fn maintenance_capacity_changed(&self) {
+        self.queue.capacity_changed().await;
+    }
+
     pub(crate) async fn replay_due(self: &Arc<Self>) {
         let due = {
             let mut next = self.selected_reconcile_at.lock().unwrap();
             let due = tokio::time::Instant::now() >= *next;
             if due {
-                *next = tokio::time::Instant::now() + Duration::from_secs(5);
+                *next = tokio::time::Instant::now() + Duration::from_secs(1);
             }
             due
         };
-        if due && let Some(authority) = &self.assignment_fence {
-            for (wallet, session) in authority.selected_reconciliation_targets() {
-                self.announce_connect(&wallet, &session);
+        // Durable takeover recovery and events use the event reservation before maintenance.
+        if due && let Some(store) = &self.safety {
+            match store.due_takeovers().await {
+                Ok(due) => {
+                    for (wallet, session) in due {
+                        self.announce_connect(&wallet, &session);
+                    }
+                }
+                Err(_) => tracing::warn!(
+                    "island durable recovery scheduling unavailable; admission remains closed"
+                ),
             }
         }
-        let Some(store) = &self.safety else {
-            return;
-        };
-        match store.due_takeovers().await {
-            Ok(due) => {
-                for (wallet, session) in due {
-                    self.announce_connect(&wallet, &session);
-                }
+        if let Some(authority) = &self.assignment_fence {
+            let available = self.queue.maintenance_capacity();
+            for (wallet, session) in authority
+                .selected_reconciliation_batch(available, self.queue.cold_maintenance_capacity())
+                .await
+            {
+                self.announce_class(&wallet, &session, true);
             }
-            Err(_) => tracing::warn!(
-                "island durable recovery scheduling unavailable; admission remains closed"
-            ),
         }
     }
 }
