@@ -461,7 +461,7 @@ pub struct WorldsConfig {
     pub ws_max_sockets: u32,
 
     /// Connector sockets that have not completed the handshake, counted inside `WS_MAX_SOCKETS`;
-    /// 0 keeps a quarter of it.
+    /// 0 keeps a quarter of it. When full, a new socket evicts the oldest pending one.
     #[arg(long, env = "WS_MAX_PENDING_HANDSHAKES", default_value_t = 0)]
     pub ws_max_pending_handshakes: u32,
 

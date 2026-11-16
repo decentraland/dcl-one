@@ -39,7 +39,8 @@ pub struct ServerConfig {
     /// included; 0 is unlimited.
     pub max_sockets_per_ip: u32,
     /// `WS_MAX_PENDING_HANDSHAKES`: sockets that have not completed the handshake, counted inside
-    /// `max_sockets`; a quarter of it by default, and never more than it.
+    /// `max_sockets`; a quarter of it by default, and never more than it. When full, a new socket
+    /// evicts the oldest pending one.
     pub max_pending_handshakes: u32,
     /// `WS_MAX_PENDING_HANDSHAKES_PER_IP`: pending handshakes one client source may hold, counted
     /// like `max_sockets_per_ip`; 0 is unlimited.

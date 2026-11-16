@@ -1598,43 +1598,52 @@ async fn upgrade_cap_is_shared_across_paths_and_mounts_and_released_after_transp
     wait(|| state.sockets.available_permits() == 1).await;
 }
 #[tokio::test]
-async fn pending_handshakes_cannot_take_the_capacity_of_authenticated_sockets() {
+async fn a_full_pending_share_evicts_its_oldest_handshake_instead_of_refusing_new_joins() {
     let mut settings = Settings::for_tests();
     settings.server.max_sockets = 5;
     settings.server.max_pending_handshakes = 2;
     let (port, state) = server_with(settings).await;
-    let refused = |port| async move {
-        let error = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
-            .await
-            .unwrap_err();
-        let Error::Http(response) = error else {
-            panic!("HTTP refusal expected")
-        };
-        assert_eq!(response.status().as_u16(), 503);
-        assert_eq!(response.headers()["retry-after"], "5");
+    let closed = |mut socket: Socket| async move {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("the evicted handshake closes");
     };
 
-    let idle = raw_upgrade(port).await;
-    // Authenticated sockets give their pending slot back at the welcome.
+    let oldest = raw_upgrade(port).await;
+    let mut held = raw_upgrade(port).await;
+    wait(|| state.pending_handshakes.held() == 2).await;
+    // The share is full, yet a new client joins: the oldest pending handshake makes room.
     let (first, _) = authenticated(port).await;
-    let (second, _) = authenticated(port).await;
-    wait(|| state.pending_handshakes.available_permits() == 1).await;
-    let other_idle = raw_upgrade(port).await;
-    assert_eq!(state.sockets.available_permits(), 1);
-    // Socket capacity remains, but only for a socket that can complete its handshake.
-    refused(port).await;
-
-    drop(idle);
-    wait(|| state.pending_handshakes.available_permits() == 1).await;
-    // The freed pending slot admits a socket that completes its handshake.
-    let (third, _) = authenticated(port).await;
-    assert_eq!(state.sockets.available_permits(), 1);
-    assert_eq!(state.pending_handshakes.available_permits(), 1);
-    drop((first, second, third, other_idle));
-    wait(|| {
-        state.sockets.available_permits() == 5 && state.pending_handshakes.available_permits() == 2
-    })
-    .await;
+    closed(oldest).await;
+    // Sockets that completed the handshake no longer hold a pending place.
+    wait(|| state.pending_handshakes.held() == 1).await;
+    wait(|| state.sockets.available_permits() == 3).await;
+    // The next-oldest handshake was not evicted and still completes.
+    let wallet = PrivateKeySigner::random();
+    held.send(packet(client_packet::Message::ChallengeRequest(
+        ChallengeRequestMessage {
+            address: format!("{:#x}", wallet.address()),
+        },
+    )))
+    .await
+    .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut held).await else {
+        panic!("challenge expected")
+    };
+    send_eoa_chain(&mut held, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(_) = receive(&mut held).await else {
+        panic!("welcome expected")
+    };
+    wait(|| state.pending_handshakes.held() == 0).await;
+    drop((first, held));
+    wait(|| state.sockets.available_permits() == 5).await;
 }
 
 #[tokio::test]
@@ -2147,7 +2156,7 @@ async fn a_client_source_holds_at_most_its_share_of_pending_handshakes() {
         Some((429, Some("5".into())))
     );
     let _other = connect_from(port, "203.0.113.8").await.unwrap();
-    assert_eq!(state.pending_handshakes.available_permits(), 7);
+    assert_eq!(state.pending_handshakes.held(), 3);
     // A socket that completes its handshake gives its source's share back.
     let (_first, _) = authenticate(
         first,

@@ -126,15 +126,8 @@ fn upgrade(
         return too_many();
     };
     let handler = state.handlers.clone().try_acquire_owned();
-    let pending = state.pending_handshakes.clone().try_acquire_owned();
-    let (permit, pending) = match (state.sockets.clone().try_acquire_owned(), pending) {
-        (Ok(permit), Ok(pending)) if handler.is_ok() && !state.restart.is_cancelled() => (
-            permit,
-            super::state::PendingHandshake {
-                _global: pending,
-                _source: pending_source,
-            },
-        ),
+    let permit = match state.sockets.clone().try_acquire_owned() {
+        Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
         _ => {
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -142,6 +135,11 @@ fn upgrade(
             )
                 .into_response();
         }
+    };
+    // Taken only once the socket is admitted, so a refused upgrade never evicts another socket.
+    let pending = super::state::PendingHandshake {
+        global: state.pending_handshakes.admit(),
+        _source: pending_source,
     };
     let ws = ws.protocols(protocols);
     ws.read_buffer_size(16 * 1024)
@@ -258,6 +256,7 @@ async fn handshake_operation<F: std::future::Future>(
     socket: &mut WebSocket,
     state: &AppState,
     deadline: tokio::time::Instant,
+    evicted: &tokio_util::sync::CancellationToken,
     signed_pending: bool,
     operation: F,
 ) -> Option<F::Output> {
@@ -267,6 +266,7 @@ async fn handshake_operation<F: std::future::Future>(
             biased;
             _ = state.restart.cancelled() => return None,
             _ = tokio::time::sleep_until(deadline) => return None,
+            _ = evicted.cancelled() => return None,
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Ping(payload))) => {
                     if !io::send(socket, Message::Pong(payload), None).await { return None; }
@@ -295,6 +295,7 @@ async fn handle_socket(
     state: AppState,
     pending: super::state::PendingHandshake,
 ) {
+    let evicted = pending.global.evicted.clone();
     let mut pending = Some(pending);
     let mut stage = Stage::HandshakeStart;
     let mut challenge_to_sign = String::new();
@@ -363,7 +364,7 @@ async fn handle_socket(
                                     tracing::debug!("rejecting: challengeRequest carries no valid address");
                                     break;
                                 }
-                                let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, false, state.deny_list.is_denied(&addr)).await else { break };
+                                let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, false, state.deny_list.is_denied(&addr)).await else { break };
                                 if denied {
                                     tracing::warn!(addr = %addr, "archipelago ws rejected: deny-listed wallet");
                                     break;
@@ -404,7 +405,7 @@ async fn handle_socket(
                                 };
                                 let Some(issued) = issuance.as_ref() else { break };
                                 let Some(verified) = handshake_operation(
-                                    &mut socket, &state, handshake_deadline, true,
+                                    &mut socket, &state, handshake_deadline, &evicted, true,
                                     state.challenges.redeem_and_verify_payload(
                                         issued, &challenge_to_sign, &chain, state.gatekeeper.eip1654(),
                                     ),
@@ -416,12 +417,12 @@ async fn handle_socket(
                                             tracing::warn!(addr = %signer, "rejecting: auth chain yields no usable session key");
                                             break;
                                         }
-                                        let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.deny_list.is_denied(&signer)).await else { break };
+                                        let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, true, state.deny_list.is_denied(&signer)).await else { break };
                                         if denied {
                                             tracing::warn!(addr = %signer, "archipelago ws rejected: deny-listed wallet (post-auth)");
                                             break;
                                         }
-                                        let Some(banned) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.ban_checker.is_banned(&signer)).await else { break };
+                                        let Some(banned) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, true, state.ban_checker.is_banned(&signer)).await else { break };
                                         if banned {
                                             tracing::warn!(addr = %signer, "archipelago ws rejected: platform-banned wallet");
                                             let _ = send_packet(&mut socket, kicked_packet(), None).await;
@@ -526,6 +527,10 @@ async fn handle_socket(
             }
             _ = tokio::time::sleep_until(handshake_deadline), if stage != Stage::Completed => {
                 tracing::debug!("closing socket: the handshake stalled past its timeout");
+                break;
+            }
+            _ = evicted.cancelled(), if stage != Stage::Completed => {
+                tracing::debug!("closing socket: a newer handshake took its pending place");
                 break;
             }
             event = next_event(events.as_mut()) => {
