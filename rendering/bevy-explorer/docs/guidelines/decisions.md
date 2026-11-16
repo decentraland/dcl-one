@@ -7,6 +7,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate divergences from Unity
 
+- **Legacy Ethereum response envelopes follow Protocol.** `getUserAccount` returns
+  `{address}` (or `{}` without a connected wallet), and `convertMessageToObject` returns
+  `{dict}`. These are the shapes declared in `ethereum_controller.proto`. The Unity client
+  at [`c78b1f0`](https://github.com/decentraland/unity-explorer/blob/c78b1f0c59545b0d3b1ff43e109fa63997267850/Explorer/Assets/StreamingAssets/Js/Modules/EthereumController.js)
+  returns the bare address and dictionary. Dictionary keys are own properties, including
+  `__proto__`, as a protobuf map requires. Signing uses the existing engine Web3 permission
+  and wallet approval path; a hosted scene has no connected user wallet.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
@@ -134,6 +141,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
+  when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
+  standing in that parcel scene. An empty parcel and a portable experience never do.
+  - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
+    and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
+    toasts "Nearby voice chat unavailable in this scene." when the count goes up.
+  - Don't play nearby players or show their speaking badge there. Their tracks stay subscribed, so
+    hearing returns on the way out.
+  - Don't touch calls and community streams: their mic, audio, badges and mic on/off sounds are
+    unaffected.
+  - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
+    hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
+  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -265,6 +285,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
   the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
   buttons are disabled, with no spinner, while its answer runs.
+- **Community announcements.** As unity-explorer: the card's ANNOUNCEMENTS tab reads 10 a page,
+  the next as the list's end comes into view, newest first. Owners and moderators get the composer
+  first ("Any Announcement to share with your Community?", 500 characters counted as UTF-16 units,
+  so most emoji take two, with a counter shown once there is text, the chat's emoji panel and `:` suggestions, a POST button held with a spinner
+  while it posts), then a separator. The owner deletes any announcement and an author their own,
+  asked first ("Are you sure you want to delete this Announcement?", DELETE and CANCEL); a
+  moderator cannot delete another member's. Anyone who sees the list likes and unlikes, one
+  request at a time for each announcement, and the count changes once the service answers. The
+  author shows a verified mark or their #tag, and the official mark when the post comes marked
+  `isOfficial` by the social API. A post or a delete reads the first page again. Every failure is
+  toasted with unity-explorer's four texts. A member who sees no announcements reads "No
+  Announcements here yet!". A private community's announcements are not read for someone who
+  isn't a member (the service refuses them); their tab stays empty. Differences: POST stays off
+  for a draft of only whitespace, and the text is posted without leading and trailing whitespace
+  (unity-explorer enables POST for any text and sends it as typed; the service refuses a post that
+  starts with whitespace); a failed post stops the button's spinner (unity-explorer
+  leaves it spinning); and the official mark comes with the post, not from the client: this
+  node's social API marks each post (`isOfficial`, a field the Foundation's API doesn't have)
+  when its author is in the explorer feature flags' `alfa-official-wallets` list (`wallets`
+  variant, first CSV line), which unity-explorer reads itself. Against the Foundation's social
+  API, which sends no such field, no post shows the official mark.
 - **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
   social client's block sets and comms' scene admission and scene-room lists through one
   `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps
@@ -371,7 +412,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
   portable like any other: each restricted action goes through the stored rules and the per-use
   prompt, which shows what is being done (the URL to open, the realm to change to). So
-  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `requiredPermissions` grants and refuses nothing (legacy permission queries only report it),
+  and nothing is asked before the scene starts. On native,
   `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
   permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
   declared-permission check on them would be bypassable.
@@ -403,8 +445,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
   goes to, is the deployer of the place's scene here.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
-  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
+  markers with a camera into a texture; here the atlas and every marker are elements of the HUD
+  page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
+  each, the clustering grid, the draw order and the hover and appear timings are the same. Culling
+  and pooling have no counterpart, and a click goes to the topmost marker under the pointer.
+  The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
+  under the satellite map like its tiles; its water stands still, where unity-explorer animates
+  it every frame. Nothing on the map is drawn per frame.
+- **The map's layers are on the full map only.** unity-explorer draws live events, points of
+  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
+  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
+  full map alone, and a route shows no pin on the minimap's edge.
+- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
+  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
+  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
+  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
+  reads no `MapPin` and has no such layer.
+- **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
+  takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
+  sets it.
+- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
+  menu and from Places cards; neither has that control here.
+- **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
+  (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
+  starts from the player's saved interest and keeps working after the list is rebuilt; a like or
+  a dislike refreshes the rating shown; a like, a favourite or an interest the service refuses
+  goes back to what it was; a place without photos says so; closing the map forgets the whole
+  back history; "Link copied!" is a toast of its own instead of replacing the worlds warning's
+  text; and the text of a post on X and of a calendar entry is url-encoded.
+- **Escape in the map's search field clears it first.** The next press leaves the field and the
+  one after closes the map, as on the HUD's other pages.
 - **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
   while the player travels. Here a jump reconnects the realm under the loading screen, and every
   other page closes on a jump, so Events does too.
@@ -445,6 +519,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate choices that look like mistakes
 
+- **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
+  A place of several parcels is marked on the parcel a walk over them stops at, which depends on
+  their order and is not always the middle one; a cluster stands half a parcel south-west of the
+  average of its markers; the clustering grid is coarser at zoom level 2 (27 parcels) than at
+  level 1 (25); the other players are read when the People layer comes on and after a teleport,
+  not on a timer; a route keeps its destination across a teleport; and an empty search says "No results
+  founds".
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
@@ -513,6 +594,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **Legacy permission queries report declarations and current runtime policy without granting
+  either.** As in kernel@5b2cff4, a permission the scene.json `requiredPermissions` declares
+  reports true, and a portable also reports move-player and trigger-emote. Otherwise native
+  queries use the same trusted scene, realm, portable and presence rules as per-use checks;
+  an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
+  availability for an assigned scene because those browser paths are ungated. Undeclared media
+  hostname grants report false because the engine has no such grant store. Actions still pass
+  their existing permission and wallet checks, so a declaration does not create a grant. A
+  query accepts at most 16 permission items and resolves the scene policy once.
+- **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
+  assigned scene's actual identifier, metadata, content mappings and content URL. Its
+  `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and
+  cannot satisfy the legacy bundle format.
+- **Legacy avatar pulls recover current state after queue overflow.** Each scene owns at most
+  1024 queued events. Overflow causes the next pull to remove previously delivered identities
+  and bootstrap current peers; intermediate positions and transient expressions are not
+  replayed. Public speaking state is sampled from current participants, scoped by both room
+  hash and native context, with private calls excluded. Position indices count received native
+  updates, and expression timestamps record native delivery time.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **Legacy reads and signing can resolve during scene startup.** Account, permission and
+  entity-definition reads, signing, and avatar subscription/pulls use the immediate RPC
+  transport, keeping the existing trusted scene identity and action handlers. They do not
+  require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
+  budget between renderer flushes, excluding file reads; all immediate payloads share an
+  80 MiB budget. The web
+  relay independently enforces these limits and runs at most 32 queries concurrently,
+  alongside the existing file-read barrier. Retained payloads remain charged until the engine
+  releases their reply channels, even when callers cancel. A pending wallet approval therefore
+  does not block unrelated reads. A full renderer queue retains accepted web requests for retry;
+  native IPC buffers at most 1000 responses and 80 MiB per scene, serves pending scenes in
+  turn, and continues reading channel closes while the renderer queue is full. Overflow
+  terminates that scene and retains a terminal error for the renderer. File reads retain
+  their existing ordering. Deprecated CRDT reads drain already received data without
+  flushing scene state or waiting for another renderer tick.

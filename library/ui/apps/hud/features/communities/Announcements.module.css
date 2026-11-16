@@ -1,0 +1,163 @@
+/* The Announcements tab: the composer for owners and moderators, a separator, then one card per
+   announcement, newest first. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.empty {
+  margin: 40px auto;
+  color: var(--ink-45);
+  font-size: var(--type-14);
+  text-align: center;
+}
+.separator {
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--white-10);
+}
+.loadingMore {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 12px;
+}
+
+.card,
+.composer {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--r-card);
+  background: var(--white-10);
+}
+.body {
+  flex: 1;
+  min-width: 0;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--type-13);
+}
+.author {
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+.tag,
+.age {
+  color: var(--ink-45);
+}
+.official {
+  display: inline-flex;
+}
+.text {
+  margin: 6px 0 0;
+  font-size: var(--type-14);
+  line-height: 1.5;
+  color: var(--ink-85);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.like,
+.delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-65);
+  font-family: inherit;
+  font-size: var(--type-13);
+  cursor: pointer;
+}
+.like:hover,
+.delete:hover {
+  color: var(--text);
+}
+.like:disabled,
+.delete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.liked {
+  color: var(--brand);
+}
+.liked:hover {
+  color: var(--brand-hover);
+}
+.delete {
+  margin-left: auto;
+}
+/* The like's heart: the favourite outline, and the solid one tinted in the brand red once liked
+   (MaskIcon takes the button's colour). */
+.heart {
+  position: relative;
+  display: inline-flex;
+}
+/* The like's mark: grows to twice its size and fades out, once. */
+.burst {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  color: var(--brand);
+  pointer-events: none;
+  animation: burst var(--dur-pop) var(--ease-outquad) forwards;
+}
+@keyframes burst {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .burst {
+    display: none;
+  }
+}
+
+.compose {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.field {
+  width: 100%;
+}
+.composeFoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.count {
+  margin-left: auto;
+  color: var(--ink-45);
+  font-size: var(--type-12);
+}
+.composeFoot > :last-child {
+  margin-left: auto;
+}
+.count + :last-child {
+  margin-left: 0;
+}
+/* The suggestions and the emoji panel open over the list, under the composer's buttons. */
+.suggest,
+.picker {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 2;
+}

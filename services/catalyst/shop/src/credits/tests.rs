@@ -168,6 +168,12 @@ pub(crate) struct MockBroker {
     pub configured: bool,
     pub buys: Arc<parking_lot::Mutex<Vec<BuyRequest>>>,
     pub buy_answer: parking_lot::Mutex<Result<(), BrokerError>>,
+    /// When set, a buy leaves its key's `shop.broker_purchases` claim in
+    /// this status before answering (`sent`: it broadcast; `pending`: it
+    /// re-armed a claim that failed before broadcast).
+    pub claims: Option<(PgPool, &'static str)>,
+    pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
+    pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -177,6 +183,9 @@ impl MockBroker {
             configured: true,
             buys: Arc::new(parking_lot::Mutex::new(Vec::new())),
             buy_answer: parking_lot::Mutex::new(Ok(())),
+            claims: None,
+            resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
             verifications: HashMap::new(),
         }
     }
@@ -202,10 +211,21 @@ impl Broker for MockBroker {
 
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError> {
         self.buys.lock().push(req.clone());
+        if let Some((pool, status)) = &self.claims {
+            claim_broker_buy(pool, &req.idempotency_key, status, None).await;
+        }
         self.buy_answer
             .lock()
             .clone()
             .map(|_| format!("0x{}", req.idempotency_key.replace(':', "")))
+    }
+
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError> {
+        self.resumes.lock().push(idempotency_key.to_string());
+        self.resume_answer
+            .lock()
+            .clone()
+            .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
     }
 
     async fn reclaim(
@@ -236,6 +256,27 @@ impl Broker for MockBroker {
             .cloned()
             .ok_or_else(|| ApiError::bad_request("economy rejected the txHash"))
     }
+}
+
+/// Records a broker buy claimed under `key` in `status`, as the broker's
+/// claim and broadcast leave it.
+async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
+    sqlx::query(
+        "INSERT INTO shop.broker_purchases \
+         (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
+          price_wei, chain_id, mode, status) \
+         VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
+                 'primary', $4) \
+         ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
+         DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
+    )
+    .bind(key)
+    .bind(forward_tx_hash)
+    .bind(COLLECTION)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 fn lazy_pool() -> PgPool {
@@ -598,6 +639,9 @@ async fn purchase_revoked(pool: &PgPool, pi: &str) -> String {
 
 async fn cleanup(pool: &PgPool, addr: &str) {
     for sql in [
+        "DELETE FROM shop.broker_purchases WHERE idempotency_key IN ( \
+             SELECT 'checkout:' || o.checkout_id || ':' || o.id FROM credits.fulfillment_outbox o \
+             JOIN credits.checkouts c ON c.id = o.checkout_id WHERE c.address = $1)",
         "DELETE FROM credits.fulfillment_outbox WHERE checkout_id IN (SELECT id FROM credits.checkouts WHERE address = $1)",
         "DELETE FROM credits.checkouts WHERE address = $1",
         "DELETE FROM credits.cart_items WHERE cart_id IN (SELECT id FROM credits.carts WHERE address = $1)",
@@ -6012,6 +6056,259 @@ async fn a_terminal_broker_failure_freezes_the_checkout_and_refunds_the_line() {
         .unwrap();
     assert_eq!(status, "reversed");
     assert_eq!(available(&pool, &addr).await, "10");
+
+    cleanup(&pool, &addr).await;
+}
+
+async fn outbox_lines(pool: &PgPool, checkout_id: i64) -> Vec<(i64, String, i32)> {
+    sqlx::query_as(
+        "SELECT id, status, attempts FROM credits.fulfillment_outbox \
+         WHERE checkout_id = $1 ORDER BY id",
+    )
+    .bind(checkout_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn checkout_status(pool: &PgPool, checkout_id: i64) -> String {
+    sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE id = $1")
+        .bind(checkout_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// One debited checkout of `items` (3 Credits each) for `addr`, nothing fulfilled.
+async fn debited_checkout(state: &SharedState, addr: &str, items: &[&str]) -> i64 {
+    let mut lines = Vec::new();
+    for item in items {
+        let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:{item}");
+        state
+            .credits
+            .add_item(cart_line(addr, item, &urn, 1), "3")
+            .await
+            .unwrap();
+        lines.push(RepricedLine {
+            basis_wei: Some("2500000000000000000".into()),
+            ..line(item, "3")
+        });
+    }
+    state
+        .credits
+        .run_checkout(addr, &unique("broker-claim"), &lines)
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn a_buy_that_mined_after_its_attempt_timed_out_is_resumed_not_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    let cfg = || StateCfg {
+        fulfillment_mode: "auto",
+        ..StateCfg::default()
+    };
+    seed_wallet(&pool, &addr, "0", "10").await;
+
+    // The first attempt broadcasts the buy, then gives up waiting for its receipt.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "sent"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), market_for_checkout(), broker);
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    assert_eq!(state.outbox_worker().run_once().await.unwrap(), 1);
+    let [(line_id, status, attempts)] = &outbox_lines(&pool, checkout).await[..] else {
+        panic!("one line")
+    };
+    assert_eq!(
+        (status.as_str(), *attempts),
+        ("pending", 0),
+        "a broadcast buy's timeout does not count toward the attempt cap"
+    );
+
+    // It mined late, minting the item's last unit: the store no longer sells
+    // it, and a fresh mintability check would refund a buy that spent MANA.
+    let sold_out = FakeMarket::default()
+        .with_item(COLLECTION, "1", "2500000000000000000", false)
+        .with_mana_usd("0.5");
+    let broker = MockBroker::configured();
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let resume_answer = broker.resume_answer.clone();
+    *resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: escrow forward tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), sold_out, broker);
+    let worker = state.outbox_worker();
+    for _ in 0..6 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+    }
+    assert_eq!(
+        outbox_lines(&pool, checkout).await[0].1,
+        "pending",
+        "an unsettled buy waits past the attempt cap"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilling");
+    assert_eq!(available(&pool, &addr).await, "7");
+
+    *resume_answer.lock() = Ok(());
+    assert_eq!(worker.run_once().await.unwrap(), 1);
+    assert!(buys.lock().is_empty(), "nothing is bought twice");
+    assert_eq!(resumes.lock().len(), 7);
+    assert!(
+        resumes
+            .lock()
+            .iter()
+            .all(|k| *k == format!("checkout:{checkout}:{line_id}"))
+    );
+    assert_eq!(outbox_lines(&pool, checkout).await[0].1, "confirmed");
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilled");
+    assert_eq!(available(&pool, &addr).await, "7", "no refund");
+    assert_reconciles(&pool, &addr, "after the resumed buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_buy_that_failed_before_broadcast_counts_its_attempts_and_is_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    // The claim failed before broadcast; each buy re-arms it to `pending`
+    // and answers 409 without broadcasting, so no transaction is recorded.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "pending"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 409: previously failed before broadcast and was re-armed".into(),
+    ));
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(&pool, &format!("checkout:{checkout}:{line}"), "error", None).await;
+
+    let worker = state.outbox_worker();
+    for expected_attempts in 1..5 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+        assert_eq!(outbox_lines(&pool, checkout).await[0].2, expected_attempts);
+    }
+    assert_eq!(
+        worker.run_once().await.unwrap(),
+        1,
+        "the fifth attempt freezes"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "10",
+        "nothing was sent: refunded"
+    );
+    assert_eq!(buys.lock().len(), 5, "every attempt is a checked buy");
+    assert!(
+        resumes.lock().is_empty(),
+        "a claim without a transaction is never resumed"
+    );
+    assert_reconciles(&pool, &addr, "after refunding the unsent claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let broker = MockBroker::configured();
+    let resumes = broker.resumes.clone();
+    *broker.resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let worker = state.outbox_worker();
+    let freeze = |checkout: i64, failed_line: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+                .bind(failed_line)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+                .bind(checkout)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    // One line failed before any broadcast; its sibling's buy is in flight.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (unsent, sent) = (lines[0].0, lines[1].0);
+    let sent_key = format!("checkout:{checkout}:{sent}");
+    claim_broker_buy(&pool, &sent_key, "sent", None).await;
+    freeze(checkout, unsent).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "compensation waits for the in-flight buy"
+    );
+    assert_eq!(available(&pool, &addr).await, "4", "nothing refunded yet");
+    assert_eq!(
+        *resumes.lock(),
+        vec![sent_key.clone()],
+        "the frozen checkout's in-flight line is resumed"
+    );
+
+    // The buy mined but the escrow forward reverted: MANA is spent, the
+    // token sits with the relayer. Only the unsent line is refunded.
+    claim_broker_buy(&pool, &sent_key, "reverted", Some("0xforward")).await;
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after holding the forward-reverted line").await;
+
+    // A buy that reverted on its own leg spent nothing and is refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(
+        &pool,
+        &format!("checkout:{checkout}:{line}"),
+        "reverted",
+        None,
+    )
+    .await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
 
     cleanup(&pool, &addr).await;
 }

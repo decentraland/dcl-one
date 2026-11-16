@@ -1,0 +1,15 @@
+# A flat node_modules: the scene's bundle and its source map ship inside @dcl/inspector.
+nodeLinker: hoisted
+# The engine's companion @dcl/sdk-commands depends on a @dcl/protocol tarball served by the SDK CDN.
+blockExoticSubdeps: false
+overrides:
+  # @dcl/quests-client asks for the "latest" @dcl/sdk; this keeps it on the project's version.
+  '@dcl/quests-client>@dcl/sdk': 7.22.6-25007982108.commit-83012ab
+  # Left out, so the scene bundles the asset-packs the inspector above it uses.
+  '@dcl/inspector>@dcl/asset-packs': '-'
+  # One @dcl/protocol for the whole project: the tarball @dcl/sdk-commands pins.
+  '@dcl/protocol': https://sdk-team-cdn.decentraland.org/@dcl/protocol/branch//dcl-protocol-1.0.0-25001674716.commit-044c893.tgz
+allowBuilds:
+  '@dcl/sdk-commands': false
+  esbuild: false
+  protobufjs: false

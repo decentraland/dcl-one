@@ -1267,13 +1267,40 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
-    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
-    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences`
+    /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
+    /// `requiredPermissions`, kept as raw json so a value of another shape never fails the
+    /// scene.json. Only the legacy permission query reads it ([`Self::legacy_declared_permissions`]).
+    pub required_permissions: Option<serde_json::Value>,
 }
 
+/// scene.json `requiredPermissions` names, indexed by their legacy `PermissionItem` value.
+pub const LEGACY_PERMISSION_NAMES: [&str; 7] = [
+    "ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE",
+    "ALLOW_TO_TRIGGER_AVATAR_EMOTE",
+    "USE_WEB3_API",
+    "USE_WEBSOCKET",
+    "USE_FETCH",
+    "ALLOW_MEDIA_HOSTNAMES",
+    "OPEN_EXTERNAL_LINK",
+];
+
 impl SceneMeta {
+    /// The legacy `PermissionItem` values this scene.json declares, as a bit set (bit `n` is
+    /// item `n`). Unknown names and non-string entries are ignored.
+    pub fn legacy_declared_permissions(&self) -> u8 {
+        self.required_permissions
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|name| LEGACY_PERMISSION_NAMES.iter().position(|n| *n == name))
+            .fold(0, |bits, item| bits | 1 << item)
+    }
+
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -1282,6 +1309,16 @@ impl SceneMeta {
             .and_then(serde_json::Value::as_str)
             .map(|value| value.parse().unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    /// Whether nearby voice stays on while the player stands in this scene: `nearbyVoiceChat`
+    /// absent, not a string, empty or `enabled` (any case); any other string turns it off.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("nearbyVoiceChat"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
     }
 }
 
@@ -1307,6 +1344,9 @@ impl std::str::FromStr for PortableExperiencesToggle {
         }
     }
 }
+
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1794,6 +1834,34 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(default)]
+    pub scene_blocked: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl MicState {
+    /// Leaving the scene does not reopen the mic.
+    pub fn set_scene_blocked(&mut self, blocked: bool) {
+        self.scene_blocked = blocked;
+        if blocked {
+            self.enabled = false;
+        }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -2072,6 +2140,74 @@ mod tests {
     }
 
     #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: false,
+            refusals: 0,
+        };
+        mic.set_scene_blocked(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_blocked(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            scene_blocked: true,
+            refusals: 0,
+        };
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.scene_blocked = false;
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.nearby_voice_chat_enabled()
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
+    }
+
+    #[test]
     fn reset_outdated_settings_caps_uncapped_uploads() {
         let saved = |gpu_bytes_per_frame| {
             let mut config = AppConfig {
@@ -2253,6 +2389,37 @@ mod tests {
                 PortableExperiencesToggle::Enabled,
                 "{toggles}"
             );
+        }
+    }
+
+    #[test]
+    fn required_permissions_map_to_legacy_items_leniently() {
+        let declared = |extra: &str| -> u8 {
+            serde_json::from_str::<SceneMeta>(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{extra}}}"#
+            ))
+            .unwrap()
+            .legacy_declared_permissions()
+        };
+        assert_eq!(declared(""), 0);
+        assert_eq!(
+            declared(r#","requiredPermissions":["USE_FETCH","ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE"]"#),
+            0b1_0001
+        );
+        assert_eq!(
+            declared(&format!(
+                r#","requiredPermissions":{}"#,
+                serde_json::to_string(&LEGACY_PERMISSION_NAMES).unwrap()
+            )),
+            0b111_1111
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for extra in [
+            r#","requiredPermissions":"USE_FETCH""#,
+            r#","requiredPermissions":[1,null,"use_fetch","UNKNOWN"]"#,
+            r#","requiredPermissions":{"USE_FETCH":true}"#,
+        ] {
+            assert_eq!(declared(extra), 0, "{extra}");
         }
     }
 }

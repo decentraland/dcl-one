@@ -80,6 +80,11 @@
 //! The local byte route serves complete GET responses; it
 //! does not implement byte ranges or ETag validators, and its HEAD response is 404.
 //!
+//! Photos copied from camera-reel-service by `catalyst camera-reel import`
+//! ([`import`]) keep their ids, owners, documents, visibility, dates and file
+//! names, so their old URLs resolve as an upload's; the import records them
+//! in `camera_reel.imported_images`.
+//!
 //! Mount: `.nest("/camera-reel-service", camera_reel::router(state))`;
 //! the router's own paths are `/api/...`, `/admin/...`, `/health`. It is not
 //! merged at the root: `/api/places/{id}/...` is the explore places
@@ -111,6 +116,7 @@ pub mod dto;
 pub mod events;
 pub mod handlers;
 pub mod http;
+pub mod import;
 pub mod writes;
 
 #[cfg(test)]

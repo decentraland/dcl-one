@@ -65,8 +65,8 @@ The Decentraland Creator Hub Monorepo is a comprehensive ecosystem for creating,
 
 ### Monorepo Management
 
-- **Package Manager**: npm (preferred over yarn)
-- **Workspaces**: npm workspaces
+- **Package Manager**: pnpm, pinned in the root `package.json`
+- **Workspaces**: pnpm workspace (`pnpm-workspace.yaml`)
 - **Dependency Sync**: syncpack 13.0.4
 
 ### Decentraland SDK Integration
@@ -253,11 +253,11 @@ This project does not use a traditional database. Instead, it uses:
 
 ### Local Development with Full Stack
 
-1. **Asset Packs**: `cd packages/asset-packs && npm start` (SDK7 dev server on port 8001)
+1. **Asset Packs**: `cd packages/asset-packs && pnpm start` (SDK7 dev server on port 8001)
 2. **Content Server**: `cd packages/asset-packs && docker-compose up` (port 9000)
-3. **Upload Assets**: `cd packages/asset-packs && npm run upload` (to local content server)
-4. **Inspector**: `cd packages/inspector && npm start` (port 8000)
-5. **Creator Hub**: Configure `.env` with local URLs, then `npm start` (port 3000)
+3. **Upload Assets**: `cd packages/asset-packs && pnpm run upload` (to local content server)
+4. **Inspector**: `cd packages/inspector && pnpm start` (port 8000)
+5. **Creator Hub**: Configure `.env` with local URLs, then `pnpm start` (port 3000)
 
 ### Environment Variables (Creator Hub)
 
@@ -271,7 +271,7 @@ This project does not use a traditional database. Instead, it uses:
 ### Code Quality Commands
 
 - **Lint**: `make lint` (check only), `make lint-fix` (auto-fix)
-- **Format**: `npm run format` (check), `npm run format:fix` (auto-fix)
+- **Format**: `pnpm run format` (check), `pnpm run format:fix` (auto-fix)
 - **Typecheck**: `make typecheck` (all packages)
 - **Test**: `make test` (unit tests), `make test-e2e` (E2E tests)
 
@@ -303,22 +303,22 @@ This project does not use a traditional database. Instead, it uses:
 ### Asset Pack Development
 
 - **Validation**: `make validate-asset-packs` checks all assets for errors
-- **Catalog Generation**: `npm run build:catalog` creates `catalog.json` from pack definitions
-- **SDK7 Scene**: `npm run build:js` compiles Smart Items to `bin/index.js`
-- **Library Build**: `npm run build:lib` compiles TypeScript definitions for npm package
+- **Catalog Generation**: `pnpm run build:catalog` creates `catalog.json` from pack definitions
+- **SDK7 Scene**: `pnpm run build:js` compiles Smart Items to `bin/index.js`
+- **Library Build**: `pnpm run build:lib` compiles TypeScript definitions for npm package
 
 ### Inspector Development
 
 - **Standalone**: Can be developed without Creator Hub using CLI WebSocket integration
-- **Hot Reload**: `npm start` watches and rebuilds on file changes
+- **Hot Reload**: `pnpm start` watches and rebuilds on file changes
 - **Testing**: Component tests with React Testing Library, E2E with Playwright
 - **Preview**: Each PR's "Creator Hub test builds" comment links, in its Inspector section, a preview served from the SDK S3 bucket (`creator-hub/branch/<branch>/inspector/index.html`)
 
 ### Creator Hub Development
 
-- **Watch Mode**: `npm run watch` (starts all three processes with hot reload)
-- **Building**: `npm run build` (builds main, preload, renderer separately)
-- **Compilation**: `npm run compile` (creates distributable .app/.exe)
+- **Watch Mode**: `pnpm run watch` (starts all three processes with hot reload)
+- **Building**: `pnpm run build` (builds main, preload, renderer separately)
+- **Compilation**: `pnpm run compile` (creates distributable .app/.exe)
 - **Testing**: Local testing requires `xattr -c` on macOS to bypass Gatekeeper
 
 ### External DevTools Integration (Unity CDP)
@@ -414,12 +414,12 @@ creator-hub/
 | Build asset-packs | `make build-asset-packs` | SDK7 + library + catalog |
 | Build inspector | `make build-inspector` | Requires asset-packs |
 | Build creator-hub | `make build-creator-hub` | Requires inspector |
-| Start development | `cd packages/creator-hub && npm start` | Watch mode |
+| Start development | `cd packages/creator-hub && pnpm start` | Watch mode |
 | Run tests | `make test` | Unit tests all packages |
 | Run E2E tests | `make test-e2e` | Inspector + Creator Hub |
 | Lint code | `make lint` | Check only |
 | Fix linting | `make lint-fix` | Auto-fix issues |
-| Format code | `npm run format:fix` | Prettier |
+| Format code | `pnpm run format:fix` | Prettier |
 | Type check | `make typecheck` | All packages |
 | Sync dependencies | `make sync-deps` | syncpack |
 | Generate proto files | `make protoc` | After .proto changes |
