@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the node test binaries concurrently; tests create their own scratch databases.
 # The node's integration tests link as a few grouped binaries (services/catalyst/Cargo.toml), so
-# the node_* groups run with twice the test threads of a crate's binary. The socket groups
+# the node_* groups run with twice the test threads of a crate's binary unless RUST_TEST_THREADS
+# is set (tooling/dev-test.sh sets 4, so in CI every binary runs 4). The socket groups
 # (sockets_*) keep wall-clock budgets: they run after the others, sharing one test thread per core.
 # An explicit RUST_TEST_THREADS caps every binary, groups included.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.

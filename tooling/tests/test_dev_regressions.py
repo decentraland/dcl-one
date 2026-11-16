@@ -4,7 +4,6 @@ import json
 import re
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import tempfile
@@ -899,6 +898,8 @@ class IntegrationTargetTests(unittest.TestCase):
         self.assertEqual(len(modules), len(set(modules)), "a file runs in one target only")
         files = {path.stem for path in tests.glob("*.rs") if path.resolve() not in roots}
         self.assertEqual(set(modules), files, "every tests/*.rs file is a module of one grouped target")
+        mains = {f"tests/{path.parent.name}/main.rs" for path in tests.glob("*/main.rs")}
+        self.assertLessEqual(mains, set(self.targets.values()), "every tests/<dir>/main.rs is a [[test]] target")
 
     def test_each_shard_of_three_takes_one_group_of_each_kind(self):
         # catalyst-test.sh cuts the byte-sorted list round robin. No other crate's test path starts with
