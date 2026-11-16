@@ -181,6 +181,7 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
+    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
     prepared.settings.content_url = stats_content_url(
         config.node.content_url.as_deref(),
         &content.settings.content_public_url,

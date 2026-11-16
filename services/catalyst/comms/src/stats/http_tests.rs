@@ -1305,3 +1305,15 @@ async fn camera_reel_paths_bypass_shared_trailing_slash_normalization() {
         }
     }
 }
+
+#[tokio::test]
+async fn status_reports_the_host_commit_hash() {
+    let (mut state, _, _, _, _sub) = setup();
+    state.settings.commit_hash = Some("built-commit".into());
+    let app = http::standalone(state);
+    let response = request(app, "GET", "/status", &[]).await;
+    assert_eq!(response.0, StatusCode::OK);
+    let status: Value = serde_json::from_str(&response.2).unwrap();
+    assert_eq!(status["commitHash"], "built-commit");
+    assert_eq!(status["version"], "v");
+}
