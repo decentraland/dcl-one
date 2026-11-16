@@ -494,6 +494,13 @@ impl AccessPolicy for ActorPolicy {
         addresses.insert(Address::parse(&address_of(KEY)).unwrap());
         Ok(addresses)
     }
+    async fn world_grantees(
+        &self,
+        _: &WorldName,
+        _: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        Ok(self.protected.clone())
+    }
 }
 
 struct Names(Result<Option<Address>, &'static str>);
@@ -869,8 +876,8 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
 
 /// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
 /// holders to the ban listings: a world deployment or streaming grantee, a
-/// LAND operator and a lease holder reach the store, an outsider still gets
-/// 401, and an extended surface that cannot be read is 503.
+/// LAND operator and a lease holder reach the store, an outsider and a
+/// stale stored owner still get 401, and grants that cannot be read are 503.
 #[tokio::test]
 async fn toolkit_ban_listings_admit_extended_holders() {
     let holder = address_of(KEY);
@@ -900,6 +907,12 @@ async fn toolkit_ban_listings_admit_extended_holders() {
     let world = metadata("MiXeD.dcl.eth", "SceneB", "1,1");
     let genesis = metadata("main", "GenesisA", "42,42");
     let grantee = StubPolicy {
+        grantees: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
+        ..StubPolicy::default()
+    };
+    // The ban-protection set still names a previous NAME holder when the
+    // owner lookup faults; the listing never reads it.
+    let stale_owner = StubPolicy {
         protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
         ..StubPolicy::default()
     };
@@ -912,7 +925,7 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         ..StubPolicy::default()
     };
     let unreadable = StubPolicy {
-        protected: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+        grantees: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
             store: "world permissions",
             reason_for_operators: "fixture".into(),
         }),
@@ -936,6 +949,12 @@ async fn toolkit_ban_listings_admit_extended_holders() {
             app(StubPolicy::default(), Some(lease_url.clone())),
             &genesis,
             StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "stale stored owner",
+            app(stale_owner, None),
+            &world,
+            StatusCode::UNAUTHORIZED,
         ),
         (
             "unreadable world grants",

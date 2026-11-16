@@ -384,9 +384,7 @@ async fn ensure_can_list_bans(
         service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
     })?;
     if let Some(row) = row
-        && scene::try_get_extended_holders(state, row)
-            .await?
-            .contains(signer.as_str())
+        && scene::holds_extended_permission(state, row, signer).await?
     {
         return Ok(());
     }
