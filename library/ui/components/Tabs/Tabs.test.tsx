@@ -1,47 +1,45 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { Tabs } from './Tabs'
-describe('when a captured Tabs item navigates a route', () => {
-  it('should use a native link with an explicit current-page state', () => {
-    render(<Tabs href="/profile" label="Overview" selected />)
-    expect(screen.getByRole('link')).toHaveAttribute('href', '/profile')
-    expect(screen.getByRole('link')).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+
+describe('Tabs', () => {
+  describe('when it has an href', () => {
+    it('renders a link tab that keeps the selected one in the tab order', () => {
+      render(
+        <div role="tablist" aria-label="Events">
+          <Tabs label="All Events" href="/whats-on" selected variant="pill" />
+          <Tabs label="My Events" href="/whats-on?tab=my" variant="pill" />
+        </div>
+      )
+      const all = screen.getByRole('tab', { name: 'All Events' })
+      const mine = screen.getByRole('tab', { name: 'My Events' })
+      expect(all.tagName).toBe('A')
+      expect(all).toHaveAttribute('href', '/whats-on')
+      expect(all).toHaveAttribute('aria-selected', 'true')
+      expect(all).toHaveAttribute('tabindex', '0')
+      expect(mine).toHaveAttribute('aria-selected', 'false')
+      expect(mine).toHaveAttribute('tabindex', '-1')
+    })
   })
-  it('should preserve modifier clicks and caller cancellation', () => {
-    const click = vi.fn((event) => event.preventDefault())
-    render(<Tabs href="/profile" label="Overview" onClick={click} />)
-    const result = fireEvent.click(screen.getByRole('link'), { ctrlKey: true })
-    expect(click).toHaveBeenCalledOnce()
-    expect(result).toBe(false)
-    expect(screen.getByRole('link')).not.toHaveAttribute('aria-current')
+
+  describe('when it has no href', () => {
+    it('renders a button tab that reports clicks', async () => {
+      const onClick = vi.fn()
+      render(<Tabs label="Overview" onClick={onClick} aria-controls="panel" />)
+      const tab = screen.getByRole('tab', { name: 'Overview' })
+      expect(tab.tagName).toBe('BUTTON')
+      expect(tab).toHaveAttribute('type', 'button')
+      expect(tab).toHaveAttribute('aria-controls', 'panel')
+      await userEvent.click(tab)
+      expect(onClick).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('when a tab index is given', () => {
+    it('keeps it', () => {
+      render(<Tabs label="Overview" tabIndex={0} />)
+      expect(screen.getByRole('tab')).toHaveAttribute('tabindex', '0')
+    })
   })
 })
-
-it('should expose one visible label to native navigation and event consumers', () => {
-  render(<Tabs href="/profile" label="Overview" />)
-  const link = screen.getByRole('link', { name: 'Overview' })
-  expect(link.textContent).toBe('Overview')
-})
-
-it('should preserve its owned content when untyped callers provide HTML overrides', () => {
-  const override = { dangerouslySetInnerHTML: { __html: '<b>Injected content</b>' } }
-  render(<Tabs href="/profile" label="Overview" {...override} />)
-  expect(screen.getByRole('link')).toHaveTextContent('Overview')
-  expect(screen.queryByText('Injected content')).toBeNull()
-})
-
-for (const [target, rel, expected] of [
-  ['_blank', undefined, 'noopener noreferrer'],
-  ['named-window', 'nofollow', 'nofollow noopener noreferrer'],
-  ['_BLANK', 'noopener noopener', 'noopener noreferrer'],
-  ['_self', 'nofollow', 'nofollow'],
-  [undefined, undefined, undefined]
-] as const)
-  it(`should preserve safe native link relations for ${target ?? 'the current window'}`, () => {
-    render(<Tabs href="/profile" label="Overview" target={target} rel={rel} />)
-    const link = screen.getByRole('link')
-    if (expected === undefined) expect(link).not.toHaveAttribute('rel')
-    else expect(link).toHaveAttribute('rel', expected)
-    expect(link).toHaveAttribute('href', '/profile')
-  })

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { GeneralImage } from '@dcl/one-ui/foundations'
 import styles from './CardImage.module.css'
-import { hasUnsafeURLCharacters } from './card.helpers'
+import { hasUnsafeURLCharacters } from '../../link.helpers'
 
 export type CardImageProps = {
   src?: string | null

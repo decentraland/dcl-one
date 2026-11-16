@@ -936,16 +936,18 @@ describe('without a test runner', () => {
     const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInputDone?: unknown }
     expect(typeof w.__dclTrustedInputDone).toBe('function')
     expect(Object.keys(w.__dclPageCommands ?? {})).toEqual(Object.keys(PAGE_COMMANDS))
-    // the sign-in command is a test runner's: a page nobody drives gets none
+    // the sign-in commands are a test runner's: a page nobody drives gets neither
     expect(w.__dclPageCommands).not.toHaveProperty('/hud_login')
+    expect(w.__dclPageCommands).not.toHaveProperty('/hud_logout')
     delete w.__dclPageCommands
     delete w.__dclTrustedInputDone
   })
 
-  it('a test runner driving the browser gets the sign-in command as well', () => {
+  it('a test runner driving the browser gets the sign-in commands as well', () => {
     const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInput?: unknown }
     w.__dclTrustedInput = () => undefined
     installHudAutomation()
+    expect(Object.keys(LOGIN_COMMANDS)).toEqual(['/hud_login', '/hud_logout'])
     expect(Object.keys(w.__dclPageCommands ?? {})).toEqual([...Object.keys(PAGE_COMMANDS), ...Object.keys(LOGIN_COMMANDS)])
     delete w.__dclPageCommands
     delete w.__dclTrustedInput

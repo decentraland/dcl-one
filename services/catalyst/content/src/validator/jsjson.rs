@@ -6,30 +6,54 @@
 //! print as `Number.prototype.toString`. `serde_json::Value` without
 //! `preserve_order` sorts keys, so it cannot stand in.
 
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
+
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 
-/// A JSON value as `JSON.parse` holds it.
+/// Ordered JSON. Strict parsing retains exact integers; legacy hashing uses binary64.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum JsValue {
+pub enum JsValue<const LEGACY: bool = false> {
     Null,
     Bool(bool),
+    Signed(i64),
+    Unsigned(u64),
     Number(f64),
     String(String),
-    Array(Vec<JsValue>),
-    Object(Vec<(String, JsValue)>),
+    Array(Vec<JsValue<LEGACY>>),
+    Object(Vec<(String, JsValue<LEGACY>)>),
 }
 
-impl JsValue {
-    pub(super) fn as_object(&self) -> Option<&[(String, JsValue)]> {
+pub(super) type LegacyValue = JsValue<true>;
+
+impl<const LEGACY: bool> JsValue<LEGACY> {
+    pub(super) fn as_object(&self) -> Option<&[(String, Self)]> {
         match self {
             JsValue::Object(entries) => Some(entries),
             _ => None,
         }
     }
 
-    pub(super) fn get(&self, key: &str) -> Option<&JsValue> {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[Self]> {
+        match self {
+            Self::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Self> {
         self.as_object()?
             .iter()
             .find(|(k, _)| k == key)
@@ -38,62 +62,88 @@ impl JsValue {
 }
 
 /// Assigns like a JS object: a repeated key keeps its first position and takes the last value.
-fn set(entries: &mut Vec<(String, JsValue)>, key: String, value: JsValue) {
+fn set<const LEGACY: bool>(
+    entries: &mut Vec<(String, JsValue<LEGACY>)>,
+    key: String,
+    value: JsValue<LEGACY>,
+) {
     match entries.iter_mut().find(|(k, _)| *k == key) {
         Some(slot) => slot.1 = value,
         None => entries.push((key, value)),
     }
 }
 
-impl<'de> Deserialize<'de> for JsValue {
+impl<'de, const LEGACY: bool> Deserialize<'de> for JsValue<LEGACY> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = JsValue;
+        struct V<const LEGACY: bool>;
+        impl<'de, const LEGACY: bool> Visitor<'de> for V<LEGACY> {
+            type Value = JsValue<LEGACY>;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.write_str("a JSON value")
             }
-            fn visit_unit<E>(self) -> Result<JsValue, E> {
+            fn visit_unit<E>(self) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::Null)
             }
-            fn visit_none<E>(self) -> Result<JsValue, E> {
+            fn visit_none<E>(self) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::Null)
             }
-            fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<JsValue, D::Error> {
+            fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<JsValue<LEGACY>, D::Error> {
                 Deserialize::deserialize(d)
             }
-            fn visit_bool<E>(self, v: bool) -> Result<JsValue, E> {
+            fn visit_bool<E>(self, v: bool) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::Bool(v))
             }
-            fn visit_i64<E>(self, v: i64) -> Result<JsValue, E> {
-                Ok(JsValue::Number(v as f64))
+            fn visit_i64<E>(self, v: i64) -> Result<JsValue<LEGACY>, E> {
+                Ok(if LEGACY {
+                    JsValue::Number(v as f64)
+                } else {
+                    JsValue::Signed(v)
+                })
             }
-            fn visit_u64<E>(self, v: u64) -> Result<JsValue, E> {
-                Ok(JsValue::Number(v as f64))
+            fn visit_u64<E>(self, v: u64) -> Result<JsValue<LEGACY>, E> {
+                Ok(if LEGACY {
+                    JsValue::Number(v as f64)
+                } else {
+                    JsValue::Unsigned(v)
+                })
             }
-            fn visit_f64<E>(self, v: f64) -> Result<JsValue, E> {
+            fn visit_f64<E>(self, v: f64) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::Number(v))
             }
-            fn visit_str<E>(self, v: &str) -> Result<JsValue, E> {
+            fn visit_str<E>(self, v: &str) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::String(v.to_string()))
             }
-            fn visit_string<E>(self, v: String) -> Result<JsValue, E> {
+            fn visit_string<E>(self, v: String) -> Result<JsValue<LEGACY>, E> {
                 Ok(JsValue::String(v))
             }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<JsValue, A::Error> {
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<JsValue<LEGACY>, A::Error> {
                 let mut out = Vec::new();
                 while let Some(v) = seq.next_element()? {
                     out.push(v);
                 }
                 Ok(JsValue::Array(out))
             }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<JsValue, A::Error> {
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<JsValue<LEGACY>, A::Error> {
                 let mut out = Vec::new();
-                while let Some((k, v)) = map.next_entry::<String, JsValue>()? {
-                    set(&mut out, k, v);
+                // Strict reads retain order without a linear duplicate search per property.
+                // The temporary key copies and index disappear when this object is complete.
+                let mut slots = BTreeMap::new();
+                while let Some((k, v)) = map.next_entry::<String, JsValue<LEGACY>>()? {
+                    if LEGACY {
+                        set(&mut out, k, v);
+                    } else {
+                        let next = out.len();
+                        let slot = *slots.entry(k.clone()).or_insert(next);
+                        if slot == next {
+                            out.push((k, v));
+                        } else {
+                            out[slot].1 = v;
+                        }
+                    }
                 }
                 // serde_json's arbitrary-precision number, should the feature be on.
-                if let [(key, JsValue::String(digits))] = out.as_slice()
+                if LEGACY
+                    && let [(key, JsValue::String(digits))] = out.as_slice()
                     && key == "$serde_json::private::Number"
                     && let Ok(n) = digits.parse::<f64>()
                 {
@@ -102,7 +152,38 @@ impl<'de> Deserialize<'de> for JsValue {
                 Ok(JsValue::Object(out))
             }
         }
-        deserializer.deserialize_any(V)
+        deserializer.deserialize_any(V::<LEGACY>)
+    }
+}
+
+impl Serialize for JsValue<false> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Null => serializer.serialize_unit(),
+            Self::Bool(v) => serializer.serialize_bool(*v),
+            Self::Signed(v) => serializer.serialize_i64(*v),
+            Self::Unsigned(v) => serializer.serialize_u64(*v),
+            Self::Number(v) => serializer.serialize_f64(*v),
+            Self::String(v) => serializer.serialize_str(v),
+            Self::Array(v) => v.serialize(serializer),
+            Self::Object(entries) => {
+                let mut indexed: Vec<_> = entries
+                    .iter()
+                    .filter_map(|(k, v)| array_index(k).map(|index| (index, k, v)))
+                    .collect();
+                indexed.sort_unstable_by_key(|(index, _, _)| *index);
+                let mut map = serializer.serialize_map(Some(entries.len()))?;
+                for (_, key, value) in indexed {
+                    map.serialize_entry(key, value)?;
+                }
+                for (key, value) in entries {
+                    if array_index(key).is_none() {
+                        map.serialize_entry(key, value)?;
+                    }
+                }
+                map.end()
+            }
+        }
     }
 }
 
@@ -113,10 +194,12 @@ fn array_index(key: &str) -> Option<u32> {
 }
 
 /// `JSON.stringify` of `value` appended to `out`.
-pub(super) fn write(value: &JsValue, out: &mut String) {
+pub(super) fn write(value: &LegacyValue, out: &mut String) {
     match value {
         JsValue::Null => out.push_str("null"),
         JsValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        JsValue::Signed(n) => out.push_str(&number(*n as f64)),
+        JsValue::Unsigned(n) => out.push_str(&number(*n as f64)),
         JsValue::Number(n) => out.push_str(&number(*n)),
         JsValue::String(s) => write_string(s, out),
         JsValue::Array(items) => {
@@ -136,7 +219,7 @@ pub(super) fn write(value: &JsValue, out: &mut String) {
 /// `JSON.stringify` of an object built from `entries` (distinct keys) in
 /// insertion order: integer-like keys first, ascending, then the rest.
 pub(super) fn write_object<'a>(
-    entries: impl IntoIterator<Item = (&'a str, &'a JsValue)>,
+    entries: impl IntoIterator<Item = (&'a str, &'a LegacyValue)>,
     out: &mut String,
 ) {
     let (mut indexed, rest): (Vec<_>, Vec<_>) = entries
@@ -219,9 +302,79 @@ fn number(value: f64) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn strict_serialization_retains_exact_integer_boundaries() {
+        let input = "[9007199254740991,9007199254740992,9007199254740993,-9223372036854775808,9223372036854775807,18446744073709551615]";
+        let value: crate::OrderedJson = serde_json::from_str(input).unwrap();
+        assert_eq!(serde_json::to_string(&value).unwrap(), input);
+    }
+
+    #[test]
+    fn strict_deserialization_preserves_literal_number_marker() {
+        let value: JsValue =
+            serde_json::from_str(r#"{"$serde_json::private::Number":"12"}"#).unwrap();
+        assert!(matches!(value, JsValue::Object(_)));
+    }
+
+    #[test]
+    fn strict_nested_markers_duplicates_and_index_keys_keep_json_semantics() {
+        let marker = r#"{"$serde_json::private::Number":"12"}"#;
+        let direct: crate::OrderedJson = serde_json::from_str(marker).unwrap();
+        let optional: Option<crate::OrderedJson> = serde_json::from_str(marker).unwrap();
+        let vector: Vec<crate::OrderedJson> = serde_json::from_str(&format!("[{marker}]")).unwrap();
+        assert_eq!(serde_json::to_string(&direct).unwrap(), marker);
+        assert_eq!(serde_json::to_string(&optional).unwrap(), marker);
+        assert_eq!(
+            serde_json::to_string(&vector).unwrap(),
+            format!("[{marker}]")
+        );
+        let value: crate::OrderedJson = serde_json::from_str(r#"{"z":{"b":true,"a":null},"10":10,"2":2,"01":1,"0":0,"-0":0,"4294967294":4,"4294967295":5,"a":1,"\u0061":2,"z":[{"z":"first","a":"second"}],"__proto__":{"$serde_json::private::Number":"12"},"2":3}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            r#"{"0":0,"2":3,"10":10,"4294967294":4,"z":[{"z":"first","a":"second"}],"01":1,"-0":0,"4294967295":5,"a":2,"__proto__":{"$serde_json::private::Number":"12"}}"#
+        );
+    }
+
+    #[test]
+    fn strict_parser_retains_existing_overflow_and_surrogate_refusals() {
+        for input in [r#"{"v":1e400}"#, r#"{"v":"\ud800"}"#, r#"{"\udfff":0}"#] {
+            assert!(serde_json::from_str::<serde_json::Value>(input).is_err());
+            assert!(serde_json::from_str::<crate::OrderedJson>(input).is_err());
+        }
+        let value: crate::OrderedJson =
+            serde_json::from_str(r#"["\ud83d\ude00","é\n/\u2028"]"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            "[\"😀\",\"é\\n/\u{2028}\"]"
+        );
+    }
+
+    #[test]
+    fn strict_wide_objects_keep_first_position_with_last_decoded_value() {
+        let width = 4096;
+        let mut text = String::from("{");
+        for i in (0..width).rev() {
+            if i != width - 1 {
+                text.push(',');
+            }
+            text.push_str(&format!("\"long-common-prefix-{i:05}\":{i}"));
+        }
+        text.push_str(",\"long-common-prefix-04095\":-1}");
+        let value: crate::OrderedJson = serde_json::from_str(&text).unwrap();
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert!(
+            encoded
+                .starts_with("{\"long-common-prefix-04095\":-1,\"long-common-prefix-04094\":4094,")
+        );
+        assert_eq!(value.as_object().unwrap().len(), width);
+    }
+
     fn roundtrip(json: &str) -> String {
         let mut out = String::new();
-        write(&serde_json::from_str(json).unwrap(), &mut out);
+        write(
+            &serde_json::from_str::<LegacyValue>(json).unwrap(),
+            &mut out,
+        );
         out
     }
 

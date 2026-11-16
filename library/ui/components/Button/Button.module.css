@@ -60,6 +60,15 @@
   .root[data-viewport='mobile'][data-size='sm'] {
     --button-height: 44px;
   }
+  .root[data-variant='primary']:not([data-icon-only='true']):not([aria-disabled='true']) {
+    --button-color: var(--dcl-neutrals-black);
+  }
+  .root[data-variant='primary']:not([data-icon-only='true']):is(
+      :active,
+      [data-force-state='pressed']
+    ):not([aria-disabled='true']) {
+    color: var(--dcl-neutrals-white);
+  }
   .root[data-variant='secondary'] {
     --button-background: var(--dcl-transparencies-white-10);
     --button-color: var(--dcl-neutrals-snow);
@@ -123,6 +132,13 @@
   .root[data-force-state='focus'] {
     outline: 2px solid currentColor;
     outline-offset: 3px;
+  }
+  .root[data-variant='primary']:not([data-icon-only='true']):is(
+      :focus-visible,
+      [data-force-state='focus']
+    ) {
+    outline-color: var(--dcl-neutrals-white);
+    box-shadow: 0 0 0 3px var(--dcl-neutrals-black);
   }
   .root[aria-disabled='true'] {
     cursor: default;

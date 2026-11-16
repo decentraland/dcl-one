@@ -10,7 +10,9 @@
 import type {
   Color3,
   CommunityVoiceStatus,
+  ConnectivitySnapshot,
   HomeScene,
+  PortableInfo,
   SatelliteView,
   SceneLoadingUi,
   VoiceChatAction,
@@ -164,6 +166,8 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | { kind: 'getConnectivity' }
+  | { kind: 'retryConnectivity'; requestId: string }
   | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
@@ -194,6 +198,7 @@ export type PageToScene =
   | TriggerEmoteRequest
   | EquipEmoteRequest
   | SetMicRequest
+  | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
   | EquipRequest
@@ -239,6 +244,9 @@ export type PageToScene =
   | GetCommunityChannelsRequest
   | SetCommunityChannelsRequest
   | GetCommunityOnlineMembersRequest
+  | GetEventsRequest
+  | SetEventAttendingRequest
+  | GetEventPlacesRequest
   | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
@@ -248,6 +256,7 @@ export type PageToScene =
   | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
+  | OpenExternalUrlRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -264,6 +273,7 @@ export type PageToScene =
   | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
+  | SetGalleryPhotoPublicRequest
 
 // ---- scene -> page ---------------------------------------------------------
 
@@ -364,6 +374,19 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+/** The wallets whose nearby voice the user muted (lowercased), whole on every change (scene → page). */
+export interface NearbyMutesMessage {
+  kind: 'nearbyMutes'
+  addresses: string[]
+}
+
+/** Mute ("Hush") or unmute ("Hear") a wallet's nearby voice (page → scene). */
+export interface SetNearbyMuteRequest {
+  kind: 'setNearbyMute'
+  address: string
+  muted: boolean
 }
 
 // ---- voice chat: private calls and community streams ----------------------
@@ -675,8 +698,6 @@ export interface Profile {
   info?: ProfileInfo
   /** Mutual-friends count shown under the name. */
   mutuals?: number
-  /** Camera-reel photo URLs (Photos tab). */
-  photos?: string[]
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */
@@ -692,8 +713,8 @@ export interface GetProfileRequest {
   kind: 'getProfile'
 }
 
-/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges,
- *  photos and equipped items come too (each a service call of its own, so only the passport asks). */
+/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges
+ *  and equipped items come too (each a service call of its own, so only the passport asks). */
 export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
@@ -840,10 +861,14 @@ export interface HomeSceneMessage extends HomeScene {
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
+  /** The page's tag for this ask, which its answer echoes. */
+  ask?: number
 }
 
 export interface WelcomeMessage extends WelcomeState {
   kind: 'welcome'
+  /** The tag of the ask this answers, as the page sent it. */
+  ask?: number
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
@@ -882,6 +907,20 @@ export interface AcceptWelcomeRequest {
 export interface OpenLegalRequest {
   kind: 'openLegal'
   doc: 'terms' | 'privacy'
+}
+
+/** Open an `https:` url in the user's browser (the scene's openExternalUrl, which works from the
+ *  native HUD too). Answered by an ExternalUrlOpenedMessage. */
+export interface OpenExternalUrlRequest {
+  kind: 'openExternalUrl'
+  requestId: number
+  url: string
+}
+
+export interface ExternalUrlOpenedMessage {
+  kind: 'externalUrlOpened'
+  requestId: number
+  ok: boolean
 }
 
 export interface WelcomeAcceptedMessage {
@@ -1042,6 +1081,14 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+}
+
+/** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
+ *  every portable but the HUD's own scene and the startup ones, plus smart wearables that are
+ *  stopped or still loading. The engine sends the whole list on subscribe and on every change. */
+export interface PortablesMessage {
+  kind: 'portables'
+  portables: PortableInfo[]
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -1694,14 +1741,24 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** One page of the local player's camera reel (signed, so private photos are included), newest
+ *  first as the service orders them. `requestId` is echoed in the GalleryMessage that answers it. */
 export interface GetGalleryRequest {
   kind: 'getGallery'
+  requestId: number
+  offset: number
+  limit: number
 }
 
-/** The local player's camera-reel photos + storage usage (current/max). */
+/** A page of the local player's camera-reel photos + storage usage: `current` is the total number of
+ *  photos the player has, `max` the storage limit. `received` counts the images the service sent,
+ *  url-less ones included, which `photos` drops. */
 export interface GalleryMessage {
   kind: 'gallery'
+  requestId: number
+  ok: boolean
   photos: GalleryPhoto[]
+  received: number
   current: number
   max: number
 }
@@ -1718,10 +1775,29 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
-/** Delete one of the local player's photos (signed DELETE; re-emits the gallery). */
+/** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
+  requestId: number
   id: string
+}
+
+/** Make one of the local player's photos public or private (signed PATCH). Answered by a
+ *  GalleryWriteMessage. */
+export interface SetGalleryPhotoPublicRequest {
+  kind: 'setGalleryPhotoPublic'
+  requestId: number
+  id: string
+  isPublic: boolean
+}
+
+/** The outcome of a gallery write. A delete also reports the storage usage that follows it. */
+export interface GalleryWriteMessage {
+  kind: 'galleryWrite'
+  requestId: number
+  ok: boolean
+  current?: number
+  max?: number
 }
 
 /** An owned wearable (backpack catalog item). */
@@ -2154,6 +2230,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
   | CommunityVoiceUpdateMessage
@@ -2203,6 +2281,7 @@ export type SceneToPage =
   | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
+  | NearbyMutesMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
@@ -2223,10 +2302,14 @@ export type SceneToPage =
   | CommunityChannelRemovedMessage
   | CommunityOnlineMembersMessage
   | CommunityPresenceMessage
+  | EventsMessage
+  | EventAttendingMessage
+  | EventPlacesMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage
   | WelcomeAcceptedMessage
+  | ExternalUrlOpenedMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage
@@ -2234,6 +2317,7 @@ export type SceneToPage =
   | LookShownMessage
   | GalleryMessage
   | GalleryPhotoMessage
+  | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage
   | PermissionUsedMessage
@@ -2241,6 +2325,98 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | PortablesMessage
+
+// ---- events ----------------------------------------------------------------
+
+/** An event as the events service lists it for the signed-in user. Dates are ISO strings. */
+export interface EventData {
+  id: string
+  name: string
+  description: string | null
+  image: string | null
+  image_vertical: string | null
+  start_at: string | null
+  finish_at: string | null
+  next_start_at: string | null
+  next_finish_at: string | null
+  /** Milliseconds. */
+  duration: number | null
+  x: number
+  y: number
+  /** The world's name when `world` is set. */
+  server: string | null
+  world: boolean
+  user_name: string | null
+  scene_name: string | null
+  highlighted: boolean
+  live: boolean
+  /** The signed-in user asked to be reminded. */
+  attending: boolean
+  total_attendees: number
+  recurrent: boolean
+  recurrent_dates: string[]
+  /** Who is at the event now, by address. */
+  connected_addresses: string[]
+  community_id: string | null
+  place_id: string | null
+}
+
+/** A list of events (page → scene → events service, signed so each event carries `attending`).
+ *  With `from` and `to` it is the events starting in that range; with `list` it is that list. */
+export interface GetEventsRequest {
+  kind: 'getEvents'
+  /** Echoed in the answer, so the page drops an answer to a request it no longer waits for. */
+  request: number
+  /** UTC, `yyyy-MM-ddTHH:mm:ssZ`. */
+  from?: string
+  to?: string
+  list?: 'live' | 'highlight'
+  limit?: number
+  offset?: number
+}
+export interface EventsMessage {
+  kind: 'events'
+  request: number
+  events: EventData[]
+  /** The read failed; `events` is empty. */
+  failed?: boolean
+}
+
+/** Set or clear the signed-in user's reminder on an event (POST / DELETE …/attendees). */
+export interface SetEventAttendingRequest {
+  kind: 'setEventAttending'
+  eventId: string
+  attending: boolean
+}
+/** The reminder as it is after the request; `failed` when the service refused, with `attending`
+ *  the value that was asked for. */
+export interface EventAttendingMessage {
+  kind: 'eventAttending'
+  eventId: string
+  attending: boolean
+  failed?: boolean
+}
+
+/** A place an event is held at, for the event detail's location line. */
+export interface EventPlace {
+  id: string
+  title: string
+  world_name: string | null
+  /** "x,y". */
+  base_position: string | null
+}
+export interface GetEventPlacesRequest {
+  kind: 'getEventPlaces'
+  request: number
+  placeIds: string[]
+}
+export interface EventPlacesMessage {
+  kind: 'eventPlaces'
+  request: number
+  places: EventPlace[]
+  failed?: boolean
+}
 
 // ---- envelope --------------------------------------------------------------
 

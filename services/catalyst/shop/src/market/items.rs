@@ -12,7 +12,7 @@
 //! subgraphs (a reader, 10 min, at most 1,000 sales per network) and
 //! hydrates the winners through the items query.
 
-use crate::types::ManaUsdRate;
+use crate::types::{ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::HashMap;
 
 use axum::Json;
@@ -34,14 +34,13 @@ use super::readers::{self, Ttl, cached, int_of, str_of};
 use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
     ApiError, ChainId, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
-    Params, clamp_first, clamp_skip, fix_urn,
+    Params, body_shapes_for_genders, clamp_first, clamp_skip, emote_play_mode_clause, fix_urn,
 };
 use super::{MarketplaceState, SharedState};
 
 pub const DEFAULT_LIMIT: i64 = 100;
 pub const USD_WEI_PER_CREDIT: u128 = 100_000_000_000_000_000;
 const USD_WEI_PER_CREDIT_SQL: &str = "100000000000000000::numeric";
-const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
 
 pub fn item_types_for(category: NftCategory) -> Vec<&'static str> {
     match category {
@@ -423,27 +422,6 @@ pub struct CreditCatalogItem {
 
 pub fn is_address_zero(addr: &str) -> bool {
     addr.is_empty() || addr.eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
-}
-
-fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
-    let has_unisex = genders.iter().any(|g| g == "unisex");
-    let has_male = has_unisex || genders.iter().any(|g| g == "male");
-    let has_female = has_unisex || genders.iter().any(|g| g == "female");
-    let mut out = Vec::new();
-    if has_male {
-        out.push("BaseMale".to_string());
-    }
-    if has_female {
-        out.push("BaseFemale".to_string());
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
-pub(crate) fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
-    if modes.is_empty() || modes.len() == 2 {
-        return None;
-    }
-    Some(modes.iter().any(|m| m == "loop"))
 }
 
 /// The credit price, a bare expression the WHERE and ORDER BY reuse so the
@@ -890,12 +868,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         });
     }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
-        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
-            .fetch_optional(&state.pool)
+        let row = crate::mana::quote::newest_spot(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(match row {
-            Some((rate, taken_at)) => json!({ "rate": rate.trim(), "taken_at": taken_at.and_utc().timestamp() }),
+            Some((rate, taken_at)) => json!({ "rate": rate, "taken_at": taken_at }),
             None => json!({}),
         })
     })
@@ -909,7 +886,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         v["rate"].as_str().and_then(ManaUsdRate::parse_usd_per_mana),
         v["taken_at"].as_i64(),
     ) {
-        (Some(rate), Some(taken_at)) if Utc::now().timestamp() - taken_at <= budget => Ok(rate),
+        (Some(rate), Some(taken_at))
+            if crate::mana::quote::spot_is_fresh(taken_at, Utc::now().timestamp()) =>
+        {
+            Ok(rate)
+        }
         (Some(_), Some(taken_at)) => Err(crate::price::unavailable(&format!(
             "the newest MANA spot on this node is {} s old, past the {budget} s freshness budget (the mana-price-poll job is off or failing); credit prices need a live spot",
             Utc::now().timestamp() - taken_at

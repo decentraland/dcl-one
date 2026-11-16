@@ -33,8 +33,9 @@ const WORK_RUNNING: &str = "comms_cluster_work_running";
 const WORK_QUEUED: &str = "comms_cluster_work_queued";
 const FEED_OVERSIZED: &str = "comms_cluster_feed_oversized_total";
 const FEED_INVALID_SUBJECT: &str = "comms_cluster_feed_invalid_subject_total";
+const WS_UNATTRIBUTED: &str = "comms_ws_unattributed_upgrades_total";
 
-const COUNTERS: [&str; 20] = [
+const COUNTERS: [&str; 21] = [
     EVENTS_RECEIVED,
     CONNECTS_RECEIVED,
     TOKENS_MINTED,
@@ -55,6 +56,7 @@ const COUNTERS: [&str; 20] = [
     WORK_CANCELLED,
     FEED_OVERSIZED,
     FEED_INVALID_SUBJECT,
+    WS_UNATTRIBUTED,
 ];
 
 /// Renders every cluster series at 0 so a dashboard and an alert both have a value to compare
@@ -164,6 +166,24 @@ pub(crate) fn cluster_feed_invalid_subject() {
     counter!(FEED_INVALID_SUBJECT).increment(1);
 }
 
+/// A `/ws` upgrade the per-client cap cannot attribute; warns on the first
+/// one in this process and answers whether it did.
+pub(crate) fn ws_unattributed_upgrade() -> bool {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    note_unattributed_upgrade(&WARNED)
+}
+
+fn note_unattributed_upgrade(warned: &std::sync::atomic::AtomicBool) -> bool {
+    counter!(WS_UNATTRIBUTED).increment(1);
+    let first = !warned.swap(true, std::sync::atomic::Ordering::Relaxed);
+    if first {
+        tracing::warn!(
+            "a /ws upgrade has no attributable client address (gateway peer outside HTTP_TRUSTED_PROXY_CIDRS, or no X-Real-IP); WS_MAX_SOCKETS_PER_IP does not count such sockets"
+        );
+    }
+    first
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,6 +196,22 @@ mod tests {
         let handle = recorder.handle();
         metrics::with_local_recorder(&recorder, f);
         handle.render()
+    }
+
+    #[test]
+    fn unattributed_upgrades_count_every_one_and_warn_once() {
+        let once = std::sync::atomic::AtomicBool::new(false);
+        let mut warned = Vec::new();
+        let rendered = render_recorded(|| {
+            for _ in 0..3 {
+                warned.push(note_unattributed_upgrade(&once));
+            }
+        });
+        assert_eq!(warned, [true, false, false]);
+        assert!(
+            rendered.contains(&format!("{WS_UNATTRIBUTED} 3")),
+            "{rendered}"
+        );
     }
 
     #[test]
