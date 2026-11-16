@@ -332,11 +332,52 @@ fn main() -> anyhow::Result<()> {
     // The posture writes the environment clap reads, so it expands first,
     // while this is the only thread.
     posture::apply_to_process_env()?;
+    // The complete clap tree exceeds the default Windows debug stack. This
+    // parser-only thread returns plain values and finishes before V8 or runtime
+    // initialization; it never owns engine state or serves matcher work.
+    let parsed = std::thread::Builder::new()
+        .name("cli-parser".into())
+        .stack_size(64 << 20)
+        .spawn(|| -> Result<(Cli, clap::ArgMatches), clap::Error> {
+            let matches = <Cli as clap::CommandFactory>::command().try_get_matches()?;
+            let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
+            Ok((cli, matches))
+        })
+        .context("creating CLI parser thread")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("CLI parser thread panicked"))?;
+    let (mut cli, matches) = parsed.unwrap_or_else(|error| error.exit());
+    let prepared = match &mut cli.command {
+        Command::Serve(config) => {
+            if let Some(arguments) = matches.subcommand_matches("serve") {
+                config.refuse_argv_secrets(arguments)?;
+            }
+            check_posture(config)?;
+            catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
+            // SAFETY: This startup thread performs the first common initialization.
+            // All runtime/blocking workers descend from it afterwards. Prepared
+            // state never escapes this runtime; its drop joins canceled blocking
+            // work, and final handles are destroyed within this permitted subtree.
+            Some(unsafe {
+                catalyst::metrics_matcher::prepare(
+                    catalyst::comms::stats::http::Settings::from_env(),
+                )?
+            })
+        }
+        Command::Index(config) => {
+            if let Some(arguments) = matches.subcommand_matches("index") {
+                config.refuse_argv_secrets(arguments)?;
+            }
+            check_posture(config)?;
+            None
+        }
+        _ => None,
+    };
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("building the tokio runtime")?
-        .block_on(run())
+        .block_on(run(cli, prepared))
 }
 
 /// The refusals of [`posture::check`] against this process's environment.
@@ -344,25 +385,17 @@ fn check_posture(config: &Config) -> anyhow::Result<()> {
     posture::check(config, &|key: &str| std::env::var(key).ok())
 }
 
-async fn run() -> anyhow::Result<()> {
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
-    let cli =
-        <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+async fn run(
+    cli: Cli,
+    prepared: Option<catalyst::metrics_matcher::PreparedStats>,
+) -> anyhow::Result<()> {
     match cli.command {
-        Command::Serve(mut config) => {
-            if let Some(serve_matches) = matches.subcommand_matches("serve") {
-                config.refuse_argv_secrets(serve_matches)?;
-            }
-            check_posture(&config)?;
-            catalyst::serve::serve(*config).await
+        Command::Serve(config) => {
+            let prepared =
+                prepared.context("serve metrics must be prepared before runtime creation")?;
+            catalyst::serve::serve(*config, prepared).await
         }
-        Command::Index(mut config) => {
-            if let Some(index_matches) = matches.subcommand_matches("index") {
-                config.refuse_argv_secrets(index_matches)?;
-            }
-            check_posture(&config)?;
-            catalyst::index::run(*config).await
-        }
+        Command::Index(config) => catalyst::index::run(*config).await,
         Command::Schema {
             command: SchemaCommand::Apply { database_url },
         } => {

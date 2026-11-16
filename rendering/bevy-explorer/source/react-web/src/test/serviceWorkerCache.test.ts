@@ -28,7 +28,8 @@ function serviceWorker(seeded: Record<string, string> = {}) {
     fetch: object,
     console: object
   ) => void
-  load(self, { open: async () => cache }, network, { log: vi.fn(), warn: vi.fn() })
+  const open = vi.fn(async () => cache)
+  load(self, { open }, network, { log: vi.fn(), warn: vi.fn() })
 
   const asset = async (url: string, method = 'GET', init?: RequestInit): Promise<{ body: string; cached: boolean }> => {
     let reply: Promise<Response> | undefined
@@ -39,16 +40,13 @@ function serviceWorker(seeded: Record<string, string> = {}) {
     const response = await reply!
     return { body: await response.text(), cached: response.headers.has('X-IPFS-Cached') }
   }
-  // the value of the header that names the entry a request was answered from
-  const servedFrom = async (url: string): Promise<string | null> => {
-    let reply: Promise<Response> | undefined
-    listeners.fetch({
-      request: new Request(url, { headers: { 'X-IPFS': '1' } }),
-      respondWith: (r: Promise<Response>) => (reply = r)
-    })
-    return (await reply!).headers.get('X-IPFS-Cached')
+  // a request without the header, as the engine sends content requests; whether the worker replied
+  const untagged = (url: string): boolean => {
+    let replied = false
+    listeners.fetch({ request: new Request(url), respondWith: () => (replied = true) })
+    return replied
   }
-  return { asset, servedFrom, network, keys: () => [...store.keys()] }
+  return { asset, untagged, open, network, keys: () => [...store.keys()] }
 }
 
 describe('service worker asset cache', () => {
@@ -103,18 +101,20 @@ describe('service worker asset cache', () => {
     expect(await asset(`https://evil.example/contents/bafkreitarget#${path}`)).toEqual({ body: 'target', cached: true })
   })
 
-  it('names the entry it answered from in the cached header', async () => {
-    const shared = serviceWorker({ [`${SHARED}/${hash}`]: 'checked' })
-    expect(await shared.servedFrom(`https://peer.example${path}`)).toBe(`${SHARED}/${hash}`)
-    const own = `https://peer.example${path}?v=1`
-    const origin = serviceWorker({ [own]: 'peer' })
-    expect(await origin.servedFrom(own)).toBe(own)
-  })
-
   it('answers nothing but a GET from an entry', async () => {
     const { asset, network } = serviceWorker({ [`https://peer.example${path}`]: 'peer' })
     expect(await asset(`https://peer.example${path}`, 'HEAD')).toEqual({ body: 'https://peer.example', cached: false })
     expect(await asset(`https://peer.example${path}`)).toEqual({ body: 'peer', cached: true })
     expect(network).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a request without the header to the browser, without looking in the cache', async () => {
+    const { asset, untagged, open, network } = serviceWorker({ [`${SHARED}/${hash}`]: 'checked' })
+    expect(untagged(`https://peer.example${path}`)).toBe(false)
+    expect(open).not.toHaveBeenCalled()
+    expect(network).not.toHaveBeenCalled()
+    // the same url with the header is answered from the cache
+    expect(await asset(`https://peer.example${path}`)).toEqual({ body: 'checked', cached: true })
+    expect(open).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,4 +1,4 @@
-// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys, the cached header):
+// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys):
 // this worker only answers from the cache; the engine fills it (content it has checked against
 // its hash under the shared key, a url's response under the url), and its asset processor writes
 // processed bytes back over the entry it read.
@@ -8,8 +8,7 @@ const CUSTOM_HEADER = 'X-IPFS';
 // Stand-in origin for entries shared across content servers. `.invalid` is reserved, so no real
 // server's own entries can land on these keys.
 const SHARED_ORIGIN = 'https://shared.invalid';
-// Set on responses answered from the cache, to the key the response came from: the engine records
-// that entry as used.
+// Set on responses answered from the cache.
 const CACHED_HEADER = 'X-IPFS-Cached';
 
 // The scene editor's preview realm (PREVIEW_REALM.md): urls under <scope>preview/ are answered
@@ -26,7 +25,7 @@ try {
     importScripts('preview_realm.js');
     previewRealm = self.dclPreviewRealm;
 } catch (e) {
-    // keep the worker installable: the page needs its COEP rewrite and X-IPFS cache regardless
+    // keep the worker installable: the page needs its COEP rewrite regardless
     console.warn('[IPFS Cache Service Worker]: preview realm unavailable', e);
 }
 
@@ -149,8 +148,10 @@ const CONTENT_CACHE_QUOTA_INDEX_TIMEOUT_MS = 1000;
 const CONTENT_CACHE_QUOTA_SHARE = 0.5;
 // A trim goes down to this share of the cap, so the next one waits for real growth.
 const CONTENT_CACHE_LOW_WATER = 0.9;
-// After a quota error, keep at most this share of the cache, even under the cap.
-const CONTENT_CACHE_QUOTA_ERROR_KEEP = 0.75;
+// After a quota error the origin is full: free the least recently used content worth this share of
+// the cap (all of it if less), even under the cap, sizing no more than that, so the engine's 5 s wait
+// suffices.
+const CONTENT_CACHE_QUOTA_ERROR_FREE = 0.25;
 // Entries sized (one `match` each) per step while choosing what to evict.
 const CONTENT_CACHE_SIZE_BATCH = 64;
 // Requests waiting their turn, uses and trims alike, one at a time in arrival order: a trim sees
@@ -205,13 +206,9 @@ self.addEventListener('message', (event) => {
 
 // How much to free. `cachesUsage` is the bytes held: the usage bound, then the content's measured
 // total. `quota` bounds the cap.
-function contentCacheTarget({ capBytes, quota, cachesUsage, quotaError }) {
+function contentCacheTarget({ capBytes, quota, cachesUsage }) {
     const cap = Math.max(0, Math.min(capBytes, Math.floor(quota * CONTENT_CACHE_QUOTA_SHARE)));
-    let bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
-    if (quotaError) {
-        const keep = Math.floor(Math.min(cap, cachesUsage) * CONTENT_CACHE_QUOTA_ERROR_KEEP);
-        bytesToFree = Math.max(bytesToFree, cachesUsage - keep);
-    }
+    const bytesToFree = cachesUsage > cap ? cachesUsage - Math.floor(cap * CONTENT_CACHE_LOW_WATER) : 0;
     return { cap, bytesToFree };
 }
 
@@ -362,13 +359,14 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     const cachesUsage = usageDetails ? (usageDetails.caches ?? 0) : usage;
     // only for the report: a browser without it, or one that refuses, must not stop the trim
     const persisted = (await navigator.storage.persisted?.().catch(() => false)) ?? false;
-    const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage, quotaError });
+    const { cap, bytesToFree } = contentCacheTarget({ capBytes, quota, cachesUsage });
+    const quotaErrorFree = quotaError ? Math.floor(cap * CONTENT_CACHE_QUOTA_ERROR_FREE) : 0;
     const report = {
         capBytes: cap, usage, quota, cachesUsage, evictedEntries: 0, evictedBytes: 0, persisted,
         contentBytes: null, preempted: false,
     };
     // the bound: content can only be over the cap when the usage holding it is
-    if (bytesToFree <= 0) return report;
+    if (bytesToFree <= 0 && quotaErrorFree <= 0) return report;
 
     const cache = await caches.open(CACHE_NAME);
     // insertion order: oldest written first (a put over a key moves it to the end)
@@ -379,10 +377,12 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     for (const key of usedNow) ranked.set(key, now);
     const ordered = contentCacheEvictionOrder(requests, ranked);
     report.indexedEntries = requests.filter((r) => ranked.has(r.url)).length;
-    // size it all: other storage in the bound must not decide how much content goes
+    // a regular trim sizes it all: other storage in the bound must not decide how much content goes.
+    // A quota-error trim sizes in eviction order and stops at the least recently used content worth
+    // its quarter of the cap.
     const sized = [];
     let contentBytes = 0;
-    for (let i = 0; i < ordered.length; i += CONTENT_CACHE_SIZE_BATCH) {
+    for (let i = 0; i < ordered.length && !(quotaError && contentBytes >= quotaErrorFree); i += CONTENT_CACHE_SIZE_BATCH) {
         if (!quotaError && contentCacheForcedWaiting()) {
             report.preempted = true;
             return report;
@@ -394,13 +394,17 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
         for (const entry of batch) contentBytes += entry.size;
         sized.push(...batch);
     }
-    report.contentBytes = contentBytes;
-    const toFree = contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes, quotaError }).bytesToFree;
+    if (!quotaError) report.contentBytes = contentBytes;
+    const toFree = quotaError
+        ? quotaErrorFree
+        : contentCacheTarget({ capBytes, quota, cachesUsage: contentBytes }).bytesToFree;
     const { picked } = pickEvictions(sized, toFree);
     if (picked.length === 0) return report;
     // An entry written again while this trim sized moved to the newest end, behind a key that
-    // followed it in the first listing: keep it, and skip keys gone meanwhile. This covers the
-    // sizing only, not a write between this listing and the deletes.
+    // followed it in the first listing: keep it, and skip keys gone meanwhile. The newest entry has
+    // nothing behind it to show a move: it counts as rewritten when its size changed (a processed
+    // texture written back after it was sized). This covers the sizing only, not a write between
+    // this listing and the deletes.
     const first = new Map(requests.map((key, i) => [key.url, i]));
     const listed = new Set();
     const rewritten = new Set();
@@ -413,6 +417,11 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
         else latest = i;
     }
     const sizes = new Map(sized.map(({ key, size }) => [key.url, size]));
+    const newest = requests[requests.length - 1];
+    if (picked.includes(newest) && listed.has(newest.url)) {
+        const response = await cache.match(newest);
+        if (response && (await contentCacheEntrySize(response)) !== sizes.get(newest.url)) rewritten.add(newest.url);
+    }
     const evicted = picked.filter((key) => listed.has(key.url) && !rewritten.has(key.url));
     await Promise.all(evicted.map((key) => cache.delete(key)));
     report.evictedEntries = evicted.length;
@@ -499,8 +508,7 @@ async function cacheFirstStrategy(request) {
     const cachedResponse = sharedResponse ?? (await cache.match(originKey));
     if (cachedResponse) {
         const headers = new Headers(cachedResponse.headers);
-        // the engine records this key as used
-        headers.set(CACHED_HEADER, sharedResponse ? sharedKey : originKey);
+        headers.set(CACHED_HEADER, '1');
         return new Response(cachedResponse.body, {
             status: cachedResponse.status,
             statusText: cachedResponse.statusText,

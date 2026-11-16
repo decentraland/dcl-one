@@ -137,11 +137,6 @@ describe('content cache target', () => {
       bytesToFree: 150
     })
   })
-
-  it('frees a quarter after a quota error even under the cap', () => {
-    const { pure } = serviceWorker()
-    expect(pure.contentCacheTarget({ capBytes: 1000, quota: 1e9, cachesUsage: 400, quotaError: true }).bytesToFree).toBe(100)
-  })
 })
 
 describe('eviction choice', () => {
@@ -195,6 +190,24 @@ describe('content cache trim message', () => {
     const { port } = await sw.trim({ capBytes: 500 })
     expect(sw.remaining()).toContain('bafkrei0')
     expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 5, evictedBytes: 500 }))
+  })
+
+  it('keeps the newest entry when it was written again with other bytes', async () => {
+    const sw = serviceWorker()
+    sw.seed(0, 100)
+    sw.seed(1, 900)
+    const match = sw.content.match
+    sw.content.match = async (key: string | Request) => {
+      const response = await match(key)
+      // once sized, a processed texture is written back: the order shows nothing, the size does
+      if (keyOf(key) === entryUrl(1) && response?.headers.get('Content-Length') === '900') {
+        await sw.content.put(entryUrl(1), entry(800))
+      }
+      return response
+    }
+    const { port } = await sw.trim({ capBytes: 500 })
+    expect(sw.remaining()).toEqual(['bafkrei1'])
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, evictedBytes: 100 }))
   })
 
   it('keeps an entry written again while the trim was sizing when the pick takes the whole cache', async () => {
@@ -274,12 +287,29 @@ describe('content cache trim message', () => {
     expect(waitUntil).not.toHaveBeenCalled()
   })
 
-  it('trims a cache that is under its cap after a quota error', async () => {
+  it('frees the oldest content worth a quarter of the cap after a quota error, even under the cap', async () => {
     const sw = serviceWorker()
-    for (let n = 0; n < 4; n++) sw.seed(n)
+    for (let n = 0; n < 6; n++) sw.seed(n)
     const { port } = await sw.trim({ capBytes: 1000, quotaError: true })
-    expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
-    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, evictedBytes: 100 }))
+    expect(sw.remaining()).toEqual(['bafkrei3', 'bafkrei4', 'bafkrei5'])
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ evictedEntries: 3, evictedBytes: 300, contentBytes: null })
+    )
+  })
+
+  it('sizes only what a quota-error trim frees, not the whole cache', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 200; n++) sw.seed(n)
+    const match = sw.content.match
+    let matches = 0
+    sw.content.match = async (key: string | Request) => {
+      matches++
+      return match(key)
+    }
+    const { port } = await sw.trim({ capBytes: 4000, quotaError: true })
+    expect(matches).toBeLessThanOrEqual(64)
+    expect(sw.remaining()).toHaveLength(190)
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 10, evictedBytes: 1000 }))
   })
 
   it('reads Cache Storage usage from usageDetails, and 0 when it is left out', async () => {
@@ -343,13 +373,13 @@ describe('content cache trim message', () => {
     }
   })
 
-  it('frees a quarter of the content after a quota error when other storage fills the cap', async () => {
+  it('frees a quarter of the cap after a quota error whatever other storage holds', async () => {
     const sw = serviceWorker({ others: true })
     for (let n = 0; n < 10; n++) sw.seed(n)
     const { port } = await sw.trim({ capBytes: 2000, quotaError: true })
-    expect(sw.remaining()).toHaveLength(7)
+    expect(sw.remaining()).toHaveLength(5)
     expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ evictedEntries: 3, evictedBytes: 300, contentBytes: 1000 })
+      expect.objectContaining({ evictedEntries: 5, evictedBytes: 500, contentBytes: null })
     )
   })
 
@@ -461,7 +491,8 @@ describe('content cache last use', () => {
       await sw.touch([entryUrl(1), entryUrl(2), entryUrl(3)])
       vi.setSystemTime(Date.now() + 60_000)
       // entry 0 was written since the engine's last flush: the trim carries it, not a touch
-      const { port } = await sw.trim({ capBytes: 1000, quotaError: true, usedNow: [entryUrl(0), 42, 'ftp://x.example/y'] })
+      // a quarter of the 400-byte cap: one entry
+      const { port } = await sw.trim({ capBytes: 400, quotaError: true, usedNow: [entryUrl(0), 42, 'ftp://x.example/y'] })
       expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei2', 'bafkrei3'])
       expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, indexedEntries: 4 }))
       // only a touch records a use
@@ -469,6 +500,26 @@ describe('content cache last use', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('frees the least recently used content worth a quarter of the cap after a quota error, sizing no more', async () => {
+    const sw = serviceWorker()
+    for (let n = 0; n < 200; n++) sw.seed(n)
+    await sw.touch(Array.from({ length: 100 }, (_, n) => entryUrl(n)))
+    const match = sw.content.match
+    let matches = 0
+    sw.content.match = async (key: string | Request) => {
+      matches++
+      return match(key)
+    }
+    const { port } = await sw.trim({ capBytes: 4000, quotaError: true })
+    expect(matches).toBeLessThanOrEqual(64)
+    // the unrecorded entries go first: the ten oldest written of them
+    const remaining = sw.remaining()
+    expect(remaining).toHaveLength(190)
+    expect(remaining).toContain('bafkrei0')
+    for (let n = 100; n < 110; n++) expect(remaining).not.toContain(`bafkrei${n}`)
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 10, evictedBytes: 1000, indexedEntries: 100 }))
   })
 
   it('ignores the uses a regular trim carries', async () => {
@@ -484,7 +535,7 @@ describe('content cache last use', () => {
     sw.seed(0)
     sw.seed(1)
     await sw.touch([entryUrl(0), entryUrl(1)])
-    const { port } = await sw.trim({ capBytes: 1000, quotaError: true })
+    const { port } = await sw.trim({ capBytes: 400, quotaError: true })
     expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1 }))
     expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(1)])
   })
@@ -585,11 +636,11 @@ describe('content cache index that does not answer', () => {
       const factory = neverOpens()
       const sw = serviceWorker({ indexedDB: factory })
       for (let n = 0; n < 4; n++) sw.seed(n)
-      const { done } = sw.sendAsync({ type: 'content-cache-trim', capBytes: 1000, quotaError: true })
+      const { done } = sw.sendAsync({ type: 'content-cache-trim', capBytes: 400, quotaError: true })
       await vi.advanceTimersByTimeAsync(999)
       expect(sw.replies).toEqual([])
       await vi.advanceTimersByTimeAsync(1)
-      // a quarter of 400 bytes, oldest written first
+      // a quarter of the 400-byte cap, oldest written first
       expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
       expect(sw.replies.map(({ message }) => message)).toEqual([expect.objectContaining({ evictedEntries: 1, indexedEntries: 0 })])
       // the worker is kept alive for the prune, which gives up on the index the same way

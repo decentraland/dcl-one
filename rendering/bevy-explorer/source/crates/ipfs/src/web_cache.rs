@@ -1,5 +1,5 @@
 //! The service worker's asset cache (deploy/web/service_worker.js), as the engine reaches it.
-//! The cache name, the keys and the header here MUST match the worker's.
+//! The cache name and the keys here MUST match the worker's.
 //!
 //! The worker only answers from the cache; the engine fills it from what it downloads. An entry
 //! under the shared key answers for every content server, so it is only written once the bytes
@@ -41,13 +41,6 @@ fn keys(url: &str) -> Option<[String; 2]> {
 // file it under a hash nobody checked it against.
 fn names(url: &str, hash: &str) -> bool {
     keys(url).is_some_and(|[shared, _]| shared == format!("{SHARED_ORIGIN}/{hash}"))
-}
-
-// The key a response the worker answered from its cache came from, as its `CACHED_HEADER` value
-// names it: one of `url`'s two keys, else none (an older worker sends `1`).
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn served_key(url: &str, header: &str) -> Option<String> {
-    keys(url)?.into_iter().find(|key| key == header)
 }
 
 /// The most the content cache keeps on web, whatever `AppConfig::cache_bytes` says.
@@ -180,7 +173,8 @@ pub struct WebCacheState {
     pub written_bytes: u64,
     pub quota_retries: u64,
     pub trims: u64,
-    /// Requests no service worker answered: none controls the page (after a hard reload, say).
+    /// Requests no service worker answered: none controls the page (after a hard reload, say), or
+    /// the reply timed out (5 s after a quota error, 30 s otherwise).
     pub unanswered: u64,
     /// Summed over every trim reported this session.
     pub evicted_entries_total: u64,
@@ -241,9 +235,9 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
 #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
 extern "C" {
     /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
-    /// `cap_bytes`, freeing at least a quarter of it when `quota_error`, ranking `used_now` (keys
-    /// not sent yet) as used now. Resolves with the worker's report, or null when no worker
-    /// answered.
+    /// `cap_bytes`, freeing the least recently used content worth a quarter of it when
+    /// `quota_error`, ranking `used_now` (keys not sent yet) as used now. Resolves with the
+    /// worker's report, or null when no worker answered.
     #[wasm_bindgen::prelude::wasm_bindgen(js_name = "__contentCacheTrim")]
     fn page_content_cache_trim(
         cap_bytes: f64,
@@ -307,8 +301,8 @@ pub use io::*;
 mod io {
     use super::{
         crosses_interval, forced_trim_allowed, keys, names, page_content_cache_touch,
-        page_content_cache_trim, parse_trim_reply, sends_uses_before_trim, served_key,
-        trim_interval_for, TrimReply, TrimReport, UsedKeys, WebCacheState, WEB_CACHE_CAP_BYTES,
+        page_content_cache_trim, parse_trim_reply, sends_uses_before_trim, trim_interval_for,
+        TrimReply, TrimReport, UsedKeys, WebCacheState, WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -320,8 +314,6 @@ mod io {
     use web_sys::{Cache, CacheStorage, Headers, Response, ResponseInit};
 
     const CACHE_NAME: &str = "ipfs-path-cache-v2";
-    /// On a response the worker answered from its cache.
-    pub const CACHED_HEADER: &str = "x-ipfs-cached";
 
     pub async fn open() -> Result<Cache, JsValue> {
         // a window or a worker
@@ -593,13 +585,6 @@ mod io {
             wasm_bindgen_futures::spawn_local(async {
                 request_trim(false).await;
             });
-        }
-    }
-
-    /// Records the entry the worker answered `url` from (its `CACHED_HEADER` value) as used.
-    pub fn note_served(url: &str, header: &str) {
-        if let Some(key) = served_key(url, header) {
-            note_used(&key);
         }
     }
 
@@ -960,19 +945,6 @@ mod tests {
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert!(json["indexedEntries"].is_null());
         assert!(json["unavailable"]["indexedEntries"].is_string());
-    }
-
-    #[test]
-    fn the_served_key_is_one_of_the_urls_keys() {
-        let shared = "https://shared.invalid/bafkreihash";
-        assert_eq!(
-            served_key("https://peer.example/contents/bafkreihash", shared),
-            Some(shared.to_owned())
-        );
-        let own = "https://worlds.example/contents/bafkreihash?v=1";
-        assert_eq!(served_key(own, own), Some(own.to_owned()));
-        assert_eq!(served_key(own, "1"), None);
-        assert_eq!(served_key(own, "https://shared.invalid/other"), None);
     }
 
     #[test]

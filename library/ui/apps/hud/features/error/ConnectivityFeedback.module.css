@@ -26,7 +26,8 @@
   z-index: -1;
   pointer-events: none;
   background: var(--connection-modal-glow);
-  mask: url('./radial-glow.png') center / 100% 100% no-repeat;
+  -webkit-mask-image: var(--glow-mask);
+  mask-image: var(--glow-mask);
 }
 .modal::before {
   top: -186px;

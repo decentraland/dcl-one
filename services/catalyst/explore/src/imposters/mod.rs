@@ -200,6 +200,9 @@ impl State {
         let Some(bake) = self.bake.as_ref() else {
             return;
         };
+        if !key::within_bake_bounds(&tile) {
+            return;
+        }
         if self.quarantine.is_quarantined(&tile) {
             tracing::info!(tile = %tile.label(), "bake suppressed, tile quarantined");
             return;

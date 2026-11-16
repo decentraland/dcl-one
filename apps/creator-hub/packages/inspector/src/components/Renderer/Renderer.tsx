@@ -1,0 +1,558 @@
+/* eslint-disable no-console */
+import React, { useCallback, useEffect, useState } from 'react';
+import { useDrop } from 'react-dnd';
+import cx from 'classnames';
+import type { Entity, Vector3Type } from '@dcl/ecs';
+
+import { DIRECTORY, withAssetDir } from '../../lib/data-layer/host/fs-utils';
+import { useAppSelector } from '../../redux/hooks';
+import type {
+  CatalogAssetDrop,
+  IDrop,
+  LocalAssetDrop,
+  CustomAssetDrop,
+} from '../../lib/sdk/drag-drop';
+import { getNode, DROP_TYPES, isDropType, DropTypesEnum } from '../../lib/sdk/drag-drop';
+import { useRenderer } from '../../hooks/sdk/useRenderer';
+import { useSdk } from '../../hooks/sdk/useSdk';
+import { getConfig } from '../../lib/logic/config';
+import { setViewportElement } from '../../lib/logic/viewport-rect';
+import { snapPositionValue } from '../../lib/babylon/decentraland/snap-manager';
+import { ROOT } from '../../lib/sdk/tree';
+import type { CustomAsset } from '../../lib/logic/catalog';
+import { getAssetById, isFileOnly, isGround, isSmart, type Asset } from '../../lib/logic/catalog';
+import { useImportAssetToFilesystem } from '../../hooks/useImportAssetToFilesystem';
+import { useSnackbar } from '../../hooks/useSnackbar';
+import {
+  areGizmosDisabled,
+  getHiddenPanels,
+  isAssetExplorerActive,
+  isGroundGridDisabled,
+} from '../../redux/ui';
+import { PanelName } from '../../redux/ui/types';
+import type { AssetNodeItem } from '../ProjectAssetExplorer/types';
+import type { TreeNode } from '../ProjectAssetExplorer/ProjectView';
+import { isAssetNode } from '../ProjectAssetExplorer/utils';
+import { Loading } from '../Loading';
+import { isModel } from '../EntityInspector/GltfInspector/utils';
+import {
+  isQuickItemKind,
+  isTemplateMedia,
+  QUICK_ITEM_TEMPLATES,
+} from '../../lib/sdk/operations/quick-item';
+import { useIsMounted } from '../../hooks/useIsMounted';
+import {
+  useHotkey,
+  BACKSPACE,
+  DELETE,
+  COPY,
+  PASTE,
+  COPY_ALT,
+  PASTE_ALT,
+  ZOOM_IN,
+  ZOOM_IN_ALT,
+  ZOOM_OUT_ALT,
+  ZOOM_OUT,
+  RESET_CAMERA,
+  DUPLICATE,
+  DUPLICATE_ALT,
+  FOCUS_SELECTED,
+} from '../../hooks/useHotkey';
+import { analytics, Event } from '../../lib/logic/analytics';
+import { checkAssetCompatibility } from '../../lib/sdk/operations/add-asset/compatibility';
+import type { IncompatibleComponent } from '../../lib/sdk/operations/add-asset/compatibility';
+import { IncompatibleAssetModal } from '../IncompatibleAssetModal';
+import { Warnings } from '../Warnings';
+import { CameraSpeed } from './CameraSpeed';
+import { Shortcuts } from './Shortcuts';
+import { TransformInput } from './TransformInput';
+import { Metrics } from './Metrics';
+import { SceneMinimap } from './SceneMinimap';
+
+import './Renderer.css';
+
+const fixedNumber = (val: number) => Math.round(val * 1e2) / 1e2;
+
+const SINGLE_TILE_HINT_OFFSET = 30;
+
+const isQuickItemMedia = (node: TreeNode): node is AssetNodeItem =>
+  isAssetNode(node) && isQuickItemKind(node.asset.type);
+
+const Renderer: React.FC = () => {
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  // The viewport container — its bounding rect turns a drop's client coords into
+  // normalized device coords (the canvas is display:none under Bevy, so its rect
+  // is unusable; the container always has the real viewport size).
+  const viewportRef = React.useRef<HTMLDivElement>(null);
+  // The client coords of the in-flight drop, captured in the drop handler so
+  // getDropPosition (called indirectly via importCatalogAsset/etc.) can compute
+  // the drop's NDC without threading the monitor through every path.
+  const dropClientOffsetRef = React.useRef<{ x: number; y: number } | null>(null);
+  useRenderer(() => canvasRef);
+  // Expose the viewport rect so the host can crop a compositor screenshot to just the 3D
+  // view (the Bevy fallback when the engine's /screenshot command is unavailable — #1526).
+  useEffect(() => {
+    setViewportElement(viewportRef.current);
+    return () => setViewportElement(null);
+  }, []);
+  const sdk = useSdk();
+  const [isLoading, setIsLoading] = useState(false);
+  const isMounted = useIsMounted();
+  const { pushNotification } = useSnackbar();
+  const { importCatalogAssetToFilesystem, importCustomAssetToFilesystem } =
+    useImportAssetToFilesystem();
+  const gizmosDisabled = useAppSelector(areGizmosDisabled);
+  const groundGridDisabled = useAppSelector(isGroundGridDisabled);
+  const [copyEntities, setCopyEntities] = useState<Entity[]>([]);
+  const hiddenPanels = useAppSelector(getHiddenPanels);
+  const [placeSingleTile, setPlaceSingleTile] = useState(false);
+  const [showSingleTileHint, setShowSingleTileHint] = useState(false);
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [incompatibleAssetInfo, setIncompatibleAssetInfo] = useState<{
+    assetName: string;
+    incompatibleComponents: IncompatibleComponent[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (sdk) {
+      sdk.renderer.gizmos.setEnabled(!gizmosDisabled);
+    }
+  }, [sdk, gizmosDisabled]);
+
+  useEffect(() => {
+    if (sdk) {
+      sdk.renderer.setGridVisible(!groundGridDisabled);
+    }
+  }, [sdk, groundGridDisabled]);
+
+  const isUIDesignerOpen = !hiddenPanels[PanelName.UI_DESIGNER];
+  const assetExplorerActive = useAppSelector(isAssetExplorerActive);
+
+  const deleteSelectedEntities = useCallback(() => {
+    if (!sdk || isUIDesignerOpen) return;
+    const selectedEntitites = sdk.operations.getSelectedEntities();
+    selectedEntitites.forEach(entity => sdk.operations.removeEntity(entity));
+    void sdk.operations.dispatch();
+  }, [sdk, isUIDesignerOpen]);
+
+  const duplicateSelectedEntities = useCallback(() => {
+    if (!sdk || isUIDesignerOpen) return;
+    sdk.renderer.camera.setControlEnabled(false);
+    const selectedEntitites = sdk.operations.getSelectedEntities();
+    const preferredGizmo =
+      selectedEntitites.length > 0
+        ? sdk.components.Selection.getOrNull(selectedEntitites[0])?.gizmo
+        : undefined;
+    sdk.operations.removeSelectedEntities();
+    let insertAfter =
+      selectedEntitites.length > 1 ? selectedEntitites[selectedEntitites.length - 1] : undefined;
+    selectedEntitites.forEach(entity => {
+      const cloned = sdk.operations.duplicateEntity(entity, preferredGizmo, insertAfter);
+      insertAfter = cloned;
+    });
+    void sdk.operations.dispatch();
+    setTimeout(() => {
+      sdk.renderer.camera.setControlEnabled(true);
+    }, 100);
+  }, [sdk, isUIDesignerOpen]);
+
+  const copySelectedEntities = useCallback(() => {
+    if (!sdk || isUIDesignerOpen) return;
+    const selectedEntitites = sdk.operations.getSelectedEntities();
+    setCopyEntities([...selectedEntitites]);
+  }, [sdk, setCopyEntities, isUIDesignerOpen]);
+
+  const pasteSelectedEntities = useCallback(() => {
+    if (!sdk || isUIDesignerOpen) return;
+    const selectedEntities = sdk.operations.getSelectedEntities();
+    const preferredGizmo =
+      selectedEntities.length > 0
+        ? sdk.components.Selection.getOrNull(selectedEntities[0])?.gizmo
+        : undefined;
+    sdk.operations.removeSelectedEntities();
+    let insertAfter = copyEntities.length > 1 ? copyEntities[copyEntities.length - 1] : undefined;
+    copyEntities.forEach(entity => {
+      const cloned = sdk.operations.duplicateEntity(entity, preferredGizmo, insertAfter);
+      insertAfter = cloned;
+    });
+    void sdk.operations.dispatch();
+  }, [sdk, copyEntities, isUIDesignerOpen]);
+
+  const zoomIn = useCallback(() => {
+    if (!sdk) return;
+    sdk.renderer.camera.zoom(1);
+  }, [sdk]);
+
+  const zoomOut = useCallback(() => {
+    if (!sdk) return;
+    sdk.renderer.camera.zoom(-1);
+  }, [sdk]);
+
+  const resetCamera = useCallback(() => {
+    if (!sdk) return;
+    sdk.renderer.camera.reset();
+  }, [sdk]);
+
+  const focusOnSelected = useCallback(() => {
+    if (!sdk) return;
+    const selectedEntities = sdk.operations.getSelectedEntities();
+    if (selectedEntities.length > 0) {
+      sdk.renderer.camera.focusOnEntity(selectedEntities[0]);
+      sdk.events.emit('focusEntity', { entity: selectedEntities[0] });
+    }
+  }, [sdk]);
+
+  const entityKeys = { enabled: !assetExplorerActive };
+  useHotkey([DELETE, BACKSPACE], deleteSelectedEntities, document.body, entityKeys);
+  useHotkey([COPY, COPY_ALT], copySelectedEntities, document.body, entityKeys);
+  useHotkey([PASTE, PASTE_ALT], pasteSelectedEntities, document.body, entityKeys);
+  useHotkey([DUPLICATE, DUPLICATE_ALT], duplicateSelectedEntities, document.body, entityKeys);
+  const cameraKeys = { enabled: !isUIDesignerOpen };
+  useHotkey([ZOOM_IN, ZOOM_IN_ALT], zoomIn, document.body, cameraKeys);
+  useHotkey([ZOOM_OUT, ZOOM_OUT_ALT], zoomOut, document.body, cameraKeys);
+  useHotkey([RESET_CAMERA], resetCamera, document.body, cameraKeys);
+  useHotkey([FOCUS_SELECTED], focusOnSelected, document.body, cameraKeys);
+
+  // listen to ctrl key to place single tile
+  useEffect(() => {
+    const prevDrag = document.ondrag;
+    function handleDrag(event: MouseEvent) {
+      if (event.shiftKey && !placeSingleTile) {
+        setPlaceSingleTile(true);
+      } else if (placeSingleTile && !event.shiftKey) {
+        setPlaceSingleTile(false);
+      }
+      if (!placeSingleTile && event.clientX && event.clientY) {
+        setMousePosition({ x: event.clientX, y: event.clientY });
+      }
+    }
+    document.ondrag = handleDrag;
+    return () => {
+      document.ondrag = prevDrag;
+    };
+  }, [placeSingleTile, setPlaceSingleTile]);
+
+  // clear hint
+  useEffect(() => {
+    const prevDragEnd = document.ondragend;
+    function handleDragEnd() {
+      setShowSingleTileHint(false);
+    }
+    document.ondragend = handleDragEnd;
+    return () => {
+      document.ondragend = prevDragEnd;
+    };
+  }, [showSingleTileHint, setShowSingleTileHint]);
+
+  const getDropPosition = async () => {
+    // Renderer-agnostic: ask the active renderer where the pointer hits the
+    // ground, then snap. The drop's client coords (captured at drop time) →
+    // normalized device coords (x,y ∈ [-1,1], y up) relative to the viewport, so
+    // an out-of-process renderer (Bevy) can raycast from the real cursor — its own
+    // pointer is stale while the host overlay captures the HTML5 drag. Babylon
+    // reads its live pointer and ignores the NDC.
+    const clientOffset = dropClientOffsetRef.current;
+    const rect = viewportRef.current?.getBoundingClientRect();
+    const ndc =
+      clientOffset && rect && rect.width > 0 && rect.height > 0
+        ? {
+            x: ((clientOffset.x - rect.left) / rect.width) * 2 - 1,
+            y: -(((clientOffset.y - rect.top) / rect.height) * 2 - 1),
+          }
+        : undefined;
+    const point = (await sdk!.renderer.getPointerWorldPoint(ndc)) ?? { x: 0, y: 0, z: 0 };
+    // Plain {x,y,z} throughout — no Babylon Vector3, so this works for any renderer.
+    return snapPositionValue({ x: fixedNumber(point.x), y: 0, z: fixedNumber(point.z) });
+  };
+
+  const addAsset = async (
+    asset: AssetNodeItem,
+    position: Vector3Type,
+    basePath: string,
+    isCustom: boolean,
+  ) => {
+    if (!sdk) return;
+    const { operations } = sdk;
+    operations.addAsset(
+      ROOT,
+      asset.asset.src,
+      asset.name,
+      position,
+      basePath,
+      sdk.enumEntity,
+      asset.composite,
+      asset.asset.id,
+      isCustom,
+    );
+    await operations.dispatch();
+    analytics.track(Event.ADD_ITEM, {
+      itemId: asset.asset.id,
+      itemName: asset.name,
+      itemPath: asset.asset.src,
+      isSmart: isSmart(asset),
+      isCustom,
+    });
+    canvasRef.current?.focus();
+  };
+
+  const setGround = async (asset: AssetNodeItem, basePath: string) => {
+    if (!sdk) return;
+    const { operations } = sdk;
+    const src = `${basePath}/${asset.asset.src}`;
+    operations.setGround(src);
+    await operations.dispatch();
+    analytics.track(Event.SET_GROUND, {
+      itemId: asset.asset.id,
+      itemName: asset.name,
+      itemPath: asset.asset.src,
+    });
+    canvasRef.current?.focus();
+  };
+
+  const importCustomAsset = async (asset: CustomAsset) => {
+    const position = await getDropPosition();
+    const result = await importCustomAssetToFilesystem(asset);
+    if (!result) return;
+
+    const model: AssetNodeItem = {
+      type: 'asset',
+      name: asset.name,
+      parent: null,
+      asset: { type: 'gltf', src: '', id: asset.id },
+      composite: asset.composite,
+    };
+    await addAsset(model, position, result.basePath, true);
+  };
+
+  const importCatalogAsset = async (asset: Asset) => {
+    if (sdk) {
+      const compat = checkAssetCompatibility(asset.composite, sdk.engine);
+      if (!compat.compatible) {
+        setIncompatibleAssetInfo({
+          assetName: asset.name,
+          incompatibleComponents: compat.incompatibleComponents,
+        });
+        return;
+      }
+    }
+
+    if (isFileOnly(asset)) {
+      setIsLoading(true);
+      await importCatalogAssetToFilesystem(asset);
+      if (!isMounted()) return;
+      setIsLoading(false);
+      void pushNotification('success', `Added "${asset.name}" to the local assets`);
+      return;
+    }
+
+    const position = await getDropPosition();
+
+    setIsLoading(true);
+    const result = await importCatalogAssetToFilesystem(asset);
+    if (!isMounted()) return;
+    setIsLoading(false);
+
+    const model: AssetNodeItem = {
+      type: 'asset',
+      name: asset.name,
+      parent: null,
+      asset: {
+        type: result.assetPath ? 'gltf' : 'unknown',
+        src: result.assetPath ?? '',
+        id: asset.id,
+      },
+      composite: asset.composite,
+    };
+    if (isGround(asset) && !placeSingleTile) {
+      await setGround(model, result.basePath);
+    } else {
+      if (isGround(asset)) {
+        position.y += 0.25;
+      }
+      await addAsset(model, position, result.basePath, false);
+    }
+  };
+
+  // A dropped image, sound or video spawns the matching catalog item pointed at that
+  // file (#231), so the entity arrives with the components and basic view a
+  // hand-placed item has instead of a bare component.
+  const importLocalMedia = async (asset: AssetNodeItem) => {
+    const kind = asset.asset.type;
+    if (!sdk || !isQuickItemKind(kind)) return;
+    const template = getAssetById(QUICK_ITEM_TEMPLATES[kind].assetId);
+    if (!template) {
+      console.warn(`No "${QUICK_ITEM_TEMPLATES[kind].name}" item in the catalog to spawn`);
+      return;
+    }
+
+    const position = await getDropPosition();
+    // The image plane is centred on its origin; lift it so it stands on the ground.
+    if (kind === 'image') position.y += 0.5;
+
+    setIsLoading(true);
+    const result = await importCatalogAssetToFilesystem(template, {
+      skipContent: path => isTemplateMedia(kind, path),
+    });
+    if (!isMounted()) return;
+    setIsLoading(false);
+
+    const name = asset.name.replace(/\.[^.]+$/, '');
+    const { operations } = sdk;
+    const entity = operations.addAsset(
+      ROOT,
+      result.assetPath ?? '',
+      name,
+      position,
+      result.basePath,
+      sdk.enumEntity,
+      template.composite,
+      template.id,
+      false,
+    );
+    operations.setQuickItemSource(entity, kind, withAssetDir(asset.asset.src), name);
+    await operations.dispatch();
+    analytics.track(Event.ADD_ITEM, {
+      itemId: template.id,
+      itemName: name,
+      itemPath: asset.asset.src,
+      isSmart: isSmart(template),
+      isCustom: false,
+    });
+    canvasRef.current?.focus();
+  };
+
+  const [{ isDragActive }, drop] = useDrop<IDrop, void, { isDragActive: boolean }>(
+    () => ({
+      accept: DROP_TYPES,
+      collect: monitor => ({ isDragActive: monitor.canDrop() }),
+      drop: (item: IDrop, monitor) => {
+        if (monitor.didDrop()) return;
+        // Capture where the drop landed so getDropPosition can raycast from the
+        // real cursor (see dropClientOffsetRef).
+        dropClientOffsetRef.current = monitor.getClientOffset();
+        const itemType = monitor.getItemType();
+
+        if (isDropType<CatalogAssetDrop>(item, itemType, DropTypesEnum.CatalogAsset)) {
+          void importCatalogAsset(item.value);
+          return;
+        }
+
+        if (isDropType<LocalAssetDrop>(item, itemType, DropTypesEnum.LocalAsset)) {
+          const { tree } = item.context;
+          const node = tree.get(item.value)!;
+          const model = getNode(node, tree, isModel);
+          if (model) {
+            // Fire-and-forget: react-dnd's drop() returns a DropResult, not a
+            // promise, so run the async placement without awaiting it here.
+            void (async () => {
+              const position = await getDropPosition();
+              await addAsset(model, position, DIRECTORY.ASSETS, false);
+            })();
+            return;
+          }
+          const media = getNode(node, tree, isQuickItemMedia);
+          if (media) void importLocalMedia(media);
+          return;
+        }
+
+        if (isDropType<CustomAssetDrop>(item, itemType, DropTypesEnum.CustomAsset)) {
+          void importCustomAsset(item.value);
+          return;
+        }
+      },
+      hover(item: IDrop, monitor) {
+        if (isDropType<CatalogAssetDrop>(item, monitor.getItemType(), DropTypesEnum.CatalogAsset)) {
+          const asset = item.value;
+          if (isGround(asset)) {
+            if (!showSingleTileHint) {
+              setShowSingleTileHint(true);
+            }
+          } else if (showSingleTileHint) {
+            setShowSingleTileHint(false);
+          }
+        }
+      },
+    }),
+    [addAsset, showSingleTileHint, setShowSingleTileHint],
+  );
+
+  // Out-of-process renderers (Bevy) run the viewport in an iframe on top of the
+  // hidden shared canvas. HTML5 drag events don't cross an iframe boundary and a
+  // display:none canvas has zero area, so a drop onto the canvas never fires. For
+  // those, the drop target is a viewport-covering overlay in THIS document (above
+  // both canvas and iframe) so the drag stays in the parent document and the drop
+  // lands. Babylon draws into the visible canvas in-process, so it keeps using the
+  // canvas as the drop target (its proven path, unchanged).
+  const usesIframeViewport = getConfig().renderer === 'bevy';
+  const dropOverlayRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (usesIframeViewport) drop(node);
+    },
+    [drop, usesIframeViewport],
+  );
+  useEffect(() => {
+    if (!usesIframeViewport) drop(canvasRef);
+  }, [drop, usesIframeViewport]);
+
+  return (
+    <div
+      ref={viewportRef}
+      className={cx('Renderer', {
+        'is-loaded': !isLoading,
+        'is-loading': isLoading,
+      })}
+    >
+      {usesIframeViewport && (
+        <div
+          ref={dropOverlayRef}
+          className="drop-overlay"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 10,
+            // Only intercept while a compatible drag is active, so the overlay
+            // never blocks engine pointer input the rest of the time.
+            pointerEvents: isDragActive ? 'auto' : 'none',
+          }}
+        />
+      )}
+      {isLoading && <Loading />}
+      <Warnings />
+      <CameraSpeed />
+      <TransformInput />
+      {!hiddenPanels[PanelName.METRICS] && <Metrics />}
+      <SceneMinimap />
+      {!hiddenPanels[PanelName.SHORTCUTS] && (
+        <Shortcuts
+          viewport={viewportRef}
+          onResetCamera={resetCamera}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+        />
+      )}
+      {incompatibleAssetInfo && (
+        <IncompatibleAssetModal
+          assetName={incompatibleAssetInfo.assetName}
+          incompatibleComponents={incompatibleAssetInfo.incompatibleComponents}
+          onClose={() => setIncompatibleAssetInfo(null)}
+        />
+      )}
+      <canvas
+        ref={canvasRef}
+        id="canvas"
+        touch-action="none"
+      />
+      <div
+        style={{
+          top: mousePosition.y + SINGLE_TILE_HINT_OFFSET,
+          left: mousePosition.x + SINGLE_TILE_HINT_OFFSET,
+        }}
+        className={cx('single-tile-hint', { 'is-visible': !placeSingleTile && showSingleTileHint })}
+      >
+        Hold <b>SHIFT</b> to place a single tile
+      </div>
+    </div>
+  );
+};
+
+export default React.memo(Renderer);

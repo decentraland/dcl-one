@@ -129,6 +129,9 @@ struct RecoveryHarness {
 impl RecoveryHarness {
     async fn new(fixture: &Fixture, session: &str) -> Self {
         let source = Arc::new(Mutex::new(PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: WALLET.into(),
             session: session.into(),
             cluster_id: "current".into(),
@@ -460,7 +463,7 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
         let mut document = serde_json::json!({
             "islandId": "island-current",
             "connectionString": "livekit:wss://example.invalid/previous",
-            "pulseAdmission": { "wallet": WALLET, "session": SESSION, "clusterId": "current", "realm": "realm-current", "sourceIncarnation": "pulse-current", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor }
+            "pulseAdmission": { "selectedOrigin": "native", "selectedIdentity": 1, "wallet": WALLET, "session": SESSION, "clusterId": "current", "realm": "realm-current", "sourceIncarnation": "pulse-current", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor }
         });
         if let Some(expiry) = expiry {
             document["tokenExpiresAtUnix"] = expiry.into();
