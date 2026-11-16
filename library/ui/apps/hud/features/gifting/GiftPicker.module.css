@@ -24,8 +24,17 @@
   overflow-wrap: anywhere;
 }
 .address {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--text-dim);
+  font: inherit;
   font-size: var(--fs-sm);
+  cursor: pointer;
 }
 .search {
   width: 260px;

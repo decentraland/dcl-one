@@ -5,22 +5,33 @@ import { gifting } from '@hud-host'
 import type { PendingGift } from '@explorer-core/hostContract'
 import { useOptionalSession } from '../session/SessionContext'
 
+/** The host's answer for each sign-in, asked once: every profile card and passport reads it as it opens. */
+const answers = new Map<string, Promise<boolean>>()
+const known = new Map<string, boolean>()
+
+function ask(signIn: string): Promise<boolean> {
+  let answer = answers.get(signIn)
+  if (answer == null) {
+    answer = (gifting?.available() ?? Promise.resolve(false)).catch(() => false)
+    answers.set(signIn, answer)
+    void answer.then((yes) => known.set(signIn, yes))
+  }
+  return answer
+}
+
 /**
  * Whether Gift is offered to this session: a host that can sign, and its yes for this sign-in (the session's phase
- * and account). Hidden on any failure, and while the answer is pending.
+ * and account), asked once per sign-in. Hidden on any failure, and while the first answer is pending.
  */
 export function useGiftingAvailable(): boolean {
   const session = useOptionalSession()
   const signIn = `${session?.phase ?? ''}|${session?.login.account ?? ''}`
-  const [available, setAvailable] = useState(false)
+  const [available, setAvailable] = useState(() => known.get(signIn) === true)
   useEffect(() => {
-    setAvailable(false)
+    setAvailable(known.get(signIn) === true)
     if (!gifting) return
     let alive = true
-    void gifting.available().then(
-      (yes) => alive && setAvailable(yes),
-      () => {}
-    )
+    void ask(signIn).then((yes) => alive && setAvailable(yes))
     return () => {
       alive = false
     }

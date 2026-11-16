@@ -69,15 +69,14 @@ export interface HostDonations {
   onSent(fn: () => void): () => void
 }
 
-/** One token to gift: the HUD names it and its recipient; the host checks both and signs the transfer. */
+/** One token to gift: the HUD names it and its recipient; the host checks both, reads the recipient's profile itself
+ *  and signs the transfer. */
 export interface GiftRequest {
   /** The recipient's address. */
   recipient: string
   /** The token's full urn (the item urn and its token id). */
   urn: string
   tokenId: string
-  /** The recipient's name as the picker shows it; the host reads the profile again itself. */
-  recipientName: string
 }
 
 /** A token the host sent as a gift and the owned catalog may still list: hidden while its `transferredAt` is

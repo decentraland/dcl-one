@@ -66,7 +66,7 @@ describe('the gift picker', () => {
     expect(screen.getByText(/You are about to send/).textContent).toBe('You are about to send Cool Hat to Bob')
     fireEvent.click(screen.getByRole('button', { name: 'SEND GIFT' }))
     expect(onClose).toHaveBeenCalled()
-    expect(host.open).toHaveBeenCalledWith({ recipient: RECIPIENT.address, urn: `${MATIC}:8`, tokenId: '8', recipientName: 'Bob', transferredAt: 101 })
+    expect(host.open).toHaveBeenCalledWith({ recipient: RECIPIENT.address, urn: `${MATIC}:8`, tokenId: '8', transferredAt: 101 })
   })
 
   it('covers an equipped single copy, which cannot be picked', async () => {

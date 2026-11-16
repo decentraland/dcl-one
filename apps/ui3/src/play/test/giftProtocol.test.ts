@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { GIFT_EVENT, GIFT_PROTOCOL, isGiftEvent, parseGiftCapabilities, parseGiftRequest, parsePendingGifts } from '../lib/giftProtocol'
 
 const URN = 'urn:decentraland:amoy:collections-v2:0x' + 'a'.repeat(40) + ':0:105'
-const REQUEST = { v: GIFT_PROTOCOL, recipient: '0x' + 'B'.repeat(40), urn: URN, tokenId: '105', recipientName: 'Bob', transferredAt: 1700000000 }
+const REQUEST = { v: GIFT_PROTOCOL, recipient: '0x' + 'B'.repeat(40), urn: URN, tokenId: '105', transferredAt: 1700000000 }
 
 describe('parseGiftRequest', () => {
-  it('admits the recipient, the token and a display name, with the recipient lowercased', () => {
+  it('admits the recipient and the token, with the recipient lowercased', () => {
     expect(parseGiftRequest(REQUEST)).toEqual({ ...REQUEST, recipient: '0x' + 'b'.repeat(40) })
   })
 
@@ -17,7 +17,7 @@ describe('parseGiftRequest', () => {
     expect(() => parseGiftRequest({ ...REQUEST, tokenId: '0x1' })).toThrow('tokenId')
     expect(() => parseGiftRequest({ ...REQUEST, urn: URN.replace(':105', ':106') })).toThrow('urn')
     expect(() => parseGiftRequest({ ...REQUEST, urn: 'urn:decentraland:off-chain:base-avatars:hat:105' })).toThrow('urn')
-    expect(() => parseGiftRequest({ ...REQUEST, recipientName: 'x'.repeat(101) })).toThrow('recipientName')
+    expect(() => parseGiftRequest({ ...REQUEST, recipientName: 'Bob' })).toThrow('unexpected gift.open fields: recipientName')
     expect(() => parseGiftRequest({ ...REQUEST, transferredAt: -1 })).toThrow('transferredAt')
     expect(() => parseGiftRequest(null)).toThrow()
   })

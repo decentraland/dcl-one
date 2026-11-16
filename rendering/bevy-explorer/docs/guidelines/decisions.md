@@ -475,6 +475,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   and another player's passport options (before Block; the picker replaces the passport). The
   voice-stream panel's menu has none, as in unity-explorer. A picker error is a toast and the
   picker stays open; unity-explorer closes its picker on SEND before it can show the error.
+- **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
+  successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
+  port leaves both out for now. The shell's "Preparing Gift for" tile shows the
+  marketplace index's item category (wearable or emote), so its corner glyph is the generic one.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
   markers with a camera into a texture; here the atlas and every marker are elements of the HUD
   page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at

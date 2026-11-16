@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gifting } from '@hud-host'
 import type { CatalogKind, GiftableItem, GiftingPageMessage } from '@explorer-core/engine/protocol'
 import { GIFT_PAGE_SIZE, NOT_TRANSFERABLE, DEFAULT_INFO, bestToken, giftRows, transferable } from '@explorer-core/features/gifting/picker'
-import { Avatar, Button, Close, ControlButton, Modal, SearchField, Spinner, Tabs, WearableCard, openPopup, showToast, type Rarity, type TabItem } from '../../design'
+import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Spinner, Tabs, WearableCard, openPopup, showToast, type Rarity, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { CategoryIcon } from '../backpack/categoryIcons'
@@ -20,6 +20,8 @@ import { refreshPendingGifts, usePendingGifts } from './useGifting'
 import styles from './GiftPicker.module.css'
 
 const SEARCH_DEBOUNCE_MS = 500
+/** Shown when the host refused or didn't answer: the picker is already closed. */
+const OPEN_FAILED = 'There was an error while trying to process your request. Please try again!'
 const TABS: TabItem<CatalogKind>[] = [
   { id: 'wearables', label: 'WEARABLES' },
   { id: 'emotes', label: 'EMOTES' }
@@ -106,8 +108,11 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
     }
     onClose()
     gifting
-      .open({ recipient: recipient.address, urn: token.urn, tokenId: token.tokenId, recipientName: name, transferredAt: token.transferredAt })
-      .catch((e: unknown) => console.warn('[gifting] could not open', e))
+      .open({ recipient: recipient.address, urn: token.urn, tokenId: token.tokenId, transferredAt: token.transferredAt })
+      .catch((e: unknown) => {
+        console.warn('[gifting] could not open', e)
+        showToast(OPEN_FAILED, { tone: 'error' })
+      })
   }
 
   const empty = !grid.loading && rows.length === 0
@@ -120,7 +125,10 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
           <h2 className={styles.title}>
             Send a Gift to <span style={{ color }}>{name}</span>
           </h2>
-          <span className={styles.address}>{`${recipient.address.slice(0, 6)}…${recipient.address.slice(-4)}`}</span>
+          <button type="button" className={styles.address} title="Copy address" onClick={() => void navigator.clipboard?.writeText(recipient.address).catch(() => {})}>
+            {`${recipient.address.slice(0, 6)}…${recipient.address.slice(-4)}`}
+            <Copy size={12} />
+          </button>
         </div>
         <div className={styles.search}>
           <SearchField value={search} onChange={setSearch} onSubmit={(v) => setQuery(v)} clearable onClear={() => setQuery('')} />
@@ -140,7 +148,7 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
         variant="underline"
         aria-label="Gift type"
       />
-      <div className={styles.grid} role="listbox" aria-label={tab === 'wearables' ? 'Wearables' : 'Emotes'}>
+      <div className={styles.grid} role="group" aria-label={tab === 'wearables' ? 'Wearables' : 'Emotes'}>
         {grid.loading && grid.items.length === 0 && (
           <div className={styles.centre}>
             <Spinner />

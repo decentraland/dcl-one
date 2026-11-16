@@ -5876,7 +5876,7 @@
     },
     {
       "path": "library/explorer-core/features/gifting/picker.ts",
-      "sha256": "3a3c0e88d8721f71bb6022f67573fef76f3036b8c30fa1306e14af8678762b44"
+      "sha256": "39e709c4a1f7de899850244c01dd6a623c632aae4439377e880570e489521587"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
@@ -5984,7 +5984,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "dd613d0aff41020a04497e0282a0f432d70be69b8a3ad55f4500fd90a2208450"
+      "sha256": "fe97d0005c7d85164b982e333e055f5704b5e2bc7e7098fc5f34f0ab51fdb645"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -8448,11 +8448,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftPicker.module.css",
-      "sha256": "3e6789b12bff51dcd2d97ee36944cd2b39bc05b1466cd4a5ce60746e10882eb7"
+      "sha256": "1af4fc38aa125a919968825028550755dff5c45a02171e2b1f3958ef485b134f"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
-      "sha256": "f37555d4c46af6fa4760431773fb98a549d8dec6134714bc3762fe4fcda59095"
+      "sha256": "c8045f59dba958413e09b3f0b6447b5be22bc652e05cc6b619318d1f0ba3b420"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
@@ -8464,7 +8464,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
-      "sha256": "6db5276ef631d6fcbd9cfd582a19b66c16fd770665ec40e816e73c79a6e95f91"
+      "sha256": "1761b83aea83a99a46199fae4eb08bc3a223a1bda57221eaab7579d5832c4cb5"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
@@ -8472,7 +8472,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gifting/useGifting.ts",
-      "sha256": "6d6bb92dcb23ed2a88fa4ef3c1918947e8df9baf8fcfd5404a6f75a07333f960"
+      "sha256": "b5e3000e0dec41843952675ca5ef0362666c3a356964ab83bf7fba27d4317c1c"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
@@ -9268,7 +9268,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
-      "sha256": "12dd572a693a4e21c2c2ad92f1d75399bd4beca9a462bae879a7b380126148f0"
+      "sha256": "b9b12df3538dfdb3857a2665d064b08c72d523cdf69082324a10928e769f9c9e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",

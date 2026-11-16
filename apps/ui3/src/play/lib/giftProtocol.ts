@@ -2,7 +2,7 @@
 // picker names the token and the recipient; the shell checks both itself (the login's account owns the token on
 // chain, the contract is a Decentraland collection, the recipient is another account), resolves the item and the
 // recipient's profile on its own, and shows the transfer's progress, success and error over the app. Nothing that
-// signs crosses from the HUD: parseGiftRequest admits the recipient, the token and a display name only.
+// signs crosses from the HUD: parseGiftRequest admits the recipient and the token only.
 
 import type { GiftRequest, PendingGift } from '@explorer-core/hostContract'
 
@@ -47,7 +47,6 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 const TOKEN_ID = /^\d{1,78}$/
 /** A collection item's token urn: `urn:decentraland:<network>:collections-v<n>:<contract>:<item>:<token>`. */
 const TOKEN_URN = /^urn:decentraland:[a-z0-9]+:collections-v[12]:0x[0-9a-fA-F]{40}:[^:]{1,100}:\d{1,78}$/
-const NAME_MAX = 100
 
 const object = (v: unknown): Record<string, unknown> | null => (v != null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
 const seconds = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
@@ -56,15 +55,14 @@ const seconds = (v: unknown): v is number => typeof v === 'number' && Number.isF
 export function parseGiftRequest(params: unknown): GiftOpenRequest {
   const p = object(params)
   if (!p) throw new Error('bad gift.open request')
-  const extra = Object.keys(p).filter((k) => !['v', 'recipient', 'urn', 'tokenId', 'recipientName', 'transferredAt'].includes(k))
+  const extra = Object.keys(p).filter((k) => !['v', 'recipient', 'urn', 'tokenId', 'transferredAt'].includes(k))
   if (extra.length > 0) throw new Error(`unexpected gift.open fields: ${extra.join(', ')}`)
   if (p.v !== GIFT_PROTOCOL) throw new Error('unsupported gift protocol version')
   if (typeof p.recipient !== 'string' || !ADDRESS.test(p.recipient)) throw new Error('bad gift.open recipient')
   if (typeof p.tokenId !== 'string' || !TOKEN_ID.test(p.tokenId)) throw new Error('bad gift.open tokenId')
   if (typeof p.urn !== 'string' || !TOKEN_URN.test(p.urn) || !p.urn.endsWith(`:${p.tokenId}`)) throw new Error('bad gift.open urn')
-  if (typeof p.recipientName !== 'string' || p.recipientName.length > NAME_MAX) throw new Error('bad gift.open recipientName')
   if (!seconds(p.transferredAt)) throw new Error('bad gift.open transferredAt')
-  return { v: GIFT_PROTOCOL, recipient: p.recipient.toLowerCase(), urn: p.urn, tokenId: p.tokenId, recipientName: p.recipientName, transferredAt: p.transferredAt }
+  return { v: GIFT_PROTOCOL, recipient: p.recipient.toLowerCase(), urn: p.urn, tokenId: p.tokenId, transferredAt: p.transferredAt }
 }
 
 /** The shell's capabilities answer as the HUD reads it: anything it can't read is "unavailable". */

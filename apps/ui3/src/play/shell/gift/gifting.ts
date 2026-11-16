@@ -291,6 +291,8 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
     const collection = collectionV2(chain, contract)
     const tokenId = BigInt(req.tokenId)
     let signedNonce: bigint | undefined
+    /** Whether the wallet returned a signature: only then can the gift have reached the relay. */
+    let signed = false
     const settle = (outcome: Outcome): void => {
       clearTimeout(slowTimer)
       release?.()
@@ -311,16 +313,27 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
         to: req.recipient,
         tokenId,
         ...(pinned !== undefined ? { nonce: pinned } : {}),
-        current: () => account() === who
+        // Closing the dialog before the signature cancels the gift: the guard refuses to sign once it is closed.
+        current: () => account() === who && live(s)
       }
-      const guarded = svc.guard(provider, intent)
+      const checkedProvider = svc.guard(provider, intent)
+      const guarded: Eip1193Provider = {
+        ...checkedProvider,
+        async request(args) {
+          const result = await checkedProvider.request(args)
+          if (args.method === 'eth_signTypedData_v4') signed = true
+          return result
+        }
+      }
       // The nonce the wallet signs, read the way the sender reads it, so a refusal can tell whether it was used.
       signedNonce = pinned ?? (await svc.nonce(collection, who))
       const data = encodeFunctionData({ abi: TRANSFER_FROM_ABI, functionName: 'transferFrom', args: [who as `0x${string}`, req.recipient as `0x${string}`, tokenId] })
       await svc.sendGasless(guarded, collection, data, signedNonce)
       settle('sent')
     } catch (e) {
-      if (declined(e)) {
+      // Nothing signed (declined, refused by the guard, no wallet, a read that failed, closed first): nothing can land.
+      if (!signed || declined(e)) {
+        console.warn('[gift] not signed:', e)
         settle('failed')
         return
       }

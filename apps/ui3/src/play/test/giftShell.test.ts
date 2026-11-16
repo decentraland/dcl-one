@@ -30,7 +30,7 @@ const LOGIN: StoredLogin = {
     ]
   }
 }
-const OPEN = { v: 1, recipient: RECIPIENT, urn: URN, tokenId: '105', recipientName: 'Bob', transferredAt: 1700000000 }
+const OPEN = { v: 1, recipient: RECIPIENT, urn: URN, tokenId: '105', transferredAt: 1700000000 }
 
 function fakeProvider() {
   const calls: string[] = []
@@ -212,6 +212,73 @@ describe('a gift', () => {
     t.handlers().onSupport()
     t.handlers().onActivity()
     expect(t.opened).toEqual(['https://site.test/help', 'https://site.test/shop/activity'])
+  })
+})
+
+describe('what never waits, and what cancels', () => {
+  it('fails at once, with no watch, when nothing was signed: a wallet on another account, or a failed read', async () => {
+    for (const over of [{ nonce: async () => Promise.reject(new Error('rpc down')) }, {}] as Array<Partial<ShellGiftServices>>) {
+      const looks = vi.fn(async () => SENDER)
+      const t = setup({ ...over, ownerOf: looks, ...(Object.keys(over).length === 0 ? { guard: (p) => ({ request: async (a) => (a.method === 'eth_signTypedData_v4' ? Promise.reject(new Error('wrong account')) : p.request(a)) }) } : {}) })
+      await t.gift.request('gift.open', OPEN)
+      await t.settled()
+      expect(t.signed()).toBe(false)
+      expect(t.views.at(-1)).toEqual({ step: 'failed' })
+      // the check before signing is the only owner read
+      expect(looks).toHaveBeenCalledTimes(1)
+      expect(t.posts).toEqual([])
+    }
+  })
+
+  it('CLOSE before the signature cancels the gift; after it, the gift goes on and is still reported', async () => {
+    let close: (() => void) | null = null
+    const before = setup({
+      nonce: async () => {
+        close?.()
+        return 7n
+      }
+    })
+    close = () => before.handlers().onClose()
+    await before.gift.request('gift.open', OPEN)
+    await before.settled()
+    expect(before.signed()).toBe(false)
+    expect(before.posts).toEqual([])
+    expect(before.gift.dialogOpen()).toBe(false)
+
+    // eslint-disable-next-line prefer-const -- the send reaches it after setup returns
+    let after: ReturnType<typeof setup>
+    after = setup({
+      sendGasless: signThen(async () => {
+        after.handlers().onClose()
+        return HASH
+      })
+    })
+    await after.gift.request('gift.open', OPEN)
+    await after.settled()
+    expect(after.posts).toHaveLength(1)
+    expect(after.views.some((v) => v.step === 'sent')).toBe(false)
+  })
+
+  it('refuses a second gift while the dialog is up, and fails when another tab holds the account', async () => {
+    const t = setup({ sendGasless: () => new Promise(() => undefined) })
+    await t.gift.request('gift.open', OPEN)
+    const err = await t.gift.request('gift.open', OPEN).catch((e: unknown) => e)
+    expect(isShellError(err, 'gift.busy')).toBe(true)
+    const held = setup({ claim: async () => null })
+    await held.gift.request('gift.open', OPEN)
+    await held.settled()
+    expect(held.signed()).toBe(false)
+    expect(held.views.at(-1)).toEqual({ step: 'failed' })
+  })
+
+  it('forgets a pending gift after a week', async () => {
+    let now = 1_000_000
+    const t = setup({ now: () => now })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(await t.gift.request('gift.pending', undefined)).toMatchObject({ pending: [{ urn: URN }] })
+    now += 8 * 24 * 60 * 60_000
+    expect(await t.gift.request('gift.pending', undefined)).toEqual({ v: 1, pending: [] })
   })
 })
 

@@ -62,8 +62,3 @@ export function transferable(urn: string): boolean {
   const parts = urn.split(':')
   return parts.length === 7 && parts[0] === 'urn' && parts[1] === 'decentraland' && (parts[2] === 'matic' || parts[2] === 'amoy') && parts[3] === 'collections-v2'
 }
-
-/** The footer's line: the warning, or what is about to be sent to whom. */
-export function footerInfo(itemName: string | null, recipient: string): string {
-  return itemName ? `You are about to send ${itemName} to ${recipient}` : DEFAULT_INFO
-}
