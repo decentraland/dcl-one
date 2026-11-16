@@ -16,4 +16,4 @@ mod price;
 mod shop;
 mod social;
 mod worlds;
-pub use worlds::parse_island_changed_dedup_ms;
+pub use worlds::{parse_ban_sweep_interval_ms, parse_island_changed_dedup_ms};

@@ -29,6 +29,15 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::config::tests::ban_sweep_resolve_keeps_milliseconds_from_process_config",
+        "archipelago::config::tests::ban_sweep_environment_parser_keeps_defaults_delays_and_errors",
+        "archipelago::enforcement::tests::ban_sweep_waits_for_default_first_interval",
+        "archipelago::enforcement::tests::ban_sweep_first_pass_override_runs_immediately_without_resetting_cadence",
+        "archipelago::enforcement::tests::ban_sweep_subsecond_ticks_skip_overlap_without_resetting_cadence",
+        "archipelago::enforcement::tests::ban_sweep_missed_ticks_do_not_burst_or_accumulate_while_busy",
+        "archipelago::enforcement::tests::ban_sweep_cancel_before_first_tick_starts_no_pass",
+        "archipelago::enforcement::tests::ban_sweep_cancel_keeps_running_pass_owned_until_completion",
+        "archipelago::enforcement::tests::ban_sweep_stuck_pass_uses_existing_shutdown_deadline",
         "archipelago::ws::raw_transport::tests::production_partial_write_retirement_keeps_capacity_until_the_reader_drops",
         "archipelago::ws::raw_transport::tests::axum_reader_and_writer_cannot_drain_a_partial_frame_after_retirement",
         "archipelago::ws::io::tests::capacity_is_retained_until_both_shared_transport_directions_drop",
@@ -216,6 +225,9 @@ MANDATORY_ARCHIPELAGO = {
         "every_fallback_rpc_phase_cancels_without_admission_or_a_following_request",
     ],
     ("catalyst_config", "lib"): [
+        "worlds::tests::ban_sweep_interval_defaults_to_thirty_seconds",
+        "worlds::tests::ban_sweep_interval_uses_numeric_prefixes_and_timer_delay_bounds",
+        "worlds::tests::ban_sweep_interval_rejects_missing_numeric_prefix",
         "worlds::tests::island_dedup_uses_ecmascript_numeric_prefixes",
     ],
     ("dcl_auth", "lib"): [

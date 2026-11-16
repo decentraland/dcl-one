@@ -187,6 +187,11 @@ impl Jobs {
         self
     }
 
+    /// Whether manually scheduled periodic jobs should also bypass their initial delay.
+    pub fn first_pass_now(&self) -> bool {
+        self.first_pass_now
+    }
+
     fn periodic_cfg(&self, cfg: PeriodicCfg) -> PeriodicCfg {
         if self.first_pass_now {
             PeriodicCfg {
