@@ -34,6 +34,7 @@ import { ConnectionModal, EmailLoginModal, type PairingCode } from "./LoginModal
 import { rememberEmail, SESSION_MS, startMagicSignIn } from "./magic";
 import styles from "./LoginPage.module.css";
 import {
+  layoutOffers,
   layoutOptions,
   OPTION_TITLES,
   optionSetFor,
@@ -216,9 +217,11 @@ export type LoginPageProps = {
   layoutVariant: string | null;
   /** Magic's publishable key for the social options; null leaves them unavailable. */
   magicApiKey: string | null;
+  /** A method the player already picked in the Explorer: started once the page knows its layout, if it offers it. */
+  loginMethod?: ConnectionOption | null;
 };
 
-export default function LoginPage({ redirectTo, layoutVariant, magicApiKey }: LoginPageProps) {
+export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null }: LoginPageProps) {
   const auth = useAuth();
   const [client, setClient] = useState<{ userAgent: string; touch: number; injected: boolean; metamask: boolean } | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
@@ -344,6 +347,15 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey }: Lo
     },
     [auth, finish, magicApiKey, target],
   );
+
+  // The method picked in the Explorer, started once, as its button would; one the layout doesn't offer, or
+  // one that fails or is closed, leaves the page's own options.
+  const requested = useRef(false);
+  useEffect(() => {
+    if (requested.current || client == null || loginMethod == null || loginMethod === "email") return;
+    requested.current = true;
+    if (layoutOffers(layout, loginMethod)) void connect(loginMethod);
+  }, [client, layout, loginMethod, connect]);
 
   const closeModal = useCallback(() => {
     attempt.current++;

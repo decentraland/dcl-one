@@ -1,5 +1,5 @@
-// The bridge scene's `export-static` and `export-web` npm scripts, in node so they run under any host
-// shell: npm runs package scripts with cmd.exe on Windows, which has no `rm -rf`, `mkdir -p`,
+// The bridge scene's `export-static` and `export-web` package scripts, in node so they run under any host
+// shell: pnpm runs package scripts with cmd.exe on Windows, which has no `rm -rf`, `mkdir -p`,
 // `cp -R` or `${SCENE_BASE_URL:-../}`. Lives outside bridge-scene so the scene export never packs it.
 //
 //   node ../scripts/bridge-scene-export.mjs        static/ for SCENE_BASE_URL (unset or empty: ../)

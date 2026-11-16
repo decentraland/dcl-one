@@ -46,6 +46,7 @@ def main():
         assert config['User'] == '1000:1000', 'Production images must run as the unprivileged user'
         if args.revision:
             assert config['Labels']['org.opencontainers.image.revision'] == args.revision
+            assert f'COMMIT_HASH={args.revision}' in config['Env'], 'Images must report their build revision'
 
     name = 'foundation-image-smoke-' + secrets.token_hex(5)
     db, api, sites = (name + suffix for suffix in ('-db', '-api', '-sites'))
@@ -98,14 +99,20 @@ def main():
                     const data = Buffer.from(await r.arrayBuffer());
                     console.log(JSON.stringify({bytes: data.length,
                         sha256: require('crypto').createHash('sha256').update(data).digest('hex'),
-                        body: process.argv[2] === 'json' ? JSON.parse(data.toString()) : null}));
+                        body: process.argv[2] === 'json' ? JSON.parse(data.toString())
+                            : process.argv[2] === 'text' ? data.toString() : null}));
                 }).catch(() => process.exit(1));
-            ''', url, 'json' if body else '', check=False)
+            ''', url, 'text' if body == 'text' else 'json' if body else '', check=False)
             return json.loads(result.stdout) if result.returncode == 0 else None
         api_url, sites_url = 'http://api:5210', 'http://sites:5212'
         wait_until(lambda: get(api_url + '/about'), 'API HTTP readiness')
         wait_until(lambda: get(sites_url + '/'), 'Sites HTTP readiness')
         assert get(api_url + '/places/api/places?limit=1'), 'Places must read the database'
+        if args.revision:
+            status = get(api_url + '/content/status', body=True)
+            assert status and status['body']['commitHash'] == args.revision, 'APIs must report the build revision'
+            page = get(sites_url + '/', body='text')
+            assert page and f'"commitHash":"{args.revision}"' in page['body'], 'Sites must hand the page its build revision'
         assert get(sites_url + '/docs/index.md'), 'Docs Markdown must ship in the image'
         media = json.loads((ROOT / 'apps/sites/content/docs/_media.json').read_text())
         path, entry = next(iter(media.items()))

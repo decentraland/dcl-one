@@ -94,7 +94,7 @@ export type VoiceChatApi = {
 
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
-export type MicState = { enabled: boolean; available: boolean }
+export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean; refusals: number }
 
 // World-entity hover events. targetType: 0=WORLD, 1=UI, 2=AVATAR. eventType: PointerEventType.
 // eventInfo.maxPlayerDistance absent/null → the entry is range-gated by camera distance only (the
@@ -144,6 +144,8 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** Pin the home scene the engine boots into and the HUD's home actions go to. */
+  setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with

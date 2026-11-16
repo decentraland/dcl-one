@@ -507,8 +507,15 @@ fn despawn_tag(
 
 /// The voice badge of a player: bars while they speak, a hushed mark instead when the local
 /// user muted their nearby voice, and dots on the local user while their microphone is open.
-fn voice_badge(speaking: Option<Speaking>, muted: bool, local_mic_open: bool) -> Voice {
-    match speaking {
+/// A scene that turns nearby voice off silences nearby speakers, so they show none; a call's
+/// speakers still do.
+fn voice_badge(
+    speaking: Option<Speaking>,
+    muted: bool,
+    local_mic_open: bool,
+    nearby_blocked: bool,
+) -> Voice {
+    match speaking.filter(|speaking| speaking.in_call || !nearby_blocked) {
         Some(Speaking { in_call: false }) if muted => Voice::Hushed,
         Some(_) => Voice::Speaking,
         None if local_mic_open => Voice::Idle,
@@ -532,6 +539,7 @@ fn resolve_voice(
             speaking.copied(),
             foreign.is_some_and(|player| mutes.is_muted(player.address)),
             is_local && mic.enabled,
+            mic.scene_blocked,
         );
         voice.set_if_neq(NametagVoice(badge));
     }

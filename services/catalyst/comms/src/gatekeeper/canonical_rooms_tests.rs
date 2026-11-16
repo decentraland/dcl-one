@@ -1431,6 +1431,13 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
     ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished> {
         self.inner.protected_addresses(world, parcels).await
     }
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &crate::world_identity::ParcelSet,
+    ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished> {
+        self.inner.world_grantees(world, parcels).await
+    }
 }
 
 #[tokio::test]

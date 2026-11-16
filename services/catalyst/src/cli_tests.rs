@@ -67,6 +67,7 @@ fn the_operator_database_urls_are_hidden() {
             ("schema", "migrate"),
             ("builder", "catalog"),
             ("storage", "gc"),
+            ("camera-reel", "import"),
         ] {
             let cmd = cli
                 .find_subcommand(sub)
@@ -83,7 +84,7 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 4);
+        assert_eq!(seen, 5);
     });
 }
 

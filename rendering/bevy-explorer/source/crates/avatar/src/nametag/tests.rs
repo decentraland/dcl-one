@@ -121,16 +121,20 @@ fn a_name_shows_in_range_of_the_camera() {
 fn the_voice_badge_follows_speech_mutes_and_the_microphone() {
     let nearby = Some(Speaking { in_call: false });
     let call = Some(Speaking { in_call: true });
-    assert_eq!(voice_badge(None, false, false), Voice::Off);
-    assert_eq!(voice_badge(nearby, false, false), Voice::Speaking);
-    assert_eq!(voice_badge(nearby, true, false), Voice::Hushed);
+    assert_eq!(voice_badge(None, false, false, false), Voice::Off);
+    assert_eq!(voice_badge(nearby, false, false, false), Voice::Speaking);
+    assert_eq!(voice_badge(nearby, true, false, false), Voice::Hushed);
     // a nearby mute leaves a call audible
-    assert_eq!(voice_badge(call, true, false), Voice::Speaking);
+    assert_eq!(voice_badge(call, true, false, false), Voice::Speaking);
     // muted and silent: nothing to mark
-    assert_eq!(voice_badge(None, true, false), Voice::Off);
+    assert_eq!(voice_badge(None, true, false, false), Voice::Off);
     // the local user's open microphone shows before they speak
-    assert_eq!(voice_badge(None, false, true), Voice::Idle);
-    assert_eq!(voice_badge(nearby, false, true), Voice::Speaking);
+    assert_eq!(voice_badge(None, false, true, false), Voice::Idle);
+    assert_eq!(voice_badge(nearby, false, true, false), Voice::Speaking);
+    // a scene that turns nearby voice off: nearby speakers show nothing, a call's still do
+    assert_eq!(voice_badge(nearby, false, false, true), Voice::Off);
+    assert_eq!(voice_badge(nearby, true, false, true), Voice::Off);
+    assert_eq!(voice_badge(call, false, false, true), Voice::Speaking);
 }
 
 /// A world with the camera at the origin looking down -z, and the systems that give each

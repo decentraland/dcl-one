@@ -1434,3 +1434,69 @@ async fn a_scene_parked_by_an_oom_is_retired_and_stays_refused() {
     assert!(err.to_string().contains("ran out of memory"), "{err}");
     assert!(h.state.scenes.get(&second).is_none());
 }
+
+/// A runtime that stops closes its clients, and the next join loads the
+/// scene again instead of joining the stopped one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stopped_runtime_closes_its_clients_and_is_reloaded_on_join() {
+    let Some(h) = host_tuned(true, None, |raw| raw.js_update_failure_cap = 1).await else {
+        return;
+    };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    let code = "var open = false;\n\
+         registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } },\n\
+           function (ev) { if (ev.type === 'open') open = true; });\n\
+         module.exports.onUpdate = function (dt) { if (open) throw new Error('stop'); };";
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyStops",
+        code,
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+
+    let (mut first, _) = join(addr, &world, VISITOR_KEY, "{}")
+        .await
+        .expect("admitted");
+    let stopped = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), first.next()).await,
+            Ok(Some(Ok(WsMessage::Close(_))))
+        ),
+        "a stopped runtime has the host close its clients"
+    );
+    assert!(!stopped.runtime.is_running());
+    assert!(
+        crate::shared::test_wait::until(async || stopped.client_count() == 0).await,
+        "the closed client is removed"
+    );
+
+    let (_ws, _) = join(addr, &world, STRANGER_KEY, "{}")
+        .await
+        .expect("the next client gets a fresh runtime");
+    let reloaded = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(
+        !Arc::ptr_eq(&reloaded, &stopped),
+        "the stopped scene is replaced"
+    );
+
+    // The reloaded runtime stops too; within the cooldown it is not
+    // reloaded again.
+    assert!(crate::shared::test_wait::until(async || !reloaded.runtime.is_running()).await);
+    let err = h
+        .state
+        .join(&reloaded.identity, |_| ())
+        .await
+        .err()
+        .expect("a second reload within the cooldown is refused");
+    assert!(err.to_string().contains("not reloaded again yet"), "{err}");
+    let hosted = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(Arc::ptr_eq(&hosted, &reloaded), "nothing was reloaded");
+}
