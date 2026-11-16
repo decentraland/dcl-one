@@ -206,6 +206,18 @@ describe("profile creations", () => {
     expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("makes the panel a tab stop only while it holds nothing to focus", async () => {
+    let resolve: (value: ReturnType<typeof page>) => void = () => {};
+    net.fetchProfileCreations.mockReturnValue(new Promise((r) => (resolve = r)));
+    show();
+
+    expect(screen.getByRole("tabpanel").tabIndex).toBe(0);
+
+    await act(async () => resolve(page([creation(0)])));
+    await screen.findByRole("link", { name: "Hat 0" });
+    expect(screen.getByRole("tabpanel").tabIndex).toBe(-1);
+  });
+
   it("tells a visitor the member has created nothing", async () => {
     net.fetchProfileCreations.mockResolvedValue(page([]));
 

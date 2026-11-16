@@ -232,6 +232,16 @@ export type CollectiblesPanelProps = {
   panelRef?: Ref<HTMLDivElement>;
 };
 
+/**
+ * A tabpanel with nothing focusable inside is a tab stop itself, so the keyboard reaches its text;
+ * otherwise the panel takes focus only from script, after a control it held went away.
+ */
+function panelTabIndex(state: CollectiblesState, tabpanel: boolean, scripted: boolean): number | undefined {
+  const empty = state.kind === "loading" || state.kind === "empty-note" || (state.kind === "error" && !state.action);
+  if (tabpanel && empty) return 0;
+  return scripted ? -1 : undefined;
+}
+
 /** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
 export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: CollectiblesPanelProps) {
   const list = state.kind === "list" ? state : null;
@@ -245,7 +255,12 @@ export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: Co
           {aside ? <div className={styles.aside}>{aside}</div> : null}
         </div>
       ) : null}
-      <div {...panel} ref={panelRef} className={styles.panel} tabIndex={panelRef ? -1 : undefined}>
+      <div
+        {...panel}
+        ref={panelRef}
+        className={styles.panel}
+        tabIndex={panelTabIndex(state, panel !== undefined, panelRef !== undefined)}
+      >
         {/* One live region, always mounted, so a screen reader hears how loading ended. */}
         <p className={countShown ? styles.count : styles.status} role="status">
           {state.kind === "loading" ? (

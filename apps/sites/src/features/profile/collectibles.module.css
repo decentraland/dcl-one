@@ -11,9 +11,14 @@
   width: 100%;
 }
 
-/* Focus lands on the panel only from script, after a control it held went away. */
-.panel:focus {
+/* Script focus (after a control the panel held went away) shows no ring; keyboard focus does. */
+.panel:focus:not(:focus-visible) {
   outline: none;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 4px;
 }
 
 .header {
@@ -39,11 +44,11 @@
 }
 
 .viewAll {
+  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
   display: inline-flex;
   align-items: center;
   gap: var(--dcl-space-4);
   color: var(--dcl-text-link);
-  font-family: "Inter", sans-serif;
   font-size: var(--dcl-font-size-body-sm);
   font-weight: 600;
   text-decoration: none;
@@ -60,13 +65,14 @@
 
 .status,
 .count {
+  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
   margin: 0 0 var(--dcl-space-16);
-  font-family: "Inter", sans-serif;
   font-size: var(--dcl-font-size-body-sm);
   line-height: 1.43;
 }
 
 .status {
+  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
   color: var(--dcl-text-primary);
 }
 
@@ -124,13 +130,13 @@
 }
 
 .more {
+  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--dcl-space-12);
   padding: var(--dcl-space-24) 0;
   color: var(--dcl-text-primary);
-  font-family: "Inter", sans-serif;
   font-size: var(--dcl-font-size-body-sm);
 }
 
@@ -161,21 +167,17 @@
   width: 48px;
   height: 48px;
   border-radius: 10px;
-  background: linear-gradient(
-    135deg,
-    var(--dcl-brand-ruby) 0%,
-    var(--dcl-brand-violet) 100%
-  );
+  background: linear-gradient(135deg, var(--dcl-brand-ruby) 0%, var(--dcl-brand-violet) 100%);
   color: var(--dcl-neutrals-snow);
 }
 
 .nameLabel {
+  composes: text626f64792f6d64 from "@dcl/one-ui/text-styles.module.css";
   overflow: hidden;
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   color: var(--dcl-text-primary);
-  font-family: "Inter", sans-serif;
   font-size: var(--dcl-font-size-body-md);
   font-weight: 600;
   text-overflow: ellipsis;
@@ -214,6 +216,7 @@
 }
 
 .card {
+  composes: text626f64792f736d from "@dcl/one-ui/text-styles.module.css";
   --card-rarity: var(--dcl-transparencies-black-40);
 
   position: relative;
@@ -225,7 +228,6 @@
   height: 360px;
   border-radius: var(--dcl-radius-md);
   color: var(--dcl-text-primary);
-  font-family: "Inter", sans-serif;
   transition:
     transform 200ms ease-in-out,
     box-shadow 300ms ease-in-out;

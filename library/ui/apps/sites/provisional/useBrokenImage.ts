@@ -1,4 +1,4 @@
-// TODO(figma-ds): goes with the provisional avatar components it serves.
+// TODO(figma-ds): goes with its last consumer: the provisional avatars and the Sites profile collectible card.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**

@@ -29,7 +29,7 @@ import {
   type CollectiblesState,
 } from "./collectibles";
 import { useProfileAssets } from "./hooks";
-import { EmptyMessage } from "./ProfilePlacesScreen";
+import { EmptyMessage } from "./EmptyMessage";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
 /** Where the owner's empty Assets sends them: the Shop. */
