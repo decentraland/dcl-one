@@ -836,6 +836,14 @@ mod tests {
                 );
                 Ok(Default::default())
             }
+            async fn world_grantees(
+                &self,
+                world: &WorldName,
+                parcels: &ParcelSet,
+            ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished>
+            {
+                self.protected_addresses(world, parcels).await
+            }
         }
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
