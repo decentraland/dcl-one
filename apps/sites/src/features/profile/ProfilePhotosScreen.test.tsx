@@ -119,7 +119,32 @@ describe("profile photos, the grid", () => {
     expect(await tile(1)).toBeTruthy();
     expect(screen.getByText("Showing 2 of 30 photos")).toBeTruthy();
     expect(net.fetchUserPhotos).toHaveBeenCalledWith(A, { limit: PROFILE_COLLECTIBLES_PAGE, offset: 0 }, { signal: expect.any(AbortSignal) });
-    expect(screen.queryByRole("group", { name: "Photos shown" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Photos shown" })).toBeNull();
+  });
+
+  it("keeps a tile that opens the viewer when its thumbnail fails to load", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
+    show();
+    const first = await tile(0);
+
+    act(() => {
+      first.querySelector("img")!.dispatchEvent(new Event("error"));
+    });
+
+    expect(first.querySelector("img")).toBeNull();
+    await user.click(first);
+    expect(screen.getByRole("dialog", { name: `${tileName(0)}, 1 of 1` })).toBeTruthy();
+  });
+
+  it("shows no visibility tabs or panel role to a visitor", async () => {
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
+
+    show();
+
+    await tile(0);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tabpanel")).toBeNull();
   });
 
   it("tells a visitor the member has taken no photos", async () => {
@@ -204,7 +229,7 @@ describe("profile photos, the owner's visibility filter", () => {
     expect(net.fetchUserPhotos.mock.calls[0]?.[2]).toMatchObject({ identity });
     expect(client.getQueryData(profileKeys.myPhotos(A))).toBeDefined();
     expect(client.getQueryData(profileKeys.photos(A))).toBeUndefined();
-    expect(screen.getByRole("button", { name: "Public" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Public" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("shows the private photos, marked, and every photo under All", async () => {
@@ -213,15 +238,34 @@ describe("profile photos, the owner's visibility filter", () => {
     show({ own: true });
     await tile(0);
 
-    await user.click(screen.getByRole("button", { name: "Private" }));
+    await user.click(screen.getByRole("tab", { name: "Private" }));
     expect(screen.getByRole("button", { name: `${tileName(1)}, private` })).toBeTruthy();
     expect(screen.queryByRole("button", { name: tileName(0) })).toBeNull();
     expect(screen.getByText("1 photo")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("tab", { name: "All" }));
     expect(screen.getByRole("button", { name: tileName(0) })).toBeTruthy();
     expect(screen.getByRole("button", { name: `${tileName(1)}, private` })).toBeTruthy();
     expect(screen.getByText("2 photos")).toBeTruthy();
+  });
+
+  it("switches the visibility with the arrow keys and labels the panel by the selected tab", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { isPublic: false })], 2));
+    show({ own: true });
+    await tile(0);
+    const publicTab = screen.getByRole("tab", { name: "Public" });
+    expect(screen.getByRole("tabpanel", { name: "Public" })).toBeTruthy();
+    expect(publicTab.getAttribute("aria-controls")).toBe(screen.getByRole("tabpanel").id);
+
+    publicTab.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(screen.getByRole("tab", { name: "Private" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel", { name: "Private" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${tileName(1)}, private` })).toBeTruthy();
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("says when no loaded photo matches, still offering the next page", async () => {
@@ -230,7 +274,7 @@ describe("profile photos, the owner's visibility filter", () => {
     show({ own: true });
     await tile(0);
 
-    await user.click(screen.getByRole("button", { name: "Private" }));
+    await user.click(screen.getByRole("tab", { name: "Private" }));
 
     expect(screen.getByText("No photos match this filter.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
@@ -251,7 +295,7 @@ describe("profile photos, the owner's visibility filter", () => {
     expect(screen.queryByText("No photos yet", { selector: "p" })).toBeNull();
     expect(screen.getByText("Loading photos")).toBeTruthy();
     await act(async () => release(page([photo(1, { isPublic: false })])));
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Private" }));
+    await userEvent.setup().click(await screen.findByRole("tab", { name: "Private" }));
     expect(screen.getByRole("button", { name: `${tileName(1)}, private` })).toBeTruthy();
   });
 
@@ -269,11 +313,11 @@ describe("profile photos, the owner's visibility filter", () => {
 
     expect(await screen.findByText("Your private photos could not be loaded.", { exact: false })).toBeTruthy();
     expect(screen.getByRole("button", { name: tileName(0) })).toBeTruthy();
-    expect(screen.queryByRole("group", { name: "Photos shown" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Photos shown" })).toBeNull();
     expect(screen.queryByText("Photos are unavailable right now.")).toBeNull();
     net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { isPublic: false })]));
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("group", { name: "Photos shown" })).toBeTruthy();
+    expect(await screen.findByRole("tablist", { name: "Photos shown" })).toBeTruthy();
   });
 
   it("reads the public gallery, without the filter, when the owner has no identity in this browser", async () => {
@@ -284,7 +328,7 @@ describe("profile photos, the owner's visibility filter", () => {
 
     expect(await tile(0)).toBeTruthy();
     expect(net.fetchUserPhotos.mock.calls[0]?.[2]).not.toHaveProperty("identity");
-    expect(screen.queryByRole("group", { name: "Photos shown" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Photos shown" })).toBeNull();
   });
 
   it("never signs a visitor's read with their own identity", async () => {
@@ -523,7 +567,7 @@ describe("profile photos, the viewer", () => {
     show({ own: true, path: `/profile/${A}/photos?photo=p-1` });
 
     expect(await screen.findByRole("dialog", { name: `${tileName(1)}, 2 of 2` })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
     expect(net.fetchPhoto).not.toHaveBeenCalled();
   });
 

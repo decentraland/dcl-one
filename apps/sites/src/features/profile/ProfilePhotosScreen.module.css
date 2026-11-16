@@ -1,0 +1,243 @@
+/* The profile Photos panel around the shared Tabs, Button, JumpInCTA and Spinner. The design system
+ * has no photo tile or empty message, so they are drawn here. The source's 265px tile and 28px
+ * badge keep their sizes; its 55% black badge uses the nearest transparency (60%), its hover shadow
+ * (35% black) the 40% shadow token, its 13px grid gap the nearest spacing token, and the 100px icon
+ * frame has no token. The grid follows the source's MUI breakpoints (600, 900 and 1200px). */
+.root {
+  width: 100%;
+}
+
+/* Focus lands on the panel only from script, after a control it held went away. */
+.root:focus {
+  outline: none;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0 var(--dcl-space-16);
+}
+
+.filters {
+  margin-bottom: var(--dcl-space-24);
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.aside {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: var(--dcl-space-16);
+  color: var(--dcl-text-primary);
+}
+
+.status,
+.count {
+  margin: 0 0 var(--dcl-space-16);
+}
+
+.status {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  color: var(--dcl-text-primary);
+}
+
+.count {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  color: var(--dcl-text-disabled);
+  font-style: italic;
+}
+
+.spinner {
+  display: block;
+  margin: var(--dcl-space-24) 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.errorAction {
+  margin-bottom: var(--dcl-space-16);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.item {
+  min-width: 0;
+}
+
+.tile {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 265px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-40);
+  cursor: pointer;
+  transition:
+    transform 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.tile:hover {
+  box-shadow: 0 8px 20px var(--dcl-transparencies-shadow-40);
+  transform: translateY(-2px);
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: 2px;
+}
+
+.tileImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tileBroken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--dcl-text-disabled);
+}
+
+.privateBadge {
+  position: absolute;
+  top: var(--dcl-space-8);
+  right: var(--dcl-space-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-snow);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: none;
+  }
+
+  .tile:hover {
+    transform: none;
+  }
+}
+
+.more {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-24) 0;
+  color: var(--dcl-text-primary);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-24);
+  padding: var(--dcl-space-48) var(--dcl-space-16);
+  text-align: center;
+}
+
+.emptyIcon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100px;
+  height: 100px;
+  border: 4px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-xl);
+  color: var(--dcl-neutrals-snow);
+}
+
+.emptyBody {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.emptyTitle {
+  max-width: 452px;
+  composes: text68656164696e672f34 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.emptySubtitle {
+  max-width: 436px;
+  composes: text626f64792f6d64 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.emptyAction {
+  margin-top: var(--dcl-space-4);
+}
+
+@media (min-width: 1024px) {
+  .empty {
+    padding: var(--dcl-space-64) var(--dcl-space-16);
+  }
+}

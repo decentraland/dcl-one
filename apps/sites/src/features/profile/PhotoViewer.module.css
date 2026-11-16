@@ -1,4 +1,4 @@
-/* TODO(figma-ds): replace with the Figma-generated photo viewer's styles. The source is the
+/* The profile photo viewer, drawn here until the design system has a dialog. The source is the
  * profile site's PhotoModal: a 1500px paper (min(820px, 92vh) tall) with a 571px information rail,
  * full screen below the 900px MUI `md` breakpoint with the rail stacked under the photo. Values
  * without tokens: its 85% black backdrop (the 80% overlay token stands in), its #0E0518 paper
@@ -31,33 +31,24 @@
   outline: none;
 }
 
+/* Button's icon-only look is transparent; over a photo each control sits on a dark frame of the
+ * small Button's radius. */
+.control {
+  display: inline-flex;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
+}
+
+.controlOn {
+  background: var(--dcl-transparencies-white-20);
+}
+
 .close {
   position: absolute;
   z-index: 2;
   top: var(--dcl-space-8);
   right: var(--dcl-space-8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.close:hover {
-  background: var(--dcl-transparencies-black-60);
-}
-
-.close:focus-visible,
-.tool:focus-visible,
-.step:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
 }
 
 .body {
@@ -96,40 +87,6 @@
   left: var(--dcl-space-8);
   display: flex;
   gap: var(--dcl-space-8);
-}
-
-.tool,
-.step {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.tool:hover,
-.step:hover:not([aria-disabled='true']) {
-  background: var(--dcl-transparencies-black-60);
-}
-
-.toolOn {
-  background: var(--dcl-neutrals-snow);
-  color: var(--dcl-neutrals-black);
-}
-
-.toolOn:hover {
-  background: var(--dcl-neutrals-silver);
-}
-
-.step[aria-disabled='true'] {
-  cursor: default;
-  opacity: 0.4;
 }
 
 .step {
