@@ -22,6 +22,8 @@ export type MenuProps = {
   closeOnSelect?: boolean;
   /** A press outside the menu reaches nothing else, and the page behind does not scroll. */
   modal?: boolean;
+  /** Stop the page behind from scrolling while the menu is open. The default is the value of `modal`. */
+  lockScroll?: boolean;
   id?: string;
   className?: string;
   "aria-label"?: string;
@@ -35,7 +37,7 @@ const CloseOnSelect = createContext<(() => void) | undefined>(undefined);
 
 /** A list of commands next to its trigger. Focus moves into the menu when it opens and back when it closes. */
 export function Menu({
-  open, anchor, onClose, placement = "bottom-start", offset = 4, crossOffset, matchAnchorWidth, closeOnSelect = false, modal,
+  open, anchor, onClose, placement = "bottom-start", offset = 4, crossOffset, matchAnchorWidth, closeOnSelect = false, modal, lockScroll,
   id, className, children, ...aria
 }: MenuProps) {
   const list = useRef<HTMLDivElement | null>(null);
@@ -86,7 +88,7 @@ export function Menu({
   return (
     <Popover
       open={open} anchor={anchor} placement={placement} offset={offset} crossOffset={crossOffset} matchAnchorWidth={matchAnchorWidth}
-      onClose={onClose} className={className} modal={modal}
+      onClose={onClose} className={className} modal={modal} lockScroll={lockScroll}
     >
       <CloseOnSelect.Provider value={closeOnSelect && onClose ? () => onClose("select") : undefined}>
         <div {...aria} ref={list} id={id} className={styles.list} role="menu" tabIndex={-1} onKeyDown={onKeyDown}>

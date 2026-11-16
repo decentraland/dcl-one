@@ -1,6 +1,7 @@
 import type { CSSProperties, KeyboardEvent, ReactNode, RefObject } from "react";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { wasOutsidePress } from "./overlayLayers";
 import { useDismiss } from "./useDismiss";
 import { useScrollLock } from "./useScrollLock";
 import styles from "./Dialog.module.css";
@@ -73,15 +74,19 @@ export default function Dialog({
 
   const isTopLayer = useDismiss(open, { surface: paper, modal: true, onEscape: closeOnEscape && onClose ? () => onClose("escape") : undefined });
 
+  // The opener is read in the render that opens the dialog: a control in it with `autoFocus` takes focus before any effect.
+  const [opened, setOpened] = useState<{ open: boolean; opener: Element | null }>({ open: false, opener: null });
+  if (opened.open !== open) setOpened({ open, opener: open && typeof document !== "undefined" ? document.activeElement : null });
+  const opener = opened.opener;
+
   const firstFocus = useRef(initialFocus);
   useEffect(() => { firstFocus.current = initialFocus; });
   useEffect(() => {
     if (!open) return;
-    const opener = document.activeElement;
     const node = paper.current;
     if (node && !node.contains(document.activeElement)) (firstFocus.current?.current ?? node).focus({ preventScroll: true });
     return () => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true }); };
-  }, [open]);
+  }, [open, opener]);
 
   useScrollLock(open && lockScroll);
 
@@ -108,7 +113,10 @@ export default function Dialog({
     <div
       className={styles.backdrop + (backdropClassName ? " " + backdropClassName : "")}
       // A press on the backdrop while a menu or a select is open over the dialog closes that one, not the dialog.
-      onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget && isTopLayer(); }}
+      // In a browser that close can commit before this handler runs, so the dialog is the top layer again here.
+      onPointerDown={(event) => {
+        pressedBackdrop.current = event.target === event.currentTarget && isTopLayer() && !wasOutsidePress(event.nativeEvent);
+      }}
       onClick={(event) => {
         // A press that starts in the dialog and ends on the backdrop (a text selection) does not close it.
         const onBackdrop = pressedBackdrop.current && event.target === event.currentTarget;

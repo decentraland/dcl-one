@@ -1,3 +1,4 @@
+// The Person path: @mui/icons-material 5.18.0 (MIT). The licence text is in ./assets/mui-icons-material/LICENSE.
 import { useState } from "react";
 import styles from "./AvatarFace.module.css";
 

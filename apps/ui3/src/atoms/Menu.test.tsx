@@ -248,6 +248,17 @@ describe("Menu", () => {
     expect(trigger()).toHaveFocus();
   });
 
+  test("a modal menu asked not to lock the scroll leaves the page free to scroll and still takes the press outside", async () => {
+    const onClose = vi.fn();
+    const user = await openMenu({ onClose, modal: true, lockScroll: false });
+    expect(document.body.style.overflow).toBe("");
+
+    await user.click(screen.getByRole("menu").parentElement?.previousElementSibling as HTMLElement);
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onClose).toHaveBeenCalledWith("outside");
+  });
+
   test("a menu that is not modal leaves the page free to scroll", async () => {
     await openMenu();
 

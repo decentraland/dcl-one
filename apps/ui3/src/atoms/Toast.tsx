@@ -1,4 +1,4 @@
-import type { AriaRole, FocusEvent, ReactNode } from "react";
+import type { AriaRole, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import Alert, { type AlertProps, type AlertSeverity } from "./Alert";
@@ -74,11 +74,8 @@ export function Toast({
     if (!open) return;
     clock.current.left = duration ?? 0;
     run();
-    // Escape that another handler took for itself is not for the toast.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) close.current?.("escape"); };
     const onAway = () => setHeld("away", true);
     const onBack = () => setHeld("away", false);
-    document.addEventListener("keydown", onKey);
     if (holdOnWindowBlur) {
       window.addEventListener("blur", onAway);
       window.addEventListener("focus", onBack);
@@ -87,11 +84,19 @@ export function Toast({
       clearTimeout(timer.current);
       timer.current = undefined;
       clock.current.away = false;
-      document.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onAway);
       window.removeEventListener("focus", onBack);
     };
   }, [open, duration, holdOnWindowBlur]);
+
+  // A closed toast leaves the page with the pointer and focus on it: no leave event comes, and the next open starts free.
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      clock.current.hover = false;
+      clock.current.focus = false;
+    };
+  }, [open]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -101,6 +106,10 @@ export function Toast({
       role={severity ? undefined : role ?? "status"}
       onMouseEnter={() => setHeld("hover", true)}
       onMouseLeave={() => setHeld("hover", false)}
+      // Only an Escape in the toast is for the toast: an Escape elsewhere can close a tip or a menu.
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === "Escape" && !event.defaultPrevented) close.current?.("escape");
+      }}
       onFocus={() => setHeld("focus", true)}
       onBlur={(event: FocusEvent<HTMLDivElement>) => {
         if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setHeld("focus", false);

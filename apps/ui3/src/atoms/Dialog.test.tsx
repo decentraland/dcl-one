@@ -122,6 +122,16 @@ describe("Dialog", () => {
     expect(screen.getByRole("textbox", { name: "Scene name" })).toHaveFocus();
   });
 
+  test("focus returns to the opener after a control in the dialog took focus by itself", async () => {
+    const user = await openDialog({ children: <input aria-label="Scene name" autoFocus /> });
+    expect(screen.getByRole("textbox", { name: "Scene name" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(opener()).toHaveFocus();
+  });
+
   test("Tab moves through the controls of the dialog and from the last to the first", async () => {
     const user = await openDialog();
 

@@ -8,6 +8,8 @@ export type OverlayLayer = {
 };
 
 const layers: OverlayLayer[] = [];
+// Presses that closed a layer as outside presses. The close can commit before the press reaches the layer under it.
+const outsidePresses = new WeakSet<Event>();
 
 // Escape goes to the top layer only, and stops there: a select inside a dialog closes alone, and no other
 // Escape handler on the page (an older modal, another component kit) closes its own surface for the same key.
@@ -26,8 +28,14 @@ function onPointerDown(event: Event) {
   if (!(target instanceof Node)) return;
   for (const layer of [...layers].reverse()) {
     if (layer.contains(target) || layer.modal) return;
+    outsidePresses.add(event);
     layer.onOutside?.(event);
   }
+}
+
+/** True when the press was an outside press for a layer over the others. */
+export function wasOutsidePress(event: Event): boolean {
+  return outsidePresses.has(event);
 }
 
 /** True when no other layer opened after this one. */

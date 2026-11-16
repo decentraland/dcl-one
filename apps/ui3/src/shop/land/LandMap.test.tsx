@@ -635,6 +635,15 @@ describe("LandMap layers and parcel callbacks", () => {
     expect(rects.length).toBeGreaterThan(0);
   });
 
+  it("paints the marks over the atlas image in the task of the render, so they move with the image", () => {
+    const { rects } = stubBrowser();
+    const frames = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", frames);
+    renderMap({ surface: "atlas", tiles: listed(), layers: { onSale: true } });
+    expect(frames).not.toHaveBeenCalled();
+    expect(rects.length).toBeGreaterThan(0);
+  });
+
   it("waits for a frame to paint without `paintInTask`", () => {
     const { rects } = stubBrowser();
     const frames = vi.fn(() => 1);

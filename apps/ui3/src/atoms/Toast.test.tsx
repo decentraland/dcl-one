@@ -193,15 +193,31 @@ describe("Toast", () => {
     expect(screen.getByRole("button", { name: "Dismiss the message" })).toBeInTheDocument();
   });
 
-  test("Escape closes the toast", async () => {
+  test("Escape in the toast closes it", async () => {
     const user = setupUser();
     const onClose = vi.fn();
     render(<Harness onClose={onClose} />);
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith("escape");
+  });
+
+  test("Escape outside the toast is not for the toast", async () => {
+    const user = setupUser();
+    const onClose = vi.fn();
+    render(<Harness onClose={onClose} />);
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   test("Escape that another handler took for itself does not close the toast", async () => {
@@ -210,6 +226,8 @@ describe("Toast", () => {
     const take = (event: KeyboardEvent) => event.preventDefault();
     document.addEventListener("keydown", take, true);
     render(<Harness onClose={onClose} />);
+    await user.tab();
+    await user.tab();
 
     await user.keyboard("{Escape}");
     document.removeEventListener("keydown", take, true);
@@ -288,6 +306,20 @@ describe("Toast", () => {
     expect(onClose).not.toHaveBeenCalled();
     wait(1000);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("a toast that closed with the pointer on it starts its time again when it opens again", async () => {
+    const user = setupUser();
+    const onClose = vi.fn();
+    const { rerender } = render(<Toast open duration={1000} onClose={onClose}>Copied</Toast>);
+    await user.hover(screen.getByRole("status"));
+
+    rerender(<Toast open={false} duration={1000} onClose={onClose}>Copied</Toast>);
+    rerender(<Toast open duration={1000} onClose={onClose}>Copied</Toast>);
+    wait(1500);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith("timeout");
   });
 
   test("a toast that closed does not ask to close again", () => {

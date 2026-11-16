@@ -80,7 +80,7 @@ export type LandMapProps = {
   zoomButtons?: { inLabel?: string; outLabel?: string; inText?: string; outText?: string };
   /** The zoom after a press of a zoom button (1 in, -1 out); the default multiplies or divides by 1.5. */
   zoomStep?(zoom: number, direction: 1 | -1): number;
-  /** True: the canvas is painted in the task of the change, not on the next frame, for a host that reads it at once. */
+  /** True: the canvas is painted in the task of the change, not on the next frame, for a host that reads it at once. Over the atlas it always is. */
   paintInTask?: boolean;
   /** Parcels beyond each side of the view that the layers paint too, for a layer with tiles larger than a parcel; the default is 0. */
   overscan?: number;
@@ -389,19 +389,21 @@ export default function LandMap({
     };
     drawLayers(ctx, { view, size, dpr, layers: base, color, overscan });
   };
+  // Over the atlas image the canvas paints in the commit that moves the image: on the next frame its marks trail the map.
+  const inTask = paintInTask || surface !== "tiles";
   const frame = useRef({ queued: false, id: 0 });
   useEffect(() => {
     const f = frame.current;
-    if (!base.length || f.queued || paintInTask) return;
+    if (!base.length || f.queued || inTask) return;
     f.queued = true;
     f.id = requestAnimationFrame(() => {
       f.queued = false;
       paint.current();
     });
-  }, [base, view, size, dpr, theme, paintInTask, overscan]);
+  }, [base, view, size, dpr, theme, inTask, overscan]);
   useLayoutEffect(() => {
-    if (paintInTask && base.length) paint.current();
-  }, [base, view, size, dpr, theme, paintInTask, overscan]);
+    if (inTask && base.length) paint.current();
+  }, [base, view, size, dpr, theme, inTask, overscan]);
   useEffect(() => {
     const f = frame.current;
     return () => {
