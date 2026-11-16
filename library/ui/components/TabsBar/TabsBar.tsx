@@ -6,12 +6,28 @@ export type TabsBarProps = {
   children: ReactNode
   /** `underline` is the Figma bar (a bottom rule); `pill` spaces rounded tabs as decentraland.org's events page does. */
   variant?: 'underline' | 'pill'
+  /**
+   * The bar's inline padding. Without it the variant's own (the Figma 64px for `underline`, none for
+   * `pill`); `content` lines the first tab up with a page's content column: 16px, 32px from 1024px.
+   */
+  inset?: 'content'
+  /** Scrolls sideways instead of overflowing, with room inside the scroller for the tabs' focus ring. */
+  scrollable?: boolean
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
 
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
 
 /** A tab list: arrows, Home and End move focus between its tabs; a button tab is also activated. */
-export function TabsBar({ label, children, variant = 'underline', className, onKeyDown, ...rest }: TabsBarProps) {
+export function TabsBar({
+  label,
+  children,
+  variant = 'underline',
+  inset,
+  scrollable = false,
+  className,
+  onKeyDown,
+  ...rest
+}: TabsBarProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)
     if (event.defaultPrevented || !KEYS.has(event.key)) return
@@ -35,7 +51,15 @@ export function TabsBar({ label, children, variant = 'underline', className, onK
       {...rest}
       role="tablist"
       aria-label={label}
-      className={[styles.root, styles[variant], className].filter(Boolean).join(' ')}
+      className={[
+        styles.root,
+        styles[variant],
+        inset === 'content' && styles.insetContent,
+        scrollable && styles.scrollable,
+        className
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onKeyDown={handleKeyDown}
     >
       {children}

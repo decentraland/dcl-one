@@ -28,16 +28,6 @@
   margin: 0 auto;
 }
 
-/* The bar scrolls sideways on narrow screens. Its block padding keeps the tabs' focus ring inside the
- * scroller, which clips both axes; its inline padding lines the tabs up with the header. */
-.tabs {
-  overflow-x: auto;
-  box-sizing: border-box;
-  width: 100%;
-  padding: var(--dcl-space-4) var(--dcl-space-16);
-  scrollbar-width: none;
-}
-
 .body {
   display: grid;
   grid-template-columns: 1fr;
@@ -63,10 +53,6 @@
 
   .content {
     padding: 0 var(--dcl-space-32);
-  }
-
-  .tabs {
-    padding-inline: 0;
   }
 
   .withAside {

@@ -16,4 +16,22 @@
     flex-wrap: wrap;
     gap: var(--dcl-space-16);
   }
+
+  /* After the variants, so it replaces their inline padding. */
+  .insetContent {
+    padding-inline: var(--dcl-space-16);
+  }
+
+  @media (min-width: 1024px) {
+    .insetContent {
+      padding-inline: var(--dcl-space-32);
+    }
+  }
+
+  /* The block padding keeps the tabs' 2px focus ring at its 2px offset inside the scroller, which clips both axes. */
+  .scrollable {
+    overflow-x: auto;
+    padding-block: var(--dcl-space-4);
+    scrollbar-width: none;
+  }
 }

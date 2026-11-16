@@ -59,4 +59,27 @@ describe('TabsBar', () => {
       expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
     })
   })
+
+  describe('when it has an inset and scrolls', () => {
+    it('adds the inset and scroller classes after the variant, keeping the caller class', () => {
+      render(
+        <TabsBar label="Profile sections" inset="content" scrollable className="frame">
+          <Tabs label="Overview" href="/p" selected />
+        </TabsBar>
+      )
+      const bar = screen.getByRole('tablist', { name: 'Profile sections' })
+      expect(bar.className.split(' ')).toEqual(['root', 'underline', 'insetContent', 'scrollable', 'frame'])
+    })
+  })
+
+  describe('when it has neither', () => {
+    it('keeps only the variant class', () => {
+      render(
+        <TabsBar label="Events" variant="pill">
+          <Tabs label="All" variant="pill" selected />
+        </TabsBar>
+      )
+      expect(screen.getByRole('tablist').className.split(' ')).toEqual(['root', 'pill'])
+    })
+  })
 })

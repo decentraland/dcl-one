@@ -73,7 +73,7 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
             avatarUrl={profile.avatarUrl || undefined}
             actions={actions}
           />
-          <TabsBar label="Profile sections" className={styles.tabs}>
+          <TabsBar label="Profile sections" inset="content" scrollable>
             {tabs.map((tab) => (
               <Tabs
                 key={tab.id}
