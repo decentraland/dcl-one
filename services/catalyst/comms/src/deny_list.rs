@@ -173,22 +173,7 @@ impl<T: Clone> TtlCell<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::sync::Mutex;
-
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
+    use crate::test_logs::LogBuffer;
 
     fn http() -> Outbound {
         Outbound::for_tests().allowing_private_hosts()
@@ -198,15 +183,7 @@ mod tests {
     async fn deny_list_transport_logs_never_retain_the_configured_url() {
         const CANARY: &str = "archipelago-ban-private-material-canary";
         let base = format!("http://127.0.0.1:1/{CANARY}");
-        let buffer = LogBuffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .without_time()
-            .with_ansi(false)
-            .with_writer(move || writer.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (logs, _capture) = LogBuffer::capture(tracing::Level::TRACE);
 
         let deny_list = DenyList::with_ttl(
             Some(format!("{base}/deny-list")),
@@ -215,7 +192,7 @@ mod tests {
         );
         assert!(deny_list.fetch().await.is_err());
 
-        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        let logs = logs.text();
         assert!(logs.contains("deny list fetch failed, keeping last known list"));
         assert!(!logs.contains(CANARY), "configured URL survived in {logs}");
     }

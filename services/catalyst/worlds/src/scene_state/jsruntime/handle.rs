@@ -4,9 +4,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::scene_state::crdt::{CrdtEngine, decode_batch};
-use crate::scene_state::runtime::{ClientSlots, RuntimeLimits, ServerTransportConfig};
+use crate::scene_state::runtime::{
+    ClientSlots, InboundBudget, RuntimeLimits, ServerTransportConfig,
+};
 
 use super::fetch;
 use super::scene_thread::{SceneScript, run_scene_thread};
@@ -53,11 +56,66 @@ pub struct SharedState {
     pub config: Arc<Mutex<ServerTransportConfig>>,
 
     pub outbound: dashmap::DashMap<u32, mpsc::Sender<Vec<u8>>>,
+    /// Bytes handed to each client's socket channel and not yet written.
+    pub outbound_meters: dashmap::DashMap<u32, Arc<std::sync::atomic::AtomicUsize>>,
     pub running: AtomicBool,
 
     /// Bounded, recycled client indices. Shared with the scene thread, which
-    /// releases a slot only once it has reclaimed that client's entity range.
+    /// releases a slot only once it has reclaimed that client's entity range;
+    /// once the runtime stopped, `JsRuntime::on_client_close` releases it. A
+    /// slot is never freed while its client's socket may still be open.
     pub slots: Arc<ClientSlots>,
+
+    /// Each connected client's close request (its `Client::cancel`). A runtime
+    /// that stops cancels them all, so the host closes every socket and frees
+    /// each slot through its normal removal.
+    pub closes: dashmap::DashMap<u32, CancellationToken>,
+
+    /// Client bytes queued toward the scene thread and not yet read.
+    pub inbound: Arc<InboundBudget>,
+
+    /// Set when a V8 OOM parked the scene thread for good.
+    pub parked: AtomicBool,
+
+    /// Client frames this scene dropped because its inbound budget was full.
+    pub inbound_drops: AtomicU64,
+
+    /// Clients this scene closed after too many dropped frames.
+    pub desynced_closes: AtomicU64,
+}
+
+impl SharedState {
+    /// Asks the host to close every client of a stopped runtime. Called after
+    /// `running` is cleared: a client opened concurrently either is seen here
+    /// or sees the runtime stopped (`JsRuntime::on_client_open`).
+    pub(super) fn close_clients(&self) {
+        for close in self.closes.iter() {
+            close.cancel();
+        }
+    }
+}
+
+/// Held by the scene thread: a panic that unwinds out of it stops the
+/// runtime as [`finish`] does (`running` cleared, every client asked to
+/// close), so clients never stay connected to a thread that is gone. A panic
+/// inside a V8 callback aborts the process instead and never reaches it.
+pub(super) struct StopOnPanic {
+    pub(super) shared: Arc<SharedState>,
+    pub(super) watchdog: Arc<Watchdog>,
+    pub(super) scene_hash: String,
+}
+
+impl Drop for StopOnPanic {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        self.shared.running.store(false, Ordering::SeqCst);
+        self.watchdog.stopped.store(true, Ordering::SeqCst);
+        self.shared.close_clients();
+        *self.watchdog.isolate.lock() = None;
+        tracing::error!(scene = %self.scene_hash, "scene JS thread panicked; runtime stopped");
+    }
 }
 
 pub(super) struct Watchdog {
@@ -109,6 +167,11 @@ impl JsRuntimeHandle {
         }
 
         let mut guard = self.join.lock();
+        // A parked thread never ends: detach it without waiting.
+        if self.shared.parked.load(Ordering::SeqCst) {
+            guard.take();
+            return;
+        }
         if let Some(j) = guard.as_ref() {
             if j.is_finished() {
                 if let Some(j) = guard.take() {
@@ -169,7 +232,11 @@ pub fn spawn(
     static_crdt: Vec<u8>,
     storage: Option<fetch::StorageCtx>,
 ) -> JsRuntimeHandle {
-    let engine = Arc::new(Mutex::new(CrdtEngine::with_cap(limits.crdt_max_components)));
+    let engine = Arc::new(Mutex::new(CrdtEngine::with_limits(
+        limits.crdt_max_components,
+        limits.crdt_max_value_bytes,
+        limits.crdt_max_bytes,
+    )));
     let snapshot = Arc::new(Mutex::new(Vec::new()));
 
     if !static_crdt.is_empty() {
@@ -188,8 +255,14 @@ pub fn spawn(
         snapshot: Arc::clone(&snapshot),
         config: Arc::clone(&config),
         outbound: dashmap::DashMap::new(),
+        outbound_meters: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
+        closes: dashmap::DashMap::new(),
+        inbound: Arc::new(InboundBudget::new(&limits)),
+        parked: AtomicBool::new(false),
+        inbound_drops: AtomicU64::new(0),
+        desynced_closes: AtomicU64::new(0),
     });
 
     let watchdog = Arc::new(Watchdog {
@@ -225,6 +298,11 @@ pub fn spawn(
     let join = std::thread::Builder::new()
         .name(format!("scene-js-{scene_hash}"))
         .spawn(move || {
+            let _stop_on_panic = StopOnPanic {
+                shared: Arc::clone(&thread_shared),
+                watchdog: Arc::clone(&thread_watchdog),
+                scene_hash: thread_hash.clone(),
+            };
             run_scene_thread(
                 SceneScript {
                     scene_hash: thread_hash,
@@ -266,6 +344,89 @@ pub(super) extern "C" fn near_heap_limit_cb(
     current_heap_limit + 32 * 1024 * 1024
 }
 
+type OomScene = (Arc<SharedState>, Arc<Watchdog>, String);
+
+/// Scenes whose thread a V8 OOM parked; each keeps its isolate until restart.
+#[derive(Default)]
+struct ParkedScenes(Mutex<Vec<String>>);
+
+impl ParkedScenes {
+    fn add(&self, scene_hash: &str) {
+        self.0.lock().push(scene_hash.to_string());
+    }
+
+    fn count(&self) -> usize {
+        self.0.lock().len()
+    }
+
+    fn contains(&self, scene_hash: &str) -> bool {
+        self.0.lock().iter().any(|s| s == scene_hash)
+    }
+}
+
+static PARKED: ParkedScenes = ParkedScenes(Mutex::new(Vec::new()));
+
+/// Counts a park the way the OOM handler does.
+#[cfg(test)]
+pub fn record_park_for_tests(scene_hash: &str) {
+    PARKED.add(scene_hash);
+}
+
+/// Isolates parked by an OOM; they count against the scene cap.
+pub fn parked_isolates() -> usize {
+    PARKED.count()
+}
+
+/// Whether `scene_hash` ran out of memory before; it is not loaded again.
+pub fn is_parked(scene_hash: &str) -> bool {
+    PARKED.contains(scene_hash)
+}
+
+thread_local! {
+    static OOM_SCENE: std::cell::RefCell<Option<OomScene>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Routes a fatal V8 OOM on this thread to `scene` instead of the process.
+pub(super) fn guard_oom(
+    isolate: &mut v8::Isolate,
+    shared: &Arc<SharedState>,
+    watchdog: &Arc<Watchdog>,
+    scene_hash: &str,
+) {
+    OOM_SCENE.with(|s| {
+        *s.borrow_mut() = Some((Arc::clone(shared), Arc::clone(watchdog), scene_hash.into()))
+    });
+    isolate.set_oom_error_handler(scene_oom);
+}
+
+/// V8 aborts the process if this returns, so the scene's thread is parked for good.
+unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8::OomDetails) {
+    let location = if location.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(location) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    OOM_SCENE.with(|s| match s.try_borrow().ok().as_deref().and_then(Option::as_ref) {
+        Some((shared, watchdog, scene)) => {
+            tracing::error!(%scene, %location, "scene isolate out of memory; parking its thread");
+            PARKED.add(scene);
+            shared.parked.store(true, Ordering::SeqCst);
+            shared.running.store(false, Ordering::SeqCst);
+            shared.close_clients();
+            watchdog.stopped.store(true, Ordering::SeqCst);
+        }
+        None => {
+            tracing::error!(%location, "V8 out of memory off a scene thread; parking it");
+            PARKED.add("");
+        }
+    });
+    loop {
+        std::thread::park();
+    }
+}
+
 pub(super) fn finish(
     shared: &SharedState,
     watchdog: &Watchdog,
@@ -275,7 +436,7 @@ pub(super) fn finish(
     shared.running.store(false, Ordering::SeqCst);
     watchdog.stopped.store(true, Ordering::SeqCst);
 
-    shared.slots.clear();
+    shared.close_clients();
 
     *watchdog.isolate.lock() = None;
     if let Some(j) = wd_thread {
@@ -347,6 +508,10 @@ mod tests {
     fn connect(handle: &JsRuntimeHandle, tx: mpsc::Sender<Vec<u8>>) -> u32 {
         let index = handle.acquire_client_index();
         handle.shared.outbound.insert(index, tx);
+        handle
+            .shared
+            .outbound_meters
+            .insert(index, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
         let (start, size) = handle.shared.config.lock().range_for_client(index);
         handle
             .tx
@@ -1179,5 +1344,488 @@ mod tests {
             "the cross-client reparent must never reach the scene"
         );
         assert_eq!(live_puts(&handle), vec![ok]);
+    }
+
+    #[test]
+    fn a_spinning_set_immediate_is_terminated() {
+        let js = r#"
+            setImmediate(function () { for (;;) {} });
+            module.exports.onUpdate = function (dt) {};
+        "#
+        .to_string();
+        let limits = RuntimeLimits {
+            js_tick_budget_ms: 100,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "immediate-spin".into(),
+            js,
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            wait_for(|| !handle.shared.running.load(Ordering::SeqCst)),
+            "the watchdog must stop a setImmediate callback that never returns"
+        );
+    }
+
+    /// Runs `body` in `onStart` and reports whether it set `ok`, by writing
+    /// entity 600 only when it did.
+    fn scene_reports(name: &str, body: &str, limits: RuntimeLimits) -> bool {
+        let batch = encode_batch(&[put(600, 1, 1, &[1])]);
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            module.exports.onStart = function () {{
+              var ok = false;
+              {body}
+              if (ok) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array({batch:?}) }}); }}
+            }};
+            "#
+        );
+        let handle = spawn(name.into(), js, "dcl-test".into(), limits, Vec::new(), None);
+        wait_for(|| handle.shared.engine.lock().component_count() == 1)
+    }
+
+    #[test]
+    fn array_buffers_are_held_to_the_isolate_budget() {
+        let limits = RuntimeLimits {
+            js_array_buffer_limit_mb: 8,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_reports(
+                "ab-within",
+                "var keep = new Uint8Array(4 << 20); keep.fill(1); ok = keep[0] === 1;",
+                limits,
+            ),
+            "an allocation inside the budget succeeds"
+        );
+        let js = r#"
+            var keep = [];
+            module.exports.onUpdate = function () { keep.push(new Uint8Array(4 << 20)); };
+        "#;
+        let handle = spawn(
+            "ab-over".into(),
+            js.to_string(),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            wait_for(|| !handle.shared.running.load(Ordering::SeqCst)),
+            "a scene that keeps allocating past the budget is stopped"
+        );
+    }
+
+    #[test]
+    fn host_buffers_over_the_crdt_budget_throw() {
+        let limits = RuntimeLimits {
+            crdt_max_bytes: 64,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_reports(
+                "crdt-within",
+                "updateCRDTState(new Uint8Array(64)); ok = true;",
+                limits,
+            ),
+            "a buffer at the cap is accepted"
+        );
+        assert!(
+            scene_reports(
+                "crdt-over",
+                "try { updateCRDTState(new Uint8Array(65)); } catch (e) { ok = e instanceof RangeError; } \
+                 try { EngineApi.crdtSendToRenderer({ data: new Uint8Array(65) }); ok = false; } \
+                 catch (e) { ok = ok && e instanceof RangeError; }",
+                limits,
+            ),
+            "a buffer over the cap throws"
+        );
+    }
+
+    #[test]
+    fn array_buffer_budget_returns_freed_host_buffers() {
+        let budget = super::super::array_buffers::ArrayBufferBudget::new(1024);
+        ensure_v8_initialized();
+        let mut isolate = v8::Isolate::new(
+            v8::CreateParams::default()
+                .array_buffer_allocator(super::super::array_buffers::allocator(&budget)),
+        );
+        {
+            v8::scope!(let scope, &mut isolate);
+            let context = v8::Context::new(scope, Default::default());
+            let scope = &mut v8::ContextScope::new(scope, context);
+            assert!(super::super::array_buffers::uint8array(scope, &budget, &[1; 600]).is_some());
+            assert_eq!(budget.used(), 600);
+            assert!(
+                super::super::array_buffers::uint8array(scope, &budget, &[1; 600]).is_none(),
+                "a host buffer past the budget is refused"
+            );
+        }
+        drop(isolate);
+        assert_eq!(budget.used(), 0, "dropping the isolate frees its buffers");
+    }
+
+    #[test]
+    fn a_replaced_reflect_cannot_reach_the_original_array_buffer() {
+        assert!(
+            scene_reports(
+                "harden-reflect",
+                "var R = Reflect, AB0; \
+                 Reflect = { construct: function (t, a, n) { AB0 = t; return R.construct(t, a, n); } }; \
+                 var plain = new ArrayBuffer(1); Reflect = R; \
+                 ok = AB0 === undefined && plain.byteLength === 1 \
+                   && new ArrayBuffer(8, { maxByteLength: 64 }).resizable === false \
+                   && Object.getOwnPropertyDescriptor(Object.getPrototypeOf(plain), 'constructor').writable === false;",
+                RuntimeLimits::default(),
+            ),
+            "the proxy trap uses its own Reflect.construct"
+        );
+    }
+
+    #[test]
+    fn buffers_outside_the_allocator_are_not_constructible() {
+        assert!(
+            scene_reports(
+                "harden",
+                "ok = typeof WebAssembly === 'undefined' \
+                   && typeof SharedArrayBuffer === 'undefined' \
+                   && typeof ArrayBuffer.prototype.resize === 'undefined' \
+                   && new ArrayBuffer(8, { maxByteLength: 1 << 30 }).resizable === false \
+                   && new (new Uint8Array(4).buffer.constructor)(8, { maxByteLength: 16 }).resizable === false \
+                   && new Uint8Array(4).buffer instanceof ArrayBuffer \
+                   && ArrayBuffer.isView(new Uint8Array(1)) \
+                   && new Uint8Array(new ArrayBuffer(16)).length === 16;",
+                RuntimeLimits::default(),
+            ),
+            "resizable, shared and wasm memory are gone while plain buffers work"
+        );
+    }
+
+    /// Forwards what each client sends to every client, and floods each
+    /// client with `FILL` every tick.
+    fn relay_flood(fill: &[u8]) -> String {
+        format!(
+            r#"
+            var clients = {{}};
+            var FILL = new Uint8Array({fill:?});
+            registerScene({CFG_512}, function (ev) {{
+              if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+              if (ev.type === 'close') {{ delete clients[ev.clientId]; }}
+            }});
+            module.exports.onUpdate = function (dt) {{
+              for (var id in clients) {{
+                var msgs = clients[id].getMessages();
+                for (var i = 0; i < msgs.length; i++) {{
+                  for (var to in clients) {{ clients[to].sendCrdtMessage(msgs[i]); }}
+                }}
+              }}
+              for (var to in clients) {{
+                for (var k = 0; k < 8; k++) {{ clients[to].sendCrdtMessage(FILL); }}
+              }}
+            }};
+            "#
+        )
+    }
+
+    #[test]
+    fn a_reclaim_evicted_by_a_flood_does_not_corrupt_the_outbound_count() {
+        let fill = encode_batch(&[put(700, 1, 1, &[1])]);
+        let limits = RuntimeLimits {
+            client_outbound_max: 4,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "reclaim-flood".into(),
+            relay_flood(&fill),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        let (tx_a, _rx_a) = mpsc::channel::<Vec<u8>>(1024);
+        let (tx_b, _rx_b) = mpsc::channel::<Vec<u8>>(1024);
+        let a = connect(&handle, tx_a);
+        let _b = connect(&handle, tx_b);
+        handle
+            .tx
+            .send(Command::ClientCrdt {
+                index: a,
+                body: encode_batch(&[put(1100, 1, 1, &[5])]),
+            })
+            .unwrap();
+        assert!(wait_for(
+            || handle.shared.engine.lock().component_count() >= 2
+        ));
+        handle.tx.send(Command::ClientClose { index: a }).unwrap();
+        handle.shared.outbound.remove(&a);
+        assert!(wait_for(|| handle.shared.slots.live() == 1));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            handle.shared.running.load(Ordering::SeqCst),
+            "the scene keeps running after the reclaim is evicted"
+        );
+    }
+
+    #[test]
+    fn unwritten_socket_bytes_stay_within_the_outbound_budget() {
+        let fill = encode_batch(&[put(700, 1, 1, &[1; 100])]);
+        let limits = RuntimeLimits {
+            client_outbound_max_bytes: 1000,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "outbound-meter".into(),
+            relay_flood(&fill),
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1024);
+        let index = connect(&handle, tx);
+        let meter = Arc::clone(&handle.shared.outbound_meters.get(&index).unwrap());
+        assert!(wait_for(|| meter.load(Ordering::SeqCst) > 0));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let mut queued = 0;
+        while let Ok(frame) = rx.try_recv() {
+            queued += frame.len();
+        }
+        assert!(queued > 0);
+        assert!(
+            queued <= 1000 + fill.len() + 1,
+            "{queued} bytes handed to a socket that never writes"
+        );
+    }
+
+    #[test]
+    fn frames_sent_before_a_late_register_scene_reach_the_scene() {
+        let js = format!(
+            r#"
+            var clients = {{}};
+            var ticks = 0;
+            module.exports.onUpdate = function (dt) {{
+              ticks++;
+              if (ticks === 15) {{
+                registerScene({CFG_512}, function (ev) {{
+                  if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+                }});
+              }}
+              for (var id in clients) {{
+                var msgs = clients[id].getMessages();
+                for (var i = 0; i < msgs.length; i++) {{ clients[id].sendCrdtMessage(msgs[i]); }}
+              }}
+            }};
+            "#
+        );
+        let handle = spawn(
+            "late-register".into(),
+            js,
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+        let index = connect(&handle, tx);
+        let early = put(1100, 1, 1, &[9]);
+        handle
+            .tx
+            .send(Command::ClientCrdt {
+                index,
+                body: encode_batch(std::slice::from_ref(&early)),
+            })
+            .unwrap();
+        let frame = wait_for_recv(&mut rx).expect("the early frame is delivered once registered");
+        assert_eq!(decode_batch(&frame[1..]), vec![early]);
+    }
+
+    #[test]
+    fn element_setters_cannot_reenter_get_messages() {
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            var clients = {{}};
+            registerScene({CFG_512}, function (ev) {{
+              if (ev.type === 'open') {{ clients[ev.clientId] = ev.client; }}
+            }});
+            var armed = false;
+            module.exports.onUpdate = function (dt) {{
+              for (var id in clients) {{
+                var c = clients[id];
+                if (!armed) {{
+                  armed = true;
+                  Object.defineProperty(Array.prototype, '0', {{
+                    set: function (v) {{ c.getMessages(); EngineApi.crdtGetState(); }},
+                    configurable: true
+                  }});
+                }}
+                var msgs = c.getMessages();
+                EngineApi.crdtGetState();
+                for (var i = 0; i < msgs.length; i++) {{ c.sendCrdtMessage(msgs[i]); }}
+              }}
+            }};
+            "#
+        );
+        let handle = spawn(
+            "setter-reentry".into(),
+            js,
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+        let index = connect(&handle, tx);
+        let sent = put(1100, 1, 1, &[3]);
+        for _ in 0..3 {
+            handle
+                .tx
+                .send(Command::ClientCrdt {
+                    index,
+                    body: encode_batch(std::slice::from_ref(&sent)),
+                })
+                .unwrap();
+        }
+        let frame = wait_for_recv(&mut rx).expect("messages still reach the scene");
+        assert_eq!(decode_batch(&frame[1..]), vec![sent]);
+        assert!(handle.shared.running.load(Ordering::SeqCst));
+    }
+
+    /// Runs `body` in `onStart`: `(leaked, stopped)`, where `leaked` means an
+    /// allocation past the budget succeeded and `stopped` that the scene was
+    /// terminated rather than finishing `onStart`.
+    fn scene_leaks_with(name: &str, body: &str, limits: RuntimeLimits) -> (bool, bool) {
+        let mark = |e: u32| encode_batch(&[put(e, 1, 1, &[1])]);
+        let (started, leaked, finished) = (mark(601), mark(600), mark(602));
+        let js = format!(
+            r#"
+            var EngineApi = require('~system/EngineApi');
+            function mark(b) {{ EngineApi.crdtSendToRenderer({{ data: new Uint8Array(b) }}); }}
+            module.exports.onStart = function () {{
+              mark({started:?});
+              var leaked = false;
+              try {{ {body} }} catch (e) {{}}
+              if (leaked) {{ mark({leaked:?}); }}
+              mark({finished:?});
+            }};
+            module.exports.onUpdate = function (dt) {{}};
+            "#
+        );
+        let handle = spawn(name.into(), js, "dcl-test".into(), limits, Vec::new(), None);
+        let has = |e: u32| {
+            decode_batch(&handle.shared.snapshot.lock())
+                .iter()
+                .any(|m| m.entity() == e)
+        };
+        assert!(
+            wait_for(|| has(601) && (has(602) || !handle.shared.running.load(Ordering::SeqCst))),
+            "{name}: onStart never ran"
+        );
+        (has(600), !has(602))
+    }
+
+    fn scene_leaks(name: &str, body: &str, limits: RuntimeLimits) -> bool {
+        scene_leaks_with(name, body, limits).0
+    }
+
+    #[test]
+    fn no_buffer_path_allocates_past_the_budget() {
+        let limits = RuntimeLimits {
+            js_array_buffer_limit_mb: 1,
+            ..RuntimeLimits::default()
+        };
+        assert!(
+            scene_leaks(
+                "ab-control",
+                "new ArrayBuffer(1 << 19); leaked = true;",
+                limits
+            ),
+            "control: an allocation inside the budget succeeds"
+        );
+        for (name, body) in [
+            ("ab-ctor", "new ArrayBuffer(2 << 20); leaked = true;"),
+            (
+                "ab-transfer",
+                "new ArrayBuffer(1).transfer(2 << 20); leaked = true;",
+            ),
+            (
+                "ab-small",
+                "var keep = [new Uint8Array((1 << 20) - 4096)]; \
+                 for (var j = 0; j < 1000; j++) keep.push(new ArrayBuffer(64)); leaked = true;",
+            ),
+        ] {
+            let (leaked, stopped) = scene_leaks_with(name, body, limits);
+            assert!(!leaked, "{name} allocated past the budget");
+            assert!(stopped, "{name}: going over the budget stops the scene");
+            assert!(
+                !super::is_parked(name),
+                "{name}: the stop is the heap-limit termination, not an OOM park"
+            );
+        }
+    }
+
+    #[test]
+    fn a_coerced_length_never_runs_scene_code_in_the_native_constructor() {
+        assert!(
+            scene_reports(
+                "harden-coerce",
+                "function native(name) { return new Error().stack.indexOf('new ' + name) >= 0; } \
+                 var inDataView, inArrayBuffer; \
+                 new DataView(new ArrayBuffer(8), { valueOf: function () { inDataView = native('DataView'); return 0; } }); \
+                 var b = new ArrayBuffer({ valueOf: function () { inArrayBuffer = native('ArrayBuffer'); return 8; } }); \
+                 ok = inDataView === true && inArrayBuffer === false && b.byteLength === 8;",
+                RuntimeLimits::default(),
+            ),
+            "the length is converted by the trap, outside any native constructor frame"
+        );
+    }
+
+    #[test]
+    fn parked_scenes_are_counted_and_remembered() {
+        let parked = ParkedScenes::default();
+        assert_eq!((parked.count(), parked.contains("a")), (0, false));
+        parked.add("a");
+        parked.add("");
+        assert_eq!((parked.count(), parked.contains("a")), (2, true));
+    }
+
+    /// A panic that unwinds out of the scene thread stops the runtime and
+    /// asks every client to close; a normal exit leaves that to `finish`.
+    #[test]
+    fn a_panicking_scene_thread_stops_the_runtime_and_closes_its_clients() {
+        let handle = spawn(
+            "panicking-scene".into(),
+            "registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } }, function (ev) {});".into(),
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let close = CancellationToken::new();
+        handle.shared.closes.insert(0, close.clone());
+        let guard = |handle: &JsRuntimeHandle| StopOnPanic {
+            shared: Arc::clone(&handle.shared),
+            watchdog: Arc::clone(&handle.watchdog),
+            scene_hash: handle.scene_hash.clone(),
+        };
+
+        drop(guard(&handle));
+        assert!(handle.shared.running.load(Ordering::SeqCst));
+        assert!(!close.is_cancelled());
+
+        let held = guard(&handle);
+        let thread = std::thread::spawn(move || {
+            let _held = held;
+            panic!("scene thread bug");
+        });
+        assert!(thread.join().is_err());
+        assert!(!handle.shared.running.load(Ordering::SeqCst));
+        assert!(handle.watchdog.stopped.load(Ordering::SeqCst));
+        assert!(close.is_cancelled(), "every client is asked to close");
     }
 }
