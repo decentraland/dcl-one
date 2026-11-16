@@ -1,5 +1,5 @@
 //! The service worker's asset cache (deploy/web/service_worker.js), as the engine reaches it.
-//! The cache name, the keys and the header here MUST match the worker's.
+//! The cache name and the keys here MUST match the worker's.
 //!
 //! The worker only answers from the cache; the engine fills it from what it downloads. An entry
 //! under the shared key answers for every content server, so it is only written once the bytes
@@ -49,8 +49,6 @@ mod io {
     use web_sys::{Cache, CacheStorage, Headers, Response, ResponseInit};
 
     const CACHE_NAME: &str = "ipfs-path-cache-v2";
-    /// On a response the worker answered from its cache.
-    pub const CACHED_HEADER: &str = "x-ipfs-cached";
 
     pub async fn open() -> Result<Cache, JsValue> {
         // a window or a worker
