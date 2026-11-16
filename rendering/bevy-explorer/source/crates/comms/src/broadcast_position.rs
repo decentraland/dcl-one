@@ -38,10 +38,8 @@ const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
 
 #[derive(Default)]
 struct LastAnim {
-    // The (scene_hash, content_hash) pair we last broadcast. Tracked as one unit so we
-    // can detect transitions between clips.
-    hashes: Option<(String, String)>,
-    // Decides which sends carry the hash pair or the clear (change, repeats, keepalive).
+    // Decides which sends carry the hash pair or the clear (change, repeats, keepalive). It also
+    // remembers the clip as of the previous send, so clip transitions are detected through it.
     announcer: ClipAnnouncer,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
@@ -136,7 +134,7 @@ fn broadcast_position(
     let current_hashes = scene_anim
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
-    let anim_changed = current_hashes != last_anim.hashes;
+    let anim_changed = last_anim.announcer.changed(current_hashes.as_ref());
     // Toggling either enabled flag, or a yaw/pitch delta past the threshold, also
     // breaks the keepalive — same shape as anim_changed. Sub-threshold drift just
     // rides the 1Hz keepalive.
@@ -205,7 +203,6 @@ fn broadcast_position(
             Announcement::Clear => (Some(String::new()), None),
             Announcement::Nothing => (None, None),
         };
-    last_anim.hashes = current_hashes;
 
     let speed = active_anim.map(|a| a.speed);
     let transition_seconds = active_anim.map(|a| a.transition_seconds);

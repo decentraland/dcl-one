@@ -7,7 +7,9 @@
 //! that sees it and on the next [`ANNOUNCE_REPEATS`] sends, which bounds a single loss to about
 //! two send intervals. A clip that then stays active is re-announced every keepalive so late
 //! joiners learn it. Repeating the pair is safe for the receiver: it rebuilds the same clip URN, and
-//! seeks and sounds travel only on the send that latches them.
+//! seeks and sounds travel only on the send that latches them. The repeats carry the clip identity
+//! only: a seek or a sound trigger on a lost first packet is not repeated, so the clip then starts
+//! from its beginning and the sound does not play.
 //!
 //! A character at rest sends only once a second, so the repeats would be a second apart exactly
 //! when a clip changes at rest (stopping, landing). [`ClipAnnouncer::repeat_pending`] lets the
@@ -50,6 +52,11 @@ impl ClipAnnouncer {
         self.repeats_left > 0
     }
 
+    /// Whether `current` differs from the clip as of the previous send.
+    pub fn changed(&self, current: Option<&ClipHashes>) -> bool {
+        self.current.as_ref() != current
+    }
+
     /// The announcement for a send at `now` while `current` is the active clip. Call it once per
     /// packet actually sent. `keepalive` is how often an unchanged active clip is re-announced.
     pub fn announce(
@@ -58,8 +65,7 @@ impl ClipAnnouncer {
         current: Option<&ClipHashes>,
         keepalive: f64,
     ) -> Announcement {
-        let changed = self.current.as_ref() != current;
-        if changed {
+        if self.changed(current) {
             self.current = current.cloned();
             self.repeats_left = ANNOUNCE_REPEATS;
         } else if self.repeats_left > 0 {
@@ -119,6 +125,20 @@ mod tests {
         // the change and its repeats, then once a second after the last of them (at 0.25 s)
         assert_eq!(announced, [0, 1, 2, 10, 18]);
         assert!(all.iter().all(|a| *a != Clear));
+    }
+
+    #[test]
+    fn changed_compares_with_the_clip_of_the_previous_send() {
+        let mut announcer = ClipAnnouncer::default();
+        let walk = clip("walk");
+        assert!(!announcer.changed(None));
+        assert!(announcer.changed(Some(&walk)));
+        // asking does not record anything: only a send does
+        assert!(announcer.changed(Some(&walk)));
+        announcer.announce(0.0, Some(&walk), KEEPALIVE);
+        assert!(!announcer.changed(Some(&walk)));
+        assert!(announcer.changed(Some(&clip("jump"))));
+        assert!(announcer.changed(None));
     }
 
     #[test]
