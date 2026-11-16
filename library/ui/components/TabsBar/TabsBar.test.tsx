@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -80,6 +81,24 @@ describe('TabsBar', () => {
         </TabsBar>
       )
       expect(screen.getByRole('tablist').className.split(' ')).toEqual(['root', 'pill'])
+    })
+  })
+
+  describe('when it scrolls', () => {
+    const rule = (file: string, selector: string) => {
+      const css = readFileSync(new URL(file, import.meta.url), 'utf8')
+      const start = css.indexOf(`${selector} {`)
+      return start < 0 ? '' : css.slice(start, css.indexOf('}', start))
+    }
+
+    it('adds no block padding, so the selected indicator stays on the bar bottom rule', () => {
+      const scrollable = rule('./TabsBar.module.css', '.scrollable')
+      expect(scrollable).toContain('overflow-x: auto')
+      expect(scrollable).not.toMatch(/padding/)
+    })
+
+    it('draws the underline tab focus ring inside the tab, where the scroller does not clip it', () => {
+      expect(rule('../Tabs/Tabs.module.css', '.underline:focus-visible')).toContain('outline-offset: -2px')
     })
   })
 })

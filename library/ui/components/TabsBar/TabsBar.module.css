@@ -28,10 +28,10 @@
     }
   }
 
-  /* The block padding keeps the tabs' 2px focus ring at its 2px offset inside the scroller, which clips both axes. */
+  /* No block padding: the tabs keep the Figma 64px and their indicator sits on the bar's bottom rule.
+     The underline tabs draw their focus ring inside their box, so the scroller does not clip it. */
   .scrollable {
     overflow-x: auto;
-    padding-block: var(--dcl-space-4);
     scrollbar-width: none;
   }
 }
