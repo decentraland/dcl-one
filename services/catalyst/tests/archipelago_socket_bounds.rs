@@ -1481,6 +1481,7 @@ fn heartbeat(x: f32) -> Message {
 #[ignore = "requires PULSE_NATS_SERVER_BIN; real broker and Pulse statistics publisher"]
 async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     use catalyst::comms::gatekeeper::bus::{BrokerBus, NatsBus};
+    use catalyst::comms::protocol::bus::statistics::{ProducerReply, ProducerRequest};
     use catalyst::comms::pulse::cluster::nats::{NatsClusterFeed, NatsFeedOptions};
     use std::sync::Arc;
     let broker = nats_broker::Broker::start(&std::env::var("PULSE_NATS_SERVER_BIN").unwrap(), None);
@@ -1507,6 +1508,23 @@ async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     })
     .await
     .unwrap();
+    // The connector drops an observation when Pulse does not answer its producer Status request,
+    // and Pulse subscribes asynchronously after spawn. A Status reply proves the producer subject
+    // (installed after the observation subject) is live before the only heartbeat is sent.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let status = ProducerRequest::Status.encode().unwrap();
+        while !matches!(
+            bus.statistics_control(status.clone())
+                .await
+                .ok()
+                .and_then(|reply| ProducerReply::decode(&reply)),
+            Some(ProducerReply::Status { .. })
+        ) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Pulse never answered the producer Status request");
     let port = archipelago::serve(state.clone()).await;
     let (mut socket, address) = authenticated(port).await;
     socket.send(heartbeat(42.)).await.unwrap();
