@@ -195,7 +195,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
       AND n.token_id = recv_erc721.token_id::numeric \
  LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = recv_erc721.token_id::numeric \
- WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED";
+ WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN";
 
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
 #[cfg(test)]
@@ -207,6 +207,7 @@ pub(crate) fn test_trades_bids_sql() -> String {
 fn trades_bids_sql(extra: &str) -> String {
     let sql = TRADES_BIDS_SQL
         .replace("COUNTED", &super::trades::counted_sql("t.", "$2"))
+        .replace("SERVED_CHAIN", &super::catalog::served_chain_sql("t"))
         .replace("SHIFT", super::catalog::ITEM_ID_SHIFT)
         .replace(
             "CHAIN_STATUS",

@@ -741,7 +741,7 @@ async fn clean_peer_close_echoes_exact_reason_and_ends_tcp_at_each_application_s
                 socket
                     .send(packet(client_packet::Message::ChallengeRequest(
                         ChallengeRequestMessage {
-                            address: "0x0000000000000000000000000000000000000001".into(),
+                            address: "0x0000000000000000000000000000000000000101".into(),
                         },
                     )))
                     .await
@@ -1115,7 +1115,7 @@ async fn pending_contract(port: u16, delegated: bool) -> (Socket, String, String
     pending_contract_as(
         port,
         delegated,
-        "0x0000000000000000000000000000000000000001".into(),
+        "0x0000000000000000000000000000000000000101".into(),
         PrivateKeySigner::random(),
     )
     .await
@@ -1130,7 +1130,7 @@ async fn pending_contract_as(
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
         .await
         .unwrap();
-    let address = "0x0000000000000000000000000000000000000001".to_string();
+    let address = "0x0000000000000000000000000000000000000101".to_string();
     socket
         .send(packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage { address: claim },
@@ -1248,7 +1248,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 let (socket, _, session, _, _) = pending_contract_as(
                     port,
                     true,
-                    "0x0000000000000000000000000000000000000001".into(),
+                    "0x0000000000000000000000000000000000000101".into(),
                     if index == 0 || same_session {
                         device.clone()
                     } else {
@@ -1260,7 +1260,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 sockets.push(socket);
                 sessions.push(session);
             }
-            let address = "0x0000000000000000000000000000000000000001";
+            let address = "0x0000000000000000000000000000000000000101";
             assert_eq!(state.registry.authenticated_count(), 0);
             validator.gates[order[0]].add_permits(1);
             assert!(matches!(
@@ -1623,7 +1623,7 @@ async fn baseline_v4_authentication_is_not_exposed() {
     // Echoing a protocol name does not enable extended offer or typed-auth fields.
     // ChallengeRequest.address followed by the reserved ConnectionOffer tag.
     let mut challenge = vec![0x0a, 42];
-    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000001");
+    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000101");
     challenge.extend_from_slice(&[0x12, 0]);
     let mut frame = vec![0x0a, challenge.len() as u8];
     frame.extend(challenge);
@@ -1771,7 +1771,7 @@ async fn source_contract_challenge_has_32_random_bytes() {
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1828,7 +1828,7 @@ async fn source_contract_text_data_uses_the_same_protobuf_decoder() {
         .unwrap();
     let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
         ChallengeRequestMessage {
-            address: "0x0000000000000000000000000000000000000001".into(),
+            address: "0x0000000000000000000000000000000000000101".into(),
         },
     )) else {
         unreachable!()
@@ -1903,7 +1903,7 @@ async fn source_contract_negotiates_first_offered_protocol_without_selecting_aut
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1951,7 +1951,7 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
             .unwrap();
         let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage {
-                address: "0x0000000000000000000000000000000000000001".into(),
+                address: "0x0000000000000000000000000000000000000101".into(),
             },
         )) else {
             unreachable!()
@@ -1971,4 +1971,91 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
             "{size}"
         );
     }
+}
+
+/// One socket per client source behind a trusted proxy, with a short handshake deadline.
+async fn per_source_server() -> u16 {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets_per_ip = 1;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
+    settings.auth.handshake_timeout_ms = 300;
+    let state = archipelago::state(settings).await;
+    let mounts = catalyst::comms::archipelago::mounts(
+        state,
+        true,
+        Default::default(),
+        catalyst::comms::stats::http::test_support::matcher(),
+        std::sync::Arc::new(catalyst::content::Denylist::default()),
+    );
+    let app = axum::Router::new().merge(mounts.root);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    port
+}
+
+async fn connect_from(port: u16, client: &str) -> Result<Socket, (u16, Option<String>)> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://127.0.0.1:{port}/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("x-real-ip", client.parse().unwrap());
+    match tokio_tungstenite::connect_async(request).await {
+        Ok((socket, _)) => Ok(socket),
+        Err(Error::Http(response)) => Err((
+            response.status().as_u16(),
+            response
+                .headers()
+                .get("retry-after")
+                .map(|v| v.to_str().unwrap().to_owned()),
+        )),
+        Err(other) => panic!("unexpected upgrade error {other}"),
+    }
+}
+
+async fn wait_admitted(port: u16, client: &str) -> Socket {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Ok(socket) = connect_from(port, client).await {
+                return socket;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the source's slot was never released")
+}
+
+#[tokio::test]
+async fn a_client_source_holds_its_socket_cap_through_a_trusted_proxy() {
+    let port = per_source_server().await;
+    let first = connect_from(port, "203.0.113.7").await.unwrap();
+    assert_eq!(
+        connect_from(port, "203.0.113.7").await.err(),
+        Some((429, Some("5".into())))
+    );
+    let _other = connect_from(port, "203.0.113.8").await.unwrap();
+    let _v6 = connect_from(port, "2001:db8::1").await.unwrap();
+    assert_eq!(
+        connect_from(port, "2001:db8::2")
+            .await
+            .err()
+            .map(|(s, _)| s),
+        Some(429),
+        "an IPv6 /64 is one source"
+    );
+    // A closed socket frees its slot.
+    drop(first);
+    let _silent = wait_admitted(port, "203.0.113.7").await;
+    // A handshake that never starts times out and frees its slot while the client keeps it open.
+    let _again = wait_admitted(port, "203.0.113.7").await;
 }

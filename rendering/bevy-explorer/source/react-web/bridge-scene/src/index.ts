@@ -30,6 +30,7 @@ import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
+import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerLobby } from './domains/lobby'
 import { registerWorld } from './domains/world'
@@ -75,6 +76,7 @@ export function main(): void {
     registerNotifications(ctx)
     registerSettings(ctx)
     registerCommunities(ctx)
+    registerEvents(ctx)
     registerGallery(ctx)
     registerLobby(ctx)
     registerWorld(ctx)

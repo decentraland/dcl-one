@@ -69,6 +69,7 @@ prepare_catalyst_test_resources() {
       echo "catalyst-test: descriptor prerequisite: kernel per-process limit $kernel is below $required" >&2
       echo 'catalyst-test: the full backend suite includes 3,000 concurrent RPC verifiers; use hosted CI or have an administrator provision and verify adequate kernel and inherited descriptor limits' >&2
       echo 'catalyst-test: this check does not change developer kernel limits; individual Cargo targets can be run separately' >&2
+      echo "catalyst-test: to raise the limit until the next reboot, an administrator can run: sudo sysctl -w kern.maxfilesperproc=$required (and kern.maxfiles if it is lower)" >&2
       return 1
     fi
   fi

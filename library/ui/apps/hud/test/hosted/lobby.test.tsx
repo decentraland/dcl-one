@@ -60,6 +60,19 @@ describe('lobby controls', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Jump In' })).toBeInTheDocument())
   })
 
+  it("jumps to a live world event only when its server is a world's name", () => {
+    const session = fakeSession()
+    const now = new Date().toISOString()
+    session.lobbyEvents.list = [
+      { id: 'good', name: 'Good Fest', x: 0, y: 0, world: true, live: true, server: 'fest.dcl.eth', start_at: now },
+      { id: 'bad', name: 'Bad Fest', x: 0, y: 0, world: true, live: true, server: 'https://realm.example/about', start_at: now }
+    ]
+    render(lobby(session))
+    expect(screen.queryByRole('button', { name: 'Jump in to Bad Fest' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Jump in to Good Fest' }))
+    expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'world', realm: 'fest.dcl.eth' })
+  })
+
   it('loads the landing card when the native home arrives after mount', async () => {
     const session = fakeSession()
     session.homeScene = () => null
@@ -174,13 +187,13 @@ describe('lobby widgets', () => {
     expect(screen.getByText('Tower Smash')).toBeInTheDocument()
   })
 
-  it('opens the Events page on the right tab from VIEW ALL', () => {
+  it('opens the Events page from VIEW ALL', () => {
     const session = fakeSession()
     session.lobbyEvents.list = [{ id: 'u', name: 'Tower Smash', x: 3, y: 4, live: false, start_at: new Date(Date.now() + 3_600_000).toISOString() }]
     render(lobby(session))
     const upcoming = screen.getByRole('heading', { name: 'Upcoming Events' }).parentElement!
     fireEvent.click(within(upcoming).getByRole('button', { name: /view all/i }))
-    expect(session.events.openAt).toHaveBeenCalledWith('upcoming')
+    expect(session.events.toggle).toHaveBeenCalledOnce()
   })
 })
 

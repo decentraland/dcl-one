@@ -33,6 +33,8 @@ import { EngineViewport } from '../engine/EngineViewport'
 import { DEGREES_PER_PX } from '../engine/AvatarDragSurface'
 import { openCommunityModal } from '../communities/CommunityModal'
 import { PhotoDetail } from '../gallery/PhotoDetail'
+import { useOwnReelActions } from '../gallery/useOwnReelActions'
+import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
@@ -201,6 +203,8 @@ export function LobbyHome({
   const [editing, setEditing] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [photoIndex, setPhotoIndex] = useState<number | null>(null)
+  const reel = useReelList('lobby', session.gallery.fetchPage)
+  const reelActions = useOwnReelActions(session.gallery, reel)
   const [share, setShare] = useState<{ event: LobbyEvent; x: number; y: number } | null>(null)
   const [avatarTip, setAvatarTip] = useState<{ x: number; y: number } | null>(null)
   const [friendTip, setFriendTip] = useState<{ name: string; x: number; y: number } | null>(null)
@@ -246,9 +250,9 @@ export function LobbyHome({
     lobbyAnalytics.sectionOpened('places')
     if (!session.places.open) session.places.toggle()
   }
-  const openEventsPage = (section: 'live' | 'upcoming'): void => {
+  const openEventsPage = (): void => {
     lobbyAnalytics.sectionOpened('events')
-    session.events.openAt(section)
+    if (!session.events.open) session.events.toggle()
   }
 
   const ctx: LobbyWidgetContext = {
@@ -264,7 +268,7 @@ export function LobbyHome({
     totalFriends: session.friends.list.length,
     locations,
     communities: session.lobbyEvents.communitiesLoaded ? session.communities.list : null,
-    photos: session.gallery.loaded ? session.gallery.list.slice(0, 10) : null,
+    photos: reel.loaded ? reel.photos.slice(0, 10) : null,
     busy,
     friendsAt,
     onFriendHover: (friend, e) => {
@@ -296,7 +300,7 @@ export function LobbyHome({
     },
     openEvent: (e: LobbyEvent, origin) => {
       lobbyAnalytics.eventCardClicked(e, origin)
-      openEventsPage(e.live ? 'live' : 'upcoming')
+      openEventsPage()
     },
     jumpEvent: (e: LobbyEvent, origin) => {
       const dest = eventDestination(e)
@@ -362,7 +366,7 @@ export function LobbyHome({
     },
     viewAll: (target) => {
       if (target === 'recent' || target === 'recommended') openPlacesPage()
-      else if (target === 'live' || target === 'upcoming') openEventsPage(target)
+      else if (target === 'live' || target === 'upcoming') openEventsPage()
       else if (target === 'communities') session.communities.toggle()
       else session.gallery.toggle()
     }
@@ -492,7 +496,7 @@ export function LobbyHome({
           <img src={placesIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Places</span>
         </button>
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openEventsPage('live')}>
+        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openEventsPage()}>
           <img src={eventsIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Events</span>
         </button>
@@ -593,12 +597,12 @@ export function LobbyHome({
         </>
       )}
 
-      {photoIndex != null && session.gallery.list[photoIndex] != null && (
+      {photoIndex != null && reel.photos[photoIndex] != null && (
         <div className={styles.photo}>
           <PhotoDetail
-            photos={session.gallery.list}
+            photos={reel.photos}
             index={photoIndex}
-            meta={session.gallery.metas[session.gallery.list[photoIndex].id]}
+            meta={session.gallery.metas[reel.photos[photoIndex].id]}
             isSelf
             onIndex={setPhotoIndex}
             onLoadMeta={session.gallery.loadPhoto}
@@ -607,10 +611,11 @@ export function LobbyHome({
               setPhotoIndex(null)
               pick({ kind: 'parcel', x, y })
             }}
-            onDelete={(id) => {
-              session.gallery.remove(id)
-              setPhotoIndex(null)
-            }}
+            onDelete={(photo) =>
+              void reelActions.remove(photo).then((removed) => {
+                if (removed) setPhotoIndex(null)
+              })
+            }
           />
         </div>
       )}

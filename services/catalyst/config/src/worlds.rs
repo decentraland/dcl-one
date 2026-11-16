@@ -365,6 +365,30 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_FRAME_BYTES", default_value_t = 2_097_152)]
     pub ws_max_frame_bytes: usize,
 
+    /// The scene host's largest single component payload a scene's state keeps.
+    #[arg(long, env = "CRDT_MAX_VALUE_BYTES", default_value_t = 262_144)]
+    pub crdt_max_value_bytes: usize,
+
+    /// The scene host's payload bytes one scene's state keeps.
+    #[arg(long, env = "CRDT_MAX_BYTES", default_value_t = 33_554_432)]
+    pub crdt_max_bytes: usize,
+
+    /// The scene host's unread client bytes queued toward the scene, per client.
+    #[arg(long, env = "CLIENT_INBOUND_MAX_BYTES", default_value_t = 8_388_608)]
+    pub client_inbound_max_bytes: usize,
+
+    /// The scene host's unread client bytes queued toward one scene.
+    #[arg(long, env = "SCENE_INBOUND_MAX_BYTES", default_value_t = 33_554_432)]
+    pub scene_inbound_max_bytes: usize,
+
+    /// The scene host's scene bytes queued to one client.
+    #[arg(long, env = "CLIENT_OUTBOUND_MAX_BYTES", default_value_t = 8_388_608)]
+    pub client_outbound_max_bytes: usize,
+
+    /// The scene host's ArrayBuffer memory one isolate holds outside its JS heap.
+    #[arg(long, env = "JS_ARRAY_BUFFER_LIMIT_MB", default_value_t = 128)]
+    pub js_array_buffer_limit_mb: usize,
+
     /// The world-storage origin, the ONLY origin a scene's `~system/SignedFetch`
     /// may reach (this node's `<PUBLIC_URL>/world-storage`); unset disables scene storage.
     #[arg(long, env = "SCENE_HOST_STORAGE_URL")]
@@ -417,7 +441,8 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_HOST_MAX_SCENES", default_value_t = 64)]
     pub scene_host_max_scenes: usize,
 
-    /// Load an unhosted scene with a local active deployment on first contact.
+    /// Load, for an admitted client, an unhosted scene with a local active
+    /// deployment that sets `authoritativeMultiplayer`.
     #[arg(long, env = "SCENE_HOST_AUTOLOAD", default_value_t = true, action = clap::ArgAction::Set)]
     pub scene_host_autoload: bool,
 
@@ -425,11 +450,19 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_HOST_SWEEP_INTERVAL_SECS", default_value_t = 30)]
     pub scene_host_sweep_interval_secs: u64,
 
+    /// Unload a hosted scene with no clients for this long; 0 disables it.
+    #[arg(long, env = "SCENE_HOST_IDLE_UNLOAD_SECS", default_value_t = 300)]
+    pub scene_host_idle_unload_secs: u64,
+
     // worlds/archipelago: the ws-connector (the old catalyrst-archipelago
     // names); LiveKit comes from the comms settings, the pool is the ONE pool.
     /// Process-wide connector socket cap, including pending handshakes.
     #[arg(long, env = "WS_MAX_SOCKETS", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
     pub ws_max_sockets: u32,
+
+    /// Connector sockets one client address may hold, pending handshakes included; 0 is unlimited.
+    #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
+    pub ws_max_sockets_per_ip: u32,
 
     /// Handshake deadline, ms; 0 keeps the default.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
@@ -894,9 +927,10 @@ mod tests {
                 c.worlds.scene_host_auth_timeout_secs,
                 c.worlds.scene_host_delegation_ttl_secs,
                 c.worlds.scene_host_max_scenes,
-                c.worlds.scene_host_sweep_interval_secs
+                c.worlds.scene_host_sweep_interval_secs,
+                c.worlds.scene_host_idle_unload_secs
             ),
-            (5, 3600, 64, 30)
+            (5, 3600, 64, 30, 300)
         );
         assert_eq!(
             (
@@ -915,6 +949,17 @@ mod tests {
                 c.worlds.ws_max_frame_bytes
             ),
             (1024, 1024, 100_000, 2_097_152)
+        );
+        assert_eq!(
+            (
+                c.worlds.crdt_max_value_bytes,
+                c.worlds.crdt_max_bytes,
+                c.worlds.client_inbound_max_bytes,
+                c.worlds.scene_inbound_max_bytes,
+                c.worlds.client_outbound_max_bytes,
+                c.worlds.js_array_buffer_limit_mb
+            ),
+            (262_144, 33_554_432, 8_388_608, 33_554_432, 8_388_608, 128)
         );
         assert_eq!(
             (

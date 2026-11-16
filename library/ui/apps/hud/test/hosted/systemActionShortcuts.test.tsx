@@ -8,6 +8,8 @@ import { openPopup, resetPopups, PopupHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { lockInput } from '@explorer-core/lib/inputLock'
+import { pending } from '@explorer-core/lib/analytics'
+import { MainMenuShell } from '../../features/menu/MainMenuShell'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })
@@ -43,6 +45,23 @@ describe('system-action menu shortcuts', () => {
     h.driver.emit(action('ChatPanel'))
     expect(h.session().gallery.open).toBe(false)
     expect(h.session().chat.open).toBe(true)
+  })
+
+  it('opens Events on its key, reports the shortcut, and shows the key beside the tab', async () => {
+    const h = await world()
+    const before = pending().length
+    h.driver.emit(action('Events'))
+    expect(h.session().events.open).toBe(true)
+    expect(pending().slice(before).filter((e) => e.event === 'events_section_opened').map((e) => e.properties.source)).toEqual(['shortcut'])
+    h.driver.emit(action('Places'))
+    expect(h.session().events.open).toBe(false)
+    h.driver.emit(action('Events'))
+    h.driver.emit(action('Events'))
+    expect(h.session().events.open).toBe(false)
+
+    act(() => setBindingsSnapshot([[{ System: 'Events' }, ['KeyX']]]))
+    render(<MainMenuShell active="places" onNavigate={vi.fn()} onClose={vi.fn()}>{null}</MainMenuShell>)
+    expect(screen.getByRole('button', { name: (name) => name.replace(/\s+/g, '') === 'Events[X]' })).toBeInTheDocument()
   })
 
   it("stands down for the scene editor: no page hotkeys or Enter-to-chat in 'edit', the emote wheel in 'play'", async () => {
@@ -212,6 +231,15 @@ describe('system-action menu shortcuts', () => {
     const focus = h.driver.sent.filter((m) => m.kind === 'uiFocus').map((m) => m.covered)
     // the welcome stage while sign-in is answered, the lobby, the loading overlay, then the world
     expect(focus).toEqual([true, true, true, false])
+  })
+
+  it('reports the Events page as the open menu, so a scene can open it with openExplorerUi', async () => {
+    const h = await world()
+    h.driver.clearSent()
+    h.driver.emit(action('Events'))
+    await waitFor(() => expect(h.driver.last('uiFocus')).toMatchObject({ kind: 'uiFocus', covered: true, menu: 'Events' }))
+    h.driver.emit(action('Events'))
+    await waitFor(() => expect(h.driver.last('uiFocus')).toMatchObject({ kind: 'uiFocus', covered: false, menu: null }))
   })
 
   it("declares uiFocus to the engine: panels/popups set ui, a full-screen page sets covered, a focused text field sets text", async () => {
