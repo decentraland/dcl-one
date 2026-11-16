@@ -512,7 +512,6 @@ mod tests {
     use super::*;
     use crate::protocol::archipelago::Position;
     use crate::protocol::archipelago::archipelago::{Heartbeat, IslandChangedMessage};
-    use std::time::Duration;
 
     #[test]
     fn positionless_heartbeat_is_ignored() {

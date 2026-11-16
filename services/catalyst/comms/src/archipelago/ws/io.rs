@@ -1767,7 +1767,11 @@ mod bounds_tests {
             {
                 let mut pending = queue.pending.lock();
                 pending.owner = Some(owner.clone());
-                assert!(pending.push(frame(Some(owner.clone()), true)).is_ok());
+                assert!(
+                    pending
+                        .push(frame(Some(owner.clone()), true), &queue.budget)
+                        .is_ok()
+                );
             }
             let wire = Arc::new(Mutex::new(WireProbe {
                 ready: true,
@@ -1786,7 +1790,7 @@ mod bounds_tests {
             assert_eq!(wire.lock().messages.len(), 1);
             let flushes = wire.lock().flushes;
             owner.send(SocketEvent::Kicked);
-            queue.changed.notify_waiters();
+            queue.budget.changed.notify_waiters();
             wire.lock().flushed = true;
             job.await;
             let wire = wire.lock();
