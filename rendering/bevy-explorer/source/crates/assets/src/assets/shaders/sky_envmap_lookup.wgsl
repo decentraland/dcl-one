@@ -2,11 +2,12 @@
 // shaders. Each overrides environment_map::compute_radiances to sample with sky_envmap_input and
 // level the result with sky_envmap_level, and overrides ambient::ambient_light to return nothing.
 //
-// The diffuse map is Unity's Trilight ambient (sky_preset::ambient_trilight), a gradient over the
+// The diffuse map is the Trilight ambient (sky_preset::ambient_trilight), a gradient over the
 // surface normal written on the CPU, sampled with the normal as is and passed through: it is the
 // only diffuse ambient light.
 //
-// The reflection map is the sky, of which only the upper hemisphere is generated. Directions
+// The reflection map is the sky. A scene-authored nadir uses the full sphere (ambient alpha
+// carries a -2 offset). Otherwise only the upper hemisphere is generated. Directions
 // below the horizon read their mirror image above it, standing in for the sky reflected back up
 // off the ground, tinted towards the ground and blurred: see sky_envmap_ground.wgsl for the curve.
 // Reflections are levelled towards a target: the flat ambient light, which the overrides zero
@@ -20,12 +21,12 @@
 // brightness; cameras with their own ambient light have a positive alpha, and no compression).
 //
 // Each also overrides environment_map::environment_map_light with sky_envmap_light, which
-// combines the two the way Unity does.
+// puts the reflection on top of the ambient diffuse at full strength.
 //
 // The overrides themselves stay in each top-level shader: naga_oil only applies an override
 // declared there, and only the override can call bevy's original compute_radiances.
 
-#import bevy_pbr::{clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
+#import bevy_pbr::{clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
 #import "embedded://shaders/sky_envmap_ground.wgsl"::{sky_envmap_ground_shininess, sky_envmap_ground_tint}
 
 // the input to sample the envmaps with in place of `input`: the normal as is for the ambient
@@ -33,6 +34,9 @@
 // where it would have sampled, mirrored up
 fn sky_envmap_input(input: lighting::LayerLightingInput) -> lighting::LayerLightingInput {
     let direction = environment_map::radiance_sample_direction(input.N, input.R, input.roughness);
+    if lights.ambient_color.a < -1.5 {
+        return input;
+    }
     return lighting::LayerLightingInput(
         input.N,
         sky_envmap_upper(direction),
@@ -46,9 +50,11 @@ fn sky_envmap_input(input: lighting::LayerLightingInput) -> lighting::LayerLight
 // the lights uniform's ambient_color
 fn sky_envmap_level(radiances: environment_map::EnvironmentMapRadiances, input: lighting::LayerLightingInput, upper: lighting::LayerLightingInput, ambient: vec4<f32>) -> environment_map::EnvironmentMapRadiances {
     let direction = environment_map::radiance_sample_direction(input.N, input.R, input.roughness);
+    let authored = ambient.a < -1.5;
+    let specular_tint = select(sky_envmap_ground_tint(direction), vec3<f32>(1.0), authored);
     return environment_map::EnvironmentMapRadiances(
         radiances.irradiance,
-        sky_envmap_ambient(radiances.radiance * sky_envmap_ground_tint(direction), ambient, upper.perceptual_roughness),
+        sky_envmap_ambient(radiances.radiance * specular_tint, ambient, upper.perceptual_roughness),
     );
 }
 
@@ -71,7 +77,7 @@ fn sky_envmap_ambient(color: vec3<f32>, ambient: vec4<f32>, compression_weight: 
 
     var levelled = color;
     if brightest > goal_brightest && goal_brightest > 0.0 {
-        let compression = saturate(-ambient.a) * compression_weight;
+        let compression = saturate(-ambient.a - select(0.0, 2.0, ambient.a < -1.5)) * compression_weight;
         levelled = color * pow(goal_brightest / brightest, compression);
     }
 
@@ -86,16 +92,15 @@ fn sky_envmap_ambient(color: vec3<f32>, ambient: vec4<f32>, compression_weight: 
     return mix(plain, hue, FLOOR_HUE_WEIGHT);
 }
 
-// unity: one minus kDielectricSpec.a, the share of a dielectric's light that is diffuse
-const UNITY_DIELECTRIC_DIFFUSE: f32 = 0.96;
+// the share of a dielectric's light that is diffuse: one minus its 4% reflectance
+const DIELECTRIC_DIFFUSE: f32 = 0.96;
 
-// The environment light as Unity's scene shader combines it (Scene_GlobalIllumination.hlsl,
-// GlobalIllumination and URP's EnvironmentBRDF): the ambient diffuse at full strength, with the
-// reflection added on top. bevy's own split takes the reflection's share out of the diffuse,
-// which on a smooth surface seen at a grazing angle is most of it: wherever the sun does not
-// reach, the smooth patches of a floor's roughness map read as dark, or as wet with the sky.
-// Unity's reflectivity is 1 - 0.96 (1 - metallic); bevy's input carries F0 instead, whose
-// brightest channel is exactly that for a dielectric and close to it for a metal.
+// The environment light: the ambient diffuse at full strength, with the reflection added on
+// top. bevy's own split takes the reflection's share out of the diffuse, which on a smooth
+// surface seen at a grazing angle is most of it: wherever the sun does not reach, the smooth
+// patches of a floor's roughness map read as dark, or as wet with the sky.
+// The reflectivity that widens the grazing term is the brightest channel of F0: 0.04 for a
+// dielectric, close to the albedo for a metal.
 // `compute_radiances` here is the top-level shader's override.
 fn sky_envmap_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
     let layer = (*input).layers[lighting::LAYER_BASE];
@@ -115,7 +120,7 @@ fn sky_envmap_light(input: ptr<function, lighting::LightingInput>, clusterable_o
     let surface_reduction = 1.0 / (layer.roughness * layer.roughness + 1.0);
 
     if (!found_diffuse_indirect) {
-        out.diffuse = (*input).diffuse_color * UNITY_DIELECTRIC_DIFFUSE * radiances.irradiance;
+        out.diffuse = (*input).diffuse_color * DIELECTRIC_DIFFUSE * radiances.irradiance;
     } else {
         out.diffuse = vec3(0.0);
     }

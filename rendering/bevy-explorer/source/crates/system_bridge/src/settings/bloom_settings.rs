@@ -1,6 +1,6 @@
 use super::SettingCategory;
 use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{unity_bloom, AppConfig, BloomSetting};
+use common::structs::{scatter_bloom, AppConfig, BloomSetting};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -35,7 +35,7 @@ impl AppSetting for BloomSetting {
         match self {
             BloomSetting::Off => "Off: No bloom.",
             BloomSetting::Low => "Low: A subtle bloom effect is applied.",
-            BloomSetting::High => "High: Unity's bloom, as in the Medium and High presets: bright and emissive surfaces glow.",
+            BloomSetting::High => "High: Bright and emissive surfaces glow.",
         })
     }
 
@@ -63,7 +63,7 @@ impl AppSetting for BloomSetting {
                 intensity: 0.10,
                 ..Bloom::NATURAL
             }),
-            BloomSetting::High => cmds.try_insert(unity_bloom()),
+            BloomSetting::High => cmds.try_insert(scatter_bloom()),
         };
     }
 }

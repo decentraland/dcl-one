@@ -1013,9 +1013,8 @@ impl NodeProcessing<'_, '_> {
                         // see https://github.com/decentraland/bevy-explorer/issues/424
                         let mut base_clone = base.clone();
                         base_clone.anisotropy_strength = 0.;
-                        // unity: Scene.shader never samples the occlusion map (its
-                        // `_OCCLUSIONMAP` feature and texture are commented out), so a
-                        // glTF occlusion texture does not darken the ambient there
+                        // a glTF occlusion texture does not darken the ambient light:
+                        // scene materials take it at full strength (see decisions.md)
                         base_clone.occlusion_texture = None;
 
                         let h_scene_material = bound_mats.add(ExtendedMaterial {

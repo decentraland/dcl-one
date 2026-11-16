@@ -237,23 +237,23 @@ impl From<PbGlobalLight> for GlobalLight {
     }
 }
 
-/// unity: one directional light unit lights a facing white surface to 1 (URP's Lambert has no
-/// 1 / pi). bevy divides illuminance by pi and multiplies by the view exposure, so the lux that
-/// land at 1 are `pi / exposure`; the explorer leaves every camera on bevy's default exposure
-/// (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
-pub const UNITY_LIGHT_LUX: f32 = PI * 1.2 * 831.7465;
+/// One light unit of the sky preset and of scene light intensities: the directional light that
+/// lights a facing white surface to 1. bevy divides illuminance by pi and multiplies by the view
+/// exposure, so the lux that land at 1 are `pi / exposure`; the explorer leaves every camera on
+/// bevy's default exposure (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
+pub const LIGHT_UNIT_LUX: f32 = PI * 1.2 * 831.7465;
 /// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
-pub const NOON_ILLUMINANCE: f32 = 1.2 * UNITY_LIGHT_LUX;
+pub const NOON_ILLUMINANCE: f32 = 1.2 * LIGHT_UNIT_LUX;
 /// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).
 const SKY_SUN_ILLUMINANCE: f32 = 7000.0;
 
-/// unity: `LightSourceSettings.PointLightIntensityScale` and `SpotLightIntensityScale`: a scene
-/// light's intensity times this is its `Light.intensity`, in Unity's unit.
+/// A scene point or spot light's intensity times this is its intensity in light units: the
+/// default 16000 is 8 units.
 const LIGHT_SOURCE_INTENSITY_SCALE: f32 = 0.0005;
 
 /// A scene point or spot light's bevy intensity (lumens) from its `PbLightSource` intensity.
 pub fn light_source_lumens(intensity: f32) -> f32 {
-    intensity * LIGHT_SOURCE_INTENSITY_SCALE * UNITY_LIGHT_LUX * 4.0 * PI
+    intensity * LIGHT_SOURCE_INTENSITY_SCALE * LIGHT_UNIT_LUX * 4.0 * PI
 }
 
 /// Unity's sunrise and sunset (hours): the sun is overhead halfway between, at 12:37.
@@ -298,17 +298,17 @@ pub fn moon_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, MOONRISE, MOONSET, MOON_TILT_DEGREES)
 }
 
-/// unity: `DirectionalColorRamp` at phase 0.5, the ramp's noon key (sRGB).
+/// The directional light's colour at phase 0.5, the ramp's noon key (sRGB).
 pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.98, 0.94);
 
-/// unity: `celestialSwapDuration`, the fraction of a day over which the light swings from the
-/// sun's arc to the moon's before moonrise, and back after moonset.
+/// The fraction of a day over which the light swings from the sun's arc to the moon's before
+/// moonrise, and back after moonset.
 const MOON_SWAP_DURATION: f32 = 0.042;
-/// unity: `CELESTIAL_SWAP_INTENSITY_DIP`, how far the light dims mid-swing to hide the move.
+/// How far the light dims mid-swing to hide the move.
 const SWAP_INTENSITY_DIP: f32 = 0.99;
 
-/// unity: `SkyboxCelestialMath.EvaluateSwap`. At `day_fraction`: how far the light has swung
-/// onto the moon's arc (0 sun, 1 moon) and the dip hiding the swing (1 at its middle).
+/// At `day_fraction`: how far the light has swung onto the moon's arc (0 sun, 1 moon) and the
+/// dip hiding the swing (1 at its middle).
 pub fn celestial_swap(day_fraction: f32) -> (f32, f32) {
     let (moonrise, moonset) = (MOONRISE / 24.0, MOONSET / 24.0);
     let evening = (day_fraction - (moonrise - MOON_SWAP_DURATION).rem_euclid(1.0)).rem_euclid(1.0)
@@ -344,9 +344,8 @@ pub fn update_directional_light(
     player: Query<Entity, With<PrimaryUser>>,
     time: Res<TimeOfDay>,
 ) {
-    // unity: SkyboxRenderController.UpdateDirectionalLight on its computed celestial path: the
-    // colour from the ramp at the phase, the intensity from the curve at the time, the light on
-    // the sun's arc by day and the moon's by night, swung between them under a dip
+    // the colour from the ramp at the phase, the intensity from the curve at the time, the light
+    // on the sun's arc by day and the moon's by night, swung between them under a dip
     let hours = time.elapsed_secs() / 3600.0;
     let day_fraction = day_fraction(hours);
     let sun_direction = sun_direction(hours);
@@ -358,7 +357,7 @@ pub fn update_directional_light(
     ) * sun_direction;
     let dir = sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction));
     let dir_illuminance = sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction)
-        * UNITY_LIGHT_LUX
+        * LIGHT_UNIT_LUX
         * (1.0 - dip * SWAP_INTENSITY_DIP);
 
     // the sky's own sun: its energy follows the elevation, a floor keeping the night sky lit
@@ -393,10 +392,10 @@ pub fn update_directional_light(
                 } else {
                     Some(0.0)
                 } {
-                    // unity: a directional light source keeps its intensity as Unity's unit
-                    // (scale 1); the sky's sun follows at its noon ratio
-                    global_light.dir_illuminance = ill * UNITY_LIGHT_LUX;
-                    global_light.sun_illuminance = ill / 1.2 * SKY_SUN_ILLUMINANCE;
+                    // a root light's intensity is lux as given, not the point and spot lights'
+                    // scaled unit: its default of 16000 is a bright sun, not a blown out one
+                    global_light.dir_illuminance = ill;
+                    global_light.sun_illuminance = ill;
                 }
             }
 
@@ -825,36 +824,36 @@ mod tests {
     }
 
     #[test]
-    fn scene_lamps_use_unitys_intensity_scale() {
-        // the default 16000 lamp is Light.intensity 8 in unity
-        let unity_units = light_source_lumens(16000.0) / (4.0 * PI) / UNITY_LIGHT_LUX;
-        assert!((unity_units - 8.0).abs() < 1e-3, "{unity_units}");
+    fn scene_lamps_use_the_intensity_scale() {
+        // the default 16000 lamp is 8 light units
+        let units = light_source_lumens(16000.0) / (4.0 * PI) / LIGHT_UNIT_LUX;
+        assert!((units - 8.0).abs() < 1e-3, "{units}");
     }
 
     #[test]
-    fn unity_light_unit_lands_at_one_under_the_default_exposure() {
+    fn light_unit_lands_at_one_under_the_default_exposure() {
         let exposure = bevy::render::camera::Exposure::default().exposure();
-        assert!((UNITY_LIGHT_LUX / PI * exposure - 1.0).abs() < 1e-3);
+        assert!((LIGHT_UNIT_LUX / PI * exposure - 1.0).abs() < 1e-3);
     }
 
     #[test]
-    fn light_follows_unitys_intensity_curve() {
+    fn light_follows_the_intensity_curve() {
         let lux = |hours: f32| {
-            sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction(hours)) * UNITY_LIGHT_LUX
+            sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction(hours)) * LIGHT_UNIT_LUX
         };
         assert!((lux(12.0) - NOON_ILLUMINANCE).abs() < 1e-2);
         // (0.91667, 1): the moon at full from 22:00
-        assert!((lux(22.0) - UNITY_LIGHT_LUX).abs() < 1.0);
+        assert!((lux(22.0) - LIGHT_UNIT_LUX).abs() < 1.0);
         // (0.85417, 0.01) .. (0.875, 0.01): dark between 20:30 and 21:00
-        assert!((lux(20.75) - 0.01 * UNITY_LIGHT_LUX).abs() < 1e-1);
+        assert!((lux(20.75) - 0.01 * LIGHT_UNIT_LUX).abs() < 1e-1);
         // 19:47 is seven tenths of the way down from (0.75, 1) to (0.85417, 0.01)
-        let late = lux(19.78) / UNITY_LIGHT_LUX;
+        let late = lux(19.78) / LIGHT_UNIT_LUX;
         assert!(late > 0.28 && late < 0.32, "{late}");
     }
 
     #[test]
     fn light_swings_to_the_moon_under_a_dip() {
-        // unity: moonrise 0.896 with the swap before it, moonset 0.167 with the swap after it
+        // moonrise 0.896 with the swap before it, moonset 0.167 with the swap after it
         assert_eq!(celestial_swap(day_fraction(20.0)), (0.0, 0.0));
         assert_eq!(celestial_swap(day_fraction(22.0)), (1.0, 0.0));
         assert_eq!(celestial_swap(day_fraction(3.0)), (1.0, 0.0));
@@ -869,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn light_colour_follows_unitys_ramp() {
+    fn light_colour_follows_the_ramp() {
         let colour =
             |hours: f32| sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction(hours)));
         assert_eq!(colour(12.0), SUN_COLOR_NOON);

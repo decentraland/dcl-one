@@ -1,20 +1,19 @@
-//! Sky preset values from unity-explorer: `Assets/DCL/SkyBox/Presets/StylizedV1.asset` and
-//! `Assets/DCL/SkyBox/SkyboxSettings.asset`. Unity's curve tangents are not carried: keys are
-//! interpolated linearly.
+//! The sky preset: the fog, the directional light and the Trilight ambient by time of day. Keys
+//! are interpolated linearly (see decisions.md).
 
 use bevy::prelude::*;
 
-/// Fog density at every phase (`fogDensityByPhase` default), as Unity's `RenderSettings.fogDensity`.
+/// Fog density at every phase, in the preset's units (see `fog_falloff_density`).
 pub const FOG_DENSITY_PER_METRE: f32 = 0.0005;
 
-/// urp: exponential fog reads `unity_FogParams.x`, which is density / sqrt(ln 2), and takes
-/// `exp2(-x * depth)` (`ComputeFogFactorZ0ToFar`, `ComputeFogIntensity`), so it falls off as
+/// The preset's fog is a base 2 exponential of density / sqrt(ln 2), so it falls off as
 /// `exp(-sqrt(ln 2) * density * depth)`, not `exp(-density * depth)`.
-pub const URP_EXP_FOG_SCALE: f32 = 0.832_554_6;
+pub const EXP2_FOG_SCALE: f32 = 0.832_554_6;
 
-/// `RenderSettings.fogDensity` as the density of bevy's `FogFalloff::Exponential`.
-pub fn fog_falloff_density(unity_density: f32) -> f32 {
-    unity_density * URP_EXP_FOG_SCALE
+/// A density in the preset's units, which a scene's fog component shares, as the density of
+/// bevy's `FogFalloff::Exponential`.
+pub fn fog_falloff_density(preset_density: f32) -> f32 {
+    preset_density * EXP2_FOG_SCALE
 }
 
 /// `(day fraction, phase)`: phase 0 night, 0.25 sunrise, 0.5 day, 0.75 sunset, 1 night.
@@ -65,8 +64,7 @@ pub const LIGHT_INTENSITY_BY_TIME: [(f32, f32); 12] = [
     (1.0, 1.0),
 ];
 
-/// unity: `indirectSkyRamp`, sRGB, by phase. `RenderSettings.ambientSkyColor` while the preset's
-/// `indirectLight` puts the ambient mode on Trilight (`SkyboxRenderController.UpdateAmbient`).
+/// The Trilight ambient's sky colour, sRGB, by phase.
 pub const AMBIENT_SKY_RAMP: [(f32, Vec3); 5] = [
     (0.0, Vec3::new(0.31163162, 0.1308295, 0.5660378)),
     (0.25, Vec3::new(1.0, 0.5967654, 0.5264151)),
@@ -75,7 +73,7 @@ pub const AMBIENT_SKY_RAMP: [(f32, Vec3); 5] = [
     (1.0, Vec3::new(0.31163162, 0.1308295, 0.5660378)),
 ];
 
-/// unity: `indirectEquatorRamp`, sRGB, by phase: `RenderSettings.ambientEquatorColor`.
+/// The Trilight ambient's equator colour, sRGB, by phase.
 pub const AMBIENT_EQUATOR_RAMP: [(f32, Vec3); 5] = [
     (0.0, Vec3::new(0.6171662, 0.6205496, 0.7660377)),
     (0.3, Vec3::new(0.90188676, 0.52418566, 0.4747668)),
@@ -84,7 +82,7 @@ pub const AMBIENT_EQUATOR_RAMP: [(f32, Vec3); 5] = [
     (1.0, Vec3::new(0.6171662, 0.6205496, 0.7660377)),
 ];
 
-/// unity: `groundEquatorRamp`, sRGB, by phase: `RenderSettings.ambientGroundColor`.
+/// The Trilight ambient's ground colour, sRGB, by phase.
 pub const AMBIENT_GROUND_RAMP: [(f32, Vec3); 6] = [
     (0.0, Vec3::new(0.42499506, 0.18426357, 0.20304249)),
     (0.135, Vec3::new(0.5471698, 0.18325028, 0.18325028)),
@@ -153,7 +151,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn phase_anchors_match_unity() {
+    fn phase_anchors_match_the_preset() {
         assert_eq!(time_to_phase(0.0), 0.0);
         assert_eq!(time_to_phase(0.225), 0.25);
         assert_eq!(time_to_phase(0.5), 0.5);
@@ -177,8 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn ambient_ramps_hit_unity_keys() {
-        // unity: StylizedV1.asset key times 0, 16384, 32768, 45875, 65535 of 65535
+    fn ambient_ramps_hit_the_preset_keys() {
         assert_eq!(
             sample_ramp(&AMBIENT_SKY_RAMP, 0.7),
             Vec3::new(1.0, 0.49981537, 0.4584905)
@@ -211,12 +208,12 @@ mod tests {
     }
 
     #[test]
-    fn fog_falls_off_as_urp_exponential() {
-        // urp: exp2(-(density / sqrt(ln 2)) * z)
+    fn fog_falls_off_as_a_base_two_exponential() {
+        // exp2(-(density / sqrt(ln 2)) * z)
         let (density, z) = (FOG_DENSITY_PER_METRE, 200.0);
-        let urp = (-(density / std::f32::consts::LN_2.sqrt()) * z).exp2();
+        let preset = (-(density / std::f32::consts::LN_2.sqrt()) * z).exp2();
         let bevy = (-fog_falloff_density(density) * z).exp();
-        assert!((urp - bevy).abs() < 1e-6, "{urp} vs {bevy}");
+        assert!((preset - bevy).abs() < 1e-6, "{preset} vs {bevy}");
     }
 
     #[test]

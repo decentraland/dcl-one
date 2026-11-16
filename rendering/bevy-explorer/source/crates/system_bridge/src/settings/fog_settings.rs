@@ -28,7 +28,7 @@ impl AppSetting for FogSetting {
         format!("Rendering of distant objects. No performance impact, just an aesthetic preference.\n\n{}", 
         match self {
             FogSetting::Off => "Off: No fog.",
-            FogSetting::On => "On: Distant objects fade into an exponential fog whose colour follows the time of day, as in Unity.",
+            FogSetting::On => "On: Distant objects fade into an exponential fog whose colour follows the time of day.",
         })
     }
 

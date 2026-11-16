@@ -1,0 +1,31 @@
+import type { AlertColor } from 'decentraland-ui2';
+import type { Project } from '/shared/types/projects';
+
+export type Severity = AlertColor | 'loading';
+export type NotificationId = string;
+export type CustomNotificationType =
+  | { type: 'missing-scenes' }
+  | { type: 'new-dependency-version'; project: Project }
+  // `installed`: the scene has the skills and they are outdated, else it has none.
+  | { type: 'sdk-skills'; project: Project; installed: boolean }
+  | { type: 'deploy'; path: string }
+  | { type: 'external-agent-access' };
+
+export type Opts = {
+  requestId?: string;
+  duration?: number;
+};
+
+type CommonNotificationProps<T extends { type: string }> = {
+  id: NotificationId;
+} & T &
+  Opts;
+
+export type CustomNotification = CommonNotificationProps<CustomNotificationType>;
+export type GenericNotification = CommonNotificationProps<{ type: 'generic' }> & {
+  severity: Severity;
+  message: string;
+  description?: string;
+};
+
+export type Notification = CustomNotification | GenericNotification;

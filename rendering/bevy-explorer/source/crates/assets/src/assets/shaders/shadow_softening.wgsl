@@ -9,10 +9,9 @@
 /// shadow reaches the far floor without a hard edge.
 const CASCADE_BORDER: f32 = 0.7053232;
 
-/// How much of the sun a shadow blocks: 1 is full, 0 is none.
-/// unity: the sun's shadow strength is 1 (`Main.unity`) and the Trilight ambient alone fills the
-/// shadow in. Below 1 the shadow lets that share of the sun through, its specular highlight
-/// included, and a highlight inside a shadow reads as wet or metallic.
+/// How much of the sun a shadow blocks: 1 is full, 0 is none. Full: the Trilight ambient alone
+/// fills the shadow in. Below 1 the shadow lets that share of the sun through, its specular
+/// highlight included, and a highlight inside a shadow reads as wet or metallic.
 const SHADOW_OPACITY: f32 = 1.0;
 
 /// How much of the sun is blocked at and past the shadow distance, where bevy returns fully lit.

@@ -665,8 +665,8 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
-        debug_panel::register(app, self.preview);
-        bevy_variants::build(app);
+        app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
+        app.add_plugins(bevy_variants::BevyVariantsPlugin);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -686,7 +686,6 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
-        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();
@@ -2108,9 +2107,9 @@ impl IpfsIo {
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // in wasm we add a custom header to allow the service worker to cache ipfs requests
-            // across content servers: anything with a cache key (content by hash, and urls by
-            // their digest), whatever path it was asked for under
+            // on web the service worker's cache (`web_cache`) is the content cache: anything with
+            // a cache key (content by hash, and urls by their digest) is looked up there once,
+            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 

@@ -1,11 +1,13 @@
 //! The environment maps attached as an `EnvironmentMapLight` to every camera that renders the
 //! sky: the reflection (specular) map generated from the atmosphere skybox whenever the sky is
-//! redrawn, its brightest channel limited to 1 as Unity's reflection probe is not HDR, and the diffuse map, which is not the sky at all but Unity's Trilight ambient
-//! (`sky_preset::ambient_trilight`), written on the CPU as the three colours change.
+//! redrawn, its brightest channel limited to 1, and the diffuse map, which is not the sky at all
+//! but the Trilight ambient (`sky_preset::ambient_trilight`, or a scene's own sky colours),
+//! written on the CPU as the three colours change.
 //!
-//! Only the upper hemisphere of the reflection map is generated. The pbr shaders' lookups
-//! (`sky_envmap_lookup.wgsl`) mirror downward directions up, and level the reflections towards
-//! the `AmbientLight`, which they use in place of the flat ambient.
+//! Only the upper hemisphere of the reflection map is generated, unless a scene authors a nadir,
+//! which enables the full sphere so that its lower sky is reflected too. The pbr shaders' lookups
+//! (`sky_envmap_lookup.wgsl`) otherwise mirror downward directions up, and level the reflections
+//! towards the `AmbientLight`, which they use in place of the flat ambient.
 //!
 //! At the low sky reflections setting the reflection map is one texel per face instead: the sky,
 //! the horizon and the ground as three colours, straight from the sky.
@@ -43,7 +45,7 @@ use bevy_atmosphere::{
 use bevy_console::ConsoleCommand;
 use common::structs::{AppConfig, SkyReflectionSetting};
 use console::DoAddConsoleCommand;
-use scene_runner::update_world::lights::UNITY_LIGHT_LUX;
+use scene_runner::update_world::lights::LIGHT_UNIT_LUX;
 use std::f32::consts::PI;
 
 const SKY_ENVMAP_SHADER_HANDLE: Handle<Shader> =
@@ -61,6 +63,11 @@ const GENERATED_FACES: u32 = 5;
 const AMBIENT_SIZE: u32 = 8;
 
 pub struct SkyEnvmapPlugin;
+
+#[derive(Resource)]
+struct SkyEnvmapImports {
+    _ground: Handle<Shader>,
+}
 
 /// The maps: the ambient (diffuse) map, and the reflection maps in the skybox's own units, the
 /// filtered one and the one-texel one of the low setting.
@@ -89,15 +96,16 @@ pub struct SkyEnvmapSettings {
     /// scale on the reflection (specular) map, applied when it is generated
     pub specular: f32,
     /// scale on the floor the lookups level the reflections towards, which comes from the ambient
-    /// brightness setting. carried to the pbr shaders as the `AmbientLight`. unity: 0, the
-    /// probe reflects as it holds the sky (`reflectionIntensity 1`, no floor); `/envmap` sets it
-    /// live
+    /// brightness setting. carried to the pbr shaders as the `AmbientLight`. 0 by default: the
+    /// reflections are the sky as the map holds it, with no floor; `/envmap` sets it live
     pub floor: f32,
     /// how far reflected light above the floor is compressed towards it, in log space (0 = not
-    /// at all, 1 = down to the floor). carried with the floor; unity: 0
+    /// at all, the default; 1 = down to the floor). carried with the floor
     pub compression: f32,
     /// which reflection map to generate, from the config
     pub quality: SkyReflectionSetting,
+    /// A scene supplies its own lower sky instead of the default reflected ground.
+    pub authored_lower_hemisphere: bool,
 }
 
 impl Default for SkyEnvmapSettings {
@@ -109,14 +117,15 @@ impl Default for SkyEnvmapSettings {
             floor: 0.0,
             compression: 0.0,
             quality: SkyReflectionSetting::High,
+            authored_lower_hemisphere: false,
         }
     }
 }
 
-/// unity: the Trilight ambient colours (`RenderSettings.ambientSkyColor`, `ambientEquatorColor`,
-/// `ambientGroundColor`), linear, in Unity's light units: sky, equator, ground. Written by
-/// `apply_global_light` from the preset's ramps at the time of day, a scene's ambient override
-/// and the ambient brightness setting; read into the ambient map here.
+/// The Trilight ambient colours, linear, in light units (`LIGHT_UNIT_LUX`): sky, equator, ground.
+/// Written by `apply_global_light` from the preset's ramps at the time of day or a scene's own
+/// sky colours, a scene's ambient override and the ambient brightness setting; read into the
+/// ambient map here.
 #[derive(Resource, Default, Clone, Copy, PartialEq)]
 pub struct SkyAmbient {
     pub bands: [Vec3; 3],
@@ -124,6 +133,7 @@ pub struct SkyAmbient {
 
 impl Plugin for SkyEnvmapPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(Startup, load_envmap_imports);
         load_internal_asset!(
             app,
             SKY_ENVMAP_SHADER_HANDLE,
@@ -153,10 +163,7 @@ impl Plugin for SkyEnvmapPlugin {
         ))
         .add_systems(
             Update,
-            (
-                attach_sky_envmap,
-                write_sky_ambient.after(crate::apply_global_light),
-            ),
+            (attach_sky_envmap, write_sky_ambient).after(crate::apply_global_light),
         );
 
         app.add_console_command::<EnvmapConsoleCommand, _>(envmap_console_command);
@@ -177,6 +184,14 @@ impl Plugin for SkyEnvmapPlugin {
         render_graph.add_node_edge(BevyAtmosphereLabel, SkyEnvmapLabel);
         render_graph.add_node_edge(SkyEnvmapLabel, CameraDriverLabel);
     }
+}
+
+fn load_envmap_imports(mut commands: Commands, server: Res<AssetServer>) {
+    // Internal shaders bypass dependency discovery. Startup runs after all embedded assets
+    // have been registered, including when their plugin follows this one.
+    commands.insert_resource(SkyEnvmapImports {
+        _ground: server.load("embedded://shaders/sky_envmap_ground.wgsl"),
+    });
 }
 
 fn cube_image(label: &'static str, size: u32, mips: u32) -> Image {
@@ -225,13 +240,12 @@ fn ambient_image() -> Image {
     image
 }
 
-/// unity: the Trilight gradient as a surface with normal `y` up receives it. The environment is
-/// the sky colour straight up, the equator at the horizon and the ground straight down, linear
-/// in between; Unity projects it onto the ambient SH probe, which URP evaluates at the normal as
-/// irradiance (`SampleSH`), so a surface sees the cosine-weighted mean of the hemisphere it
-/// faces, not the colour straight along its normal. An up-facing surface gets 2/3 sky and 1/3
-/// equator, a wall a fifth of each of sky and ground. The L2 projection's slight rounding of this
-/// is left out.
+/// The Trilight gradient as a surface with normal `y` up receives it. The environment is the sky
+/// colour straight up, the equator at the horizon and the ground straight down, linear in
+/// between, and it lights as irradiance: a surface sees the cosine-weighted mean of the
+/// hemisphere it faces, not the colour straight along its normal. An up-facing surface gets 2/3
+/// sky and 1/3 equator, a wall a fifth of each of sky and ground. The slight rounding a
+/// second-order spherical harmonics projection would add is left out.
 fn trilight_gradient(y: f32, [sky, equator, ground]: [Vec3; 3]) -> Vec3 {
     equator
         + (sky - equator) * clamped_cosine_overlap(y)
@@ -291,12 +305,17 @@ fn attach_sky_envmap(
     mut commands: Commands,
     envmap: Res<SkyEnvmap>,
     config: Res<AppConfig>,
+    environment: Res<crate::environment::SceneEnvironment>,
     mut settings: ResMut<SkyEnvmapSettings>,
     mut cameras: Query<
         (Entity, Option<&Exposure>, Option<&mut EnvironmentMapLight>),
         With<AtmosphereCamera>,
     >,
 ) {
+    let authored_lower = environment.nadir.is_some();
+    if settings.authored_lower_hemisphere != authored_lower {
+        settings.authored_lower_hemisphere = authored_lower;
+    }
     let quality = config.graphics.sky_reflections;
     if settings.quality != quality {
         settings.quality = quality;
@@ -327,8 +346,8 @@ fn attach_sky_envmap(
 
 /// Writes the ambient map when the Trilight colours, the scales or the exposure change. The
 /// map shares the `EnvironmentMapLight` intensity that cancels the view exposure for the
-/// reflections, so its texels carry the exposure: a Unity light unit is `UNITY_LIGHT_LUX` lux,
-/// and the pbr shader multiplies the diffuse colour by irradiance / pi.
+/// reflections, so its texels carry the exposure: a light unit is `LIGHT_UNIT_LUX` lux, and the
+/// pbr shader multiplies the diffuse colour by irradiance / pi.
 fn write_sky_ambient(
     ambient: Res<SkyAmbient>,
     settings: Res<SkyEnvmapSettings>,
@@ -353,7 +372,7 @@ fn write_sky_ambient(
     for (band, scale) in bands.iter_mut().zip(settings.trilight.to_array()) {
         *band *= scale;
     }
-    let bytes = ambient_cube_bytes(bands, settings.diffuse * UNITY_LIGHT_LUX / PI * exposure);
+    let bytes = ambient_cube_bytes(bands, settings.diffuse * LIGHT_UNIT_LUX / PI * exposure);
     // the clock moves the colours every frame by less than a half float resolves; only a
     // changed image is re-uploaded
     if let Some(image) = images.get(&envmap.ambient) {
@@ -401,12 +420,16 @@ fn envmap_console_command(
     }
 }
 
-/// scale the three bands of the Trilight ambient: sky, equator, ground (1 = Unity's)
+/// scale the three bands of the Trilight ambient (1 = the sky preset's):
+/// `/ambient [--sky <scale>] [--equator <scale>] [--ground <scale>]`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/ambient")]
 struct AmbientConsoleCommand {
+    #[arg(long)]
     sky: Option<f32>,
+    #[arg(long)]
     equator: Option<f32>,
+    #[arg(long)]
     ground: Option<f32>,
 }
 
@@ -416,18 +439,20 @@ fn ambient_console_command(
     ambient: Res<SkyAmbient>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        if let Some(sky) = command.sky {
-            settings.trilight.x = sky;
-        }
-        if let Some(equator) = command.equator {
-            settings.trilight.y = equator;
-        }
-        if let Some(ground) = command.ground {
-            settings.trilight.z = ground;
+        // a read leaves the settings unchanged, so it does not rewrite the map
+        let scales = [command.sky, command.equator, command.ground];
+        if scales.iter().any(Option::is_some) {
+            let [sky, equator, ground] = scales;
+            let current = settings.trilight;
+            settings.trilight = Vec3::new(
+                sky.unwrap_or(current.x).max(0.0),
+                equator.unwrap_or(current.y).max(0.0),
+                ground.unwrap_or(current.z).max(0.0),
+            );
         }
         let [sky, equator, ground] = ambient.bands;
         input.reply_ok(format!(
-            "ambient scale sky {} equator {} ground {}; unity linear sky {sky:.3} equator {equator:.3} ground {ground:.3}",
+            "ambient scale sky {} equator {} ground {}; linear colours before the scale: sky {sky:.3} equator {equator:.3} ground {ground:.3}",
             settings.trilight.x, settings.trilight.y, settings.trilight.z
         ));
     }
@@ -448,6 +473,10 @@ mod decl {
         pub roughness: f32,
         pub sample_count: u32,
         pub source_lod: f32,
+        pub authored_lower: u32,
+        pub _padding_0: u32,
+        pub _padding_1: u32,
+        pub _padding_2: u32,
     }
 }
 use decl::Constants;
@@ -579,6 +608,10 @@ fn push_constants(
                 roughness: mip as f32 / (SPECULAR_MIPS - 1) as f32,
                 sample_count: SPECULAR_SAMPLES,
                 source_lod: 0.0,
+                authored_lower: u32::from(settings.authored_lower_hemisphere),
+                _padding_0: 0,
+                _padding_1: 0,
+                _padding_2: 0,
             })
         })
         .collect();
@@ -587,6 +620,10 @@ fn push_constants(
         roughness: 0.0,
         sample_count: TRILIGHT_SAMPLES,
         source_lod: 0.0,
+        authored_lower: u32::from(settings.authored_lower_hemisphere),
+        _padding_0: 0,
+        _padding_1: 0,
+        _padding_2: 0,
     });
     (specular, trilight)
 }
@@ -690,8 +727,8 @@ fn prepare_sky_envmap(
             offset,
         )
     };
-    // the first downsample reads the sky as a cube, so it shares the filter layout; it ignores
-    // the constants
+    // the first downsample reads the sky as a cube, so it shares the filter layout; of the
+    // constants it reads only whether the lower sky is authored, the same in every pass
     let downsample_sky = filter_bind_group(
         &source.texture_view,
         &array_view(&intermediate, 0),
@@ -741,7 +778,13 @@ impl render_graph::Node for SkyEnvmapNode {
         };
         let pipelines = world.resource::<SkyEnvmapPipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
-        let quality = world.resource::<SkyEnvmapSettings>().quality;
+        let settings = world.resource::<SkyEnvmapSettings>();
+        let quality = settings.quality;
+        let faces = if settings.authored_lower_hemisphere {
+            6
+        } else {
+            GENERATED_FACES
+        };
         let (Some(downsample_sky), Some(downsample), Some(specular), Some(trilight)) = (
             pipeline_cache.get_compute_pipeline(pipelines.downsample_sky),
             pipeline_cache.get_compute_pipeline(pipelines.downsample),
@@ -764,7 +807,7 @@ impl render_graph::Node for SkyEnvmapNode {
             pass.set_pipeline(trilight);
             let (bind_group, offset) = &resources.trilight;
             pass.set_bind_group(0, bind_group, &[*offset]);
-            pass.dispatch_workgroups(1, 1, GENERATED_FACES);
+            pass.dispatch_workgroups(1, 1, faces);
             return Ok(());
         }
 
@@ -784,7 +827,7 @@ impl render_graph::Node for SkyEnvmapNode {
         for (mip, (bind_group, offset)) in resources.specular.iter().enumerate() {
             let size = groups(SPECULAR_SIZE >> mip);
             pass.set_bind_group(0, bind_group, &[*offset]);
-            pass.dispatch_workgroups(size, size, GENERATED_FACES);
+            pass.dispatch_workgroups(size, size, faces);
         }
 
         Ok(())
@@ -903,7 +946,7 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn sky_envmap_pipelines_compile() {
-        use assets::test_support::{compile_pipelines, headless_app};
+        use pipeline_test::{compile_pipelines, headless_app};
 
         let mut app = headless_app();
         load_internal_asset!(

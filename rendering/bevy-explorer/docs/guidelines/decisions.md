@@ -14,11 +14,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
+- **Scene environment components.** Skybox cloud speed accepts finite negative values for
+  reverse rotation, as the public protocol specifies. Unity's environment profile at
+  `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides
+  retain this renderer's time-of-day atmosphere, lighting and quality settings; component
+  compatibility does not imply identical default pixels across renderers. A sky image changes
+  the visible sky while the authored color bands continue to drive ambient lighting: an
+  authored zenith, horizon or nadir replaces the sky, equator or ground colour of the Trilight
+  ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
+  sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
+  place of the `/fog` density while the scene is active.
+- **A root light source is lux.** Point and spot light intensities are scaled to the sky
+  preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root entity
+  replaces the sun and keeps its intensity as lux, unscaled: the Unity client creates no light
+  for a light source without a type, so there is no unit to match, and scenes already set it in
+  lux here.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
+- **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
+  UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
+  the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
+  at full resolution; `/screenshot` captures the window. The primary camera always keeps the
+  depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
+  while the avatar outline is on or the camera has SSAO (native only).
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
@@ -61,10 +82,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
-  the head of the best-ranked queue (one per scene or wearable hash, and one for requests with
-  no hash): the player's scenes, then avatars' wearables, then the other scenes, the last two by
-  parcel ring, in front before behind, then raw distance; then requests no scene or avatar owns
-  (no hash, or a hash nobody holds), oldest first; last, the downloads of a scene that has left.
+  the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
+  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  other scenes, the last two by parcel ring, in front before behind, then raw distance; then
+  requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
+  downloads of a scene that has left.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
@@ -390,12 +412,65 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
+  while the player travels. Here a jump reconnects the realm under the loading screen, and every
+  other page closes on a jump, so Events does too.
+- **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
+  `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
+  other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
+- **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
+  leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
+- **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
+  copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
+  wired, and its banner is drawn before the friends list arrives. Here the calendar, the day
+  view, the banner and the detail read one event, every card's buttons act, and friends show
+  when they arrive.
+- **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
+  only and nothing for an open from the sidebar; here a day view's cards report it too, and the
+  sidebar reports `events_section_opened` with `source: sidebar`.
+- **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
+  the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
+  report; cards show friends and community marks once the lists are there.
+- **Events page: shapes are CSS, icons are unity-explorer's.** Its rounded containers, outlines
+  and gradients are nine-slice sprites there; drawn as masks at the HUD's fractional scale they
+  show seams between the slices, so here they are radii, borders and gradients with the sprites'
+  colours. The canvas scales by the smaller of width and height, as every menu page does, where
+  unity-explorer's scales by width.
 
 ## Deliberate choices that look like mistakes
+
+- **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
+  (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
+  thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
+  and a scene's global light does not tint it. A scene sets fog colour and density with its fog
+  component. The Off setting is no fog at all.
+- **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
+  baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
+  does not sample it either, and content is authored against that look.
 
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
+  `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
+  client), so the worker passes the request to the network untouched; a lookup there could only
+  repeat that miss. The worker still answers requests that carry the header from that cache, and
+  only the engine writes it. A hit missed in between (the same hash finishing under another url,
+  another tab), or one that appears before a retry (the engine reads the cache only before the
+  first attempt), costs one more download of the same bytes.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns

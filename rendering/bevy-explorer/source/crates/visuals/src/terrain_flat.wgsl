@@ -36,7 +36,7 @@ override fn environment_map::compute_radiances(input: lighting::LayerLightingInp
     return sky_envmap_level(radiances, input, upper, lights.ambient_color);
 }
 
-// the environment light combined as Unity does (see sky_envmap_lookup.wgsl)
+// the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
 override fn environment_map::environment_map_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
     return sky_envmap_light(input, clusterable_object_index_ranges, found_diffuse_indirect);
 }

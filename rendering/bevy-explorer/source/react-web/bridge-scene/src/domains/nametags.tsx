@@ -313,9 +313,9 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
   }
 }
 
-// The pill material: the UiCanvas texture, unlit and alpha-blended. Unlit like Unity's nametags,
-// which are UI: no light, shade or shadow reaches the pill, so a shadow falling across it (the
-// avatar's own, as the camera closes in) never darkens it. The texture doubles as the alpha
+// The pill material: the UiCanvas texture, unlit and alpha-blended. Unlit because a nametag is
+// UI: no light, shade or shadow reaches the pill, so a shadow falling across it (the avatar's
+// own, as the camera closes in) never darkens it. The texture doubles as the alpha
 // texture so its transparent corners blend at full opacity. `opacity` fades the whole pill by
 // distance. Unlit materials cast no shadow.
 function setTagMaterial(tag: Entity, opacity: number): void {

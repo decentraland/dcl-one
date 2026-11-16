@@ -24,7 +24,8 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    unity_bloom, unity_color_grading, BLOOM_SCATTER, GRADING_MIDTONES_RANGE, GRADING_SHADOWS_WEIGHT,
+    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
@@ -810,13 +811,33 @@ impl AppConfig {
         self.inputs
             .0
             .retain(|(action, _)| *action != Action::System(SystemAction::ShowProfile));
-        for (action, bindings) in InputMapSerialized::default().0 {
+        // A merged default leaves out inputs the user gave another action, or one press would
+        // fire both. Inputs the defaults share on purpose still merge.
+        let defaults = InputMapSerialized::default().0;
+        let chosen: HashSet<InputIdentifier> = self
+            .inputs
+            .0
+            .iter()
+            .flat_map(|(action, bindings)| {
+                let own = defaults
+                    .iter()
+                    .find(|(default_action, _)| default_action == action)
+                    .map(|(_, default_bindings)| default_bindings.as_slice())
+                    .unwrap_or_default();
+                bindings.iter().filter(move |id| !own.contains(id)).copied()
+            })
+            .collect();
+        for (action, bindings) in defaults {
             if !self
                 .inputs
                 .0
                 .iter()
                 .any(|(existing, _)| *existing == action)
             {
+                let bindings = bindings
+                    .into_iter()
+                    .filter(|id| !chosen.contains(id))
+                    .collect();
                 self.inputs.0.push((action, bindings));
             }
         }
@@ -900,12 +921,14 @@ pub struct GraphicsSettings {
     pub avatar_ghosts: bool,
     /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
-    /// share of the screen's device pixels the web canvas renders at
+    /// share of the window's device pixels the world renders at, upscaled to the window with FSR
+    /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
 
-/// The ambient brightness setting at which the Trilight ambient is Unity's (visuals::sky_envmap).
-pub const AMBIENT_BRIGHTNESS_UNITY: i32 = 50;
+/// The ambient brightness setting at which the Trilight ambient is the sky preset's
+/// (visuals::sky_envmap).
+pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
@@ -926,7 +949,7 @@ impl Default for GraphicsSettings {
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
-            ambient_brightness: AMBIENT_BRIGHTNESS_UNITY,
+            ambient_brightness: AMBIENT_BRIGHTNESS_DEFAULT,
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
@@ -2021,6 +2044,7 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inputs::CommonInputAction;
 
     #[test]
     fn fog_reads_the_old_variants_as_on() {
@@ -2034,8 +2058,8 @@ mod tests {
 
     #[test]
     fn grading_brightens_shadows_and_keeps_gamma_neutral() {
-        let g = unity_color_grading();
-        // urp: ColorUtils.PrepareShadowsMidtonesHighlights adds 4w to the (1, 1, 1) multiplier
+        let g = default_color_grading();
+        // the shadows weight w adds 4w to the (1, 1, 1) multiplier
         assert_eq!(g.shadows.gain, 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT);
         assert_eq!(g.shadows.lift, 0.0);
         assert_eq!(
@@ -2074,23 +2098,23 @@ mod tests {
     }
 
     #[test]
-    fn grading_shadow_band_follows_unity() {
-        // urp: LutBuilderHdr.shader, `1 - smoothstep(shadowsStart, shadowsEnd, luma)` with the
-        // profile's limits, 0 and 0.3
-        let unity = |level: f32| {
+    fn grading_shadow_band_follows_the_smoothstep() {
+        // the target band: `1 - smoothstep(start, end, luma)` with the
+        // limits 0 and 0.3
+        let target = |level: f32| {
             let t = (level / 0.3).clamp(0.0, 1.0);
             1.0 - t * t * (3.0 - 2.0 * t)
         };
         for step in 0..=100 {
             let level = step as f32 / 100.0;
-            let (ours, theirs) = (bevy_shadows_weight(level), unity(level));
+            let (ours, theirs) = (bevy_shadows_weight(level), target(level));
             assert!((ours - theirs).abs() < 0.08, "{level}: {ours} vs {theirs}");
         }
     }
 
     #[test]
     fn grading_never_darkens_a_brighter_pixel() {
-        let gain = unity_color_grading().shadows.gain;
+        let gain = default_color_grading().shadows.gain;
         let graded = |level: f32| level * (1.0 + (gain - 1.0) * bevy_shadows_weight(level));
         for step in 0..1000 {
             let (darker, brighter) = (step as f32 / 1000.0, (step + 1) as f32 / 1000.0);
@@ -2108,22 +2132,22 @@ mod tests {
     }
 
     #[test]
-    fn bloom_weighs_mips_like_urp_scatter() {
-        let b = unity_bloom();
+    fn bloom_weighs_mips_by_scatter() {
+        let b = scatter_bloom();
         assert_eq!(b.prefilter.threshold, 1.0);
-        // urp: thresholdKnee = threshold * 0.5; bevy: knee = threshold * softness
+        // the knee is threshold * 0.5; bevy: knee = threshold * softness
         assert_eq!(b.prefilter.threshold_softness, 0.5);
         assert_eq!(b.high_pass_frequency, 1.0);
-        // urp folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
+        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
         // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
         let max_mip = 7.0;
         let mut weight = 1.0;
         for mip in 0..=7 {
             weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
-            let urp = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
+            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
             assert!(
-                (weight - urp).abs() < 0.002,
-                "mip {mip}: bevy {weight} vs urp {urp}"
+                (weight - scatter).abs() < 0.002,
+                "mip {mip}: bevy {weight} vs scatter {scatter}"
             );
         }
     }
@@ -2211,6 +2235,11 @@ mod tests {
                         Action::System(SystemAction::QuickEmote4),
                         vec![InputIdentifier::Key(KeyCode::KeyX)],
                     ),
+                    // a default binding that a photo-mode default shares
+                    (
+                        Action::Scene(CommonInputAction::IaPrimary),
+                        vec![InputIdentifier::Key(KeyCode::KeyE)],
+                    ),
                 ],
                 Default::default(),
             ),
@@ -2240,6 +2269,18 @@ mod tests {
             get(&config, SystemAction::Places),
             Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
         );
+        // ...but not onto a key the user gave another action: X stays QuickEmote4's alone
+        assert_eq!(get(&config, SystemAction::Events), Some(vec![]));
+        // a key the defaults share on purpose still merges
+        let photo_tilt_right = InputMapSerialized::default()
+            .0
+            .into_iter()
+            .find(|(a, _)| *a == Action::System(SystemAction::PhotoTiltRight))
+            .map(|(_, bindings)| bindings);
+        assert!(photo_tilt_right
+            .as_ref()
+            .is_some_and(|b| b.contains(&InputIdentifier::Key(KeyCode::KeyE))));
+        assert_eq!(get(&config, SystemAction::PhotoTiltRight), photo_tilt_right);
         assert_eq!(config.inputs_generation, INPUTS_GENERATION);
         // fixed bindings restored: the wheel always scrolls
         assert_eq!(
