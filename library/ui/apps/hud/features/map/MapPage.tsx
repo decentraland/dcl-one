@@ -198,10 +198,13 @@ function CategorySidebar({
 export function MapPage({
   map,
   profile,
+  compact,
   onNavigate
 }: {
   map: MapState
   profile: ProfileState
+  /** Shown in the lobby's section modal; `onTravel` closes it once a jump goes ahead. */
+  compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
   const [catKey, setCatKey] = useState('all')
@@ -219,9 +222,12 @@ export function MapPage({
   // keep its close handle and dismiss it explicitly when the map closes.
   const closeVisitRef = useRef<(() => void) | null>(null)
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null)
+  // the modal hosting a compact map can close under the confirm
+  useEffect(() => () => closeVisitRef.current?.(), [])
   const viewRef = useRef<HTMLDivElement>(null)
 
-  const open = map.open
+  const open = map.open || compact != null
+  const leave = compact != null ? compact.onTravel : map.toggle
   const category = CATEGORIES.find((c) => c.key === catKey) ?? CATEGORIES[0]
   const sidebarOpen = category.api !== null
 
@@ -333,7 +339,7 @@ export function MapPage({
   const visitWorld = (w: World): void => {
     // close first: a pick from the startup lobby closes every page itself, and a toggle after it
     // would reopen the map over the world
-    map.toggle()
+    leave()
     map.changeRealm(w.world_name)
   }
   const askVisitWorld = (w: World): void => {
@@ -345,7 +351,7 @@ export function MapPage({
   }
   const jumpTo = (pl: Place): void => {
     const [x, y] = pl.base_position.split(',').map(Number)
-    map.toggle()
+    leave()
     map.teleportToPlace(x, y)
   }
 
@@ -403,6 +409,151 @@ export function MapPage({
   })
 
   const p = profile.data
+  const body = (
+    <div className={compact != null ? `${styles.wrap} ${styles.compact}` : styles.wrap}>
+      <div className={styles.chips}>
+        {CATEGORIES.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            className={`${styles.chip} ${catKey === c.key ? styles.chipActive : ''}`.trim()}
+            onClick={() => {
+              setCatKey(c.key)
+              setPlace(null)
+              setSelected(null)
+            }}
+          >
+            <img className={styles.chipIcon} src={catIcon(c.key)} alt="" />
+            {c.label}
+          </button>
+        ))}
+        <div className={styles.searchWrap}>
+          <input
+            className={styles.search}
+            placeholder="Search places & worlds"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (worldHits[0]) askVisitWorld(worldHits[0])
+                else if (placeHits[0]) pickPlace(placeHits[0])
+              } else if (isCancelKey(e) && query !== '') {
+                // consume the press: clearing is one step, the session's blur-on-cancel
+                // rule takes the next one, and a third closes the map via Cancel.
+                e.stopPropagation()
+                setQuery('')
+              }
+            }}
+          />
+          {query.trim().length >= 2 && (worldHits.length > 0 || placeHits.length > 0) && (
+            <div className={styles.results}>
+              {worldHits.map((w) => (
+                <button key={w.world_name} type="button" className={styles.result} onClick={() => askVisitWorld(w)}>
+                  <img className={styles.resultWorldIcon} src={WORLD_ICON} alt="" />
+                  <div className={styles.resultBody}>
+                    <div className={styles.resultTitle}>{w.title || w.world_name}</div>
+                    <div className={styles.resultSub}>{w.world_name}</div>
+                  </div>
+                  <span className={styles.resultTag}>WORLD</span>
+                </button>
+              ))}
+              {placeHits.map((pl) => (
+                <button key={pl.id ?? pl.base_position} type="button" className={styles.result} onClick={() => pickPlace(pl)}>
+                  <div className={styles.resultImg} style={{ backgroundImage: pl.image ? `url(${pl.image})` : undefined }} />
+                  <div className={styles.resultBody}>
+                    <div className={styles.resultTitle}>{pl.title}</div>
+                    <div className={styles.resultSub}>{pl.base_position}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        ref={viewRef}
+        data-testid="map-view"
+        className={styles.view}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={() => (drag.current = null)}
+        onWheel={onWheel}
+      >
+        <div className={styles.atlasWrap} style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+          {/* Offset so parcel (0,0) sits at the atlasWrap origin (the pan/zoom anchor). */}
+          <div style={{ position: 'absolute', left: -(0 - ORIGIN_X) * SIZE, top: -(ORIGIN_Y - 0) * SIZE }}>
+            <AtlasTiles size={SIZE} />
+          </div>
+          {selected && (
+            <div
+              className={styles.selected}
+              style={{ left: selected.x * SIZE, top: -selected.y * SIZE, width: SIZE, height: SIZE }}
+            />
+          )}
+          <div
+            className={styles.marker}
+            aria-label="You are here"
+            style={{ left: map.x * SIZE, top: -map.y * SIZE }}
+          />
+        </div>
+
+        {/* Category pins — screen-space so they stay a constant size while panning/zooming. */}
+        {list.map((pl) => {
+          const [px, py] = pl.base_position.split(',').map(Number)
+          return (
+            <img
+              key={pl.id ?? pl.base_position}
+              className={styles.pin}
+              src={catPin(category.key)}
+              alt={pl.title}
+              style={screenPos(px, py)}
+              onMouseDown={(e) => e.stopPropagation()}
+              onMouseUp={(e) => {
+                e.stopPropagation()
+                drag.current = null
+                openPlace(pl)
+              }}
+            />
+          )
+        })}
+
+        {/* Coordinate badge for the selected parcel — screen-space so the text stays crisp. */}
+        {selected && (
+          <div className={styles.coord} style={screenPos(selected.x, selected.y)}>
+            {selected.x}, {selected.y}
+          </div>
+        )}
+
+        <div className={styles.zoom}>
+          <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 0.3))}>+</button>
+          <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.3))}>−</button>
+        </div>
+
+        <div className={styles.minimap}>
+          <div className={styles.minimapInner}>
+            <AtlasTiles size={160 / SPAN} />
+          </div>
+        </div>
+      </div>
+
+      {sidebarOpen && (
+        <CategorySidebar
+          category={category}
+          sort={sort}
+          setSort={setSort}
+          places={list}
+          loading={loading}
+          onClose={() => setCatKey('all')}
+          onSelect={openPlace}
+        />
+      )}
+
+      {place && <PlacePanel place={place} onClose={() => setPlace(null)} onJump={() => jumpTo(place)} />}
+    </div>
+  )
+  if (compact != null) return body
   return (
     <MainMenuShell
       active="map"
@@ -413,148 +564,7 @@ export function MapPage({
       onNavigate={onNavigate}
       onClose={map.toggle}
     >
-      <div className={styles.wrap}>
-        <div className={styles.chips}>
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={`${styles.chip} ${catKey === c.key ? styles.chipActive : ''}`.trim()}
-              onClick={() => {
-                setCatKey(c.key)
-                setPlace(null)
-                setSelected(null)
-              }}
-            >
-              <img className={styles.chipIcon} src={catIcon(c.key)} alt="" />
-              {c.label}
-            </button>
-          ))}
-          <div className={styles.searchWrap}>
-            <input
-              className={styles.search}
-              placeholder="Search places & worlds"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  if (worldHits[0]) askVisitWorld(worldHits[0])
-                  else if (placeHits[0]) pickPlace(placeHits[0])
-                } else if (isCancelKey(e) && query !== '') {
-                  // consume the press: clearing is one step, the session's blur-on-cancel
-                  // rule takes the next one, and a third closes the map via Cancel.
-                  e.stopPropagation()
-                  setQuery('')
-                }
-              }}
-            />
-            {query.trim().length >= 2 && (worldHits.length > 0 || placeHits.length > 0) && (
-              <div className={styles.results}>
-                {worldHits.map((w) => (
-                  <button key={w.world_name} type="button" className={styles.result} onClick={() => askVisitWorld(w)}>
-                    <img className={styles.resultWorldIcon} src={WORLD_ICON} alt="" />
-                    <div className={styles.resultBody}>
-                      <div className={styles.resultTitle}>{w.title || w.world_name}</div>
-                      <div className={styles.resultSub}>{w.world_name}</div>
-                    </div>
-                    <span className={styles.resultTag}>WORLD</span>
-                  </button>
-                ))}
-                {placeHits.map((pl) => (
-                  <button key={pl.id ?? pl.base_position} type="button" className={styles.result} onClick={() => pickPlace(pl)}>
-                    <div className={styles.resultImg} style={{ backgroundImage: pl.image ? `url(${pl.image})` : undefined }} />
-                    <div className={styles.resultBody}>
-                      <div className={styles.resultTitle}>{pl.title}</div>
-                      <div className={styles.resultSub}>{pl.base_position}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div
-          ref={viewRef}
-          data-testid="map-view"
-          className={styles.view}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={() => (drag.current = null)}
-          onWheel={onWheel}
-        >
-          <div className={styles.atlasWrap} style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
-            {/* Offset so parcel (0,0) sits at the atlasWrap origin (the pan/zoom anchor). */}
-            <div style={{ position: 'absolute', left: -(0 - ORIGIN_X) * SIZE, top: -(ORIGIN_Y - 0) * SIZE }}>
-              <AtlasTiles size={SIZE} />
-            </div>
-            {selected && (
-              <div
-                className={styles.selected}
-                style={{ left: selected.x * SIZE, top: -selected.y * SIZE, width: SIZE, height: SIZE }}
-              />
-            )}
-            <div
-              className={styles.marker}
-              aria-label="You are here"
-              style={{ left: map.x * SIZE, top: -map.y * SIZE }}
-            />
-          </div>
-
-          {/* Category pins — screen-space so they stay a constant size while panning/zooming. */}
-          {list.map((pl) => {
-            const [px, py] = pl.base_position.split(',').map(Number)
-            return (
-              <img
-                key={pl.id ?? pl.base_position}
-                className={styles.pin}
-                src={catPin(category.key)}
-                alt={pl.title}
-                style={screenPos(px, py)}
-                onMouseDown={(e) => e.stopPropagation()}
-                onMouseUp={(e) => {
-                  e.stopPropagation()
-                  drag.current = null
-                  openPlace(pl)
-                }}
-              />
-            )
-          })}
-
-          {/* Coordinate badge for the selected parcel — screen-space so the text stays crisp. */}
-          {selected && (
-            <div className={styles.coord} style={screenPos(selected.x, selected.y)}>
-              {selected.x}, {selected.y}
-            </div>
-          )}
-
-          <div className={styles.zoom}>
-            <button type="button" onClick={() => setZoom((z) => Math.min(4, z + 0.3))}>+</button>
-            <button type="button" onClick={() => setZoom((z) => Math.max(0.6, z - 0.3))}>−</button>
-          </div>
-
-          <div className={styles.minimap}>
-            <div className={styles.minimapInner}>
-              <AtlasTiles size={160 / SPAN} />
-            </div>
-          </div>
-        </div>
-
-        {sidebarOpen && (
-          <CategorySidebar
-            category={category}
-            sort={sort}
-            setSort={setSort}
-            places={list}
-            loading={loading}
-            onClose={() => setCatKey('all')}
-            onSelect={openPlace}
-          />
-        )}
-
-        {place && <PlacePanel place={place} onClose={() => setPlace(null)} onJump={() => jumpTo(place)} />}
-      </div>
+      {body}
     </MainMenuShell>
   )
 }

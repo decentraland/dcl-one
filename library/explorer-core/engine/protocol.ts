@@ -269,9 +269,9 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
-  | GetLobbyEventsRequest
-  | SetEventInterestRequest
   | QuitRequest
+  | MapApiRequestMessage
+  | GetPlaceRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -1748,59 +1748,72 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
-/** Read signed, with its connected users. */
-export interface LobbyEvent {
+/** One of the full-screen map's requests the engine signs as the player. The page builds the
+ *  query; the scene picks the service, signs and sends. */
+export type MapApiRequest =
+  /** The places covering these `x,y` parcels. */
+  | { op: 'places'; positions: string[] }
+  /** A destinations search; `query` is the request's query string. */
+  | { op: 'destinations'; query: string }
+  /** An events read; `query` is the request's query string. */
+  | { op: 'events'; query: string }
+  /** Like (true), dislike (false) or clear (null) the player's vote on a place. */
+  | { op: 'placeLike'; id: string; like: boolean | null }
+  | { op: 'placeFavorite'; id: string; favorite: boolean }
+  /** Add the player to, or remove them from, an event's attendees. */
+  | { op: 'eventAttend'; id: string; attending: boolean }
+  /** A page of the photos taken at a place. */
+  | { op: 'placePhotos'; id: string; offset: number; limit: number }
+
+export interface MapApiRequestMessage {
+  kind: 'mapApi'
+  /** Echoed in the answer. */
+  id: number
+  request: MapApiRequest
+}
+
+/** The service's answer to a `mapApi` request: its parsed body, or why there is none. */
+export interface MapApiResultMessage {
+  kind: 'mapApiResult'
+  id: number
+  ok: boolean
+  data?: unknown
+  error?: string
+}
+
+/** Only a signed read carries the player's own votes and favourite. */
+export interface SignedPlace {
   id: string
-  name: string
-  image?: string | null
-  description?: string | null
-  x: number
-  y: number
-  server?: string | null
-  world?: boolean
-  live?: boolean
-  highlighted?: boolean
-  start_at: string
-  finish_at?: string
-  next_start_at?: string | null
-  next_finish_at?: string | null
-  total_attendees?: number
-  user_name?: string | null
-  /** The signed-in player marked it interested. */
-  attending?: boolean
-  /** The wallets in the event's scene now. */
+  likes?: number
+  dislikes?: number
+  favorites?: number
+  like_rate?: number | string | null
+  user_like?: boolean
+  user_dislike?: boolean
+  user_favorite?: boolean
+  user_count?: number
+  user_visits?: number
+  updated_at?: string | null
+  creator_address?: string | null
   connected_addresses?: string[] | null
-  place_id?: string | null
+}
+
+export interface GetPlaceRequest {
+  kind: 'getPlace'
+  requestId: number
+  id: string
+}
+
+/** `place` is null when the read failed or the service no longer lists the place. */
+export interface PlaceMessage {
+  kind: 'place'
+  requestId: number
+  place: SignedPlace | null
 }
 
 /** Native only: the web page has nothing to close. */
 export interface QuitRequest {
   kind: 'quit'
-}
-
-/** Read signed so each event carries `attending`. */
-export interface GetLobbyEventsRequest {
-  kind: 'getLobbyEvents'
-}
-
-/** null when the read failed. */
-export interface LobbyEventsMessage {
-  kind: 'lobbyEvents'
-  events: LobbyEvent[] | null
-}
-
-export interface SetEventInterestRequest {
-  kind: 'setEventInterest'
-  id: string
-  interested: boolean
-}
-
-/** On failure `interested` is the event's unchanged state. */
-export interface EventInterestMessage {
-  kind: 'eventInterest'
-  id: string
-  interested: boolean
-  ok: boolean
 }
 
 /** One page of the local player's camera reel (signed, so private photos are included), newest
@@ -2292,6 +2305,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | MapApiResultMessage
+  | PlaceMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
@@ -2378,8 +2393,6 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | LookShownMessage
   | GalleryMessage
-  | LobbyEventsMessage
-  | EventInterestMessage
   | GalleryPhotoMessage
   | GalleryWriteMessage
   | PermissionRequestMessage

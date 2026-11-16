@@ -54,11 +54,14 @@ function CompassGlyph(): React.JSX.Element {
 export function PlacesBrowser({
   account,
   headExtra,
+  columns,
   onPick
 }: {
   account?: string | null
   /** Slot rendered at the far right of the toolbar (e.g. the picker's "Skip" button). */
   headExtra?: React.ReactNode
+  /** The results grid's column count; unset, cards fill the width. */
+  columns?: number
   onPick: (place: DiscoverPlace) => void
 }): React.JSX.Element {
   const { places: list, liveFeed, featured: featuredFeed, loading, loadingMore, hasMore, loadMore, retry, error, search, setSearch, category, setCategory, sort, setSort, section, setSection } = usePlaces(account)
@@ -165,7 +168,7 @@ export function PlacesBrowser({
             }
           />
         ) : (
-          renderGrid(mainList)
+          renderGrid(mainList, columns)
         )}
         {error && list.length > 0 && (
           <EmptyState variant="inline" tone="error" title="Couldn't load more places" subtitle={error} actions={[{ label: 'Retry', onClick: retry }]} />

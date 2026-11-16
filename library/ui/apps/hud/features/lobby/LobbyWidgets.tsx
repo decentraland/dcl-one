@@ -11,7 +11,8 @@ import warningIcon from '../../assets/lobby/warning-icn.png'
 import { MaskIcon, Spinner } from '../../design'
 import { userColor } from '@explorer-core/lib/identity'
 import { isDestination } from '@explorer-core/features/lobby/goto'
-import { eventAttendees, startsInText, type LobbyEvent } from '@explorer-core/features/lobby/lobbyEvents'
+import type { EventData } from '@explorer-core/engine/protocol'
+import { eventAttendees, startsInText } from '@explorer-core/features/lobby/lobbyEvents'
 import { placeOnline, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { widgetCardCount, type LobbyWidgetId } from '@explorer-core/features/lobby/layout'
 import type { CardOrigin } from '@explorer-core/features/lobby/lobbyAnalytics'
@@ -31,8 +32,8 @@ export interface LobbyWidgetContext {
   landing: LandingState & { title: string }
   recent: LobbyPlace[] | null
   recommended: LobbyPlace[] | null
-  live: LobbyEvent[]
-  upcoming: LobbyEvent[]
+  live: EventData[]
+  upcoming: EventData[]
   eventsLoaded: boolean
   online: Friend[]
   /** No friend list yet, or the social service is still starting. */
@@ -49,11 +50,11 @@ export interface LobbyWidgetContext {
   jumpLanding: () => void
   openPlace: (p: LobbyPlace, origin: CardOrigin) => void
   jumpPlace: (p: LobbyPlace, origin: CardOrigin) => void
-  openEvent: (e: LobbyEvent, origin: CardOrigin) => void
-  jumpEvent: (e: LobbyEvent, origin: CardOrigin) => (() => void) | null
-  toggleInterest: (e: LobbyEvent) => void
-  addToCalendar: (e: LobbyEvent) => void
-  shareEvent: (e: LobbyEvent, anchor: HTMLElement) => void
+  openEvent: (e: EventData, origin: CardOrigin) => void
+  jumpEvent: (e: EventData, origin: CardOrigin) => (() => void) | null
+  toggleInterest: (e: EventData) => void
+  addToCalendar: (e: EventData) => void
+  shareEvent: (e: EventData, anchor: HTMLElement) => void
   openFriend: (f: Friend) => void
   joinFriend: (f: Friend) => void
   viewCommunity: (c: Community) => void

@@ -5,6 +5,7 @@
 
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { PlacesBrowser } from './PlacesBrowser'
+import { openPlaceDetail } from './PlaceDetail'
 import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { ProfileState } from '../session/useEngineSession'
 
@@ -13,10 +14,13 @@ export interface PlacesState {
   toggle: () => void
 }
 
+export const COMPACT_PLACES_COLUMNS = 4
+
 export function PlacesPage({
   places,
   account,
   profile,
+  compact,
   onNavigate,
   onTeleport,
   onVisitWorld
@@ -24,18 +28,38 @@ export function PlacesPage({
   places: PlacesState
   account?: string | null
   profile: ProfileState
+  /** Shown in the lobby's section modal; `onTravel` closes it once a jump goes ahead. */
+  compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
   onTeleport: (x: number, y: number) => void
   onVisitWorld: (realm: string) => void
 }): React.JSX.Element | null {
-  if (!places.open) return null
+  if (!places.open && compact == null) return null
 
-  const visit = (place: DiscoverPlace): void => {
+  const travel = (place: DiscoverPlace): boolean => {
     const t = placeTeleport(place)
-    if (!t) return
+    if (!t) return false
     if (t.kind === 'world') onVisitWorld(t.realm)
     else onTeleport(t.x, t.y)
-    places.toggle()
+    return true
+  }
+
+  if (compact != null) {
+    const { onTravel } = compact
+    const open = (place: DiscoverPlace): void =>
+      openPlaceDetail({
+        place,
+        onJumpIn: (picked) => {
+          if (!travel(picked)) return false
+          onTravel()
+          return true
+        }
+      })
+    return <PlacesBrowser account={account} columns={COMPACT_PLACES_COLUMNS} onPick={open} />
+  }
+
+  const visit = (place: DiscoverPlace): void => {
+    if (travel(place)) places.toggle()
   }
 
   const p = profile.data

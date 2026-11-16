@@ -1197,6 +1197,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
       return
     }
+    if (msg.kind === 'getPlace') {
+      setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
+      return
+    }
+    if (msg.kind === 'mapApi') {
+      // `?mockPlaces=error` fails every place write, to show the toggles rolling back
+      const failed = new URLSearchParams(location.search).get('mockPlaces') === 'error'
+      const req = msg.request
+      const data =
+        req.op === 'placeLike'
+          ? { likes: req.like === true ? 1 : 0, dislikes: req.like === false ? 1 : 0, user_like: req.like === true, user_dislike: req.like === false }
+          : req.op === 'placeFavorite'
+            ? { favorites: req.favorite ? 1 : 0, user_favorite: req.favorite }
+            : null
+      setTimeout(() => {
+        if (failed && data != null) reply({ kind: 'mapApiResult', id: msg.id, ok: false, error: 'mock failure' })
+        else reply({ kind: 'mapApiResult', id: msg.id, ok: true, data: data != null ? { ok: true, data } : { ok: true, data: [], total: 0 } })
+      }, 300)
+      return
+    }
     if (msg.kind === 'getEventPlaces') {
       reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return
@@ -1557,21 +1577,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
         }
       })
-      return
-    }
-    if (msg.kind === 'getLobbyEvents') {
-      const at = (minutes: number): string => new Date(Date.now() + minutes * 60_000).toISOString()
-      reply({
-        kind: 'lobbyEvents',
-        events: [
-          { id: 'mock-live', name: 'Mock Live Party', user_name: 'Mojito', x: 0, y: 0, live: true, start_at: at(-30), next_start_at: at(-30), connected_addresses: ['0x1', '0x2'] },
-          { id: 'mock-soon', name: 'Mock Tower Smash Arena', user_name: 'Razzor', x: 10, y: 10, live: false, start_at: at(40), next_start_at: at(40), next_finish_at: at(100), attending: false }
-        ]
-      })
-      return
-    }
-    if (msg.kind === 'setEventInterest') {
-      reply({ kind: 'eventInterest', id: msg.id, interested: msg.interested, ok: true })
       return
     }
     if (msg.kind === 'quit') return

@@ -7,6 +7,14 @@
   min-height: 0;
   margin: -22px clamp(-120px, -6vw, -20px) -22px;
 }
+/* In the lobby's section modal: the frame's own edges, and the search clear of its close button. */
+.compact {
+  height: 100%;
+  margin: 0;
+}
+.compact .chips {
+  right: 82px;
+}
 
 .chips {
   position: absolute;

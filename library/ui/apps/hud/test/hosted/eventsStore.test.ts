@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addDays, startOfDay } from '../../features/events/eventFormat'
-import { calendarColumns, emptyEventsStore, eventsReducer, placeIds, type EventsStore } from '../../features/events/eventsStore'
+import { calendarColumns, emptyEventsStore, eventsReducer, lobbyEvents, placeIds, type EventsStore } from '../../features/events/eventsStore'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { eventAt } from './eventFixtures'
 
@@ -8,7 +8,7 @@ const now = new Date(2026, 8, 8, 12, 0, 0)
 const today = startOfDay(now)
 const at = (dayOffset: number, hour: number): Date => new Date(today.getFullYear(), today.getMonth(), today.getDate() + dayOffset, hour)
 
-const loaded = (store: EventsStore, query: 'range' | 'live' | 'day' | 'highlighted', events: EventData[]): EventsStore => eventsReducer(store, { type: 'loaded', query, events })
+const loaded = (store: EventsStore, query: 'range' | 'live' | 'day' | 'highlighted' | 'lobby', events: EventData[]): EventsStore => eventsReducer(store, { type: 'loaded', query, events })
 const ids = (columns: EventData[][]): string[][] => columns.map((c) => c.map((e) => e.id))
 
 describe('events store', () => {
@@ -44,5 +44,25 @@ describe('events store', () => {
 
   it('lists each place once', () => {
     expect(placeIds([eventAt('a', now, { place_id: 'p1' }), eventAt('b', now, { place_id: 'p1' }), eventAt('c', now), eventAt('d', now, { place_id: 'p2' })])).toEqual(['p1', 'p2'])
+  })
+
+  it("keeps the lobby's list, its events and their places when the Events page resets", () => {
+    let store = loaded(emptyEventsStore(), 'lobby', [eventAt('lobby', at(0, 18), { place_id: 'p1', attending: true })])
+    store = loaded(store, 'range', [eventAt('page', at(1, 10), { place_id: 'p2' })])
+    store = eventsReducer(store, { type: 'places', places: [{ id: 'p1', title: 'One', world_name: null, base_position: '0,0' }, { id: 'p2', title: 'Two', world_name: null, base_position: '1,1' }] })
+    store = eventsReducer(store, { type: 'reset' })
+    expect(lobbyEvents(store).map((e) => e.id)).toEqual(['lobby'])
+    expect(Object.keys(store.byId)).toEqual(['lobby'])
+    expect(Object.keys(store.places)).toEqual(['p1'])
+    expect(store.remindedWhenRead).toEqual(['lobby'])
+    expect(store.queries.range.status).toBe('idle')
+  })
+
+  it('keeps showing the lobby list while it reads again and after the read fails', () => {
+    let store = loaded(emptyEventsStore(), 'lobby', [eventAt('a', at(0, 18))])
+    store = eventsReducer(store, { type: 'loading', query: 'lobby' })
+    expect(lobbyEvents(store).map((e) => e.id)).toEqual(['a'])
+    store = eventsReducer(store, { type: 'failed', query: 'lobby' })
+    expect(store.queries.lobby).toEqual({ status: 'failed', ids: ['a'] })
   })
 })

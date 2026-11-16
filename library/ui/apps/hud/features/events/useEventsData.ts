@@ -1,5 +1,6 @@
-// The Events page's data: its requests to the bridge (signed reads of the events service, the
-// reminder on an event, the places events are held at) and their answers, kept in one store.
+// The Events page's and the lobby's data: their requests to the bridge (signed reads of the events
+// service, the reminder on an event, the places events are held at) and their answers, kept in one
+// store.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { showToast } from '../../design/Toast'
@@ -21,8 +22,10 @@ export interface EventsData {
   store: EventsStore
   loadCalendar: (startDay: Date, days: number, withHighlighted: boolean) => void
   loadDay: (day: Date) => void
+  loadLobby: () => void
   /** Set or clear the user's reminder; the store changes when the service confirms. */
   setAttending: (event: EventData, attending: boolean) => void
+  /** Drops what the Events page read; the lobby's list stays. */
   clear: () => void
 }
 
@@ -83,6 +86,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   )
 
   const loadDay = useCallback((day: Date): void => read('day', dayRange(day)), [read])
+  const loadLobby = useCallback((): void => read('lobby', {}), [read])
 
   const settleReminder = useCallback((eventId: string, attending: boolean, failed: boolean, timedOut = false): void => {
     const timer = reminderTimers.current.get(eventId)
@@ -115,11 +119,21 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   )
 
   const clear = useCallback((): void => {
+    for (const query of Object.keys(waiting.current) as EventsQuery[]) if (query !== 'lobby') stop(query)
+    const lobby = new Set(storeRef.current.queries.lobby.ids)
+    reminderTimers.current.forEach((timer, id) => {
+      if (lobby.has(id)) return
+      clearTimeout(timer)
+      reminderTimers.current.delete(id)
+    })
+    for (const id of reminderLate.current) if (!lobby.has(id)) reminderLate.current.delete(id)
+    dispatch({ type: 'reset' })
+  }, [stop])
+  const dispose = useCallback((): void => {
     for (const query of Object.keys(waiting.current) as EventsQuery[]) stop(query)
     reminderTimers.current.forEach((timer) => clearTimeout(timer))
     reminderTimers.current.clear()
     reminderLate.current.clear()
-    dispatch({ type: 'reset' })
   }, [stop])
 
   const onMessage = useCallback(
@@ -149,7 +163,10 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
     [driverRef, fail, settleReminder]
   )
 
-  useEffect(() => clear, [clear])
+  useEffect(() => dispose, [dispose])
 
-  return useMemo(() => ({ store, loadCalendar, loadDay, setAttending, clear, onMessage }), [store, loadCalendar, loadDay, setAttending, clear, onMessage])
+  return useMemo(
+    () => ({ store, loadCalendar, loadDay, loadLobby, setAttending, clear, onMessage }),
+    [store, loadCalendar, loadDay, loadLobby, setAttending, clear, onMessage]
+  )
 }

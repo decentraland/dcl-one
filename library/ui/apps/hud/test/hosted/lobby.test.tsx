@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PopupHost, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
+import type { EventData } from '@explorer-core/engine/protocol'
+import type { QueryStatus } from '../../features/events/eventsStore'
+import { eventAt } from './eventFixtures'
 import { fetchLandingPlace, fetchRecents, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import * as analytics from '@explorer-core/lib/analytics'
@@ -37,14 +41,32 @@ const lobby = (session: EngineSession, onClose?: () => void): React.JSX.Element 
   </SessionProvider>
 )
 
+const lobbyWithPopups = (session: EngineSession): React.JSX.Element => (
+  <SessionProvider value={session}>
+    <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+    <PopupHost />
+  </SessionProvider>
+)
+
 beforeEach(() => {
   setPref(PREF.lobbyLayout, '')
 })
 
 afterEach(() => {
+  resetPopups()
   vi.restoreAllMocks()
   vi.clearAllMocks()
 })
+
+
+function lobbyRead(session: ReturnType<typeof fakeSession>, events: EventData[], status: QueryStatus = 'loaded'): void {
+  const store = session.events.data.store
+  session.events.data.store = {
+    ...store,
+    byId: { ...store.byId, ...Object.fromEntries(events.map((e) => [e.id, e])) },
+    queries: { ...store.queries, lobby: { status, ids: events.map((e) => e.id) } }
+  }
+}
 
 describe('lobby controls', () => {
   it('disables Customize until the player is ready', async () => {
@@ -62,11 +84,11 @@ describe('lobby controls', () => {
 
   it("jumps to a live world event only when its server is a world's name", () => {
     const session = fakeSession()
-    const now = new Date().toISOString()
-    session.lobbyEvents.list = [
-      { id: 'good', name: 'Good Fest', x: 0, y: 0, world: true, live: true, server: 'fest.dcl.eth', start_at: now },
-      { id: 'bad', name: 'Bad Fest', x: 0, y: 0, world: true, live: true, server: 'https://realm.example/about', start_at: now }
-    ]
+    const now = new Date()
+    lobbyRead(session, [
+      eventAt('good', now, { name: 'Good Fest', x: 0, y: 0, world: true, live: true, server: 'fest.dcl.eth' }),
+      eventAt('bad', now, { name: 'Bad Fest', x: 0, y: 0, world: true, live: true, server: 'https://realm.example/about' })
+    ])
     render(lobby(session))
     expect(screen.queryByRole('button', { name: 'Jump in to Bad Fest' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Jump in to Good Fest' }))
@@ -98,6 +120,23 @@ describe('lobby controls', () => {
     render(lobby(fakeSession()))
     expect(await screen.findByText('boedo')).toBeInTheDocument()
     expect(screen.queryByText(owner)).not.toBeInTheDocument()
+  })
+
+  it("opens a place's detail from its card, naming the event live there, and jumps from it", async () => {
+    const track = vi.spyOn(analytics, 'track')
+    const recent: LobbyPlace = { id: 'p', title: 'Plaza', description: 'A square.', image: '', positions: ['3,4'], base_position: '3,4', owner: null, live: true }
+    vi.mocked(fetchRecents).mockResolvedValueOnce([recent])
+    const session = fakeSession()
+    lobbyRead(session, [eventAt('l', new Date(), { name: 'Sunset Set', live: true, place_id: 'p' })])
+    render(lobbyWithPopups(session))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Plaza' }))
+    expect(track).toHaveBeenCalledWith('place_card_clicked', expect.objectContaining({ place_id: 'p', from_section: 'recent', source: 'lobby' }))
+    const detail = within(screen.getByRole('dialog', { name: 'Plaza' }))
+    expect(detail.getByRole('tooltip')).toHaveTextContent('Sunset Set')
+    fireEvent.click(detail.getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 3, y: 4 })
+    expect(track).toHaveBeenCalledWith('place_jumped_in', expect.objectContaining({ place_id: 'p', from_section: 'recent' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
@@ -160,40 +199,94 @@ describe('lobby widgets', () => {
 
   it('lists live and upcoming events and marks one interested', async () => {
     const session = fakeSession()
-    const soon = new Date(Date.now() + 40 * 60_000).toISOString()
-    session.lobbyEvents.list = [
-      { id: 'l', name: 'Live Party', x: 1, y: 2, live: true, start_at: soon, connected_addresses: ['0xa'] },
-      { id: 'u', name: 'Tower Smash', x: 3, y: 4, live: false, start_at: soon, next_start_at: soon, attending: false }
-    ]
+    const soon = new Date(Date.now() + 40 * 60_000)
+    lobbyRead(session, [
+      eventAt('l', soon, { name: 'Live Party', x: 1, y: 2, live: true, connected_addresses: ['0xa'] }),
+      eventAt('u', soon, { name: 'Tower Smash', x: 3, y: 4 })
+    ])
     render(lobby(session))
     expect(screen.getByText('Live Party')).toBeInTheDocument()
     expect(screen.getByText('Tower Smash')).toBeInTheDocument()
     expect(screen.getByText('In 40 min')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Interested' }))
-    expect(session.lobbyEvents.setInterest).toHaveBeenCalledWith('u', true)
+    expect(session.events.data.setAttending).toHaveBeenCalledWith(expect.objectContaining({ id: 'u' }), true)
     fireEvent.click(screen.getByRole('button', { name: 'Jump in to Live Party' }))
     expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 1, y: 2 })
   })
 
+  it("opens an event's detail from its card and jumps from there through the lobby's pick", () => {
+    const track = vi.spyOn(analytics, 'track')
+    const session = fakeSession()
+    lobbyRead(session, [eventAt('l', new Date(), { name: 'Live Party', x: 1, y: 2, live: true })])
+    render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Live Party' }))
+    expect(track).toHaveBeenCalledWith('event_card_clicked', expect.objectContaining({ event_id: 'l', source: 'lobby', from_section: 'live_events' }))
+    const detail = screen.getByRole('dialog', { name: 'Live Party' })
+    fireEvent.click(within(detail).getByRole('button', { name: /^Jump in to/ }))
+    expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 1, y: 2 })
+    expect(track).toHaveBeenCalledWith('event_jumped_in', expect.objectContaining({ event_id: 'l', source: 'lobby' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it("keeps an upcoming event's detail open when its world cannot be reached", () => {
+    const session = fakeSession()
+    lobbyRead(session, [eventAt('u', new Date(Date.now() + 3_600_000), { name: 'Bad Fest', world: true, server: 'https://realm.example/about' })])
+    render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Bad Fest' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Bad Fest' })).getByRole('button', { name: /^Jump in to/ }))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Bad Fest' })).toBeInTheDocument()
+  })
+
   it('clears the live events when the read fails and keeps the upcoming ones', () => {
     const session = fakeSession()
-    session.lobbyEvents.list = [
-      { id: 'l', name: 'Live Party', x: 1, y: 2, live: true, start_at: new Date().toISOString() },
-      { id: 'u', name: 'Tower Smash', x: 3, y: 4, live: false, start_at: new Date(Date.now() + 3_600_000).toISOString() }
-    ]
-    session.lobbyEvents.failed = true
+    lobbyRead(
+      session,
+      [eventAt('l', new Date(), { name: 'Live Party', live: true }), eventAt('u', new Date(Date.now() + 3_600_000), { name: 'Tower Smash' })],
+      'failed'
+    )
     render(lobby(session))
     expect(screen.queryByText('Live Party')).not.toBeInTheDocument()
     expect(screen.getByText('Tower Smash')).toBeInTheDocument()
   })
 
-  it('opens the Events page from VIEW ALL', () => {
+  it("opens Events in the lobby's section modal from VIEW ALL", () => {
+    const track = vi.spyOn(analytics, 'track')
     const session = fakeSession()
-    session.lobbyEvents.list = [{ id: 'u', name: 'Tower Smash', x: 3, y: 4, live: false, start_at: new Date(Date.now() + 3_600_000).toISOString() }]
-    render(lobby(session))
+    lobbyRead(session, [eventAt('u', new Date(Date.now() + 3_600_000), { name: 'Tower Smash' })])
+    render(lobbyWithPopups(session))
     const upcoming = screen.getByRole('heading', { name: 'Upcoming Events' }).parentElement!
     fireEvent.click(within(upcoming).getByRole('button', { name: /view all/i }))
-    expect(session.events.toggle).toHaveBeenCalledOnce()
+    expect(screen.getByRole('dialog', { name: 'Events' })).toBeInTheDocument()
+    expect(session.events.toggle).not.toHaveBeenCalled()
+    expect(session.events.data.loadCalendar).toHaveBeenCalledWith(expect.any(Date), 4, true)
+    expect(track).toHaveBeenCalledWith('events_section_opened', expect.objectContaining({ source: 'lobby' }))
+  })
+
+  it('opens one section at a time from the top bar, and closes it', () => {
+    const session = fakeSession()
+    render(lobbyWithPopups(session))
+    const bar = within(screen.getByRole('navigation', { name: 'Lobby' }))
+    fireEvent.click(bar.getByRole('button', { name: 'Map' }))
+    expect(screen.getByRole('dialog', { name: 'Map' })).toBeInTheDocument()
+    expect(session.map.toggle).not.toHaveBeenCalled()
+    fireEvent.click(bar.getByRole('button', { name: 'Events' }))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Close Map' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(bar.getByRole('button', { name: 'Events' }))
+    expect(screen.getByRole('dialog', { name: 'Events' })).toBeInTheDocument()
+  })
+
+  it('hands over to the full page when it opens under the modal', () => {
+    const session = fakeSession()
+    const { rerender } = render(lobbyWithPopups(session))
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Lobby' })).getByRole('button', { name: 'Events' }))
+    expect(screen.getByRole('dialog', { name: 'Events' })).toBeInTheDocument()
+    session.events.open = true
+    rerender(lobbyWithPopups({ ...session }))
+    expect(screen.queryByRole('dialog', { name: 'Events' })).toBeNull()
+    expect(session.events.data.clear).not.toHaveBeenCalled()
   })
 })
 
@@ -315,7 +408,7 @@ describe('lobby profile menu and visit', () => {
     const { unmount } = render(lobby(session, vi.fn()))
     expect(track).toHaveBeenCalledWith('lobby_opened', { source: 'lobby', is_startup: false })
     expect(session.lobbyStage.set).toHaveBeenCalledWith({ idleEmotes: true })
-    expect(session.lobbyEvents.warm).toHaveBeenCalled()
+    expect(session.lobbyData.warm).toHaveBeenCalled()
     unmount()
     expect(track).toHaveBeenCalledWith('lobby_closed', expect.objectContaining({ source: 'lobby', is_startup: false }))
     expect(session.lobbyStage.set).toHaveBeenCalledWith({ idleEmotes: false })

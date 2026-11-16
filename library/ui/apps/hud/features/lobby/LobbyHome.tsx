@@ -13,7 +13,7 @@ import notificationsOff from '../../assets/lobby/notifications-off.png'
 import notificationsOn from '../../assets/lobby/notifications-on.png'
 import placesIcon from '../../assets/lobby/places-off.png'
 import { ContextMenu, MaskIcon, showToast } from '../../design'
-import { siteUrl, isNativeHud } from '@hud-host'
+import { isNativeHud } from '@hud-host'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { clickButton } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
@@ -24,23 +24,28 @@ import { placeTeleport } from '@explorer-core/features/places/placesApi'
 import { LobbyLayout, widgetSpan } from '@explorer-core/features/lobby/layout'
 import { loadLayout, saveLayout } from '@explorer-core/features/lobby/layoutStorage'
 import { fetchCrowd, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
-import { eventCalendarLink, eventCopyLink, eventShareLink, splitEvents, type LobbyEvent } from '@explorer-core/features/lobby/lobbyEvents'
+import { splitEvents } from '@explorer-core/features/lobby/lobbyEvents'
 import { parseGotoTarget, randomParcel, worldName } from '@explorer-core/features/lobby/goto'
 import * as lobbyAnalytics from '@explorer-core/features/lobby/lobbyAnalytics'
-import type { Community, Friend } from '@explorer-core/engine/protocol'
+import type { Community, EventData, Friend } from '@explorer-core/engine/protocol'
 import { clip } from '../backpack/BackpackModal'
 import { EngineViewport } from '../engine/EngineViewport'
 import { DEGREES_PER_PX } from '../engine/AvatarDragSurface'
 import { openCommunityModal } from '../communities/CommunityModal'
+import { openEventDetail } from '../events/EventDetail'
+import { eventCalendarUrl, eventCopyLink, eventShareUrl } from '../events/eventFormat'
+import { lobbyEvents } from '../events/eventsStore'
 import { PhotoDetail } from '../gallery/PhotoDetail'
 import { useOwnReelActions } from '../gallery/useOwnReelActions'
 import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
+import { openPlaceDetail } from '../places/PlaceDetail'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
 import type { Destination } from '../session/useEngineSession'
 import { profilePictureStyle, type ConnectedFriend } from './LobbyCards'
 import { CustomizeModal, DropMarker, EditorGrids, WidgetHandle, WidgetPreview, useLayoutEditor } from './LobbyEditor'
+import { openExploreSection, type ExploreSection } from './ExploreSectionModal'
 import { LobbyProfileMenu } from './LobbyProfileMenu'
 import { LobbyWidget, widgetShown, type LobbyWidgetContext } from './LobbyWidgets'
 import { cellRect, type Rect } from './grid'
@@ -205,12 +210,12 @@ export function LobbyHome({
   const [photoIndex, setPhotoIndex] = useState<number | null>(null)
   const reel = useReelList('lobby', session.gallery.fetchPage)
   const reelActions = useOwnReelActions(session.gallery, reel)
-  const [share, setShare] = useState<{ event: LobbyEvent; x: number; y: number } | null>(null)
+  const [share, setShare] = useState<{ event: EventData; x: number; y: number } | null>(null)
   const [avatarTip, setAvatarTip] = useState<{ x: number; y: number } | null>(null)
   const [friendTip, setFriendTip] = useState<{ name: string; x: number; y: number } | null>(null)
   const [rotating, setRotating] = useState<{ x: number; y: number } | null>(null)
 
-  const { warm } = session.lobbyEvents
+  const { warm } = session.lobbyData
   const setStage = session.lobbyStage.set
   useEffect(() => {
     lobbyAnalytics.lobbyOpened(startup)
@@ -224,9 +229,12 @@ export function LobbyHome({
 
   const landing = useLanding(session.homeScene())
   const places = usePlaces()
-  const events = useMemo(() => splitEvents(session.lobbyEvents.list ?? []), [session.lobbyEvents.list])
+  const eventStore = session.events.data.store
+  const eventsQuery = eventStore.queries.lobby
+  const events = useMemo(() => splitEvents(lobbyEvents(eventStore)), [eventStore])
   // a failed read clears the live list (a stale LIVE badge is a false claim) and keeps the upcoming one
-  const live = session.lobbyEvents.failed ? [] : events.live
+  const live = eventsQuery.status === 'failed' ? [] : events.live
+  const referrer = profile?.address ?? null
   const online = useMemo(
     () => session.friends.list.filter((f) => f.status !== 'offline').sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
     [session.friends.list]
@@ -246,13 +254,33 @@ export function LobbyHome({
     [onlineByAddress]
   )
 
-  const openPlacesPage = (): void => {
-    lobbyAnalytics.sectionOpened('places')
-    if (!session.places.open) session.places.toggle()
+  const openSection = (section: ExploreSection): void => {
+    if (section !== 'map') lobbyAnalytics.sectionOpened(section)
+    openExploreSection(section)
   }
-  const openEventsPage = (): void => {
-    lobbyAnalytics.sectionOpened('events')
-    if (!session.events.open) session.events.toggle()
+
+  /** False when the place names nowhere to travel to. */
+  const jumpPlace = (p: LobbyPlace, origin: lobbyAnalytics.CardOrigin): boolean => {
+    const dest = placeTeleport(p)
+    if (dest == null) return false
+    lobbyAnalytics.placeJumpedIn(p, origin)
+    clickButton('JUMP_IN', 'LOBBY', { kind: 'place', place_id: p.id })
+    pick(dest)
+    return true
+  }
+  const openPlace = (p: LobbyPlace, origin: lobbyAnalytics.CardOrigin): void => {
+    lobbyAnalytics.placeCardClicked(p, origin)
+    openPlaceDetail({ place: p, onJumpIn: (place) => jumpPlace(place, origin) })
+  }
+
+  const jumpEvent = (e: EventData, origin: lobbyAnalytics.CardOrigin): (() => void) | null => {
+    const dest = eventDestination(e)
+    if (dest == null) return null
+    return () => {
+      lobbyAnalytics.eventJumpedIn(e, origin)
+      clickButton('JUMP_IN', 'LOBBY', { kind: 'event', event_id: e.id })
+      pick(dest.kind === 'world' ? { kind: 'world', realm: dest.realm } : { kind: 'parcel', x: dest.x, y: dest.y })
+    }
   }
 
   const ctx: LobbyWidgetContext = {
@@ -262,12 +290,12 @@ export function LobbyHome({
     recommended: places.recommended,
     live,
     upcoming: events.upcoming,
-    eventsLoaded: session.lobbyEvents.list != null,
+    eventsLoaded: eventsQuery.status === 'loaded' || eventsQuery.ids.length > 0,
     online,
     friendsLoading: session.friends.loading,
     totalFriends: session.friends.list.length,
     locations,
-    communities: session.lobbyEvents.communitiesLoaded ? session.communities.list : null,
+    communities: session.lobbyData.communitiesLoaded ? session.communities.list : null,
     photos: reel.loaded ? reel.photos.slice(0, 10) : null,
     busy,
     friendsAt,
@@ -277,42 +305,35 @@ export function LobbyHome({
       setFriendTip({ name: friend.name, x: p.x + FRIEND_TOOLTIP_OFFSET, y: p.y })
     },
     openLanding: () => {
-      const p = landing.place
-      if (p == null) return
-      lobbyAnalytics.placeCardClicked(p, 'landing')
-      openPlacesPage()
+      if (landing.place != null) openPlace(landing.place, 'landing')
     },
     jumpLanding: () => {
       if (landing.place) lobbyAnalytics.placeJumpedIn(landing.place, 'landing')
       clickButton('JUMP_IN', 'LOBBY', { kind: 'landing', place_id: landing.place?.id ?? '' })
       pick(null)
     },
-    openPlace: (p: LobbyPlace, origin) => {
-      lobbyAnalytics.placeCardClicked(p, origin)
-      openPlacesPage()
-    },
+    openPlace,
     jumpPlace: (p: LobbyPlace, origin) => {
-      const dest = placeTeleport(p)
-      if (dest == null) return
-      lobbyAnalytics.placeJumpedIn(p, origin)
-      clickButton('JUMP_IN', 'LOBBY', { kind: 'place', place_id: p.id })
-      pick(dest)
+      jumpPlace(p, origin)
     },
-    openEvent: (e: LobbyEvent, origin) => {
+    openEvent: (e: EventData, origin) => {
       lobbyAnalytics.eventCardClicked(e, origin)
-      openEventsPage()
+      openEventDetail(e.id, (event) => {
+        const jump = jumpEvent(event, origin)
+        if (jump == null) {
+          showToast('This event’s world cannot be reached.', { tone: 'error' })
+          return false
+        }
+        jump()
+        return true
+      })
     },
-    jumpEvent: (e: LobbyEvent, origin) => {
-      const dest = eventDestination(e)
-      if (dest == null) return null
-      return () => {
-        lobbyAnalytics.eventJumpedIn(e, origin)
-        clickButton('JUMP_IN', 'LOBBY', { kind: 'event', event_id: e.id })
-        pick(dest.kind === 'world' ? { kind: 'world', realm: dest.realm } : { kind: 'parcel', x: dest.x, y: dest.y })
-      }
+    jumpEvent,
+    toggleInterest: (e) => session.events.data.setAttending(e, !e.attending),
+    addToCalendar: (e) => {
+      const url = eventCalendarUrl(e, referrer)
+      if (url != null) window.open(url, '_blank', 'noopener')
     },
-    toggleInterest: (e) => session.lobbyEvents.setInterest(e.id, e.attending !== true),
-    addToCalendar: (e) => window.open(`${eventCalendarLink(e, siteUrl, profile?.address)}&utm_source=explorer&utm_campaign=discover`, '_blank', 'noopener'),
     shareEvent: (e, anchor) => {
       const box = anchor.getBoundingClientRect()
       const p = toCanvas(box.left + box.width / 2, box.top + box.height / 2)
@@ -365,17 +386,12 @@ export function LobbyHome({
       return false
     },
     viewAll: (target) => {
-      if (target === 'recent' || target === 'recommended') openPlacesPage()
-      else if (target === 'live' || target === 'upcoming') openEventsPage()
+      if (target === 'recent' || target === 'recommended') openSection('places')
+      else if (target === 'live' || target === 'upcoming') openSection('events')
       else if (target === 'communities') session.communities.toggle()
       else session.gallery.toggle()
     }
   }
-
-  const interestError = session.lobbyEvents.interestError
-  useEffect(() => {
-    if (interestError != null) showToast('Something went wrong, please try again.')
-  }, [interestError])
 
   // The stand-in covers the stage under the Backpack, which the engine keeps as it is: the Backpack
   // opening or closing shows or hides it at once; only the stage coming up fades it out.
@@ -488,15 +504,15 @@ export function LobbyHome({
       </header>
 
       <nav className={styles.topBar} aria-label="Lobby">
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => session.map.toggle()}>
+        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('map')}>
           <img src={mapIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Map</span>
         </button>
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={openPlacesPage}>
+        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('places')}>
           <img src={placesIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Places</span>
         </button>
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openEventsPage()}>
+        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('events')}>
           <img src={eventsIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Events</span>
         </button>
@@ -577,14 +593,14 @@ export function LobbyHome({
                 {
                   label: 'Share',
                   onClick: () => {
-                    window.open(`${eventShareLink(share.event, siteUrl, profile?.address)}&utm_source=explorer&utm_campaign=discover`, '_blank', 'noopener')
+                    window.open(eventShareUrl(share.event, referrer), '_blank', 'noopener')
                     setShare(null)
                   }
                 },
                 {
                   label: 'Copy link',
                   onClick: () => {
-                    navigator.clipboard?.writeText(eventCopyLink(share.event, siteUrl, profile?.address)).then(
+                    navigator.clipboard?.writeText(eventCopyLink(share.event, referrer)).then(
                       () => showToast('Link copied!'),
                       () => undefined
                     )

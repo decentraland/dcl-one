@@ -29,6 +29,11 @@ export interface DiscoverPlace {
   highlighted?: boolean
   live?: boolean
   live_event_name?: string | null
+  /** 0..1; some services send it as a string. */
+  like_rate?: number | string | null
+  user_visits?: number
+  updated_at?: string | null
+  creator_address?: string | null
 }
 
 export type PlacesOrderBy = 'most_active' | 'name' | 'created_at' | 'updated_at' | 'like_score_best'

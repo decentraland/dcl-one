@@ -7,7 +7,6 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { LobbyEvent } from '@explorer-core/features/lobby/lobbyEvents'
 import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
@@ -57,6 +56,7 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { resolveMapApi, setMapApiTransport } from '@explorer-core/features/map/mapApi'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
@@ -94,6 +94,8 @@ import type {
   GalleryPhotoMeta,
   GalleryWriteMessage,
   ExternalUrlOpenedMessage,
+  PlaceMessage,
+  SignedPlace,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -438,6 +440,8 @@ export interface MinimapState {
 export interface PlacesState {
   open: boolean
   toggle: () => void
+  /** One place read signed, with the player's own votes; null when the read failed. */
+  readSigned: (id: string) => Promise<SignedPlace | null>
 }
 
 /** What opened the Events page: its key, the menu's top bar, or the sidebar. */
@@ -490,15 +494,9 @@ export interface PhotoModeState {
   take: () => void
 }
 
-export interface LobbyEventsState {
-  /** null before the first answer or after a failed read. */
-  list: LobbyEvent[] | null
-  failed: boolean
-  load: () => void
-  /** The list follows once the service confirms. */
-  setInterest: (id: string, interested: boolean) => void
-  interestError: { id: string; at: number } | null
-  /** Prefetches the events, communities and photos the lobby's widgets list. */
+export interface LobbyDataState {
+  /** Prefetches the events and communities the lobby's widgets list; the events land in
+   *  `events.data`'s lobby query. */
   warm: () => void
   /** Stays true after the first answer. */
   communitiesLoaded: boolean
@@ -876,7 +874,7 @@ export const BRIDGE_CALL_TIMEOUT_MS = 30_000
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | PlaceMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1008,7 +1006,7 @@ export interface EngineSession {
   /** The lobby reopened in-world from the menu. */
   lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
   /** Read signed through the bridge. */
-  lobbyEvents: LobbyEventsState
+  lobbyData: LobbyDataState
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
@@ -1195,9 +1193,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobby, setLobby] = useState(false)
   const lobbyRef = useRef(false)
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
-  const [lobbyEventList, setLobbyEventList] = useState<LobbyEvent[] | null>(null)
-  const [lobbyEventsFailed, setLobbyEventsFailed] = useState(false)
-  const [eventInterestError, setEventInterestError] = useState<{ id: string; at: number } | null>(null)
   const [communitiesLoaded, setCommunitiesLoaded] = useState(false)
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
@@ -1573,6 +1568,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current = driver
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    // The map's signed reads and writes go out through the bridge scene.
+    setMapApiTransport((id, request) => driver.send({ kind: 'mapApi', id, request }))
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
@@ -2395,22 +2392,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'gallery':
         case 'galleryWrite':
-        case 'externalUrlOpened': {
+        case 'externalUrlOpened':
+        case 'place': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
           break
         }
+        case 'mapApiResult':
+          resolveMapApi(msg)
+          break
         case 'galleryPhoto':
           setGalleryMetas((prev) => ({ ...prev, [msg.id]: msg.meta }))
-          break
-        case 'lobbyEvents':
-          setLobbyEventsFailed(msg.events == null)
-          if (msg.events != null) setLobbyEventList(msg.events)
-          break
-        case 'eventInterest':
-          setLobbyEventList((list) => list?.map((e) => (e.id === msg.id ? { ...e, attending: msg.interested } : e)) ?? list)
-          if (!msg.ok) setEventInterestError({ id: msg.id, at: Date.now() })
           break
         case 'permissionRequest': {
           const remembered = answeredPermissions.current.get(`${msg.scene}|${msg.ty}`)
@@ -2499,6 +2492,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
     return () => {
       off()
+      setMapApiTransport(null)
       driver.dispose()
       driverRef.current = null
     }
@@ -2725,10 +2719,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     []
   )
   const quit = useCallback(() => driverRef.current?.send({ kind: 'quit' }), [])
+  const loadLobbyEvents = eventsData.loadLobby
   const warmLobby = useCallback(() => {
     ensure('getCommunities')
-    driverRef.current?.send({ kind: 'getLobbyEvents' })
-  }, [ensure])
+    loadLobbyEvents()
+  }, [ensure, loadLobbyEvents])
   const closeAllPanels = useCallback(() => {
     setChatOpen(false)
     setLobbyOpen(false)
@@ -3090,6 +3085,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     [bridgeCall]
   )
+  const readSignedPlace = useCallback(
+    async (id: string): Promise<SignedPlace | null> => (await bridgeCall('place', (requestId) => ({ kind: 'getPlace', requestId, id })))?.place ?? null,
+    [bridgeCall]
+  )
   const openExternalUrl = useCallback(
     async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
     [bridgeCall]
@@ -3135,11 +3134,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyOpen, anyPanelOpenExceptLobby])
   const homeScene = useCallback(() => driverRef.current?.homeScene?.() ?? home, [home])
-  const loadLobbyEvents = useCallback(() => driverRef.current?.send({ kind: 'getLobbyEvents' }), [])
-  const setEventInterest = useCallback((id: string, interested: boolean) => {
-    setLobbyEventList((list) => list?.map((e) => (e.id === id ? { ...e, attending: interested } : e)) ?? list)
-    driverRef.current?.send({ kind: 'setEventInterest', id, interested })
-  }, [])
   useEffect(() => {
     if ((!lobby && !lobbyOpen) || driverRef.current?.homeScene != null) return
     setHome(null)
@@ -4715,15 +4709,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     playerReady,
     lobbyStageReady,
     lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
-    lobbyEvents: {
-      list: lobbyEventList,
-      failed: lobbyEventsFailed,
-      load: loadLobbyEvents,
-      setInterest: setEventInterest,
-      interestError: eventInterestError,
-      warm: warmLobby,
-      communitiesLoaded
-    },
+    lobbyData: { warm: warmLobby, communitiesLoaded },
     homeScene,
     avatarPreviewRect,
     pickDestination,
@@ -4845,7 +4831,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember },
     map: mapSlice,
     minimap: minimapSlice,
-    places: { open: placesOpen, toggle: togglePlaces },
+    places: { open: placesOpen, toggle: togglePlaces, readSigned: readSignedPlace },
     events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },

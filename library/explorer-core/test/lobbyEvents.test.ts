@@ -1,18 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { eventCalendarLink, eventCopyLink, splitEvents, startsInText, type LobbyEvent } from '../features/lobby/lobbyEvents'
+import type { EventData } from '../engine/protocol'
+import { splitEvents, startsInText } from '../features/lobby/lobbyEvents'
 
 const NOW = Date.parse('2026-11-13T12:00:00Z')
-const event = (id: string, minutes: number, live = false): LobbyEvent => ({
+const event = (id: string, minutes: number, live = false): EventData => ({
   id,
   name: `Event ${id}`,
+  description: null,
+  image: null,
+  image_vertical: null,
+  start_at: new Date(NOW + minutes * 60_000).toISOString(),
+  finish_at: null,
+  next_start_at: new Date(NOW + minutes * 60_000).toISOString(),
+  next_finish_at: new Date(NOW + (minutes + 60) * 60_000).toISOString(),
+  duration: 3_600_000,
   x: 1,
   y: 2,
+  server: null,
+  world: false,
+  user_name: null,
+  scene_name: null,
+  highlighted: false,
   live,
-  start_at: new Date(NOW + minutes * 60_000).toISOString(),
-  next_start_at: new Date(NOW + minutes * 60_000).toISOString(),
-  next_finish_at: new Date(NOW + (minutes + 60) * 60_000).toISOString()
+  attending: false,
+  total_attendees: 0,
+  recurrent: false,
+  recurrent_dates: [],
+  connected_addresses: [],
+  community_id: null,
+  place_id: null
 })
-const site = (path: string): string => `https://decentraland.org${path}`
 
 describe('lobby events', () => {
   it('splits live from upcoming, the soonest first, at most ten', () => {
@@ -30,16 +47,5 @@ describe('lobby events', () => {
     expect(startsInText(event('a', 59.6), NOW)).toBe('In 1 hour')
     expect(startsInText(event('a', 150), NOW)).toBe('In 3 hours')
     expect(startsInText(event('a', 60 * 24 * 3), NOW)).toBe('In 3 days')
-  })
-
-  it('links a live event to its parcel and an upcoming one to its page', () => {
-    expect(eventCopyLink(event('l', -1, true), site, '0xabc')).toBe('https://decentraland.org/jump/?position=1,2&referrer=0xabc')
-    expect(eventCopyLink(event('u', 10), site)).toBe('https://decentraland.org/whats-on/?id=u')
-  })
-
-  it('drafts a calendar entry with UTC stamps', () => {
-    const link = eventCalendarLink(event('u', 60), site)
-    expect(link).toContain('dates=20261113T130000Z/20261113T140000Z')
-    expect(link).toContain('jump in: https%3A%2F%2Fdecentraland.org%2Fjump%2F%3Fposition%3D1%2C2')
   })
 })
