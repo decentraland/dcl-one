@@ -131,10 +131,6 @@
     "primitives": 10,
     "tokens": 0
   },
-  "apps/ui3/src/web/pages/stprofileplacestab.css": {
-    "primitives": 15,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
     "primitives": 16,
     "tokens": 0

@@ -214,7 +214,7 @@ export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
   | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
 
 export interface VoiceState {
-  mic: { available: boolean; enabled: boolean }
+  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
   livekit: boolean
   connected: boolean | null
   rooms: { scene: boolean; state: RoomState }[] | null

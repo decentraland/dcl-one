@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
-// electron-builder picks how it lists the app's dependencies from this; "traversal" follows Node's own lookup.
+// electron-builder lists the app's dependencies by Node's own lookup ("traversal"); every process it starts inherits this.
 process.env.npm_config_user_agent = 'traversal';
 
 // Every build but a release is a dry run: it skips the slow .dmg build and ships only the unsigned

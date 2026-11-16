@@ -287,6 +287,17 @@ jobs:
           INPUT_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
           INPUT_CREDENTIAL_ID: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
 
+      # Installed apps on macOS 12 must not take a build that macOS 12 cannot open: electron-updater
+      # compares this Darwin version with os.release() (scripts/after-pack.js).
+      - name: Check that the macOS update file has the minimum Darwin version
+        if: ${{ matrix.os == 'macos-latest' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        run: |
+          grep -Eq "^minimumSystemVersion: '?22\.0\.0'?$" dist/latest-mac.yml && exit 0
+          echo "::error::dist/latest-mac.yml has no minimumSystemVersion 22.0.0"
+          cat dist/latest-mac.yml
+          exit 1
+
       # Installed Windows apps check each update's signature against `publisherName`
       # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make
       # every Windows update fail, so a release whose installer doesn't match fails here, before

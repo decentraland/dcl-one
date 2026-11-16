@@ -4,17 +4,31 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { afterEach, beforeEach, describe, it } = require('node:test');
 
 const extract = require('./index.js');
 const { zip } = require('./write.js');
 
+const LOCAL_VERSION = 4;
 const LOCAL_FLAGS = 6;
+const LOCAL_CRC = 14;
+const LOCAL_COMPRESSED_SIZE = 18;
 const LOCAL_SIZE = 22;
+const LOCAL_NAME_SIZE = 26;
+const LOCAL_EXTRA_SIZE = 28;
+const LOCAL_HEADER = 30;
 const FLAG_DESCRIPTOR = 0x8;
 const FLAG_UTF8 = 0x800;
 const STORED = 0;
 const DEFLATED = 8;
+const ZIP64_VERSION = 45;
+const ZIP64_EXTRA = 0x0001;
+const ZIP64_END_SIGNATURE = 0x06064b50;
+const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
+const END = 22;
+const LOCATOR = 20;
+const DATE = new Date(2024, 4, 17, 13, 45, 58);
 
 async function collect(chunks) {
   const all = [];
@@ -80,17 +94,91 @@ describe('zip', () => {
     assert.equal(entries.get('scene/images/a.png').compressedSize, image.length);
   });
 
-  it('should state the sizes of a content entry before its data and of a file entry after it', async () => {
-    const content = await collect(zip([{ name: 'a.txt', content: 'text', store: true }]));
+  it('should state the sizes of a stored entry before its data', async () => {
+    const content = await collect(
+      zip([{ name: 'a.txt', content: 'text', store: true }], { date: DATE }),
+    );
     const file = await collect(
-      zip([{ name: 'a.txt', file: source('a.txt', 'text'), store: true }]),
+      zip([{ name: 'a.txt', file: source('a.txt', 'text'), store: true }], { date: DATE }),
+    );
+
+    for (const bytes of [content, file]) {
+      assert.equal(bytes.readUInt16LE(LOCAL_FLAGS) & FLAG_DESCRIPTOR, 0);
+      assert.equal(bytes.readUInt32LE(LOCAL_CRC), zlib.crc32('text'));
+      assert.equal(bytes.readUInt32LE(LOCAL_COMPRESSED_SIZE), 4);
+      assert.equal(bytes.readUInt32LE(LOCAL_SIZE), 4);
+    }
+    assert.deepEqual(file, content);
+  });
+
+  it('should state the sizes of a deflated file entry after its data', async () => {
+    const content = await collect(zip([{ name: 'a.txt', content: 'text' }], { date: DATE }));
+    const file = await collect(
+      zip([{ name: 'a.txt', file: source('a.txt', 'text') }], { date: DATE }),
     );
 
     assert.equal(content.readUInt16LE(LOCAL_FLAGS) & FLAG_DESCRIPTOR, 0);
-    assert.equal(content.readUInt32LE(LOCAL_SIZE), 4);
     assert.equal(file.readUInt16LE(LOCAL_FLAGS) & FLAG_DESCRIPTOR, FLAG_DESCRIPTOR);
+    assert.equal(file.readUInt32LE(LOCAL_CRC), 0);
     assert.equal(file.readUInt32LE(LOCAL_SIZE), 0);
     assert.equal(file.length, content.length + 16);
+  });
+
+  it('should refuse a stored file that changes between its two reads', async () => {
+    for (const next of ['text', 'longer text']) {
+      const file = source('a.txt', 'TEXT');
+      const chunks = zip([{ name: 'a.txt', file, store: true }]);
+
+      const header = await chunks.next();
+      fs.writeFileSync(file, next);
+
+      assert.equal(header.value.readUInt32LE(LOCAL_SIZE), 4);
+      await assert.rejects(collect(chunks), /Entry "a.txt" changed while it was read/);
+    }
+  });
+
+  it('should write zip64 records with forceZip64 that the reader gives back', async () => {
+    const long = Buffer.from('scene '.repeat(50000));
+    const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]);
+    const bytes = await collect(
+      zip(
+        [
+          { name: 'scene/scene.json', content: '{"main":"bin/index.js"}' },
+          { name: 'scene/notes.txt', content: 'stored text', store: true },
+          { name: 'scene/src/index.ts', file: source('index.ts', long) },
+          { name: 'scene/images/a.png', file: source('a.png', image), store: true },
+          { name: 'scene/empty.txt', file: source('empty.txt', '') },
+        ],
+        { forceZip64: true },
+      ),
+    );
+
+    const entries = await unpack(bytes);
+
+    const read = name => fs.readFileSync(path.join(target, name));
+    assert.equal(read('scene/scene.json').toString(), '{"main":"bin/index.js"}');
+    assert.equal(read('scene/notes.txt').toString(), 'stored text');
+    assert.deepEqual(read('scene/src/index.ts'), long);
+    assert.deepEqual(read('scene/images/a.png'), image);
+    assert.equal(read('scene/empty.txt').length, 0);
+    assert.equal(entries.get('scene/images/a.png').compressedSize, image.length);
+    assert.equal(entries.get('scene/src/index.ts').uncompressedSize, long.length);
+
+    let at = 0;
+    for (const entry of entries.values()) {
+      assert.equal(entry.localOffset, at);
+      assert.equal(bytes.readUInt16LE(at + LOCAL_VERSION), ZIP64_VERSION);
+      const extra = at + LOCAL_HEADER + bytes.readUInt16LE(at + LOCAL_NAME_SIZE);
+      assert.equal(bytes.readUInt16LE(extra), ZIP64_EXTRA);
+      assert.equal(bytes.readUInt16LE(at + LOCAL_EXTRA_SIZE), 20);
+      const descriptor = bytes.readUInt16LE(at + LOCAL_FLAGS) & FLAG_DESCRIPTOR ? 24 : 0;
+      at = extra + 20 + entry.compressedSize + descriptor;
+    }
+    const end = bytes.length - END;
+    assert.equal(bytes.readUInt16LE(end + 10), 0xffff);
+    assert.equal(bytes.readUInt32LE(end + 16), 0xffffffff);
+    assert.equal(bytes.readUInt32LE(end - LOCATOR), ZIP64_LOCATOR_SIGNATURE);
+    assert.equal(bytes.readUInt32LE(end - LOCATOR - 56), ZIP64_END_SIGNATURE);
   });
 
   it('should write a name that is not ASCII as UTF-8', async () => {
@@ -170,43 +258,39 @@ describe('zip', () => {
     await assert.rejects(collect(zip([{ name: '', content: 'a' }])), /Invalid entry name/);
   });
 
-  it('should refuse more entries than an archive without zip64 holds', async () => {
-    const entries = Array.from({ length: 65535 }, (_, index) => ({
-      name: String(index),
-      content: '',
-      store: true,
-    }));
+  it('should write zip64 end records only above the entry count of the plain format', async () => {
+    const entries = length =>
+      Array.from({ length }, (_, index) => ({ name: String(index), content: '', store: true }));
 
-    await assert.rejects(collect(zip(entries)), /at most 65534 entries without zip64/);
-  });
+    const plain = await collect(zip(entries(65534)));
+    const zip64 = await collect(zip(entries(65535)));
 
-  it('should write as many entries as an archive without zip64 holds', async () => {
-    const entries = Array.from({ length: 65534 }, (_, index) => ({
-      name: String(index),
-      content: '',
-      store: true,
-    }));
-
-    const bytes = await collect(zip(entries));
-
-    assert.equal(bytes.readUInt16LE(bytes.length - 12), 65534);
+    assert.equal(plain.readUInt16LE(plain.length - 12), 65534);
+    assert.notEqual(plain.readUInt32LE(plain.length - END - LOCATOR), ZIP64_LOCATOR_SIGNATURE);
+    assert.equal(zip64.readUInt16LE(zip64.length - 12), 0xffff);
+    assert.equal(zip64.readUInt32LE(zip64.length - END - LOCATOR), ZIP64_LOCATOR_SIGNATURE);
+    assert.equal(zip64.readBigUInt64LE(zip64.length - END - LOCATOR - 56 + 32), 65535n);
   });
 
   // The test needs a file with a hole. On Windows such a file takes its full size on the disk.
   const sparse = process.platform !== 'win32';
 
-  it('should refuse a file entry that is larger than 4 GiB', { skip: !sparse }, async () => {
-    const large = path.join(folder, 'large.bin');
-    fs.closeSync(fs.openSync(large, 'w'));
-    fs.truncateSync(large, 2 ** 32);
-    let written = 0;
+  it(
+    'should state zip64 for a file entry that is larger than 4 GiB',
+    { skip: !sparse },
+    async () => {
+      const large = path.join(folder, 'large.bin');
+      fs.closeSync(fs.openSync(large, 'w'));
+      fs.truncateSync(large, 2 ** 32);
 
-    await assert.rejects(async () => {
-      for await (const chunk of zip([{ name: 'large.bin', file: large, store: true }])) {
-        written += chunk.length;
-      }
-    }, /Entry "large.bin" is larger than 4 GiB, and zip64 is not supported/);
+      // The local header of a deflated file entry comes before its data is read.
+      const chunks = zip([{ name: 'large.bin', file: large }]);
+      const { value: header } = await chunks.next();
+      await chunks.return();
 
-    assert.ok(written < 2 ** 32);
-  });
+      assert.equal(header.readUInt16LE(LOCAL_VERSION), ZIP64_VERSION);
+      assert.equal(header.readUInt16LE(LOCAL_FLAGS) & FLAG_DESCRIPTOR, FLAG_DESCRIPTOR);
+      assert.equal(header.readUInt16LE(LOCAL_HEADER + 'large.bin'.length), ZIP64_EXTRA);
+    },
+  );
 });

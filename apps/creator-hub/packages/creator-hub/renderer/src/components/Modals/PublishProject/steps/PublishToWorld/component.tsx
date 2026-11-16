@@ -32,6 +32,7 @@ import {
 import { addBase64ImagePrefix } from '/@/modules/image';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { useAuth } from '/@/hooks/useAuth';
 import { WorldPermissionName, type WorldScene } from '/@/lib/worlds';
 import { coordsToId } from '/@/lib/land';
@@ -916,6 +917,8 @@ function ConfirmOverwrite({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { project } = useEditor();
+  const storage = useMultiplayerStorage(project?.path);
   const replacedScenes = useMemo(() => {
     return worldScenes.filter(scene => {
       const sceneParcels = new Set(scene.parcels);
@@ -970,9 +973,15 @@ function ConfirmOverwrite({
         <PlaceContinuityWarning
           kind="world-merge"
           overlap={overlap}
+          storage={storage}
         />
       )}
-      {continuityBreak === 'replace-world' && <PlaceContinuityWarning kind="world-replace" />}
+      {continuityBreak === 'replace-world' && (
+        <PlaceContinuityWarning
+          kind="world-replace"
+          storage={storage}
+        />
+      )}
       <div className="actions">
         <Button
           color="secondary"

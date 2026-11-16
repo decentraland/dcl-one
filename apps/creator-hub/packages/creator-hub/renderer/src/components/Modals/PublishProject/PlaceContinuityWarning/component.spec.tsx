@@ -44,6 +44,14 @@ describe('PlaceContinuityWarning', () => {
     expect(screen.getByRole('alert').textContent).toContain('replaces exactly one existing scene');
   });
 
+  it('names the Multiplayer Server storage only for a scene that uses it', () => {
+    renderWarning({ kind: 'land', storage: true });
+    expect(screen.getByRole('alert').textContent).toContain('Multiplayer Server storage');
+    cleanup();
+    renderWarning({ kind: 'world-merge', overlap: 2 });
+    expect(screen.getByRole('alert').textContent).not.toContain('Multiplayer Server storage');
+  });
+
   it('explains that single-scene mode empties the world', () => {
     renderWarning({ kind: 'world-replace' });
     expect(screen.getByRole('alert').textContent).toContain('removes every scene from this World');

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
+const { pipeline } = require('node:stream/promises');
 const { afterEach, beforeEach, describe, it } = require('node:test');
 
 const extract = require('./index.js');
@@ -26,7 +27,7 @@ function zip(entries) {
     const name = Buffer.from(entry.name);
     const content = Buffer.from(entry.content ?? '');
     const method = entry.method ?? 8;
-    const data = method === 8 ? zlib.deflateRawSync(content) : content;
+    const data = entry.data ?? (method === 8 ? zlib.deflateRawSync(content) : content);
     const crc = entry.crc32 ?? zlib.crc32(content);
     const size = entry.size ?? content.length;
 
@@ -65,6 +66,26 @@ function zip(entries) {
   end.writeUInt32LE(directory.length, 12);
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, end]);
+}
+
+// Gives the deflated data of `size` zero bytes, and never holds all the zero bytes in memory.
+async function deflatedZeros(size) {
+  const zero = Buffer.alloc(2 ** 20);
+  const parts = [];
+  let crc32 = 0;
+  await pipeline(
+    function* () {
+      for (let done = 0; done < size; done += zero.length) {
+        crc32 = zlib.crc32(zero, crc32);
+        yield zero;
+      }
+    },
+    zlib.createDeflateRaw(),
+    async chunks => {
+      for await (const chunk of chunks) parts.push(chunk);
+    },
+  );
+  return { data: Buffer.concat(parts), crc32, size };
 }
 
 describe('extract', () => {
@@ -212,12 +233,38 @@ describe('extract', () => {
     assert.deepEqual(fs.readdirSync(target), []);
   });
 
+  it('should not hold a large entry in memory', async () => {
+    const size = 256 * 2 ** 20;
+    write([{ name: 'zeros.bin', ...(await deflatedZeros(size)) }]);
+    const before = process.memoryUsage.rss();
+
+    await extract(archive, { dir: target });
+
+    // The highest memory use of the process, so that a short peak is also seen.
+    const growth = process.resourceUsage().maxRSS * 1024 - before;
+    assert.equal(fs.statSync(path.join(target, 'zeros.bin')).size, size);
+    assert.ok(growth < 128 * 2 ** 20, `memory use grew by ${Math.round(growth / 2 ** 20)} MiB`);
+  });
+
   it('should refuse an entry with a wrong checksum', async () => {
     write([{ name: 'a.txt', content: 'text', crc32: 1 }]);
 
     await assert.rejects(extract(archive, { dir: target }), /checksum/);
 
     assert.deepEqual(fs.readdirSync(target), []);
+  });
+
+  it('should remove the written part of an entry that fails its checksum', async () => {
+    const content = 'scene '.repeat(600000);
+    for (const method of [0, 8]) {
+      fs.mkdirSync(target, { recursive: true });
+      fs.writeFileSync(path.join(target, 'a.txt'), 'old');
+      write([{ name: 'a.txt', content, method, crc32: (zlib.crc32(content) ^ 1) >>> 0 }]);
+
+      await assert.rejects(extract(archive, { dir: target }), /checksum/);
+
+      assert.deepEqual(fs.readdirSync(target), []);
+    }
   });
 
   it('should refuse an encrypted entry and an unknown method', async () => {

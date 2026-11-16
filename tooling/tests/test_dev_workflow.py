@@ -74,6 +74,18 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         self.assertEqual(log.read_text(), 'rm -rf /usr/local/lib/android /usr/share/dotnet '
                                          '/usr/share/swift /opt/ghc /usr/local/.ghcup\n')
 
+    def test_every_workflow_deletes_the_sdk_folders_only_below_a_free_space_limit(self):
+        delete = 'sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup'
+        seen = 0
+        for path in sorted(WORKFLOW.parent.glob('*.y*ml')):
+            lines = [line.strip() for line in path.read_text().splitlines()]
+            for number, line in enumerate(lines):
+                if line == delete:
+                    seen += 1
+                    with self.subTest(workflow=path.name, line=number + 1):
+                        self.assertRegex(lines[number - 1], r'^if \[ "\$(\{avail:-0\}|available)" -l[te] \S.* \]; then$')
+        self.assertGreaterEqual(seen, 12)
+
     def test_rust_caches_dependencies_only_and_smoke_keeps_a_snapshot_on_both_platforms(self):
         rust, smoke = jobs()['rust'], jobs()['smoke']
         for job in (rust, smoke):
@@ -412,15 +424,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         hub = 'apps/creator-hub'
         for project in (hub, f'{hub}/packages/inspector/agents/bevy'):
             self.assertNotIn('packageManager', json.loads((root / project / 'package.json').read_text()), project)
-        setup, node = 'uses: ./.github/actions/setup-pnpm', 'uses: actions/setup-node@'
+        # A job that runs code of a pull request in main's cache scope takes the action from the
+        # commit of its workflow (.workflow-actions), not from the pull request checkout.
+        setup, node = re.compile(r'uses: \./(\.workflow-actions/)?\.github/actions/setup-pnpm\n'), 'uses: actions/setup-node@'
         files = [root / '.github/actions/creator-hub-setup/action.yml', *sorted(WORKFLOW.parent.glob('creator-hub-*.yml'))]
         self.assertGreater(len(files), 1)
         for path in files:
             text = path.read_text()
             self.assertNotRegex(text, r'corepack|pnpm@\d', path.name)
             if node in text:
-                self.assertIn(setup, text, path.name)
-                self.assertLess(text.index(setup), text.index(node), path.name)
+                found = setup.search(text)
+                self.assertIsNotNone(found, path.name)
+                self.assertLess(found.start(), text.index(node), path.name)
+        upload = (WORKFLOW.parent / 'creator-hub-asset-packs-upload-pr.yml').read_text()
+        self.assertIn('uses: ./.workflow-actions/.github/actions/setup-pnpm\n', upload)
+        self.assertIn('ref: ${{ github.workflow_sha }}\n          path: .workflow-actions\n', upload)
         # A change to the action alone starts the Creator Hub jobs, on a push and on a pull request.
         entry = (WORKFLOW.parent / 'creator-hub-ci.yml').read_text()
         self.assertIn("\n      - '.github/actions/setup-pnpm/**'\n", entry)

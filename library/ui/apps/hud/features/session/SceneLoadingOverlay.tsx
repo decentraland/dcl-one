@@ -7,7 +7,7 @@ import type { SceneLoadingState } from '@explorer-core/engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
 import { launchCount } from '@explorer-core/lib/launchCount'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
-import { Icon } from '../../design'
+import { Icon, LogoPattern } from '../../design'
 import logoIcon from '../../assets/loading/logo-icon.webp'
 import wordmark from '../../assets/loading/wordmark.webp'
 import { TIP_ROTATE_MS, tipsFor, type LoadingTip } from './loadingTips'
@@ -143,11 +143,7 @@ export function SceneLoadingOverlay({
 
   return (
     <div className={styles.root}>
-      <div className={styles.pattern} aria-hidden="true">
-        <div className={styles.patternX}>
-          <div className={styles.patternY} />
-        </div>
-      </div>
+      <LogoPattern />
       <div className={styles.canvas}>
         <div className={styles.glow} aria-hidden="true" />
         <header className={styles.bar}>

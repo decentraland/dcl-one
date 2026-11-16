@@ -18,10 +18,6 @@ overrides:
   '@dcl/crypto@3.4.5>@dcl/schemas': 9.15.0
   '@dcl/crypto@3.4.5>ethereum-cryptography': 1.2.0
   electron-updater>semver: 7.6.3
-  glob@11.1.0>minimatch: 10.2.2
-  minimatch@10.2.2>brace-expansion: 5.0.2
-  brace-expansion@5.0.2>balanced-match: 4.0.3
-  path-scurry@2.0.2>lru-cache: 11.2.6
   '@types/glob>@types/node': 20.14.9
   '@types/node-fetch>@types/node': 20.14.9
 
@@ -282,19 +278,19 @@ importers:
         specifier: file:../asset-packs
         version: link:../asset-packs
       '@protobufjs/utf8':
-        specifier: 1.1.2
+        specifier: ^1.1.2
         version: 1.1.2
       '@well-known-components/pushable-channel':
         specifier: ^1.0.3
         version: 1.0.3
       ajv:
-        specifier: 8.18.0
+        specifier: ^8.18.0
         version: 8.18.0
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
       long:
-        specifier: 5.3.2
+        specifier: ^5.3.2
         version: 5.3.2
       protobufjs:
         specifier: 7.6.6

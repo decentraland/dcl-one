@@ -343,14 +343,14 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             deployment.files.values().map(|f| f.len() as u64).sum()
         };
 
-        let size_per_pointer = total_size / entity.pointers.len().max(1) as u64;
-        if size_per_pointer > max_size_bytes {
+        // Compares total / pointers > max without truncating the quotient.
+        let allowed_bytes = (entity.pointers.len().max(1) as u64).saturating_mul(max_size_bytes);
+        if total_size > allowed_bytes {
             return ValidationResponse::fail(format!(
                 "The deployment is too big. The maximum allowed size per pointer is \
                  {max_size_mb} MB for {}. You can upload up to {} bytes but you tried \
                  to upload {total_size}.",
-                entity.entity_type,
-                entity.pointers.len() as u64 * max_size_bytes
+                entity.entity_type, allowed_bytes
             ));
         }
 

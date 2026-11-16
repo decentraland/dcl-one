@@ -12,6 +12,7 @@ import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 import { Button } from '/@/components/Button';
 import { Atlas } from '/@/components/WorldAtlas/Atlas';
+import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { COLORS, type Props, type Coordinate } from '../../types';
 import { breaksLandPlaceContinuity, calculateParcels, parseCoords } from '../../utils';
 import { PublishModal } from '../../PublishModal';
@@ -24,6 +25,7 @@ const CONTENT_SERVER = config.get('PEER_URL');
 export function PublishToLand(props: Props) {
   const { project, publishScene } = useEditor();
   const { updateProject, updateSceneJson } = useWorkspace();
+  const storage = useMultiplayerStorage(project?.path);
   const tiles = useSelector(state => state.land.tiles);
   const landTiles = useSelector(state => landSelectors.getLandTiles(state.land));
   const [hover, setHover] = useState<Coordinate>({ x: 0, y: 0 });
@@ -226,7 +228,10 @@ export function PublishToLand(props: Props) {
         onBack={handleCancelWarning}
       >
         <div className={styles.warning}>
-          <PlaceContinuityWarning kind="land" />
+          <PlaceContinuityWarning
+            kind="land"
+            storage={storage}
+          />
           <div className={styles.warningActions}>
             <Button
               color="secondary"
