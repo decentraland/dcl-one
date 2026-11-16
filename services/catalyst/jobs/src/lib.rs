@@ -1424,7 +1424,13 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        let settings = settings("failover");
+        // The keepalive outlasts the test: a check or lease statement stalled
+        // past a short bound under load would lose a's lease and hand it to b,
+        // which is the keeper's behavior, not the standby this test pins.
+        let settings = LeaseSettings {
+            keepalive: Duration::from_secs(300),
+            ..settings("failover")
+        };
         let a = Jobs::with_leases(pool.clone(), settings.clone());
         let b = Jobs::with_leases(pool.clone(), settings.clone());
         let (runs_a, runs_b) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
