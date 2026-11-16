@@ -261,15 +261,15 @@ impl Source {
     }
 
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled or after giving up are ignored; one while paused counts, reports
-    /// `VsError` and leaves the reopen to the next play.
+    /// reopen is scheduled or waits for play, or after giving up, are ignored; one while paused
+    /// counts, reports `VsError` and leaves the reopen to the next play.
     fn fail(self: &Rc<Self>, error: &'static str) {
         if self.url.is_none() {
             self.send_state(VideoState::VsError);
             return;
         }
         let mut retry = self.retry.get();
-        if retry.gave_up() || self.timeout.get().is_some() {
+        if retry.gave_up() || self.timeout.get().is_some() || self.reopen_on_play.get() {
             return;
         }
         self.failed.set(true);
@@ -375,7 +375,8 @@ impl Source {
     /// Detaches the source; one that is not live resumes where it was on the next open.
     fn suspend(&self) {
         let time = self.media.current_time();
-        if !self.is_live() && time > 0.0 {
+        // a pending position (a seek while failed) is not yet played past
+        if !self.is_live() && time > 0.0 && self.resume_at.get().is_none() {
             self.resume_at.set(Some(time));
         }
         self.detach();
