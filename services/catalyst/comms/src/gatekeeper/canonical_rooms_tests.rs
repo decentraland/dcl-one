@@ -1308,19 +1308,22 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
             }
         });
         // The revocation runs on a detached task; the bound only ends a hang.
-        let observed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            while let Some(room) = removals.recv().await {
-                if room == "w1:d:mixed.dcl.ethSceneA" {
-                    return true;
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                if removals.recv().await.as_deref() == Some("w1:d:mixed.dcl.ethSceneA") {
+                    break;
                 }
             }
-            false
         })
-        .await;
-        assert!(
-            observed == Ok(true),
-            "redeployment must not hide an already connected room from revocation (access_changed={access_changed})"
-        );
+        .await
+        .expect("redeployment must not hide an already connected room from revocation");
+        // Rooms are revoked in name order and the other world's room sorts
+        // after the expected one: let any later removal arrive before the
+        // isolation check.
+        while let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), removals.recv()).await
+        {
+        }
         assert!(
             !requests
                 .lock()
