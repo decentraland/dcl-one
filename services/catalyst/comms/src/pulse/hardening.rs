@@ -1531,19 +1531,30 @@ mod tests {
             Ok(())
         );
         assert_eq!(p.oldest_signed_ms, SIGNED);
-        // Inside the window the refusal leaves the table and its floor untouched.
+        // An entry already outside the window that the tracked oldest does not cover: only a
+        // full sweep would drop it, so it survives the refusal only if the sweep is skipped.
+        p.seen.insert(
+            ("0xstale".to_string(), (SIGNED - 1).to_string()),
+            ReplayEntry {
+                signed_ms: SIGNED - 1,
+                sources: Vec::new(),
+            },
+        );
+        // Inside the window the wallet refusal reaches the sweep, which returns early.
         let floor = p.forgotten_through_ms;
         assert_eq!(
             p.try_admit(SIGNED + SKEW, None, "0xabc", &(SIGNED + SKEW).to_string()),
             Err(ReplayRejection::WalletQuota)
         );
-        assert_eq!((p.seen.len(), p.forgotten_through_ms), (2, floor));
-        // Past it, the sweep drops the expired entry and tracks the next oldest.
+        assert_eq!((p.seen.len(), p.forgotten_through_ms), (3, floor));
+        assert_eq!(p.oldest_signed_ms, SIGNED);
+        // Past it, the full sweep drops both expired entries and tracks the next oldest.
         let later = SIGNED + SKEW + 1;
         assert_eq!(
             p.try_admit(later, None, "0xabc", &later.to_string()),
             Ok(())
         );
+        assert_eq!(p.seen.len(), 2);
         assert_eq!(p.forgotten_through_ms, SIGNED);
         assert_eq!(p.oldest_signed_ms, SIGNED + 5);
     }
