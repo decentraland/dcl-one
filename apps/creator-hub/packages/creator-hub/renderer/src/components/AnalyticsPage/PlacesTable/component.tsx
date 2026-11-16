@@ -79,6 +79,8 @@ export function PlacesTable({ places, pinnedPlaceIds, onTogglePin, onSelectPlace
             aria-label={place.name}
             onClick={() => onSelectPlace(place.placeId)}
             onKeyDown={e => {
+              // Keys from the options button and its menu (in a portal, but in this React tree) are not for the row.
+              if (e.target !== e.currentTarget) return;
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 onSelectPlace(place.placeId);

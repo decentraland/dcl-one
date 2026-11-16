@@ -86,8 +86,13 @@ export default function Dialog({
   useEffect(() => {
     if (!open) return;
     const node = paper.current;
-    if (node && !node.contains(document.activeElement)) (firstFocus.current?.current ?? node).focus({ preventScroll: true });
-    return () => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true }); };
+    // The update that opened the dialog can also remove the opener (a menu item, the dialog of a step before).
+    // Focus is then where the cleanups of that update put it, outside this dialog.
+    const active = document.activeElement;
+    const back = opener?.isConnected ? opener
+      : active && active !== document.body && !node?.contains(active) ? active : null;
+    if (node && !node.contains(active)) (firstFocus.current?.current ?? node).focus({ preventScroll: true });
+    return () => { if (back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true }); };
   }, [open, opener]);
 
   useScrollLock(open && lockScroll);

@@ -439,3 +439,75 @@ describe("a Select and a Menu opened from a Dialog", () => {
     expect(onClose).toHaveBeenCalledWith("backdrop");
   });
 });
+
+/** A row menu: its item closes the menu and opens a dialog in the same update, so the item is gone when the dialog opens. */
+function RowMenu() {
+  const [menu, setMenu] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  return (
+    <>
+      <button ref={setAnchor} onClick={() => setMenu((value) => !value)}>Options for Plaza</button>
+      <Menu open={menu} anchor={anchor} aria-label="Options for Plaza" modal onClose={() => setMenu(false)}>
+        <MenuItem onClick={() => { setMenu(false); setConfirm(true); }}>Delete</MenuItem>
+      </Menu>
+      <Dialog open={confirm} title="Delete Plaza" onClose={() => setConfirm(false)}><p>This cannot be undone.</p></Dialog>
+    </>
+  );
+}
+
+/** Two steps of one flow: each step is its own dialog, and the next one replaces it in the same update. */
+function TwoSteps() {
+  const [step, setStep] = useState<"none" | "terms" | "contact">("none");
+  const close = () => setStep("none");
+  return (
+    <>
+      <button onClick={() => setStep("terms")}>Join</button>
+      {step === "terms" ? <Dialog open title="Terms" onClose={close}><button onClick={() => setStep("contact")}>Accept</button></Dialog> : null}
+      {step === "contact" ? <Dialog open title="Contact" onClose={close}><input aria-label="Email" /></Dialog> : null}
+    </>
+  );
+}
+
+describe("a dialog opened by a control that the same update removes", () => {
+  test("a menu item opens a dialog, and focus returns to the menu trigger when the dialog closes", async () => {
+    const user = userEvent.setup();
+    render(<RowMenu />);
+    await user.click(screen.getByRole("button", { name: "Options for Plaza" }));
+
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Delete Plaza" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Options for Plaza" })).toHaveFocus();
+  });
+
+  test("a menu item chosen with the keyboard opens a dialog, and focus returns to the menu trigger when the dialog closes", async () => {
+    const user = userEvent.setup();
+    render(<RowMenu />);
+    await user.click(screen.getByRole("button", { name: "Options for Plaza" }));
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Delete Plaza" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Options for Plaza" })).toHaveFocus();
+  });
+
+  test("a step that replaces the dialog of the step before returns focus to the first opener when it closes", async () => {
+    const user = userEvent.setup();
+    render(<TwoSteps />);
+    await user.click(screen.getByRole("button", { name: "Join" }));
+
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    expect(screen.getByRole("dialog", { name: "Contact" })).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Join" })).toHaveFocus();
+  });
+});

@@ -294,8 +294,9 @@ jobs:
         with:
           previous_version: ${{ needs.version.outputs.previous_version }}
           current_version: ${{ needs.version.outputs.version }}
-          paths: 'apps/creator-hub/packages/inspector,apps/ui3/src/atoms'
-          section_names: 'Inspector Changes,Shared UI Changes'
+          # The same paths as change_path in the version job: each one that bumps the version has a section here.
+          paths: 'apps/creator-hub/packages/inspector,apps/ui3/src/atoms,apps/ui3/package.json,apps/ui3/tsconfig.json'
+          section_names: 'Inspector Changes,Shared UI Changes,Shared UI Package Changes,Shared UI Compiler Settings Changes'
           release_title: '@dcl/inspector'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag_prefix: '@dcl/inspector@'
