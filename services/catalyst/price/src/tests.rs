@@ -5,6 +5,7 @@
 //! an in-process stub and deletes its rows by their distinctive quotes.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::Router;
 use axum::http::{StatusCode, header};
@@ -451,6 +452,9 @@ fn quote(usd: f64, ts: i64) -> Value {
     })
 }
 
+/// The default poll interval, the lease holder's refresh.
+const POLL: Duration = Duration::from_secs(300);
+
 const MARKER_A: f64 = 0.42424242;
 const MARKER_B: f64 = 0.51515151;
 
@@ -474,8 +478,8 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
     let answer = Arc::new(Mutex::new(quote(MARKER_A, t0)));
     let base = stub_coingecko(answer.clone()).await;
     let http = crate::http::Outbound::for_tests();
-    let live = Prices::new(pool.clone(), true);
-    let db_only = Prices::new(pool.clone(), false);
+    let live = Prices::new(pool.clone(), Some(POLL));
+    let db_only = Prices::new(pool.clone(), None);
 
     poller::run_pass(&http, &poller::Sources::coingecko_only(&base), &live)
         .await
@@ -489,19 +493,23 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         "the published snapshot is exactly the stored row"
     );
 
-    // The cold-start DB read seeds the live cell; only the poller replaces it.
-    let cold = Prices::new(pool.clone(), true);
+    // A polling replica that does not hold the lease seeds its live cell
+    // from the row and re-reads it once the copy is a refresh interval old,
+    // so it follows what the lease holder persists.
+    let replica = Prices::new(pool.clone(), Some(Duration::from_millis(200)));
     assert_eq!(
-        cold.latest().await.unwrap().unwrap().mana_usd,
+        replica.latest().await.unwrap().unwrap().mana_usd,
         Some(MARKER_A)
     );
     *answer.lock().unwrap() = quote(MARKER_B, t0 + 300);
     poller::run_pass(&http, &poller::Sources::coingecko_only(&base), &live)
         .await
         .unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
     assert_eq!(
-        cold.latest().await.unwrap().unwrap().mana_usd,
-        Some(MARKER_A)
+        replica.latest().await.unwrap().unwrap().mana_usd,
+        Some(MARKER_B),
+        "a replica must not keep its first snapshot"
     );
     assert_eq!(
         live.latest().await.unwrap().unwrap().mana_usd,
@@ -511,11 +519,45 @@ async fn the_poller_appends_publishes_and_the_route_serves_the_newest_row() {
         db_only.latest().await.unwrap().unwrap().mana_usd,
         Some(MARKER_B)
     );
-    cold.publish(PriceSnapshot {
+
+    // A replica holding a snapshot past the freshness budget re-reads the
+    // row at once: the route answers the fresh row, not the envelope.
+    let mut settings = Settings::for_tests();
+    settings.poll_enabled = true;
+    let state = state_over(pool.clone(), settings);
+    let newest = db_only.latest_snapshot().await.unwrap().unwrap();
+    let old = chrono::Utc::now() - chrono::Duration::hours(2);
+    state.prices.publish(PriceSnapshot {
         mana_usd: Some(0.6),
-        ..(*published).clone()
+        source_updated_at: Some(old),
+        ..newest.clone()
     });
-    assert_eq!(cold.latest().await.unwrap().unwrap().mana_usd, Some(0.6));
+    let (status, _, body) = send(
+        router(state.clone()),
+        "GET",
+        "/api/v3/simple/price?ids=decentraland&vs_currencies=usd",
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["decentraland"]["usd"], json!(MARKER_B));
+
+    // Within the interval the published copy is served from memory.
+    replica.publish(PriceSnapshot {
+        mana_usd: Some(0.6),
+        taken_at: chrono::Utc::now(),
+        ..newest
+    });
+    assert_eq!(replica.latest().await.unwrap().unwrap().mana_usd, Some(0.6));
+    // Past the interval the re-read returns the older row; the later
+    // published snapshot is kept, so a slow re-read cannot undo a publish.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(
+        replica.latest().await.unwrap().unwrap().mana_usd,
+        Some(0.6),
+        "a re-read must not replace a later published snapshot"
+    );
 
     // A frozen provider quote, and a jump against the fresh previous
     // snapshot, are refused before the insert.
@@ -755,7 +797,7 @@ async fn a_refused_coingecko_falls_back_to_the_exchanges_in_order() {
     };
     cleanup().await;
     let http = crate::http::Outbound::for_tests();
-    let live = Prices::new(pool.clone(), true);
+    let live = Prices::new(pool.clone(), Some(POLL));
 
     // coinbase answers nothing usable (no route: 404), binance answers MANA and ETH
     let base = stub_upstreams(vec![(
@@ -779,7 +821,7 @@ async fn a_refused_coingecko_falls_back_to_the_exchanges_in_order() {
     assert_eq!(published.mana_eth, Some(MARKER_FALLBACK / 3000.0));
     assert_eq!(published.mana_btc, None);
     assert_eq!(published.market_cap_usd, None);
-    let db_only = Prices::new(pool.clone(), false);
+    let db_only = Prices::new(pool.clone(), None);
     assert_eq!(
         db_only.latest_snapshot().await.unwrap().unwrap(),
         *published
@@ -843,7 +885,7 @@ async fn an_outlier_needs_a_second_source() {
         )])
     };
     let http = crate::http::Outbound::for_tests();
-    let live = Prices::new(pool.clone(), true);
+    let live = Prices::new(pool.clone(), Some(POLL));
     let sources = |fallback: String| poller::Sources {
         coingecko: coingecko.clone(),
         fallbacks: vec![(poller::Exchange::Binance, fallback)],

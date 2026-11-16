@@ -734,6 +734,7 @@ pub(super) fn social_states(
             first_wear: notifications::FirstWearSettings {
                 shop_item_base_url: config.social.shop_item_base_url.clone(),
                 image_base: non_empty(&config.social.first_wear_image_base),
+                batch_size: i64::from(config.social.badges_processor_batch_size),
             },
             delivery_interval: Duration::from_secs(
                 config.social.notification_delivery_interval_secs,

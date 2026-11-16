@@ -14,6 +14,70 @@ guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
 
+class AuthStressTests(unittest.TestCase):
+    def test_external_timeout_preserves_partial_diagnostics_and_failure(self):
+        for output in (b'RPC_WORKLOAD_latest\nFD count=42\n\xff',
+                       'RPC_WORKLOAD_latest\nFD count=42\n', None):
+            for show_output in (False, True):
+                with self.subTest(output=output, show_output=show_output):
+                    error = subprocess.TimeoutExpired(['fixture'], 210, output=output)
+                    with mock.patch.object(guard, 'external_inventory'), \
+                            mock.patch.object(guard.subprocess, 'run', side_effect=error) as execute, \
+                            mock.patch('builtins.print') as printed, \
+                            mock.patch.object(guard, 'verify_external_result') as verify, \
+                            self.assertRaises(subprocess.TimeoutExpired) as raised:
+                        guard.run_external('fixture', 'required', show_output=show_output)
+                    self.assertIs(raised.exception, error)
+                    expected = output.decode(errors='replace') if isinstance(output, bytes) else output or ''
+                    printed.assert_any_call(expected, flush=True)
+                    self.assertEqual(execute.call_args.kwargs['timeout'], 210)
+                    self.assertEqual(execute.call_args.kwargs['stderr'], subprocess.STDOUT)
+                    verify.assert_not_called()
+
+    def test_auth_stress_workflow_requires_one_prepared_run_per_platform(self):
+        workflow = (ROOT / '.github/workflows/development.yml').read_text()
+        guard.validate_auth_stress_workflow(workflow)
+        command = '          python3 tooling/dev-regressions.py --auth-stress\n'
+        for changed in [workflow.replace(command, ''), workflow.replace(command, command * 2),
+                        workflow.replace('      - name: Run provisioned auth stress\n',
+                                         '      - name: Run provisioned auth stress\n        if: false\n'),
+                        workflow.replace('          prepare_catalyst_test_resources\n', ''),
+                        workflow.replace('        if: matrix.shard == 2\n', ''),
+                        workflow.replace('        shard: [1, 2, 3]\n', '        shard: [1, 3]\n')]:
+            with self.subTest(changed=changed):
+                with self.assertRaises(ValueError):
+                    guard.validate_auth_stress_workflow(changed)
+
+    def test_auth_stress_compiles_same_graph_and_runs_exact_ignored_body_once(self):
+        with mock.patch.object(guard, 'compiled_targets', return_value={'dcl_auth': 'fixture'}) as compile, \
+                mock.patch.object(guard, 'run_external') as execute:
+            guard.check_auth_stress()
+        compile.assert_called_once_with(guard.SELECTION.split(), ROOT / 'services/catalyst',
+                                        selected={'dcl_auth'}, kind='lib')
+        execute.assert_called_once_with('fixture', guard.AUTH_STRESS, show_output=True)
+
+    def test_auth_stress_never_displaces_ordinary_controls(self):
+        name = 'rpc_validator::tests::controlled_rpc_workload_measures_latest_and_fallback_at_the_verification_envelope'
+        self.assertIn(name, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, [name for _, _, name in guard.EXTERNAL])
+        for script in ['tooling/dev-test.sh', 'tooling/catalyst-test.sh']:
+            self.assertNotIn('prepare_catalyst_test_resources', (ROOT / script).read_text())
+
+    def test_auth_stress_preserves_successful_workload_output_and_rejects_missing_target(self):
+        name = guard.AUTH_STRESS
+        output = f'test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s\n'
+        with mock.patch.object(guard, 'run', side_effect=[f'{name}: test\n', f'{name}: test\n']), \
+                mock.patch.object(guard.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)) as execute:
+            guard.run_external('fixture', name, show_output=True)
+        self.assertIn('--show-output', execute.call_args.args[0])
+        with mock.patch.object(guard, 'compiled_targets', return_value={}), \
+                mock.patch.object(guard, 'run_external') as execute, \
+                self.assertRaisesRegex(ValueError, 'auth stress library target missing'):
+            guard.check_auth_stress()
+        execute.assert_not_called()
+
+
 class InventoryTests(unittest.TestCase):
     def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
         bodies = {
@@ -35,7 +99,12 @@ class InventoryTests(unittest.TestCase):
                 "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
                 "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
                 "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
-                "pulse::statistics::tests::producer_capacity_never_forgets_cursors_and_backlog_recovers_completely",
+                "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+                "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+                "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
+                "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+                "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+                "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
             ],
             ("catalyst_content", "lib"): [
                 "write_path_tests::a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile",
@@ -59,6 +128,29 @@ class InventoryTests(unittest.TestCase):
                     (others + f"{name}: benchmark\n", ""),
                 ]:
                     with self.subTest(target=target, name=name, changed=changed, ignored=ignored), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_statistics_boundary_bodies_remain_required_and_unignored(self):
+        targets = {
+            ("catalyst_comms", "lib"): [
+                "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+                "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+                "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
+            ],
+            ("catalyst", "lib"): [
+                "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+                "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
+            ],
+        }
+        for target, names in targets.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                without = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [(without, ""), (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
                         guard.verify(required, changed, ignored, str(target))
 
     def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
@@ -227,7 +319,7 @@ class InventoryTests(unittest.TestCase):
         setting = guard.EXTERNAL_SHARD
         self.assertEqual(guard.external_shard({}), (True, "1/1"))
         self.assertEqual(guard.external_shard({"CATALYST_TEST_SHARD": "", setting: ""}), (True, "1/1"))
-        # A run without shards executes them whatever the workflow sets for its three shards.
+        # A run that sets neither variable executes them.
         for total in range(1, 6):
             for chosen in range(1, total + 1):
                 owners = [guard.external_shard({"CATALYST_TEST_SHARD": f"{index}/{total}", setting: str(chosen)})
@@ -426,7 +518,8 @@ class InventoryTests(unittest.TestCase):
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
             mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
             mock.patch.dict(guard.os.environ, clear=True),
-            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
+            mock.patch.object(Path, "read_text", side_effect=["", manifest, "", ""]),
+            mock.patch.object(guard, "validate_auth_stress_workflow"),
             mock.patch.object(guard, "verify_resolution"),
             mock.patch.object(guard, "validate_runtime_script"),
             mock.patch.object(guard, "validate_test_script"),
@@ -476,6 +569,41 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
 
+
+    def test_engine_receipt_is_emitted_once_without_unrelated_success_output(self):
+        import json
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="matcher-receipt-") as temporary:
+            directory = Path(temporary)
+            count = directory / "executions"
+            executables = [directory / name for name in ["stats_metrics_engine-fixture", "ordinary-fixture"]]
+            for executable in executables:
+                executable.write_text(
+                    '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
+                    + "printf '%s' 'test configured_stats_engine_and_http_contract ... '\n"
+                    + "printf '\\n%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
+                    + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
+                )
+                executable.chmod(0o755)
+            result = subprocess.run(
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                 + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
+                 *(executable.as_posix() for executable in executables)],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(count.read_text().splitlines(), [path.name for path in executables])
+            receipts = [line for line in result.stdout.splitlines() if line.startswith("STATS_ENGINE_RECEIPT ")]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(json.loads(receipts[0].removeprefix("STATS_ENGINE_RECEIPT ")), {"completed": 32})
+            self.assertNotIn("private success detail", result.stdout)
+            self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
+            self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
+            for executable in executables:
+                log = (directory / (executable.name + ".log")).read_text()
+                self.assertEqual(log.splitlines()[0], "test configured_stats_engine_and_http_contract ... ")
+                self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
+                self.assertIn("private success detail", log)
 
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
@@ -684,21 +812,20 @@ export -f ulimit
                                     text=True, capture_output=True)
             return result, log.read_text() if log.exists() else ""
 
-    def test_macos_resource_probe_uses_controlled_tools_on_the_restricted_path(self):
+    def test_macos_ordinary_suite_does_not_probe_stress_resources(self):
         result, calls = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls.count("resource:sysctl -n kern.maxfilesperproc"), 1, calls)
-        self.assertIn("descriptors kern.maxfilesperproc=65536 required=65536", result.stdout)
+        self.assertNotIn("resource:sysctl", calls)
+        self.assertNotIn("descriptors", result.stdout)
         self.assertIn("verified-exports", calls)
         self.assertEqual(calls.count("foundation:down"), 1, calls)
 
-    def test_macos_inadequate_resource_stops_before_guards_and_cleans_up(self):
-        result, calls = self.run_fixture(kernel="10240")
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("kernel per-process limit 10240 is below 65536", result.stderr)
-        self.assertIn("resource:sysctl -n kern.maxfilesperproc", calls)
+    def test_macos_stock_kernel_runs_ordinary_suite_without_stress_floor(self):
+        result, calls = self.run_fixture(kernel="61440")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("resource:sysctl", calls)
         for command in ("python:", "cargo:", "make:"):
-            self.assertNotIn(command, calls)
+            self.assertIn(command, calls)
         self.assertEqual(calls.count("foundation:down"), 1, calls)
 
     def test_good_exports_cleanup_and_one_broad_run(self):
