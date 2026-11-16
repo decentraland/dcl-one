@@ -85,7 +85,8 @@ impl MovementPacer {
     /// Whether a send is allowed at `now` for `change`. It does not record one: call
     /// [`record_send`](Self::record_send) when the packet goes out.
     pub fn should_send(&self, now: f64, change: Change) -> bool {
-        // A whole token pays for a send; the tolerance absorbs rounding in the refill.
+        // A whole token pays for a send. The same tolerance on every comparison absorbs the rounding
+        // of times that are sums of frame lengths: six 60 Hz frames add up to 0.09999999999999998.
         if self.tokens_at(now) < 1.0 - 1e-9 {
             return false;
         }
@@ -95,8 +96,8 @@ impl MovementPacer {
         let elapsed = now - last;
         match change {
             Change::Edge => true,
-            Change::Moving => elapsed >= REGULAR_SPACING_SECONDS,
-            Change::Idle => elapsed >= IDLE_KEEPALIVE_SECONDS,
+            Change::Moving => elapsed >= REGULAR_SPACING_SECONDS - 1e-9,
+            Change::Idle => elapsed >= IDLE_KEEPALIVE_SECONDS - 1e-9,
         }
     }
 

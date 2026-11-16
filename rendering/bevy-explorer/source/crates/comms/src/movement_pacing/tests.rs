@@ -114,18 +114,69 @@ fn the_idle_keepalive_stays_at_one_hertz() {
 fn regular_movement_keeps_its_hundred_millisecond_spacing() {
     let mut pacer = MovementPacer::default();
     let mut sends = Vec::new();
-    for frame in 0..300 {
-        let now = frame as f64 / 60.0;
+    // The clock adds up frame lengths, as the game's does, so its times carry rounding error.
+    let mut now = 0.0;
+    for _ in 0..600 {
         if ask(&mut pacer, now, Change::Moving) {
             sends.push(now);
         }
+        now += 1.0 / 60.0;
     }
-    // Every send is at least 100 ms after the one before, and none waits more than a frame extra.
+    // Every send is 100 ms after the one before, six frames, so steady movement sends at 10 Hz.
     for pair in sends.windows(2) {
-        assert!(pair[1] - pair[0] >= REGULAR_SPACING_SECONDS);
-        assert!(pair[1] - pair[0] < REGULAR_SPACING_SECONDS + 1.0 / 60.0 + 1e-9);
+        assert!(
+            (pair[1] - pair[0] - REGULAR_SPACING_SECONDS).abs() < 1e-6,
+            "gap {}",
+            pair[1] - pair[0]
+        );
     }
-    assert!(busiest_second(&sends) <= MOVEMENT_MAX_SENDS_PER_SECOND as usize);
+    assert_eq!(sends.len(), 100);
+}
+
+/// The server's input bucket: 20 a second, 16 held, refilled in whole 50 ms steps
+/// (`GameplayRateLimiter` in `services/catalyst/comms/src/pulse/hardening.rs`).
+struct ServerInputBucket {
+    tokens: u32,
+    refilled_at_ms: u32,
+}
+
+impl ServerInputBucket {
+    fn accepts(&mut self, now_ms: u32) -> bool {
+        let refills = (now_ms - self.refilled_at_ms) / 50;
+        if refills > 0 {
+            self.tokens = (self.tokens + refills).min(16);
+            self.refilled_at_ms += refills * 50;
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
+#[test]
+fn the_server_accepts_every_send_of_a_storm_and_of_mixed_movement() {
+    for change_of in [(|_| Change::Edge) as fn(u32) -> Change, |frame| {
+        if frame % 7 == 0 {
+            Change::Edge
+        } else {
+            Change::Moving
+        }
+    }] {
+        let mut pacer = MovementPacer::default();
+        let mut server = ServerInputBucket {
+            tokens: 16,
+            refilled_at_ms: 1,
+        };
+        let mut now = 1.0;
+        for frame in 0..1200 {
+            if ask(&mut pacer, now, change_of(frame)) {
+                assert!(server.accepts((now * 1000.0) as u32), "frame {frame}");
+            }
+            now += 1.0 / 120.0;
+        }
+    }
 }
 
 #[test]

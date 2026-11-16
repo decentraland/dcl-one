@@ -37,7 +37,7 @@ struct LastAnim {
     sent_at: f64,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
-    // 10Hz dynamic / 1Hz static broadcast intervals.
+    // regular (`REGULAR_SPACING_SECONDS`) and idle keepalive broadcast intervals.
     pending_seek: Option<f32>,
     // Latched sound content hashes from the scene. Accumulated across frames so
     // single-frame sound triggers still make it out on the next broadcast; drained
@@ -118,7 +118,7 @@ fn broadcast_position(
     let (_, rotation, translation) = player.to_scale_rotation_translation();
     // An anim change (e.g. jump → idle on landing) must go out promptly: when the
     // player comes to rest, velocity/position stop changing, and without this
-    // bypass the transition would wait on the STATIC_FREQ keepalive.
+    // bypass the transition would wait on the idle keepalive (`IDLE_KEEPALIVE_SECONDS`).
     let current_hashes = scene_anim
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
