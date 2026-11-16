@@ -340,6 +340,9 @@ def pulse_env(config, certificate, key):
             'PULSE_WT_ENABLED': 'true', 'PULSE_WT_BIND': f'{bind}:{webtransport}',
             'PULSE_WT_CERT_PATH': str(certificate), 'PULSE_WT_KEY_PATH': str(key),
             'PULSE_REPLAY_STATE_PATH': str(STATE / 'pulse/replay.tsv'), 'NO_COLOR': '1',
+            # Root generation ownership uses the stack database after API schema readiness.
+            'DATABASE_URL': database_url(config),
+            'PULSE_V4_AUDIENCE': pulse_about_env(config)['COMMS_V4_PULSE_AUDIENCE'],
             # The cluster feed to the API's archipelago, and its engine.discovery heartbeat.
             'PULSE_NATS_URL': nats_url(config),
             # Pulse polls the API's moderator ban snapshot with the token the API checks.
@@ -367,6 +370,7 @@ def runtime_env(config):
     base = config['port']
     env.update({
         'DATABASE_URL': database_url(config), 'CATALYST_DATABASE_URL': database_url(config),
+        'ARCHIPELAGO_CONTROL_V4_AUDIENCE': pulse_about_env(config)['COMMS_V4_PULSE_AUDIENCE'],
         'HTTP_SERVER_HOST': '127.0.0.1',
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
@@ -658,9 +662,11 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/about'},
+    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
+    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
-    pulse = process('pulse', {'api-build': 'process_completed_successfully', 'nats': 'process_healthy'})
+    pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
     livekit = process('livekit')

@@ -460,11 +460,10 @@ difference not listed here is a gap, not a decision.
   permission edits, the operator and storage routes) answers 503
   `{"ok": false, "error": "Service Unavailable", "message": …}` with
   `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
-  default, and while the restore stamps do not vouch for this node
-  (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
+  default (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
   `POST /entities/active`, the parcel-holder lookup, the world-storage
-  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once a restore of its
-  database, blobs and credentials has been shown to work.
+  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once its database, blobs
+  and credentials are backed up and a restore has been tested.
 - **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
   whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
   than `sepolia` reports `networkId: 1` (upstream answers 500 for a network

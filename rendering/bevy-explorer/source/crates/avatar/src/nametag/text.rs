@@ -103,7 +103,6 @@ impl TextShaper<'_> {
                 JustifyText::Left,
                 linebreak,
                 width,
-                None,
                 font_size,
                 false,
                 &mut self.pipeline,
