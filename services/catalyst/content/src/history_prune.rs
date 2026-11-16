@@ -4,8 +4,8 @@
 //! nothing else names, once they have been out of `active_pointers` for the
 //! grace period. `failed_deployments`, `processed_snapshots`, the cursors
 //! and `local_entities` are never touched, and a row `local_entities` names
-//! (this node's own deployment, tombstoned or not) is never pruned, nor is a
-//! row such a deployment superseded.
+//! (this node's own scene, tombstoned or not) is never pruned, nor is a row
+//! such a scene superseded.
 //!
 //! Peer sync does not need the history rows to stay correct. Its only
 //! already-known probe is `sync_deployer::is_entity_deployed` (the bloom
@@ -19,9 +19,10 @@
 //! download, never a wrong pointer.
 //!
 //! Pruning is the operator's choice (`CONTENT_HISTORY_PRUNE_ENABLED`),
-//! independent of `CONTENT_WRITES_ENABLED`: only peer deployments go, which
-//! peers still hold, while local deployments and the rows they superseded
-//! always stay.
+//! independent of `CONTENT_WRITES_ENABLED`. Local scenes and the rows they
+//! superseded always stay; every other superseded version, local or peer,
+//! goes. Nothing needs those: the forwarder never sends a superseded row, a
+//! peer only needs the active entity, and only scenes can be unpublished.
 //!
 //! Superseded at: a row has no such column; it is the later of the row's own
 //! `local_timestamp` (a late replay lands already superseded) and its
@@ -521,8 +522,8 @@ mod tests {
     /// superseder is too recent, and an orphan no pointer names: the pass
     /// drops the superseded and the orphan with their `content_files` and
     /// exclusive blobs (their entity files too), keeps the shared blob, the
-    /// active rows, the local row and the young ones; the switch and the
-    /// flag refuse a pass; a second pass finds nothing.
+    /// active rows, the local row and the young ones; the flag refuses a
+    /// pass; a second pass finds nothing.
     #[tokio::test]
     async fn superseded_rows_go_with_their_exclusive_blobs_and_everything_active_local_or_young_stays()
      {
@@ -718,9 +719,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A pass that runs while writes are off (a node that had them on and
-    /// turns them on again) keeps the scene a local deployment superseded,
-    /// however old; the local scene's unpublish leaves it superseded.
+    /// A pass keeps the scene a local scene superseded, however old; the
+    /// local scene's unpublish leaves it superseded.
     #[tokio::test]
     async fn the_predecessor_of_a_local_deployment_is_kept() {
         let Some((pool, admin, name)) = own_database().await else {

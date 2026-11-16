@@ -79,7 +79,7 @@ pub mod time_range;
 // (READ_THROUGH_ENABLED).
 pub mod read_through;
 
-// The history prune: superseded peer deployments, their
+// The history prune: superseded deployments (local scenes excepted), their
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
 

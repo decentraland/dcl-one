@@ -117,11 +117,11 @@ pub struct ContentConfig {
     #[arg(long, env = "SNAPSHOT_GENERATION_INTERVAL_HOURS", default_value_t = 6)]
     pub snapshot_generation_interval_hours: u64,
 
-    // content history prune (src/content/history_prune.rs): drops the peer
+    // content history prune (src/content/history_prune.rs): drops the
     // deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
-    // Off by default and independent of CONTENT_WRITES_ENABLED: local
-    // deployments and the rows they superseded always stay.
+    // Off by default and independent of CONTENT_WRITES_ENABLED: local scenes
+    // and the rows they superseded always stay.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 
