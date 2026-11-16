@@ -7,6 +7,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate divergences from Unity
 
+- **Legacy Ethereum response envelopes follow Protocol.** `getUserAccount` returns
+  `{address}` (or `{}` without a connected wallet), and `convertMessageToObject` returns
+  `{dict}`. These are the shapes declared in `ethereum_controller.proto`. The Unity client
+  at [`c78b1f0`](https://github.com/decentraland/unity-explorer/blob/c78b1f0c59545b0d3b1ff43e109fa63997267850/Explorer/Assets/StreamingAssets/Js/Modules/EthereumController.js)
+  returns the bare address and dictionary. Dictionary keys are own properties, including
+  `__proto__`, as a protobuf map requires. Signing uses the existing engine Web3 permission
+  and wallet approval path; a hosted scene has no connected user wallet.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
@@ -405,7 +412,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
   portable like any other: each restricted action goes through the stored rules and the per-use
   prompt, which shows what is being done (the URL to open, the realm to change to). So
-  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `requiredPermissions` grants and refuses nothing (legacy permission queries only report it),
+  and nothing is asked before the scene starts. On native,
   `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
   permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
   declared-permission check on them would be bypassable.
@@ -508,6 +516,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m), read at startup and held to 500 to 7000 m.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 
 ## Deliberate choices that look like mistakes
 
@@ -586,6 +610,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **Legacy permission queries report declarations and current runtime policy without granting
+  either.** As in kernel@5b2cff4, a permission the scene.json `requiredPermissions` declares
+  reports true, and a portable also reports move-player and trigger-emote. Otherwise native
+  queries use the same trusted scene, realm, portable and presence rules as per-use checks;
+  an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
+  availability for an assigned scene because those browser paths are ungated. Undeclared media
+  hostname grants report false because the engine has no such grant store. Actions still pass
+  their existing permission and wallet checks, so a declaration does not create a grant. A
+  query accepts at most 16 permission items and resolves the scene policy once.
+- **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
+  assigned scene's actual identifier, metadata, content mappings and content URL. Its
+  `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and
+  cannot satisfy the legacy bundle format.
+- **Legacy avatar pulls recover current state after queue overflow.** Each scene owns at most
+  1024 queued events. Overflow causes the next pull to remove previously delivered identities
+  and bootstrap current peers; intermediate positions and transient expressions are not
+  replayed. Public speaking state is sampled from current participants, scoped by both room
+  hash and native context, with private calls excluded. Position indices count received native
+  updates, and expression timestamps record native delivery time.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **Legacy reads and signing can resolve during scene startup.** Account, permission and
+  entity-definition reads, signing, and avatar subscription/pulls use the immediate RPC
+  transport, keeping the existing trusted scene identity and action handlers. They do not
+  require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
+  budget between renderer flushes, excluding file reads; all immediate payloads share an
+  80 MiB budget. The web
+  relay independently enforces these limits and runs at most 32 queries concurrently,
+  alongside the existing file-read barrier. Retained payloads remain charged until the engine
+  releases their reply channels, even when callers cancel. A pending wallet approval therefore
+  does not block unrelated reads. A full renderer queue retains accepted web requests for retry;
+  native IPC buffers at most 1000 responses and 80 MiB per scene, serves pending scenes in
+  turn, and continues reading channel closes while the renderer queue is full. Overflow
+  terminates that scene and retains a terminal error for the renderer. File reads retain
+  their existing ordering. Deprecated CRDT reads drain already received data without
+  flushing scene state or waiting for another renderer tick.
