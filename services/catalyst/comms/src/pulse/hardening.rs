@@ -149,6 +149,7 @@ pub enum ReplayRejection {
     Forgotten,
     Capacity,
     SourceQuota,
+    WalletQuota,
     FutureDated,
     Storage,
 }
@@ -166,6 +167,12 @@ type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
 /// far above what the clients behind one address sign, and one source can take only a small part
 /// of the table.
 pub const DEFAULT_REPLAY_ENTRIES_PER_SOURCE: usize = 256;
+
+/// Live replay entries one wallet may hold. A client signs a new timestamp for every connection
+/// attempt; its fastest honest cadence is the reconnect after an accepted connection drops (about
+/// 3 s, less a fifth of jitter), about 25 per freshness window, while failed attempts back off from
+/// 1 s, doubling. This leaves room above that and keeps one wallet to a small part of the table.
+pub const DEFAULT_REPLAY_ENTRIES_PER_WALLET: usize = 32;
 
 /// Prefix of the IPv6 site a peer is also counted against, so addresses spread over the /64s of
 /// one allocation share one quota, as the clients behind one IPv4 address do. A provider that
@@ -360,17 +367,20 @@ impl ReplayJournal {
 /// therefore cannot make a dropped timestamp fresh again, and `forget_before` puts everything
 /// signed before this process started under the same floor.
 ///
-/// The table is bounded overall by `max_entries` and per source by `max_entries_per_source`: a
-/// source at its quota is refused a new pair, which is then neither recorded nor answered, and
-/// no existing entry is dropped early.
+/// The table is bounded overall by `max_entries`, per source by `max_entries_per_source` and per
+/// wallet by `max_entries_per_wallet`: a source or wallet at its quota is refused a new pair, which
+/// is then neither recorded nor answered, and no existing entry is dropped early. A clock-ahead
+/// pair stays recorded, and counted, because it was answered.
 pub struct HandshakeReplayPolicy {
     enabled: bool,
     skew_ms: i64,
     max_entries: usize,
     max_entries_per_source: usize,
+    max_entries_per_wallet: usize,
     forgotten_through_ms: i64,
     seen: ReplayEntries,
     entries_by_source: std::collections::HashMap<String, usize>,
+    entries_by_wallet: std::collections::HashMap<String, usize>,
     journal: Option<ReplayJournal>,
     storage_failed: bool,
 }
@@ -382,9 +392,11 @@ impl HandshakeReplayPolicy {
             skew_ms,
             max_entries,
             max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+            max_entries_per_wallet: DEFAULT_REPLAY_ENTRIES_PER_WALLET,
             forgotten_through_ms: i64::MIN,
             seen: std::collections::HashMap::new(),
             entries_by_source: std::collections::HashMap::new(),
+            entries_by_wallet: std::collections::HashMap::new(),
             journal: None,
             storage_failed: false,
         }
@@ -403,13 +415,20 @@ impl HandshakeReplayPolicy {
             skew_ms,
             max_entries,
             max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+            max_entries_per_wallet: DEFAULT_REPLAY_ENTRIES_PER_WALLET,
             forgotten_through_ms,
             seen,
             entries_by_source: std::collections::HashMap::new(),
+            entries_by_wallet: std::collections::HashMap::new(),
             journal: Some(journal),
             storage_failed: false,
         };
         policy.sweep_expired_in_memory(now_ms);
+        // A journal written under a larger or no per-wallet bound still loads; its wallets are
+        // refused new pairs until their entries leave the freshness window.
+        for (wallet, _) in policy.seen.keys() {
+            *policy.entries_by_wallet.entry(wallet.clone()).or_default() += 1;
+        }
         if policy.seen.len() > max_entries {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -449,6 +468,11 @@ impl HandshakeReplayPolicy {
     /// Live entries one source may hold; 0 removes the per-source bound.
     pub fn set_max_entries_per_source(&mut self, max: usize) {
         self.max_entries_per_source = max;
+    }
+
+    /// Live entries one wallet may hold; 0 removes the per-wallet bound.
+    pub fn set_max_entries_per_wallet(&mut self, max: usize) {
+        self.max_entries_per_wallet = max;
     }
 
     pub fn forget_before(&mut self, wall_ms: i64) {
@@ -499,12 +523,20 @@ impl HandshakeReplayPolicy {
                     >= policy.max_entries_per_source
             })
         };
-        if self.seen.len() >= self.max_entries / 2 || source_full(self) {
+        let wallet_full = |policy: &Self| {
+            policy.max_entries_per_wallet > 0
+                && policy.entries_by_wallet.get(&key.0).copied().unwrap_or(0)
+                    >= policy.max_entries_per_wallet
+        };
+        if self.seen.len() >= self.max_entries / 2 || source_full(self) || wallet_full(self) {
             self.sweep_expired(now_ms)?;
         }
 
         if source_full(self) {
             return Err(ReplayRejection::SourceQuota);
+        }
+        if wallet_full(self) {
+            return Err(ReplayRejection::WalletQuota);
         }
         if self.seen.len() >= self.max_entries {
             return Err(ReplayRejection::Capacity);
@@ -520,6 +552,7 @@ impl HandshakeReplayPolicy {
         for source in &sources {
             *self.entries_by_source.entry(source.clone()).or_default() += 1;
         }
+        *self.entries_by_wallet.entry(key.0.clone()).or_default() += 1;
         self.seen.insert(key, ReplayEntry { signed_ms, sources });
         if self
             .journal
@@ -556,11 +589,18 @@ impl HandshakeReplayPolicy {
         let oldest_fresh_ms = now_ms.saturating_sub(self.skew_ms);
         let mut forgotten_through_ms = self.forgotten_through_ms;
         let entries_by_source = &mut self.entries_by_source;
-        self.seen.retain(|_, entry| {
+        let entries_by_wallet = &mut self.entries_by_wallet;
+        self.seen.retain(|(wallet, _), entry| {
             if entry.signed_ms >= oldest_fresh_ms {
                 return true;
             }
             forgotten_through_ms = forgotten_through_ms.max(entry.signed_ms);
+            if let Some(count) = entries_by_wallet.get_mut(wallet) {
+                *count -= 1;
+                if *count == 0 {
+                    entries_by_wallet.remove(wallet);
+                }
+            }
             for source in &entry.sources {
                 if let Some(count) = entries_by_source.get_mut(source) {
                     *count -= 1;
@@ -1306,6 +1346,105 @@ mod tests {
             Err(ReplayRejection::Capacity)
         );
         assert!(p.seen.is_empty());
+    }
+
+    #[test]
+    fn one_wallet_cannot_take_the_replay_table_from_other_wallets() {
+        let capacity = 256;
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, capacity);
+        // One wallet signs many distinct timestamps inside the freshness window, current and
+        // clock-ahead, with no source to count them against.
+        for i in 0..capacity as i64 {
+            let signed = SIGNED + i * (SKEW / capacity as i64);
+            assert_ne!(
+                p.try_admit(SIGNED, None, "0xFlood", &signed.to_string()),
+                Err(ReplayRejection::Capacity)
+            );
+        }
+        // Other wallets are still admitted, now and later in the same window.
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xother", &SIGNED.to_string()),
+            Ok(())
+        );
+        let later = SIGNED + SKEW - 1;
+        assert_eq!(
+            p.try_admit(later, None, "0xthird", &later.to_string()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn wallet_quota_counts_clock_ahead_pairs_and_frees_after_the_window() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_wallet(2);
+        let current = SIGNED.to_string();
+        let ahead = (SIGNED + SKEW).to_string();
+        assert_eq!(p.try_admit(SIGNED, None, "0xABC", &current), Ok(()));
+        // A clock-ahead pair is answered, so it stays recorded and counts against the wallet.
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xabc", &ahead),
+            Err(ReplayRejection::FutureDated)
+        );
+        let refused = (SIGNED + 1).to_string();
+        assert_eq!(
+            p.try_admit(SIGNED + 1, Some("192.0.2.9"), "0xabc", &refused),
+            Err(ReplayRejection::WalletQuota)
+        );
+        // The refused pair was not recorded; other wallets are unaffected.
+        assert_eq!(p.seen.len(), 2);
+        assert_eq!(p.try_admit(SIGNED + 1, None, "0xdef", &refused), Ok(()));
+        // The answered clock-ahead pair is still consumed once it becomes current.
+        assert_eq!(
+            p.try_admit(SIGNED + SKEW, None, "0xabc", &ahead),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Once the current pair leaves the window, the wallet has room for one more.
+        let later = SIGNED + SKEW + 2;
+        assert_eq!(
+            p.try_admit(later, None, "0xabc", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_wallet.get("0xabc"), Some(&2));
+        assert_eq!(
+            p.try_admit(later, None, "0xabc", &(later + 1).to_string()),
+            Err(ReplayRejection::WalletQuota)
+        );
+    }
+
+    #[test]
+    fn durable_replay_journal_restores_wallet_counts_across_restart() {
+        let path = ReplayPath::new("wallet-quota-restart");
+        {
+            let mut first =
+                HandshakeReplayPolicy::durable(true, SKEW, 64, &path.0, SIGNED).unwrap();
+            for i in 0..3 {
+                let signed = SIGNED + i;
+                assert_eq!(
+                    first.try_admit(SIGNED + 2, None, "0xabc", &signed.to_string()),
+                    Ok(())
+                );
+            }
+        }
+        // A journal holding more than the wallet's quota still loads.
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 64, &path.0, SIGNED + 3)
+                .unwrap();
+        restarted.set_max_entries_per_wallet(2);
+        assert_eq!(restarted.entries_by_wallet.get("0xabc"), Some(&3));
+        assert_eq!(
+            restarted.try_admit(SIGNED + 3, None, "0xabc", &(SIGNED + 3).to_string()),
+            Err(ReplayRejection::WalletQuota)
+        );
+        assert_eq!(
+            restarted.try_admit(SIGNED + 3, None, "0xdef", &(SIGNED + 3).to_string()),
+            Ok(())
+        );
+        let later = SIGNED + SKEW + 3;
+        assert_eq!(
+            restarted.try_admit(later, None, "0xabc", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(restarted.entries_by_wallet.get("0xabc"), Some(&1));
     }
 
     #[test]

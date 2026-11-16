@@ -1169,6 +1169,30 @@ async fn replay_table_is_bounded_per_source() {
 }
 
 #[tokio::test]
+async fn wallet_over_its_replay_quota_is_refused_with_a_retryable_code() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_wallet(1);
+    assert_eq!(
+        server
+            .replay_policy
+            .try_admit(timestamp, None, &wallet, &(timestamp - 1).to_string()),
+        Ok(())
+    );
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Reject { reply, reason } => {
+            assert_eq!(reason, DisconnectReason::PreAuthBudgetExhausted);
+            assert!(reply.is_none());
+        }
+        other => panic!("expected the wallet's quota to refuse, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn whitelisted_source_is_not_held_to_the_replay_quota() {
     let (bytes, wallet, timestamp) = signed_handshake_request().await;
     let mut server = PulseServer::new();

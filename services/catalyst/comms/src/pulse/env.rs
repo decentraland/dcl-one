@@ -18,8 +18,8 @@ use super::cluster::{
 use super::handshake::MAX_TIMESTAMP_SKEW_MS;
 use super::hardening::{
     DEFAULT_DISCRETE_BURST, DEFAULT_DISCRETE_RATE_PER_SEC, DEFAULT_INPUT_BURST,
-    DEFAULT_INPUT_MAX_HZ, DEFAULT_REPLAY_ENTRIES_PER_SOURCE, DisconnectReason, GameplayRateLimiter,
-    HandshakeReplayPolicy, IpWhitelist,
+    DEFAULT_INPUT_MAX_HZ, DEFAULT_REPLAY_ENTRIES_PER_SOURCE, DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+    DisconnectReason, GameplayRateLimiter, HandshakeReplayPolicy, IpWhitelist,
 };
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use super::server::{ENET_CAPACITY, WT_CAPACITY};
@@ -207,6 +207,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48, so every subscriber of an IPv6 provider that shares one /48 shares one quota, as clients behind one IPv4 NAT address do; raise it before binding IPv6 for such networks; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
     ),
     (
+        "PULSE_REPLAY_ENTRIES_PER_WALLET",
+        "consumed-handshake entries one wallet may hold while they are fresh, including clock-ahead handshakes the server answered; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
+    ),
+    (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
         "shared audience for configured legacy ownership and its NATS control-position bridge; must match PULSE_V4_AUDIENCE when both are set (default unset)",
     ),
@@ -324,6 +328,10 @@ pub async fn run_from_env() -> anyhow::Result<()> {
     server.replay_policy.set_max_entries_per_source(env_or(
         "PULSE_REPLAY_ENTRIES_PER_SOURCE",
         DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+    )?);
+    server.replay_policy.set_max_entries_per_wallet(env_or(
+        "PULSE_REPLAY_ENTRIES_PER_WALLET",
+        DEFAULT_REPLAY_ENTRIES_PER_WALLET,
     )?);
     tracing::info!("durable Pulse handshake replay protection enabled");
     server.gameplay_limiter = GameplayRateLimiter::new(
@@ -953,6 +961,10 @@ mod tests {
             (
                 "PULSE_REPLAY_ENTRIES_PER_SOURCE",
                 DEFAULT_REPLAY_ENTRIES_PER_SOURCE.to_string(),
+            ),
+            (
+                "PULSE_REPLAY_ENTRIES_PER_WALLET",
+                DEFAULT_REPLAY_ENTRIES_PER_WALLET.to_string(),
             ),
             (
                 "PULSE_SCENE_LISTENER_MAX_PARCELS",

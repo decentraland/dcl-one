@@ -569,6 +569,15 @@ impl PulseServer {
                             );
                             DisconnectReason::PreAuthIpLimitExhausted
                         }
+                        // A retryable pre-auth refusal: the wallet's entries leave the table
+                        // within two freshness windows, and its client is then admitted again.
+                        ReplayRejection::WalletQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_wallet_quota");
+                            tracing::debug!(
+                                "Pulse handshake refused: wallet holds its replay-table quota"
+                            );
+                            DisconnectReason::PreAuthBudgetExhausted
+                        }
                         _ => DisconnectReason::HandshakeReplayRejected,
                     },
                 }));
