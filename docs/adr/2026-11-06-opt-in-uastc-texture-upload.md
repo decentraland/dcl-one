@@ -122,15 +122,21 @@ is byte-for-byte what it was.
 - **Staging.** Rewritten models, KTX2 files, the background import's `manifest.json`, the last
   deploy's `deploy-manifest.json` and a cache live in `.dcl-one/optimized-textures/`. The cache is keyed by the source's sha256, the encoder identity
   (module sha256 and arguments), the colour mode and the size cap, so an unchanged texture is never
-  encoded again. A texture that can't gain (too small, undecodable, refused by the encoder) is
-  recorded as kept, so it is not retried. A file's hash and a GLB's image plan are kept in memory
-  per size and modification time, and a source's bytes are read only while it is encoded, so a
-  save that changes no image or model re-reads nothing. After each background swap, KTX2 files and
-  cache entries the run neither read nor publishes are deleted, as are staged models the overlay
-  no longer names. One process at a time writes, prunes or reads a payload from the stage: an
-  exclusive lock on `.dcl-one/optimized-textures/.lock` is held by a background run until its
-  sweep and by a deploy until its payload is read. Two `start`s on one project still share the
-  stage; each sweep keeps only its own run's files.
+  encoded again. A texture the preparation refuses for good (too small to gain, undecodable) is
+  recorded as kept, so it is not retried; an encoder or storage failure is not recorded, and the
+  next run tries again. A file's hash and a GLB's image plan are kept in memory per size,
+  modification time and, on Unix, inode and change time (which a copy that keeps the
+  modification time still moves); a `.gltf`, or a GLB that reads images through an external
+  buffer, is scanned every run. A source's bytes are read only while it is encoded: a file alone,
+  or one model at a time for its embedded images, read and parsed once. So a save that changes no
+  image or model re-reads nothing. After each background swap and when a deploy's stage is
+  dropped, KTX2 files, cache entries and staged models that run (and the preview in the same
+  process) neither read nor publish are deleted; with the setting off the stage is emptied when
+  no other process holds it. One process at a time writes, sweeps or reads a payload from the
+  stage: an exclusive lock on `.dcl-one/optimized-textures/.lock` is held by a background run
+  until its sweep and by a deploy until its payload is read. With the setting off a deploy takes
+  no lock and creates nothing. Two `start`s on one project still share the stage; each sweep keeps
+  only its own process's files.
 - **Preview equals upload.** The overlay (staged sources, added KTX2 files, left-out originals) is
   applied where the payload is decided: `deploy`'s file list and `payload_path`, and the preview's
   scene entity and `/content/contents`. Once an import finishes, the preview serves the bytes a

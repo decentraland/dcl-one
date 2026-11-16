@@ -152,7 +152,7 @@ impl Overlay {
 }
 
 /// A file as last seen: a moved stamp means the inputs changed.
-type Stamp = (String, u64, Option<SystemTime>);
+type Stamp = (String, Option<FileKey>);
 
 /// One project's last finished background run: what the preview serves.
 #[derive(Clone, Debug, Default)]
@@ -165,6 +165,9 @@ struct Entry {
     stamps: Option<Vec<Stamp>>,
     /// Each rewritten model's size and time when the run read it.
     model_inputs: Arc<HashMap<String, FileKey>>,
+    /// The stage files the run read or publishes: what any sweep in this
+    /// process keeps while the preview serves this run.
+    keep: Arc<BTreeSet<PathBuf>>,
 }
 
 /// Projects this process has imported, by canonical root.
@@ -296,12 +299,7 @@ pub fn payload_source(root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 fn stamp(rel: &str, path: &Path) -> Stamp {
-    let meta = std::fs::metadata(path).ok();
-    (
-        rel.to_string(),
-        meta.as_ref().map_or(0, |m| m.len()),
-        meta.and_then(|m| m.modified().ok()),
-    )
+    (rel.to_string(), file_key(path))
 }
 
 /// The preview's inputs: the tree files it serves.
@@ -315,14 +313,48 @@ fn stamps_of(root: &Path, rels: &[String]) -> Vec<Stamp> {
 /// background import, if any, to catch up with the setting it may have stored.
 pub struct DeployStage {
     root: PathBuf,
-    _turn: tokio::sync::MutexGuard<'static, ()>,
-    _lock: std::fs::File,
+    /// With the setting off, none: the stage is not read, so nothing is held.
+    _turn: Option<tokio::sync::MutexGuard<'static, ()>>,
+    lock: Option<std::fs::File>,
+    /// The stage files this run read or publishes, kept by the sweep that
+    /// runs when the stage is dropped, with the preview's.
+    keep: Option<BTreeSet<PathBuf>>,
 }
 
 impl Drop for DeployStage {
     fn drop(&mut self) {
+        // still under the stage lock: the fields drop after this body
+        if self.lock.is_some()
+            && let Some(keep) = self.keep.take()
+        {
+            let mut keep = keep;
+            keep.extend(preview_keep(&self.root));
+            sweep_stage(&self.root.join(STAGE), &keep);
+        }
         deploys().remove(&self.root);
         import::request(&self.root);
+    }
+}
+
+/// The stage files the preview in this process serves, which no sweep here
+/// deletes.
+fn preview_keep(root: &Path) -> BTreeSet<PathBuf> {
+    registry()
+        .get(root)
+        .map(|entry| (*entry.keep).clone())
+        .unwrap_or_default()
+}
+
+/// With the setting off, the stage's files serve nothing: deleted when the
+/// stage exists and no other process holds it, but those the preview here
+/// still serves. Nothing is created, and a lock that can't be taken skips it.
+fn sweep_when_off(root: &Path) {
+    let stage = root.join(STAGE);
+    if !stage.is_dir() {
+        return;
+    }
+    if let Ok(Some(_lock)) = try_lock_stage(root) {
+        sweep_stage(&stage, &preview_keep(root));
     }
 }
 
@@ -339,6 +371,17 @@ pub async fn stage_for_deploy(
     quiet: bool,
 ) -> Result<DeployStage> {
     let project = settings::apply(root, overrides)?;
+    if !project.optimize_textures {
+        // the payload is the tree's: no lock, no stage, nothing to wait for
+        sweep_when_off(root);
+        deploys().insert(root.to_path_buf(), None);
+        return Ok(DeployStage {
+            root: root.to_path_buf(),
+            _turn: None,
+            lock: None,
+            keep: None,
+        });
+    }
     let turn = match RUN_LOCK.try_lock() {
         Ok(turn) => turn,
         Err(_) => {
@@ -361,20 +404,18 @@ pub async fn stage_for_deploy(
                 .context("locking the texture stage")?
         }
     };
-    let stage = DeployStage {
+    let mut stage = DeployStage {
         root: root.to_path_buf(),
-        _turn: turn,
-        _lock: lock,
+        _turn: Some(turn),
+        lock: Some(lock),
+        keep: None,
     };
     let settings = Settings::for_project(project);
-    if !project.optimize_textures {
-        deploys().insert(root.to_path_buf(), None);
-        return Ok(stage);
-    }
     let owned = root.to_path_buf();
-    let overlay = tokio::task::spawn_blocking(move || deploy_run(&owned, settings, quiet))
+    let (overlay, keep) = tokio::task::spawn_blocking(move || deploy_run(&owned, settings, quiet))
         .await
         .context("the texture optimizer stopped")??;
+    stage.keep = Some(keep);
     deploys().insert(root.to_path_buf(), Some(Arc::new(overlay)));
     Ok(stage)
 }
@@ -382,7 +423,11 @@ pub async fn stage_for_deploy(
 /// One foreground run for `deploy`, on every core, over the files it uploads:
 /// the tree's publishable files and the release build's own, each read where
 /// the payload reads it.
-fn deploy_run(root: &Path, settings: Settings, quiet: bool) -> Result<Overlay> {
+fn deploy_run(
+    root: &Path,
+    settings: Settings,
+    quiet: bool,
+) -> Result<(Overlay, BTreeSet<PathBuf>)> {
     let rels =
         crate::deploy::tree_payload_files(root, crate::deploy::collect_publishable_files(root)?);
     let encoder = basisu::WasmBasisu::shared()?;
@@ -424,7 +469,8 @@ fn deploy_run(root: &Path, settings: Settings, quiet: bool) -> Result<Overlay> {
     {
         ux::note_absent(warning);
     }
-    Ok(outcome.overlay)
+    let keep = outcome.keep();
+    Ok((outcome.overlay, keep))
 }
 
 /// The deploy's loud line about originals left out.
@@ -576,6 +622,16 @@ pub struct Outcome {
     pub model_inputs: HashMap<String, FileKey>,
 }
 
+impl Outcome {
+    /// The stage files a sweep keeps for this run: those it read and the
+    /// staged files its overlay publishes.
+    fn keep(&self) -> BTreeSet<PathBuf> {
+        let mut keep = self.stage_files.clone();
+        keep.extend(self.overlay.sources.values().cloned());
+        keep
+    }
+}
+
 fn is_model(rel: &str) -> bool {
     let lower = rel.to_ascii_lowercase();
     lower.ends_with(".glb") || lower.ends_with(".gltf")
@@ -644,13 +700,32 @@ struct ModelWork {
     images: Vec<ImageWork>,
 }
 
-/// A file's size and modification time: when both hold, its bytes, hash and
-/// plan are taken as unchanged.
-pub type FileKey = (u64, Option<SystemTime>);
+/// What tells a file's bytes moved without reading them: its size and
+/// modification time and, on Unix, its inode and change time, which a copy
+/// that keeps the modification time (`cp -p`, `rsync -t`, an unzip) still
+/// moves. While all hold, its hash and plan are taken as unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FileKey {
+    pub len: u64,
+    modified: Option<SystemTime>,
+    /// Inode, then change time in seconds and nanoseconds; zero off Unix.
+    changed: (u64, i64, i64),
+}
 
 fn file_key(path: &Path) -> Option<FileKey> {
     let meta = std::fs::metadata(path).ok()?;
-    Some((meta.len(), meta.modified().ok()))
+    #[cfg(unix)]
+    let changed = {
+        use std::os::unix::fs::MetadataExt;
+        (meta.ino(), meta.ctime(), meta.ctime_nsec())
+    };
+    #[cfg(not(unix))]
+    let changed = (0, 0, 0);
+    Some(FileKey {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+        changed,
+    })
 }
 
 /// The sha256 of `path` and its size, read again only when its size or time
@@ -667,7 +742,7 @@ fn file_sha(path: &Path) -> Option<(String, u64)> {
         .get(path)
         && *had == key
     {
-        return Some((sha.clone(), key.0));
+        return Some((sha.clone(), key.len));
     }
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = sha2::Sha256::new();
@@ -684,7 +759,7 @@ fn file_sha(path: &Path) -> Option<(String, u64)> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(path.to_path_buf(), (key, sha.clone()));
-    Some((sha, key.0))
+    Some((sha, key.len))
 }
 
 /// What one image of a model is, as [`scan_model`] found it.
@@ -716,8 +791,9 @@ enum ModelScan {
 }
 
 /// [`ModelScan`] of the model `rel` at `path`; `Err` when it can't be read.
-/// Only GLBs are kept between runs: a `.gltf` may read images through
-/// buffers in other files, whose changes its own time does not show.
+/// Kept between runs only for a GLB whose images read nothing outside it: a
+/// `.gltf`, or a GLB with an external buffer, reads images through other
+/// files, whose changes its own key does not show.
 fn scan_model(
     path: &Path,
     rel: &str,
@@ -735,23 +811,29 @@ fn scan_model(
         return Ok((scan.clone(), key));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("model not readable: {e}"))?;
+    let read_outside = std::cell::Cell::new(false);
     let scan = match gltf::Model::parse(&bytes) {
         Err(e) => ModelScan::Unparsed {
             why: format!("model not optimized: {e:#}"),
             text: String::from_utf8_lossy(&bytes).to_lowercase(),
         },
         Ok(model) => {
+            let tracked = |path: &str| {
+                read_outside.set(true);
+                read(path)
+            };
             let images = gltf::plan_images(&model)
                 .into_iter()
                 .enumerate()
                 .map(|(index, plan)| {
-                    let source = gltf::image_source(&model, rel, index, read).map(|s| match s {
-                        gltf::ImageSource::External(path) => ScanSource::External(path),
-                        gltf::ImageSource::Embedded(b) => ScanSource::Embedded {
-                            sha: encode::sha256_hex(&b),
-                            len: b.len() as u64,
-                        },
-                    });
+                    let source =
+                        gltf::image_source(&model, rel, index, &tracked).map(|s| match s {
+                            gltf::ImageSource::External(path) => ScanSource::External(path),
+                            gltf::ImageSource::Embedded(b) => ScanSource::Embedded {
+                                sha: encode::sha256_hex(&b),
+                                len: b.len() as u64,
+                            },
+                        });
                     ImageScan { plan, source }
                 })
                 .collect();
@@ -763,7 +845,7 @@ fn scan_model(
         }
     };
     let scan = Arc::new(scan);
-    if bytes.starts_with(b"glTF") {
+    if bytes.starts_with(b"glTF") && !read_outside.get() {
         scans
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -772,31 +854,66 @@ fn scan_model(
     Ok((scan, key))
 }
 
-/// A job's source bytes, checked against the hash the run planned with: a
-/// file changed since then is kept as it is this run and encoded the next.
-fn job_bytes(
-    job: &Job,
-    read: &dyn Fn(&str) -> Option<Vec<u8>>,
-) -> std::result::Result<Vec<u8>, String> {
-    let bytes = match &job.source {
-        JobSource::File(path) => {
-            std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?
-        }
-        JobSource::Embedded { path, rel, index } => {
-            let raw = std::fs::read(path).map_err(|e| format!("reading {rel}: {e}"))?;
-            let model = gltf::Model::parse(&raw).map_err(|e| format!("{e:#}"))?;
-            match gltf::image_source(&model, rel, *index, read)? {
-                gltf::ImageSource::Embedded(b) => b,
-                gltf::ImageSource::External(_) => {
-                    return Err(format!("{rel} changed during the run"));
-                }
-            }
-        }
-    };
-    if encode::sha256_hex(&bytes) != job.sha {
+/// Checks `bytes` against the hash the run planned `job` with: a source
+/// changed since then is kept as it is this run and encoded the next.
+fn check_planned(job: &Job, bytes: &[u8]) -> std::result::Result<(), String> {
+    if encode::sha256_hex(bytes) != job.sha {
         return Err("the source changed during the run".to_string());
     }
-    Ok(bytes)
+    Ok(())
+}
+
+/// The jobs of one source, taken together: a file's job alone, or every
+/// missing embedded job of one model, so the model is read and parsed once.
+fn work_units(jobs: &[Job], missing: &[usize]) -> Vec<Vec<usize>> {
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    let mut by_model: HashMap<&Path, usize> = HashMap::new();
+    for &i in missing {
+        match &jobs[i].source {
+            JobSource::File(_) => units.push(vec![i]),
+            JobSource::Embedded { path, .. } => match by_model.get(path.as_path()) {
+                Some(&unit) => units[unit].push(i),
+                None => {
+                    by_model.insert(path, units.len());
+                    units.push(vec![i]);
+                }
+            },
+        }
+    }
+    units
+}
+
+/// The bytes of a unit of embedded jobs: the model read and parsed once, its
+/// missing images taken out, the model dropped before they are encoded.
+fn embedded_sources(
+    jobs: &[Job],
+    unit: &[usize],
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Vec<(usize, std::result::Result<Vec<u8>, String>)> {
+    let Some(JobSource::Embedded { path, rel, .. }) = unit.first().map(|&i| &jobs[i].source) else {
+        return Vec::new();
+    };
+    let model = std::fs::read(path)
+        .map_err(|e| format!("reading {rel}: {e}"))
+        .and_then(|raw| gltf::Model::parse(&raw).map_err(|e| format!("{e:#}")));
+    unit.iter()
+        .map(|&i| {
+            let bytes = match (&model, &jobs[i].source) {
+                (Err(why), _) => Err(why.clone()),
+                (Ok(model), JobSource::Embedded { index, .. }) => {
+                    match gltf::image_source(model, rel, *index, read) {
+                        Ok(gltf::ImageSource::Embedded(b)) => Ok(b),
+                        Ok(gltf::ImageSource::External(_)) => {
+                            Err(format!("{rel} changed during the run"))
+                        }
+                        Err(why) => Err(why),
+                    }
+                }
+                (Ok(_), JobSource::File(_)) => Err("not an embedded image".to_string()),
+            };
+            (i, bytes)
+        })
+        .collect()
 }
 
 fn ktx2_path(stage: &Path, sha: &str) -> PathBuf {
@@ -844,8 +961,9 @@ fn is_sha_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// What a cache entry holds for a texture kept as its source: the encode is
-/// not retried until the source, the encoder or the settings change.
+/// What a cache entry holds for a texture the preparation refuses for good
+/// (too small to gain, undecodable): not retried until the source, the
+/// encoder or the settings change.
 const KEPT_PREFIX: &str = "kept: ";
 
 fn cache_entry(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> PathBuf {
@@ -873,9 +991,9 @@ fn cached(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Opti
 }
 
 /// One texture not in the cache: prepared and encoded, its KTX2 stored by
-/// content hash and the cache pointed at it. A texture the preparation or the
-/// encoder refuses (too small to gain, undecodable) is recorded as kept, so
-/// later runs don't retry it.
+/// content hash and the cache pointed at it. A texture the preparation
+/// refuses (too small to gain, undecodable) is recorded as kept, so later runs
+/// don't retry it; an encoder or storage failure is retried by the next run.
 fn encode_one(
     stage: &Path,
     job: &Job,
@@ -894,7 +1012,8 @@ fn encode_one(
     };
     let ktx2 = match encoder.encode(&png, job.mode) {
         Ok(ktx2) => ktx2,
-        Err(e) => return kept(format!("encoder failed: {e:#}")),
+        // not recorded: a failure here can pass (a full disk, memory pressure)
+        Err(e) => return Encoded::Failed(format!("encoder failed: {e:#}")),
     };
     let sha = encode::sha256_hex(&ktx2);
     let stored = write_content_addressed(&ktx2_path(stage, &sha), &ktx2)
@@ -965,37 +1084,23 @@ fn stage_model(
     Ok(hit)
 }
 
-/// Deletes the KTX2 files and cache entries outside `keep` (what the run in
-/// place read or publishes), so a creator iterating on textures doesn't grow
-/// the stage without bound; called after the swap, under the stage lock.
+/// Deletes the KTX2 files, cache entries and staged models outside `keep`
+/// (what the run in place read or publishes), so the stage doesn't grow
+/// without bound; called after a background swap and when a deploy's stage is
+/// dropped, under the stage lock, and with the setting off.
 fn sweep_stage(stage: &Path, keep: &BTreeSet<PathBuf>) {
-    for dir in ["ktx2", "cache"] {
+    for dir in ["ktx2", "cache", "models"] {
         let Ok(rd) = std::fs::read_dir(stage.join(dir)) else {
             continue;
         };
         for entry in rd.flatten() {
             let path = entry.path();
-            if path.is_file() && !keep.contains(&path) {
+            if path.is_dir() {
+                // the layout before models were named by content
+                let _ = std::fs::remove_dir_all(&path);
+            } else if !keep.contains(&path) {
                 let _ = std::fs::remove_file(&path);
             }
-        }
-    }
-}
-
-/// Deletes staged models the overlay now in place does not name; called
-/// after the swap.
-fn prune_models(stage: &Path, keep: &Overlay) {
-    let keep: BTreeSet<&Path> = keep.sources.values().map(PathBuf::as_path).collect();
-    let Ok(rd) = std::fs::read_dir(stage.join("models")) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            // the layout before models were named by content
-            let _ = std::fs::remove_dir_all(&path);
-        } else if !keep.contains(path.as_path()) {
-            let _ = std::fs::remove_file(&path);
         }
     }
 }
@@ -1157,19 +1262,43 @@ pub(crate) fn optimize(
             })
         };
         report(done.load(std::sync::atomic::Ordering::Relaxed));
-        let encoded = encode::run_pool(&missing, run.workers, |&i| {
-            // one source in memory per worker, only while it is encoded
-            let result = match job_bytes(&jobs[i], &read) {
-                Ok(bytes) => encode_one(&stage, &jobs[i], &bytes, encoder, settings.max_size),
+        // sources are read in the workers, only while encoded: a file's bytes,
+        // or one model and one of its embedded images at a time
+        let encode_job = |i: usize, bytes: std::result::Result<&[u8], String>| {
+            let result = match bytes.and_then(|b| check_planned(&jobs[i], b).map(|()| b)) {
+                Ok(bytes) => encode_one(&stage, &jobs[i], bytes, encoder, settings.max_size),
                 Err(why) => Encoded::Failed(why),
             };
             if matches!(result, Encoded::Failed(_)) {
                 failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             report(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
-            result
+            (i, result)
+        };
+        // sources are read only for the textures the cache lacks: each file in
+        // its worker, and one model at a time for its embedded images, which
+        // the workers then share
+        let units = work_units(&jobs, &missing);
+        let (files, models): (Vec<_>, Vec<_>) = units
+            .into_iter()
+            .partition(|unit| matches!(jobs[unit[0]].source, JobSource::File(_)));
+        let files: Vec<usize> = files.into_iter().map(|unit| unit[0]).collect();
+        let mut encoded = encode::run_pool(&files, run.workers, |&i| {
+            let JobSource::File(path) = &jobs[i].source else {
+                unreachable!("partitioned on the source")
+            };
+            match std::fs::read(path) {
+                Ok(bytes) => encode_job(i, Ok(&bytes)),
+                Err(e) => encode_job(i, Err(format!("reading {}: {e}", path.display()))),
+            }
         });
-        for (i, result) in missing.iter().copied().zip(encoded) {
+        for unit in models {
+            let sources = embedded_sources(&jobs, &unit, &read);
+            encoded.extend(encode::run_pool(&sources, run.workers, |(i, bytes)| {
+                encode_job(*i, bytes.as_deref().map_err(Clone::clone))
+            }));
+        }
+        for (i, result) in encoded {
             results[i] = Some(result);
         }
     }
