@@ -23,7 +23,9 @@ Internal development and CI install with pnpm. This replaces the package-manager
 decisions; the rest of both stands.
 
 - A project commits `pnpm-lock.yaml` and pins pnpm 12.21.0 in its root `packageManager`. pnpm 12
-  is a native program; through corepack it downloads and verifies that program on first use.
+  is a native program; through corepack it downloads and verifies that program on first use. Each
+  lockfile opens with the pinned pnpm's own packages and their integrity
+  (`packageManagerDependencies`), and a frozen install fails until it does.
   CI and the build scripts install with `--frozen-lockfile` on that version, through corepack
   (`corepack enable`, or `corepack pnpm@12.21.0`, the `PNPM` default of the SDK and protocol
   Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
@@ -84,8 +86,9 @@ What stays on npm:
   declare, which the flat install hides. Declaring them changes what their users install and is a
   separate decision.
 - The electron-builder setting depends on that tool's internals and is checked on each upgrade.
-- Another pnpm version is one change: each project's pin, the workflows, the Makefiles' `PNPM`
-  defaults and `PNPM_VERSION`, which the guard then holds everything to.
+- Another pnpm version is one change: each project's pin and the record at the top of its lockfile
+  (`pnpm install --lockfile-only`), the workflows, the Makefiles' `PNPM` defaults and
+  `PNPM_VERSION`, which the guard then holds everything to.
 - CI fetches pnpm through the corepack Node 24 ships. Node 25 and later do not ship corepack, so a
   move of CI past Node 24 needs another way to fetch the pinned pnpm. The development shell
   provides pnpm itself.
