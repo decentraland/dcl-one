@@ -41,7 +41,7 @@
   },
   "apps/sites/src/features/profile/collectibles.module.css": {
     "primitives": 0,
-    "tokens": 78
+    "tokens": 40
   },
   "apps/sites/src/features/social/submit-hangout/FeaturedAssetPicker.module.css": {
     "primitives": 2,
@@ -226,6 +226,10 @@
   "library/ui/components/SearchBar/SearchBar.module.css": {
     "primitives": 0,
     "tokens": 9
+  },
+  "library/ui/components/ShopCard/ShopCard.module.css": {
+    "primitives": 0,
+    "tokens": 66
   },
   "library/ui/components/Skeleton/Skeleton.module.css": {
     "primitives": 0,
