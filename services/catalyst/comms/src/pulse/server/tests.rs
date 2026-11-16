@@ -1,4 +1,5 @@
 use super::*;
+use crate::pulse::hardening::WriterStep;
 
 #[test]
 fn connection_limiter_precedes_admission_and_rolls_back_refused_pre_auth() {
@@ -1074,7 +1075,7 @@ impl Drop for JournalPath {
 fn journaled_server(
     path: &std::path::Path,
     now_ms: i64,
-) -> (PulseServer, std::sync::mpsc::Sender<std::io::Result<()>>) {
+) -> (PulseServer, std::sync::mpsc::Sender<WriterStep>) {
     let mut server = PulseServer::with_config(4, 2, &[50], false);
     let (policy, gate) = HandshakeReplayPolicy::durable_gated(
         crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
@@ -1127,7 +1128,7 @@ async fn a_handshake_is_answered_only_after_its_journal_sync() {
         );
         assert!(!server.is_authenticated(1));
 
-        gate.send(Ok(())).unwrap();
+        gate.send(WriterStep::Write).unwrap();
         let ready = journal_settled(&mut server).await;
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].peer, 1);
@@ -1216,9 +1217,41 @@ async fn a_failed_journal_sync_refuses_the_held_handshake_without_an_answer() {
             .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
             .is_none()
     );
-    gate.send(Err(std::io::Error::other("injected write failure")))
-        .unwrap();
+    gate.send(WriterStep::Fail).unwrap();
     let ready = journal_settled(&mut server).await;
+    assert_eq!(ready.len(), 1);
+    assert_eq!(
+        ready[0].action,
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::ServerFull
+        }
+    );
+    assert_eq!(
+        server.peers[&1].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+}
+
+#[tokio::test]
+async fn a_panicked_journal_writer_wakes_the_loop_to_refuse_held_handshakes() {
+    let path = JournalPath::new("writer-panic");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    gate.send(WriterStep::Panic).unwrap();
+    // The event loop waits on the writer's progress, not on polling: the panic must wake it.
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        server.replay_policy.journal_progressed(),
+    )
+    .await
+    .expect("a writer panic wakes the event loop");
+    let ready = server.take_journaled();
     assert_eq!(ready.len(), 1);
     assert_eq!(
         ready[0].action,
@@ -1254,7 +1287,7 @@ async fn a_peer_that_floods_while_its_handshake_is_held_is_refused() {
     let held = server.held_handshakes.front().unwrap();
     assert!(held.overflowed);
     assert!(held.packets.is_empty(), "nothing more of the peer is kept");
-    gate.send(Ok(())).unwrap();
+    gate.send(WriterStep::Write).unwrap();
     let ready = journal_settled(&mut server).await;
     assert_eq!(
         ready[0].action,
@@ -1349,7 +1382,7 @@ async fn a_held_handshake_is_answered_on_release_before_the_packets_behind_it() 
     assert!(!server.is_authenticated(peer), "no answer before the sync");
     assert_eq!(server.profiles.get(peer), 0);
 
-    gate.send(Ok(())).unwrap();
+    gate.send(WriterStep::Write).unwrap();
     tokio::time::timeout(
         crate::shared::test_wait::HANG_GUARD,
         server.replay_policy.journal_progressed(),
@@ -1402,7 +1435,7 @@ async fn a_disconnect_drops_the_held_handshake() {
     server
         .peers
         .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
-    gate.send(Ok(())).unwrap();
+    gate.send(WriterStep::Write).unwrap();
     let issued = server.replay_policy.journal_issued();
     tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
         while server.replay_policy.journal_progress().durable_through < issued {

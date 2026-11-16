@@ -360,20 +360,23 @@ impl ReplayJournalFile {
 
     /// The writer thread: waits for a job, takes every job queued behind it as one batch, and
     /// writes the batch with one sync, so concurrent handshakes share a sync. `gate`, used by
-    /// tests only, must release each batch (an error fails it, a closed gate stops the writer
-    /// as a crash would, before the batch is written).
+    /// tests only, must release each batch with a [`WriterStep`]; a closed gate stops the writer
+    /// as a crash would, before the batch is written.
     fn write_jobs(
         mut self,
         jobs: std::sync::mpsc::Receiver<JournalJob>,
         progress: tokio::sync::watch::Sender<JournalProgress>,
-        gate: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
     ) {
         let _panic = ReportPanic(&progress);
         let mut durable_through = 0u64;
         while let Ok(first) = jobs.recv() {
             let gated = match gate.as_ref().map(std::sync::mpsc::Receiver::recv) {
-                None => Ok(()),
-                Some(Ok(result)) => result,
+                None | Some(Ok(WriterStep::Write)) => Ok(()),
+                Some(Ok(WriterStep::Fail)) => {
+                    Err(std::io::Error::other("injected journal write failure"))
+                }
+                Some(Ok(WriterStep::Panic)) => panic!("injected journal writer panic"),
                 Some(Err(_)) => return,
             };
             let batch: Vec<_> = std::iter::once(first).chain(jobs.try_iter()).collect();
@@ -397,6 +400,15 @@ impl ReplayJournalFile {
             }
         }
     }
+}
+
+/// What a test gate tells the journal writer to do with its next batch.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug)]
+pub(crate) enum WriterStep {
+    Write,
+    Fail,
+    Panic,
 }
 
 /// Reports the journal failed if the writer panics, so the event loop wakes and refuses the
@@ -437,7 +449,7 @@ impl ReplayJournal {
     fn start(
         file: ReplayJournalFile,
         records: usize,
-        gate: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
     ) -> std::io::Result<Self> {
         let (jobs, queued) = std::sync::mpsc::channel();
         let (sender, progress) = tokio::sync::watch::channel(JournalProgress::default());
@@ -553,7 +565,7 @@ impl HandshakeReplayPolicy {
         max_entries: usize,
         path: impl AsRef<std::path::Path>,
         now_ms: i64,
-        gate: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
     ) -> std::io::Result<Self> {
         let (mut file, seen, forgotten_through_ms) = ReplayJournalFile::open(path)?;
         let mut policy = Self {
@@ -583,15 +595,15 @@ impl HandshakeReplayPolicy {
     }
 
     /// [`Self::durable`] whose writer waits for one message from the returned gate before each
-    /// batch: `Ok(())` writes it, an error fails it, and dropping the gate stops the writer
-    /// before the batch reaches the file, as a crash would.
+    /// batch (see [`WriterStep`]), and dropping the gate stops the writer before the batch
+    /// reaches the file, as a crash would.
     #[cfg(test)]
     pub(crate) fn durable_gated(
         skew_ms: i64,
         max_entries: usize,
         path: impl AsRef<std::path::Path>,
         now_ms: i64,
-    ) -> (Self, std::sync::mpsc::Sender<std::io::Result<()>>) {
+    ) -> (Self, std::sync::mpsc::Sender<WriterStep>) {
         let (gate, released) = std::sync::mpsc::channel();
         let policy =
             Self::durable_with_gate(true, skew_ms, max_entries, path, now_ms, Some(released))
@@ -1482,15 +1494,14 @@ mod tests {
             Ok(())
         );
         let issued = policy.journal_issued();
-        gate.send(Err(std::io::Error::other("injected write failure")))
-            .unwrap();
+        gate.send(WriterStep::Fail).unwrap();
         let progress = settle(&mut policy, |progress| progress.failed).await;
         assert!(
             progress.durable_through < issued,
             "failed persistence cannot grant admission"
         );
         // The failure is latched: nothing reopens admission inside the failed process.
-        let _ = gate.send(Ok(()));
+        let _ = gate.send(WriterStep::Write);
         assert_eq!(
             policy.try_admit(SIGNED + 1, None, "other", &(SIGNED + 1).to_string()),
             Err(ReplayRejection::Storage)
@@ -1505,8 +1516,7 @@ mod tests {
             policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
             Ok(())
         );
-        gate.send(Err(std::io::Error::other("injected write failure")))
-            .unwrap();
+        gate.send(WriterStep::Fail).unwrap();
         // The writer reports the failure and exits before the event loop looks.
         assert!(
             crate::shared::test_wait::until(async || {
@@ -1527,21 +1537,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_writer_panic_is_reported_as_a_failure() {
-        let (sender, mut progress) = tokio::sync::watch::channel(JournalProgress::default());
-        let writer = std::thread::spawn(move || {
-            let _panic = ReportPanic(&sender);
-            panic!("injected writer panic");
-        });
-        assert!(writer.join().is_err());
-        assert!(
-            progress.changed().await.is_ok(),
-            "the panic still wakes the event loop once"
-        );
-        assert!(progress.borrow().failed);
-    }
-
-    #[tokio::test]
     async fn journal_group_commits_every_record_queued_behind_one_sync() {
         let path = ReplayPath::new("group-commit");
         let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
@@ -1557,7 +1552,7 @@ mod tests {
             "nothing is durable before the sync"
         );
         // The writer needs one release per batch: one release makes all three durable.
-        gate.send(Ok(())).unwrap();
+        gate.send(WriterStep::Write).unwrap();
         let progress = settle(&mut policy, |progress| progress.durable_through >= issued).await;
         assert_eq!(
             progress,
@@ -1584,7 +1579,7 @@ mod tests {
                 HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
             assert_eq!(policy.try_admit(SIGNED, None, "0xanswered", &ts), Ok(()));
             let answerable = policy.journal_issued();
-            gate.send(Ok(())).unwrap();
+            gate.send(WriterStep::Write).unwrap();
             settle(&mut policy, |progress| {
                 progress.durable_through >= answerable
             })
