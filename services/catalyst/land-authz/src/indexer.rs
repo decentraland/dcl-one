@@ -10,8 +10,10 @@
 //! publish marker `folded_block`. The index stays `Settings::confirmations`
 //! blocks behind the head, and every pass first compares the cursor block's
 //! stored hash with the chain: on a mismatch (a reorg past that depth) it
-//! rewinds [`REORG_REWIND_BLOCKS`], deletes the log past the rewind and the
-//! rights it decided, and the next passes re-index and refold. Readers
+//! rewinds to the checkpoint kept [`CHECKPOINT_DEPTH_BLOCKS`] or more below
+//! the cursor when the chain still has that block, or to the start block
+//! otherwise, deletes the log past the rewind and the rights it decided,
+//! and the next passes re-index and refold. Readers
 //! trust the fold through [`index_ready`]: `folded_block = last_block` and
 //! `folded_at` at most [`READY_WINDOW`] old, the old server's rule.
 //!
@@ -49,12 +51,14 @@ impl From<RpcError> for IndexError {
 /// `Settings::confirmations`) has not moved further than this past the
 /// indexed block: a fold of an old snapshot is not "current rights".
 pub const HEAD_LAG_BLOCKS: u64 = 25;
-/// How far below the cursor a reorg rewind re-reads: past Ethereum's
-/// finality (two epochs, 64 blocks) on top of the confirmation depth. The
-/// rewound block's hash is not checked against a stored one (only the
-/// cursor block's is kept), so a fork point further back than this stays
-/// undetected; that takes a finality failure on mainnet.
-pub const REORG_REWIND_BLOCKS: u64 = 128;
+/// The least depth below the cursor of the checkpoint a reorg rewinds to:
+/// past Ethereum's finality (two epochs, 64 blocks) on top of the
+/// confirmation depth. A pass whose cursor hash matched moves the
+/// checkpoint up once it is twice this far behind, so a rewind re-reads
+/// fewer than `2 * CHECKPOINT_DEPTH_BLOCKS` blocks plus the blocks indexed
+/// since. A reorg that also replaced the checkpoint block rewinds to the
+/// start block: a full replay.
+pub const CHECKPOINT_DEPTH_BLOCKS: u64 = 128;
 /// How old a published fold may be before readers fall back (a stopped indexer).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 /// Rows per `INSERT ... UNNEST` statement.
@@ -706,6 +710,8 @@ async fn rewind_for_replay(
 /// registries (`$2`, `$3`).
 const REWIND_SET: &str = "last_block = CASE WHEN $6 THEN $4 ELSE LEAST(c.last_block, $4) END, \
      last_block_hash = CASE WHEN $6 OR $4 < c.last_block THEN NULL ELSE c.last_block_hash END, \
+     checkpoint_block = CASE WHEN $6 OR $4 < c.checkpoint_block THEN NULL ELSE c.checkpoint_block END, \
+     checkpoint_hash = CASE WHEN $6 OR $4 < c.checkpoint_block THEN NULL ELSE c.checkpoint_hash END, \
      folded_block = NULL, folded_at = NULL, \
      full_replay_started = c.full_replay_started OR $5, \
      history_timestamps_ready = c.history_timestamps_ready AND NOT $6, \
@@ -1233,11 +1239,16 @@ pub async fn sync_range(
 }
 
 /// Compares the cursor block's recorded hash with the chain's. A cursor
-/// without one (a row from before the hash was kept, or just rewound)
-/// records the chain's. On a mismatch, the blocks the log holds past it
+/// without one (a row from before the hash was kept, or just rewound to
+/// the start block) records the chain's. On a match, a missing or stale
+/// checkpoint moves to [`CHECKPOINT_DEPTH_BLOCKS`] below the cursor: that
+/// block's chain hash, read between two reads of the cursor block that
+/// both still answer the recorded hash, so it is the ancestor of what was
+/// indexed. On a mismatch, the blocks the log holds past the fork point
 /// came from a fork the chain abandoned: [`rewind_reorg`] moves the cursor
-/// [`REORG_REWIND_BLOCKS`] back (never before the start block) and answers
-/// the block it now stands on.
+/// to the checkpoint when the chain still has the checkpoint's hash there,
+/// and to the block before the start block otherwise (no checkpoint yet,
+/// or a reorg deeper than it), and answers the block it now stands on.
 async fn check_cursor_block(
     state: &LandAuthzState,
     rpc: &Rpc<'_>,
@@ -1247,8 +1258,12 @@ async fn check_cursor_block(
     if last_block < settings.start_block as i64 {
         return Ok(None);
     }
-    let Some(stored): Option<Option<String>> = sqlx::query_scalar(
-        "SELECT last_block_hash FROM land_authz.index_cursor \
+    let Some((stored, checkpoint_block, checkpoint_hash)): Option<(
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT last_block_hash, checkpoint_block, checkpoint_hash FROM land_authz.index_cursor \
          WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 AND last_block = $4",
     )
     .bind(&settings.network)
@@ -1278,20 +1293,58 @@ async fn check_cursor_block(
             .await?;
             Ok(None)
         }
-        Some(stored) if stored.eq_ignore_ascii_case(&header.hash) => Ok(None),
+        Some(stored) if stored.eq_ignore_ascii_case(&header.hash) => {
+            let depth = CHECKPOINT_DEPTH_BLOCKS as i64;
+            let candidate = last_block - depth;
+            let stale = checkpoint_block.is_none_or(|block| last_block - block >= 2 * depth);
+            if stale && candidate >= settings.start_block as i64 {
+                let checkpoint = rpc.block_header(candidate as u64).await?;
+                let again = rpc.block_header(last_block as u64).await?;
+                if again.hash.eq_ignore_ascii_case(&stored) {
+                    sqlx::query(
+                        "UPDATE land_authz.index_cursor SET checkpoint_block = $5, checkpoint_hash = $6 \
+                         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 \
+                           AND last_block = $4 AND last_block_hash = $7",
+                    )
+                    .bind(&settings.network)
+                    .bind(&settings.land_registry)
+                    .bind(&settings.estate_registry)
+                    .bind(last_block)
+                    .bind(candidate)
+                    .bind(&checkpoint.hash)
+                    .bind(&stored)
+                    .execute(&state.pool)
+                    .await?;
+                }
+            }
+            Ok(None)
+        }
         Some(stored) => {
-            let to = (last_block - REORG_REWIND_BLOCKS as i64).max(settings.start_block as i64 - 1);
-            if !rewind_reorg(&state.pool, settings, last_block, to).await? {
+            let mut to = (settings.start_block as i64 - 1, None);
+            if let (Some(block), Some(hash)) = (checkpoint_block, checkpoint_hash)
+                && block < last_block
+                && block >= settings.start_block as i64
+                && rpc
+                    .block_header(block as u64)
+                    .await?
+                    .hash
+                    .eq_ignore_ascii_case(&hash)
+            {
+                to = (block, Some(hash));
+            }
+            let (to, to_hash) = to;
+            if !rewind_reorg(&state.pool, settings, last_block, to, to_hash.as_deref()).await? {
                 return Ok(None);
             }
-            tracing::warn!(network = %settings.network, block = last_block, stored, chain = %header.hash, rewound_to = to, "land-authz: the cursor block's hash changed (a reorg past the confirmation depth); rewound and re-indexing");
+            tracing::warn!(network = %settings.network, block = last_block, stored, chain = %header.hash, rewound_to = to, full_replay = to_hash.is_none(), "land-authz: the cursor block's hash changed (a reorg past the confirmation depth); rewound and re-indexing");
             Ok(Some(to))
         }
     }
 }
 
 /// Undoes the log past `to` after a reorg, in one transaction: the cursor
-/// moves back to `to` with no recorded hash and no publish marker (readers
+/// moves back to `to` with `to_hash` (the verified checkpoint's hash, or
+/// `None` at the start block), no checkpoint and no publish marker (readers
 /// fall back until the refold publishes), the configured registries'
 /// events past `to` are deleted, and so are the rights rows those events
 /// decided. The next fold is the rebuild (`folded_block` is NULL), which
@@ -1310,6 +1363,7 @@ pub async fn rewind_reorg(
     settings: &Settings,
     from: i64,
     to: i64,
+    to_hash: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('lock_timeout', $1, true)")
@@ -1336,12 +1390,14 @@ pub async fn rewind_reorg(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = NULL, \
+        "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = $3, \
+             checkpoint_block = NULL, checkpoint_hash = NULL, \
              folded_block = NULL, folded_at = NULL, updated_at = timezone('UTC', now()) \
          WHERE network = $1",
     )
     .bind(&settings.network)
     .bind(to)
+    .bind(to_hash)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

@@ -2268,8 +2268,17 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     assert!(out.published && out.requests == 0, "{out:?}");
     assert_eq!(
         chain.requests.load(Ordering::SeqCst) - requests_before,
+        5,
+        "the cursor block's header, the checkpoint's header between it and a \
+         second read of it, and two eth_blockNumber calls; no eth_getLogs"
+    );
+    let requests_before = chain.requests.load(Ordering::SeqCst);
+    let out = indexer::run_pass(&s2, &ctx).await.unwrap();
+    assert!(out.published && out.requests == 0, "{out:?}");
+    assert_eq!(
+        chain.requests.load(Ordering::SeqCst) - requests_before,
         3,
-        "the cursor block's header and two eth_blockNumber calls, no eth_getLogs"
+        "with a current checkpoint: the cursor block's header and two eth_blockNumber calls"
     );
     assert!(
         can_deploy(&s2, (37, 55), ALICE)
@@ -2450,6 +2459,18 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_
     );
     let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(row.last_block, (START + 1_000) as i64);
+    // A pass that finds the cursor hash on the chain records the checkpoint.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    let checkpoint = START + 1_000 - indexer::CHECKPOINT_DEPTH_BLOCKS;
+    assert_eq!(
+        cursor_hashes(&db.pool).await,
+        (
+            Some(format!("0x{:064x}", START + 1_000)),
+            Some(checkpoint as i64),
+            Some(format!("0x{checkpoint:064x}"))
+        )
+    );
 
     // The chain replaces that block: the same position now holds a transfer
     // to CARL, and the grant was never mined.
@@ -2460,10 +2481,15 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_
     );
     chain.head.store(START + 1_005, Ordering::SeqCst);
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
-    let rewound = (START + 1_000 - indexer::REORG_REWIND_BLOCKS) as i64;
+    let rewound = checkpoint as i64;
     assert_eq!(out.reorg_rewound_to, Some(rewound), "{out:?}");
     let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(row.last_block, rewound);
+    assert_eq!(
+        cursor_hashes(&db.pool).await,
+        (Some(format!("0x{checkpoint:064x}")), None, None),
+        "the rewind stands on the verified checkpoint and keeps its hash"
+    );
     assert!(
         !index_ready(&row, Utc::now()),
         "readers fall back until the refold publishes"
@@ -2494,6 +2520,72 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_canonical_event_is_
     // The next pass finds the recorded hash on the chain and goes on.
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
     assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    db.drop().await;
+}
+
+/// The cursor row's `(last_block_hash, checkpoint_block, checkpoint_hash)`.
+async fn cursor_hashes(pool: &PgPool) -> (Option<String>, Option<i64>, Option<String>) {
+    sqlx::query_as(
+        "SELECT last_block_hash, checkpoint_block, checkpoint_hash FROM land_authz.index_cursor WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_reorg_below_the_checkpoint_replays_from_the_start_block() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (chain, total_logs) = fixture_chain();
+    chain.push(transfer(START + 600, 0, LAND, ALICE, BOB, TOKEN_37_55));
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    let checkpoint = START + 1_000 - indexer::CHECKPOINT_DEPTH_BLOCKS;
+    assert_eq!(cursor_hashes(&db.pool).await.1, Some(checkpoint as i64));
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(BOB)
+    );
+
+    // The fork point is below the checkpoint: the chain no longer has the
+    // checkpoint's hash, so no indexed block above the start is trusted.
+    reorg_from(
+        &chain,
+        START + 600,
+        vec![transfer(START + 600, 0, LAND, ALICE, CARL, TOKEN_37_55)],
+    );
+    chain.head.store(START + 1_005, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert_eq!(out.reorg_rewound_to, Some(START as i64 - 1), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, 0);
+    assert_eq!(cursor_hashes(&db.pool).await, (None, None, None));
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert!(!index_ready(&row, Utc::now()));
+
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(event_count(&db.pool).await, total_logs as i64 + 1);
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(CARL),
+        "the canonical transfer below the old checkpoint is folded"
+    );
     db.drop().await;
 }
 
@@ -2586,7 +2678,7 @@ async fn a_reorg_near_the_start_block_rewinds_to_it_and_drops_the_abandoned_esta
     );
 
     // The block holding the AddLand is replaced by one without it, less
-    // than REORG_REWIND_BLOCKS above the start block.
+    // than CHECKPOINT_DEPTH_BLOCKS above the start block (no checkpoint).
     reorg_from(&chain, s + 100, vec![]);
     chain.head.store(s + 105, Ordering::SeqCst);
     let out = indexer::run_pass(&state, &ctx).await.unwrap();
