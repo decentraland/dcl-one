@@ -66,6 +66,12 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   `ChatBubbleRequest` where it forwards a nearby, community or direct message, after block and ban
   filtering. A bubble is shown only if its sender has a tag at that moment; nothing is queued. The
   setting `ChatBubbleVisibility` chooses all messages, nearby only, or none.
+- **What a peer sends is bounded and checked before it is drawn.** A bubble shows the first 100
+  characters of a message on wrapped lines, with line breaks read as spaces; a community's name
+  shows its first 28 characters and a player's name its first 32. An unclaimed name shows the
+  last four characters of its address, and anything after a `#` in the name itself is dropped.
+  The verified seal needs a claimed name on a profile with a connected wallet: a guest's profile
+  is only the guest's word.
 - **The foundation badge has an input and no source.** `OfficialWallets` lists the wallets that
   show it. Nothing fills it yet.
 - **Observable through the console.** `/nametag_state` reports every shown tag without message

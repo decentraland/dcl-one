@@ -13,6 +13,25 @@ pub const TEXT_COLOR: Color = Color::srgb_u8(252, 252, 252);
 /// The colour of links, coordinates and mentions in a message.
 const LINK_COLOR: Color = Color::srgb_u8(0x00, 0xB2, 0xFF);
 
+/// The most characters of a message a bubble shows; the rest is cut.
+pub const MAX_MESSAGE_CHARS: usize = 100;
+/// The most characters of a community's name a bubble shows.
+pub const MAX_COMMUNITY_NAME_CHARS: usize = 28;
+/// The most characters of a player's name a tag shows.
+pub const MAX_NAME_CHARS: usize = 32;
+
+/// `text` on one line and at most `max` characters long, ending in an ellipsis when cut. What
+/// a peer sends is bounded here, before any of it is laid out.
+pub fn capped(text: &str, max: usize) -> String {
+    let mut chars = text.chars().map(|c| if c.is_control() { ' ' } else { c });
+    let mut capped = chars.by_ref().take(max).collect::<String>();
+    if chars.next().is_some() {
+        capped.truncate(capped.trim_end().len());
+        capped.push('…');
+    }
+    capped
+}
+
 /// A chat message to show over its sender's nametag. Nothing is shown for a sender with no
 /// nametag up, and the message is not kept for later.
 #[derive(Event, Clone, Debug)]
@@ -198,6 +217,19 @@ pub fn mentions(message: &str, mention: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_is_cut_to_its_cap_on_one_line() {
+        assert_eq!(capped("hello", 5), "hello");
+        assert_eq!(capped("hello there", 5), "hello…");
+        assert_eq!(capped("hello there", 6), "hello…");
+        // characters, not bytes
+        assert_eq!(capped("名前😀名前", 3), "名前😀…");
+        assert_eq!(capped("one\ntwo\r\nthree", 100), "one two  three");
+        let long = capped(&"😀\n".repeat(5000), MAX_MESSAGE_CHARS);
+        assert_eq!(long.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(!long.contains('\n'));
+    }
 
     #[test]
     fn mentions_are_whole_words_naming_the_user() {

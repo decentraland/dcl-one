@@ -40,7 +40,10 @@ use crate::{dynamic_nametag::NametagsVisible, BeyondMaxAvatars};
 
 use self::{
     animation::{BubbleAnimation, BubblePhase, BubbleTarget},
-    bubble::{message_spans, BubbleKind, ChatBubbleRequest, ChatBubbleRetext},
+    bubble::{
+        capped, message_spans, BubbleKind, ChatBubbleRequest, ChatBubbleRetext,
+        MAX_COMMUNITY_NAME_CHARS, MAX_MESSAGE_CHARS, MAX_NAME_CHARS,
+    },
     layout::{
         layout, message_container, BubbleProgress, Header, TagLayout, Voice, BORDER,
         COMMUNITY_FONT_SIZE, CORNER_RADIUS, DM_TAG_FONT_SIZE, LINE_HEIGHT, MENTION_RING,
@@ -187,21 +190,21 @@ impl NametagContent {
     fn from_profile(profile: &UserProfile, official: &OfficialWallets) -> Self {
         let content = &profile.content;
         let address = &content.eth_address;
+        // a guest's profile is its own word, with no catalyst to confirm the claim
+        let claimed = content.has_claimed_name && content.has_connected_web3 == Some(true);
+        // the tag is always the address' own: whatever follows a `#` in the name is dropped
         let suffix = match address.len().checked_sub(4) {
-            Some(last4)
-                if !content.has_claimed_name
-                    && !content.name.contains('#')
-                    && address.is_char_boundary(last4) =>
-            {
+            Some(last4) if !claimed && address.is_char_boundary(last4) => {
                 format!("#{}", &address[last4..])
             }
             _ => String::new(),
         };
+        let name = content.name.split('#').next().unwrap_or_default();
         Self {
-            name: content.name.clone(),
+            name: capped(name, MAX_NAME_CHARS),
             suffix,
             color: profile.name_color(),
-            verified: content.has_claimed_name,
+            verified: claimed,
             official: address
                 .as_h160()
                 .is_some_and(|address| official.0.contains(&address)),
@@ -240,6 +243,8 @@ impl ShownNametag {
 #[derive(Component, Default)]
 struct Nametag {
     name: Option<Shaped>,
+    /// What `name` was shaped from.
+    named: Option<NametagContent>,
     built: Option<Built>,
     /// A transition was still running when the mesh was last built.
     animating: bool,
@@ -572,10 +577,17 @@ fn show_chat_bubbles(
                 .map(|(_, content)| content.clone()),
             _ => None,
         };
+        let kind = match &request.kind {
+            BubbleKind::Community(Some(name)) => {
+                BubbleKind::Community(Some(capped(name, MAX_COMMUNITY_NAME_CHARS)))
+            }
+            kind => kind.clone(),
+        };
+        let message = capped(&request.message, MAX_MESSAGE_CHARS);
         match bubbles.get_mut(tag) {
             Ok(mut bubble) => {
-                bubble.kind = request.kind.clone();
-                bubble.message = request.message.clone();
+                bubble.kind = kind;
+                bubble.message = message;
                 bubble.message_id = request.message_id.clone();
                 bubble.mention = mention;
                 bubble.recipient = recipient;
@@ -583,8 +595,8 @@ fn show_chat_bubbles(
             }
             Err(_) => {
                 commands.entity(tag).try_insert(ChatBubble {
-                    kind: request.kind.clone(),
-                    message: request.message.clone(),
+                    kind,
+                    message,
                     message_id: request.message_id.clone(),
                     mention,
                     recipient,
@@ -597,9 +609,10 @@ fn show_chat_bubbles(
     }
 
     for retext in retexts.read() {
+        let message = capped(&retext.message, MAX_MESSAGE_CHARS);
         for mut bubble in &mut bubbles {
-            if bubble.message_id == retext.message_id && bubble.message != retext.message {
-                bubble.message = retext.message.clone();
+            if bubble.message_id == retext.message_id && bubble.message != message {
+                bubble.message = message.clone();
                 if bubble.stale == Stale::No {
                     bubble.stale = Stale::Text;
                 }
@@ -655,20 +668,20 @@ fn build_tags(
         let Ok((content, voice)) = owners.get(owner.0) else {
             continue;
         };
-        let content_changed = nametag
-            .built
-            .as_ref()
-            .is_none_or(|built| built.content != *content);
+        // shaped once for what it says, however long its glyphs take to be rastered
+        let content_changed = nametag.named.as_ref() != Some(content);
         let mut texts_changed = content_changed;
         if content_changed {
             nametag.name = shaper.shape(tag, &content.spans(), NAME_FONT_SIZE, None);
+            nametag.named = Some(content.clone());
         }
         let mut dirty = awaiting
             || nametag.animating
-            || nametag
-                .built
-                .as_ref()
-                .is_none_or(|built| built.voice != voice.0 || built.generation != generation);
+            || nametag.built.as_ref().is_none_or(|built| {
+                built.content != *content
+                    || built.voice != voice.0
+                    || built.generation != generation
+            });
 
         let mut header = Header {
             name: nametag
@@ -685,6 +698,7 @@ fn build_tags(
 
         let mut progress = BubbleProgress::default();
         let mut animating = false;
+        let mut bubble_hidden = false;
         if let Some(bubble) = bubble.as_deref_mut() {
             if content_changed && bubble.texts.is_some() && bubble.stale == Stale::No {
                 bubble.stale = Stale::Text;
@@ -706,6 +720,9 @@ fn build_tags(
             if let Some(animation) = bubble.animation.as_mut() {
                 if animation.tick(now) == BubblePhase::Hidden {
                     commands.entity(tag).remove::<ChatBubble>();
+                    // its glyphs are no longer this tag's to keep in the atlas
+                    bubble_hidden = true;
+                    texts_changed = true;
                     dirty = true;
                 } else {
                     animating = !animation.settled(now);
@@ -724,7 +741,10 @@ fn build_tags(
             continue;
         }
 
-        let bubble_texts = bubble.as_deref().and_then(|bubble| bubble.texts.as_ref());
+        let bubble_texts = bubble
+            .as_deref()
+            .filter(|_| !bubble_hidden)
+            .and_then(|bubble| bubble.texts.as_ref());
         if texts_changed {
             commands.entity(tag).insert(glyph_use(
                 nametag.name.iter().chain(
@@ -758,7 +778,11 @@ fn build_tags(
         match drawn {
             Ok(()) => {
                 let (tag_mesh, aabb) = quad_mesh(&quads);
-                mesh.0 = meshes.add(tag_mesh);
+                // a tag keeps one mesh for as long as it lives
+                match meshes.get_mut(&mesh.0) {
+                    Some(current) => *current = tag_mesh,
+                    None => mesh.0 = meshes.add(tag_mesh),
+                }
                 let mut tag_commands = commands.entity(tag);
                 tag_commands.insert(aabb);
                 if awaiting {

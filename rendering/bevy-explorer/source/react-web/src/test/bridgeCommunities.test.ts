@@ -7,8 +7,9 @@ import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene,
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
-const { signed, getCompactProfiles, serviceBase } = vi.hoisted(() => ({
+const { signed, getCompactProfiles, serviceBase, setCommunityChannels } = vi.hoisted(() => ({
   signed: vi.fn(),
+  setCommunityChannels: vi.fn(),
   getCompactProfiles: vi.fn(),
   serviceBase: vi.fn(async (name: string) => `https://${name}.example`)
 }))
@@ -20,7 +21,7 @@ vi.mock('../../bridge-scene/src/http', () => ({
   dataUrlBytes: vi.fn(),
   HttpError: class extends Error {}
 }))
-vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getCompactProfiles, social: {} } }))
+vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getCompactProfiles, social: { setCommunityChannels } } }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: vi.fn() }))
 vi.mock('../../bridge-scene/src/domains/profile', () => ({
   fetchIdentities: async () => (address: string) => ({ name: address, hasClaimedName: false })
@@ -291,6 +292,20 @@ describe('bridge community browse', () => {
     const h = fakeCtx()
     await h.req({ kind: 'browseCommunities', search: '', page: 1 })
     expect(browsed(h.sent).failed).toBe(true)
+  })
+
+  it("tells the engine a listened community's new name, and nothing when no name changed", async () => {
+    const h = fakeCtx()
+    serve({ [memberOf]: { results: [raw('r1', { name: 'Old', role: 'member' })], total: 1 } })
+    await h.req({ kind: 'getCommunities' })
+    setCommunityChannels.mockClear()
+    await h.req({ kind: 'setCommunityChannels', ids: ['R1'] })
+    expect(setCommunityChannels.mock.calls).toEqual([[[{ id: 'R1', name: 'Old' }]]])
+    await h.req({ kind: 'getCommunities' })
+    expect(setCommunityChannels).toHaveBeenCalledTimes(1)
+    serve({ [memberOf]: { results: [raw('r1', { name: 'New', role: 'member' }), raw('r2', { role: 'member' })], total: 2 } })
+    await h.req({ kind: 'getCommunities' })
+    expect(setCommunityChannels.mock.calls.slice(1)).toEqual([[[{ id: 'R1', name: 'New' }]]])
   })
 
   it('My Communities is every membership, not a browse page', async () => {

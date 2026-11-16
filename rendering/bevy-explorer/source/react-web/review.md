@@ -169,6 +169,8 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
 - [ ] Name **colour** = a claimed name's custom colour if set, else the hue hashed from the name (the
       colour the HUD shows for it); **claimed** names show the verified seal, **unclaimed** show `#abcd`
       tight to the name, dimmed. The name stays on one line.
+      A name written with its own tag (`Ada#ffff`) still shows the address' tag, and a guest
+      shows no seal whatever its profile claims.
 - [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
       avatar and, for other players, on theirs, without a rename or a reload.
 - [ ] **Constant size on screen.** A tag looks the same size at 3 m and at 39 m, and at any field of
@@ -183,7 +185,7 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
-      message restarts it); a long message wraps; a message that @-mentions you has a pink-to-purple
+      message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is

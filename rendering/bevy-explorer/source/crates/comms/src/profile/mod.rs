@@ -1403,9 +1403,10 @@ impl UserProfile {
     pub fn name_color(&self) -> Color {
         match self.content.name_color {
             Some(custom) if self.content.has_claimed_name => custom.convert_srgb(),
+            // lowercased as the HUD has it: the tag's letters are part of what is hashed
             _ => name_color(
                 &self.content.name,
-                &self.content.eth_address,
+                &self.content.eth_address.to_lowercase(),
                 self.content.has_claimed_name,
             ),
         }

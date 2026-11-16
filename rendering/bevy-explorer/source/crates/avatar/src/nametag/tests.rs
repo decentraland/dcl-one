@@ -11,6 +11,7 @@ fn profile(name: &str, claimed: bool) -> UserProfile {
             name: name.to_owned(),
             eth_address: ADDRESS.to_owned(),
             has_claimed_name: claimed,
+            has_connected_web3: Some(true),
             ..Default::default()
         },
         ..Default::default()
@@ -34,9 +35,35 @@ fn an_unclaimed_name_carries_the_end_of_its_address() {
     assert!(!unclaimed.verified);
     assert_ne!(unclaimed.color, claimed.color);
 
-    // a name stored with its tag is not given a second one
-    let tagged = NametagContent::from_profile(&profile("Ada#12ab", false), &official);
-    assert_eq!(tagged.suffix, "");
+    // a tag in the name is dropped for the address' own, whatever it says
+    for stored in ["Ada#12ab", "Ada#ffff"] {
+        let tagged = NametagContent::from_profile(&profile(stored, false), &official);
+        assert_eq!(tagged.name, "Ada", "{stored}");
+        assert_eq!(tagged.suffix, "#12ab", "{stored}");
+    }
+}
+
+#[test]
+fn a_guest_claiming_a_name_gets_no_seal() {
+    let mut guest = profile("Ada", true);
+    guest.content.has_connected_web3 = None;
+    let content = NametagContent::from_profile(&guest, &OfficialWallets::default());
+    assert!(!content.verified);
+    assert_eq!(content.suffix, "#12ab");
+}
+
+#[test]
+fn an_address_colours_a_name_the_same_in_any_case() {
+    let mut checksummed = profile("Ada", false);
+    checksummed.content.eth_address = ADDRESS.to_uppercase().replacen("0X", "0x", 1);
+    assert_eq!(checksummed.name_color(), profile("Ada", false).name_color());
+}
+
+#[test]
+fn a_long_name_is_cut() {
+    let content = content(&"a".repeat(500));
+    assert_eq!(content.name.chars().count(), MAX_NAME_CHARS + 1);
+    assert!(content.name.ends_with('…'));
 }
 
 #[test]
@@ -347,6 +374,12 @@ fn a_tag_follows_a_player_that_moved_this_frame() {
     let ada = spawn_player(&mut app, "Ada", 10.0);
     app.update();
     let tag = tag_of(&app, ada).unwrap();
+    // the anchor at the player's feet: the tag stands where the player is
+    let anchor = app.world().get::<AttachPoints>(ada).unwrap().nametag;
+    app.world_mut()
+        .get_mut::<Transform>(anchor)
+        .unwrap()
+        .translation = Vec3::ZERO;
     let fov = 60f32.to_radians();
     let mut cameras = app
         .world_mut()
@@ -387,9 +420,6 @@ fn a_tag_follows_a_player_that_moved_this_frame() {
 #[test]
 #[ignore = "needs a GPU; run with --ignored"]
 fn nametag_shader_compiles() {
-    use assets::test_support::{
-        compile_pipelines, fragment_pipelines, headless_app, render_target,
-    };
     use bevy::{
         asset::RenderAssetUsages,
         core_pipeline::{
@@ -401,6 +431,7 @@ fn nametag_shader_compiles() {
             render_resource::{Extent3d, TextureDimension, TextureFormat},
         },
     };
+    use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
 
     use super::layout::Tail;
 

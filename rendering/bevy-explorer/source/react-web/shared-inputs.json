@@ -4356,7 +4356,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "e26b491ecea624a7fc28d85c642d34e3503813a7ed24ce2e5b6489a706436993"
+      "sha256": "045da63cb3e1b3f726be4305cbb7c33b0d366899cf5588988d1c5d4bc8a92982"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4556,7 +4556,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "29db5e29cf57111a645a1f417b305887d764942f15092200beee74a760df6f38"
+      "sha256": "edf814b299ecab5f06bc63b0dccb322446c588557c0ba7f19860e78a4822f5b7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
