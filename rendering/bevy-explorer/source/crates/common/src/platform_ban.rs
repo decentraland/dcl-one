@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use system_api_types::PlatformBanNotice;
 
 /// What a realm change refused for a platform ban answers.
-pub const PLATFORM_BANNED: &str = "You are banned from Decentraland";
+pub const REALM_CHANGE_BANNED: &str = "You are banned from Decentraland";
 
 /// The signed-in wallet's platform ban: unknown, checked (banned or not) or failed.
 #[derive(Resource, Debug, Clone, PartialEq)]
@@ -123,11 +123,10 @@ impl PlatformBanStatus {
         self.state = PlatformBanState::Checked { ban, checked_at };
     }
 
-    /// Records a failed check. A ban learnt from a scene-admission refusal is kept: a failed poll
-    /// is no evidence against it.
+    /// Records a failed check. A known ban is kept: a failed poll is no evidence against it.
     pub fn platform_ban_check_failed(&mut self, error: String, checked_at: f64) {
-        if self.source() == Some(PlatformBanSource::SceneAdmissionRefusal) {
-            warn!("[ban_block] platform ban check failed, keeping the refusal: {error}");
+        if self.ban().is_some() {
+            warn!("[ban_block] platform ban check failed, keeping the known ban: {error}");
             return;
         }
         self.state = PlatformBanState::Failed { error, checked_at };
@@ -147,17 +146,95 @@ impl Default for PlatformBanStatus {
     }
 }
 
-/// Not banned unless a ban is known.
+/// Not banned unless a ban is known. A refusal-learnt ban has no reason: its text is the
+/// gatekeeper's refusal, not a ban record.
 impl From<&PlatformBanStatus> for PlatformBanNotice {
     fn from(status: &PlatformBanStatus) -> Self {
         match status.ban() {
             None => Self::default(),
             Some(ban) => Self {
                 banned: true,
-                reason: ban.reason.clone(),
+                reason: match status.source() {
+                    Some(PlatformBanSource::SceneAdmissionRefusal) => String::new(),
+                    _ => ban.reason.clone(),
+                },
                 custom_message: ban.custom_message.clone(),
                 expires_at: ban.expires_at.clone(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn endpoint_ban() -> PlatformBanInfo {
+        PlatformBanInfo {
+            reason: "spam".to_owned(),
+            ..PlatformBanInfo::withheld("")
+        }
+    }
+
+    #[test]
+    fn a_failed_check_keeps_a_ban_the_endpoint_confirmed() {
+        let mut status = PlatformBanStatus::new();
+        status.apply_platform_ban(
+            Some(endpoint_ban()),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        status.platform_ban_check_failed("status 503".to_owned(), 2.0);
+        assert_eq!(status.ban(), Some(&endpoint_ban()));
+        assert_eq!(status.source(), Some(PlatformBanSource::BanStatusEndpoint));
+    }
+
+    #[test]
+    fn a_failed_check_without_a_known_ban_fails_open() {
+        let mut status = PlatformBanStatus::new();
+        status.platform_ban_check_failed("status 503".to_owned(), 1.0);
+        assert_eq!(status.ban(), None);
+        status.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, 2.0);
+        status.platform_ban_check_failed("status 503".to_owned(), 3.0);
+        assert_eq!(status.ban(), None);
+    }
+
+    #[test]
+    fn the_notice_carries_a_record_reason_and_no_refusal_text() {
+        let mut status = PlatformBanStatus::new();
+        assert_eq!(
+            PlatformBanNotice::from(&status),
+            PlatformBanNotice::default()
+        );
+        status.apply_platform_ban(
+            Some(endpoint_ban()),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        assert_eq!(PlatformBanNotice::from(&status).reason, "spam");
+        status.reset_platform_ban();
+        status.apply_platform_ban(
+            Some(PlatformBanInfo::from_refusal(
+                "Access denied, platform-banned user",
+            )),
+            PlatformBanSource::SceneAdmissionRefusal,
+            2.0,
+        );
+        let notice = PlatformBanNotice::from(&status);
+        assert!(notice.banned);
+        assert_eq!(notice.reason, "");
+    }
+
+    #[test]
+    fn the_hud_matches_the_refusal_text() {
+        let protocol = std::path::Path::new(env!("DCL_ONE_ROOT"))
+            .join("library/explorer-core/engine/protocol.ts");
+        let source = std::fs::read_to_string(&protocol).expect("protocol.ts");
+        assert!(
+            source.contains(&format!(
+                "export const PLATFORM_BANNED_REFUSAL = '{REALM_CHANGE_BANNED}'"
+            )),
+            "PLATFORM_BANNED_REFUSAL in protocol.ts differs from REALM_CHANGE_BANNED"
+        );
     }
 }

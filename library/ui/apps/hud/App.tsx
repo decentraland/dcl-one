@@ -44,7 +44,7 @@ import { StartupFlow } from './features/startup/StartupFlow'
 import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
-import { openPlatformBanDialog } from './features/session/PlatformBanDialog'
+import { usePlatformBanNotices } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
 import { useHudInsetReport } from './lib/hudInset'
@@ -339,24 +339,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelError is stable
   }, [travelError])
 
-  // A known platform ban before the world: a blocking notice over the lobby (or the welcome page,
-  // the picker, the loader) that only a sign-out leaves.
-  const banNotice = session.platformBan.notice
-  const banBlocksEntry = banNotice != null && session.phase !== 'login' && session.phase !== 'world'
-  const banKey = banBlocksEntry ? JSON.stringify(banNotice) : null
-  useEffect(() => {
-    if (banKey == null || banNotice == null) return
-    return openPlatformBanDialog(banNotice, { signOut: session.logout })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the notice changes
-  }, [banKey])
-  // An in-world travel refused for the ban: a dismissible notice says why.
-  const banRefusedTravel = session.platformBan.travelRefused && !banBlocksEntry
-  useEffect(() => {
-    if (!banRefusedTravel) return
-    const notice = banNotice ?? { banned: true, reason: '', customMessage: null, expiresAt: null }
-    return openPlatformBanDialog(notice, { onClose: session.platformBan.dismissTravelRefused })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
-  }, [banRefusedTravel])
+  // The platform ban: blocking before the world, dismissible after a refused travel.
+  usePlatformBanNotices({ phase: session.phase, ...session.platformBan, signOut: session.logout })
 
   // Deploying the Backpack's look failed: try it again, or go back to the last look that deployed.
   // A deliberate choice only: Escape reverts, a stray click outside does nothing.

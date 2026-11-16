@@ -69,14 +69,20 @@ scenario(
   async ({ explorer }) => {
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e', 'a test ban'))
-    await explorer.run('/ban_block_refresh')
-    const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.isBanned === true, {
-      timeoutMs: 15_000,
-      what: 'the banned answer to be reported'
-    })
-    assert.equal(state.platformBan.reason, 'e2e')
-    assert.equal(state.platformBan.customMessage, 'a test ban')
-    assert.equal(state.platformBan.source, 'ban_status_endpoint')
+    try {
+      await explorer.run('/ban_block_refresh')
+      const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.isBanned === true, {
+        timeoutMs: 15_000,
+        what: 'the banned answer to be reported'
+      })
+      assert.equal(state.platformBan.reason, 'e2e')
+      assert.equal(state.platformBan.customMessage, 'a test ban')
+      assert.equal(state.platformBan.source, 'ban_status_endpoint')
+    } finally {
+      // a known ban survives a failed check: the next scenario starts from not banned
+      stub.banStatus(NOT_BANNED)
+      await stateAfterRefresh(explorer, (s) => s.platformBan.isBanned === false, 'the ban to be lifted')
+    }
   },
   native ? stubSession : webOnly
 )

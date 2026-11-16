@@ -67,7 +67,7 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
-    platform_ban::{PlatformBanStatus, PLATFORM_BANNED},
+    platform_ban::{PlatformBanStatus, REALM_CHANGE_BANNED},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
@@ -782,8 +782,8 @@ pub fn change_realm(
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
     mut issued: Local<u64>,
-    // the latest issued change's id, watched by the earlier ones so they stand down
-    mut latest_issued: Local<Option<tokio::sync::watch::Sender<u64>>>,
+    // the latest issued id, watched by the issued changes so the earlier ones stand down
+    mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
     wallet: Option<Res<Wallet>>,
     prompter: Option<Res<WorldPasswordPrompter>>,
@@ -865,6 +865,23 @@ pub fn change_realm(
         commands.remove_resource::<WorldHold>();
     }
 
+    let platform_ban = platform_ban.filter(|status| status.ban().is_some());
+    // a platform ban learnt while changes are in flight stops them before they set the realm
+    if platform_ban
+        .as_ref()
+        .is_some_and(|status| status.is_changed())
+        && !in_flight.is_empty()
+    {
+        *issued += 1;
+        *target = RealmInitialLocation::None;
+        if let Some(latest_issued) = latest_issued.as_ref() {
+            latest_issued.send_replace(world_access::Issued {
+                id: *issued,
+                refusal: REALM_CHANGE_BANNED,
+            });
+        }
+    }
+
     if !change_realm_requests.is_empty() {
         if preview_mode.is_preview {
             const DISABLED: &str = "Changing realm is disabled in preview mode.";
@@ -889,9 +906,17 @@ pub fn change_realm(
             let response = request.response.clone();
             let (sx, rx) = RpcResultSender::channel();
             *issued += 1;
-            let latest_issued =
-                latest_issued.get_or_insert_with(|| tokio::sync::watch::channel(0).0);
-            latest_issued.send_replace(*issued);
+            let latest_issued = latest_issued.get_or_insert_with(|| {
+                tokio::sync::watch::channel(world_access::Issued {
+                    id: 0,
+                    refusal: world_access::SUPERSEDED,
+                })
+                .0
+            });
+            latest_issued.send_replace(world_access::Issued {
+                id: *issued,
+                refusal: world_access::SUPERSEDED,
+            });
             let superseded = world_access::Superseded {
                 latest: latest_issued.subscribe(),
                 id: *issued,
@@ -917,14 +942,14 @@ pub fn change_realm(
                 .and_then(|_| world_secret.0.clone());
             let prompter = prompter.as_deref().cloned();
             let client = ipfs.client();
-            let banned = platform_ban.is_some_and(|status| status.ban().is_some());
+            let banned = platform_ban.is_some();
             IoTaskPool::get()
                 .spawn_compat(async move {
                     let mut superseded = superseded;
                     let result = async {
                         // a known platform ban refuses the change before world access
                         if banned {
-                            return Err(PLATFORM_BANNED.to_owned());
+                            return Err(REALM_CHANGE_BANNED.to_owned());
                         }
                         let secret = match &world {
                             Some((world, wallet)) => {
@@ -942,7 +967,7 @@ pub fn change_realm(
                             None => None,
                         };
                         if superseded.is_superseded() {
-                            return Err(world_access::SUPERSEDED.to_owned());
+                            return Err(superseded.refusal());
                         }
                         ipfs.set_realm(new_realm, content_server_override, secret)
                             .await

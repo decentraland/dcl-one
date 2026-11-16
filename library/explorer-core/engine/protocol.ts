@@ -1111,11 +1111,11 @@ export interface WorldPasswordRequestMessage {
   error?: string
 }
 
-/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
- *  `banned` is false while the check is unknown or failed. */
-/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::PLATFORM_BANNED`). */
+/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::REALM_CHANGE_BANNED`). */
 export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
 
+/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
+ *  `banned` is false while the check is unknown or failed. */
 export interface PlatformBanMessage {
   kind: 'platformBan'
   ban: PlatformBanNotice

@@ -2,9 +2,11 @@
 // help. Blocking before the world (no way past it but signing out); dismissible after a refused
 // in-world travel.
 
+import { useEffect, useState } from 'react'
 import { siteUrl } from '@hud-host'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'
 import { Button, ModalShell, openPopup } from '../../design'
+import type { SessionPhase } from './useEngineSession'
 
 export const PLATFORM_BAN_TITLE = "You're banned from Decentraland"
 
@@ -75,4 +77,43 @@ export function openPlatformBanDialog(ban: PlatformBanNotice, options: { signOut
     signOut != null ? { backdropClickCloses: false, confirmClose: () => false, onClose: options.onClose } : { onClose: options.onClose }
   )
   return close
+}
+
+const NO_RECORD: PlatformBanNotice = { banned: true, reason: '', customMessage: null, expiresAt: null }
+
+/** Opens the platform-ban notices. Blocking once a ban is known before the world, and kept open
+ *  until sign-out or a not-banned notice; dismissible after a refused travel otherwise. A refused
+ *  travel under the blocking notice is dismissed at once. */
+export function usePlatformBanNotices(input: {
+  phase: SessionPhase
+  notice: PlatformBanNotice | null
+  travelRefused: boolean
+  dismissTravelRefused: () => void
+  signOut: () => void
+}): void {
+  const { phase, notice, travelRefused } = input
+  const beforeWorld = phase !== 'login' && phase !== 'world'
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    if (notice == null || phase === 'login') setHeld(false)
+    else if (beforeWorld) setHeld(true)
+  }, [notice, phase, beforeWorld])
+  const blocking = notice != null && phase !== 'login' && (beforeWorld || held)
+  const blockingKey = blocking ? JSON.stringify(notice) : null
+  useEffect(() => {
+    if (blockingKey == null || notice == null) return
+    return openPlatformBanDialog(notice, { signOut: input.signOut })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the notice changes
+  }, [blockingKey])
+
+  useEffect(() => {
+    if (blocking && travelRefused) input.dismissTravelRefused()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
+  }, [blocking, travelRefused])
+  const refusedNotice = travelRefused && !blocking
+  useEffect(() => {
+    if (!refusedNotice) return
+    return openPlatformBanDialog(notice ?? NO_RECORD, { onClose: input.dismissTravelRefused })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
+  }, [refusedNotice])
 }

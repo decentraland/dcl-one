@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from '../harness'
-import { PLATFORM_BAN_TITLE, banLines, banPeriod, openPlatformBanDialog } from '../../features/session/PlatformBanDialog'
+import { PLATFORM_BAN_TITLE, banLines, banPeriod, openPlatformBanDialog, usePlatformBanNotices } from '../../features/session/PlatformBanDialog'
+import type { SessionPhase } from '../../features/session/useEngineSession'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import { PLATFORM_BANNED_REFUSAL } from '@explorer-core/engine/protocol'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'
@@ -36,6 +37,23 @@ describe('platform ban domain', () => {
     await waitFor(() => expect(h.session().phase).toBe('lobby'))
     expect(h.session().travelError).toBeNull()
     expect(h.session().platformBan.travelRefused).toBe(true)
+  })
+
+  it('sign-out after a lobby pick refused for the ban clears the ban and the refusal', async () => {
+    const h = renderSession()
+    await waitFor(() => expect(h.session().login.status).not.toBe('loading'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    h.driver.emit({ kind: 'platformBan', ban: BAN })
+    act(() => h.session().pickDestination(null))
+    const go = h.driver.last('teleport')!
+    h.driver.emit({ kind: 'travelResult', travelId: go.travelId!, realm: go.realm!, ok: false, message: PLATFORM_BANNED_REFUSAL })
+    await waitFor(() => expect(h.session().platformBan.travelRefused).toBe(true))
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    expect(h.session().platformBan.notice).toBeNull()
+    expect(h.session().platformBan.travelRefused).toBe(false)
   })
 
   it('an in-world travel refused for the ban is not a travel error', async () => {
@@ -109,5 +127,54 @@ describe('the ban notice', () => {
     expect(screen.queryByRole('button', { name: 'Sign Out' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'OK' }))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+})
+
+// The notices the HUD opens for the ban, by phase.
+describe('the ban notices', () => {
+  type Input = { phase: SessionPhase; notice: PlatformBanNotice | null; travelRefused: boolean }
+
+  function mount(initial: Input) {
+    resetPopups()
+    render(<PopupHost />)
+    const dismissTravelRefused = vi.fn()
+    const signOut = vi.fn()
+    const hook = renderHook((input: Input) => usePlatformBanNotices({ ...input, dismissTravelRefused, signOut }), { initialProps: initial })
+    return { ...hook, dismissTravelRefused, signOut }
+  }
+
+  const dialog = () => screen.queryByRole('alertdialog', { name: PLATFORM_BAN_TITLE })
+  const blocking = () => screen.queryByRole('button', { name: 'Sign Out' }) != null
+
+  it('blocks the lobby, and a refused pick under it is dismissed', async () => {
+    const h = mount({ phase: 'lobby', notice: BAN, travelRefused: false })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    expect(blocking()).toBe(true)
+    h.rerender({ phase: 'lobby', notice: BAN, travelRefused: true })
+    await waitFor(() => expect(h.dismissTravelRefused).toHaveBeenCalled())
+    expect(blocking()).toBe(true)
+  })
+
+  it('opens nothing over sign-in after Sign Out', async () => {
+    const h = mount({ phase: 'lobby', notice: BAN, travelRefused: true })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    h.rerender({ phase: 'login', notice: null, travelRefused: false })
+    await waitFor(() => expect(dialog()).toBeNull())
+  })
+
+  it('stays open when entry was under way and the world loads', async () => {
+    const h = mount({ phase: 'entering', notice: BAN, travelRefused: false })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    h.rerender({ phase: 'world', notice: BAN, travelRefused: false })
+    expect(dialog()).not.toBeNull()
+    expect(blocking()).toBe(true)
+    h.rerender({ phase: 'world', notice: null, travelRefused: false })
+    await waitFor(() => expect(dialog()).toBeNull())
+  })
+
+  it('in the world, a refused travel opens the dismissible notice', async () => {
+    mount({ phase: 'world', notice: BAN, travelRefused: true })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    expect(blocking()).toBe(false)
   })
 })

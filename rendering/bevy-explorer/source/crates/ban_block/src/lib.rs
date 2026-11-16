@@ -2,7 +2,7 @@
 //!
 //! A facade over the crates that produce each fact. Social blocks live in the social client,
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
-//! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
+//! platform ban in `common::platform_ban`, which this crate checks and writes. [`BanBlock`] reads them all as one
 //! system parameter. There are no events of its own: every fact it answers from is a resource
 //! or a component.
 

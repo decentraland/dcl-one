@@ -5,6 +5,10 @@ use bevy::{
     ecs::{
         event::EventReader,
         resource::Resource,
+        schedule::{
+            common_conditions::{on_event, resource_changed},
+            Condition, IntoScheduleConfigs,
+        },
         system::{Res, ResMut},
     },
 };
@@ -46,8 +50,11 @@ pub(crate) struct PlatformBanStreamPlugin;
 
 impl Plugin for PlatformBanStreamPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlatformBanStreams>()
-            .add_systems(Update, publish_platform_ban);
+        app.init_resource::<PlatformBanStreams>().add_systems(
+            Update,
+            publish_platform_ban
+                .run_if(resource_changed::<PlatformBanStatus>.or(on_event::<SystemApi>)),
+        );
     }
 }
 

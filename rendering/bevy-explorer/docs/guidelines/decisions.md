@@ -317,7 +317,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
   notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
   push reaches an idle client here, and the period promises no freshness, as a failed check
-  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  fails open, as there, and the state says so instead of guessing; a failed check keeps a ban
+  already known); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
   marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
@@ -330,7 +331,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the
-  terms and an in-world realm change all stay where they are and nothing loads or connects. The
+  terms and an in-world realm change all stay where they are and nothing loads or connects. A ban
+  learnt while a change is in flight (a world's password prompt) stops it with the same answer
+  before it sets the realm. The
   HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
   picker or loader with a blocking notice that only a sign-out leaves (B1); a refused in-world
   travel shows the same notice, dismissible, and the player stays put (B5). Differences from
