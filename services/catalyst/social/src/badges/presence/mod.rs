@@ -197,6 +197,22 @@ pub async fn apply_pending(
     Ok(pass.applied)
 }
 
+/// The age in ms of the oldest queued event whose wallet is not waiting for
+/// a scene, over the whole queue (waiting wallets can fill a batch).
+async fn oldest_not_waiting_ms(
+    pool: &PgPool,
+    retries: &Retries,
+) -> Result<Option<i64>, sqlx::Error> {
+    let waiting: Vec<String> = retries.waits.values().map(|w| w.wallet.clone()).collect();
+    sqlx::query_scalar(
+        "SELECT (extract(epoch FROM timezone('UTC', now()) - received_at) * 1000)::bigint \
+         FROM social.presence_events WHERE wallet <> ALL($1) ORDER BY seq LIMIT 1",
+    )
+    .bind(&waiting)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Applies up to `event_batch` stored events after `pass.after` in `seq`
 /// order, each in its own transaction that deletes it and with the clock
 /// read for it, and returns how many it read. `retries.failures` counts the
@@ -223,19 +239,18 @@ async fn apply_from(
     .fetch_all(pool)
     .await?;
     if pass.after == 0 {
-        let waiting: HashSet<&str> = retries.waits.values().map(|w| w.wallet.as_str()).collect();
-        let oldest = queued
-            .iter()
-            .filter(|(_, _, wallet)| !waiting.contains(wallet.as_str()))
-            .map(|(_, age, _)| *age)
-            .max()
-            .unwrap_or(0);
-        metrics::gauge!("badges_presence_queue_oldest_seconds").set(oldest.max(0) as f64 / 1000.0);
+        let oldest = oldest_not_waiting_ms(pool, retries).await?;
+        metrics::gauge!("badges_presence_queue_oldest_seconds")
+            .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0);
     }
     let read = queued.len();
     for (seq, queued_ms, wallet) in queued {
         pass.after = seq;
         if pass.waiting.contains(&wallet) {
+            // keep a wait an earlier event of its wallet holds up
+            if retries.waits.contains_key(&seq) {
+                pass.seen.insert(seq);
+            }
             continue;
         }
         let now = clock();

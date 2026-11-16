@@ -1654,7 +1654,9 @@ failure counts toward dropping an event (after 3 passes, logged and counted);
 a connection, pool, timeout, conflict or failover error is retried on the next
 pass without counting until the event has been queued for an hour, then counts
 too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
-reports the age of the oldest queued event each pass.
+reports the age of the oldest queued event of a wallet not waiting for a
+scene, each pass (one `presence_events_seq_idx` scan that stops at the first
+such row).
 
 Every presence transaction first takes one advisory lock: the engine and the
 `badges-presence-sweep` job are a single writer fleet-wide, so the runtime

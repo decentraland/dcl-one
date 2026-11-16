@@ -10,7 +10,10 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use super::sink::{self, PresenceEvent};
-use super::{Flow, Occupancy, Retries, Settings, SweepSummary, apply_pending, drain, sweep};
+use super::{
+    Flow, Occupancy, Retries, Settings, SweepSummary, Wait, apply_pending, drain,
+    oldest_not_waiting_ms, sweep,
+};
 use crate::comms::gatekeeper::events::RoomEventStore;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 
@@ -813,6 +816,115 @@ async fn waiting_events_filling_a_batch_do_not_hold_the_next_one() {
         .await
         .unwrap();
     assert_eq!(queued, 3, "the three waiting joins stay queued");
+}
+
+#[tokio::test]
+async fn the_oldest_age_skips_waiting_wallets_across_the_whole_queue() {
+    let Some(t) = T::new().await else { return };
+    let (c1, c2) = (
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+    );
+    let unsynced = At::Scene("bafkreinotsyncedgaugeeeeeeeeeeeeeee");
+    let events = [
+        t.event(true, c1, "s", T0, unsynced),
+        t.event(true, c2, "s", T0, unsynced),
+        t.event(true, ALICE, "a", T0, At::Scene(SCENE)),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    // the waiting wallets' rows come first and are newer than Alice's
+    sqlx::query(
+        "UPDATE social.presence_events SET received_at = timezone('UTC', now()) - \
+         CASE WHEN wallet = $1 THEN interval '10 minutes' ELSE interval '1 minute' END",
+    )
+    .bind(ALICE)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    let seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq")
+        .fetch_all(&t.pool)
+        .await
+        .unwrap();
+    let mut retries = Retries::default();
+    let age = oldest_not_waiting_ms(&t.pool, &retries)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        (50_000..120_000).contains(&age),
+        "the first queued row: {age}"
+    );
+    for (seq, wallet) in [(seqs[0], c1), (seqs[1], c2)] {
+        let wait = Wait {
+            wallet: wallet.into(),
+            next_ms: 0,
+            tries: 0,
+        };
+        retries.waits.insert(seq, wait);
+    }
+    let age = oldest_not_waiting_ms(&t.pool, &retries)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        (590_000..700_000).contains(&age),
+        "Alice's row past them: {age}"
+    );
+    let wait = Wait {
+        wallet: ALICE.into(),
+        next_ms: 0,
+        tries: 0,
+    };
+    retries.waits.insert(seqs[2], wait);
+    assert_eq!(
+        oldest_not_waiting_ms(&t.pool, &retries).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_wait_held_behind_its_wallet_is_kept_across_drains() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let events = [
+        t.event(
+            true,
+            BOB,
+            "s1",
+            T0,
+            At::Scene("bafkreinotsyncedfirstaaaaaaaaaaaaaa"),
+        ),
+        t.event(
+            true,
+            BOB,
+            "s2",
+            T0,
+            At::Scene("bafkreinotsyncedsecondbbbbbbbbbbbbb"),
+        ),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq")
+        .fetch_all(&t.pool)
+        .await
+        .unwrap();
+    let mut retries = Retries::default();
+    let now = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut retries)
+        .await
+        .unwrap();
+    assert!(retries.waits.contains_key(&seqs[0]));
+    // the later event already waited (a lower seq committed after it started)
+    let wait = Wait {
+        wallet: BOB.into(),
+        next_ms: now + 60_000,
+        tries: 3,
+    };
+    retries.waits.insert(seqs[1], wait);
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut retries)
+        .await
+        .unwrap();
+    let kept = retries.waits.get(&seqs[1]).expect("the held wait is kept");
+    assert_eq!(kept.tries, 3, "its backoff does not restart");
 }
 
 #[tokio::test]
