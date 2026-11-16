@@ -1,10 +1,219 @@
-/* TODO(figma-ds): replace with the Figma-generated catalog card's styles. Sizes follow the
- * source (decentraland-ui2 CatalogCard, Figma 94:36542): a 360px card whose image flexes above a
- * 160px minimum info panel, the thumbnail at 68% of the image, a 26px rarity tag, and a 20px
- * price after a 32px MANA mark (the source's is 35px). The rarity hues are the foundations' rarity tokens, which differ slightly from the
- * source's `@dcl/schemas` colours. The tag's 20% tint is mixed from the rarity token. The hover
- * glow (30% white in the source) uses the nearest transparency, 20%. */
+/* The profile Creations and Assets panels around the shared Tabs, Button and Spinner. The design
+ * system has no catalogue card, NAME row or collectibles grid yet, so they are drawn here.
+ * Grid: the source's 250px column floor, 28px rows and 16px columns, two columns below the 900px
+ * MUI `md` breakpoint with 16px rows and 12px columns; 28px has no spacing token. Card: the
+ * source's 360px card (decentraland-ui2 CatalogCard) with a 160px minimum info panel, the
+ * thumbnail at 68% of the image, a 26px rarity tag and a 32px MANA mark. The rarity hues are the
+ * foundations' rarity tokens; the tag's 20% tint is mixed from them, and the hover glow (30% white
+ * in the source) uses the nearest transparency, 20%. The NAME row's 10px tile radius and 48px tile
+ * keep the source's sizes; its fills use the nearest transparencies. */
 .root {
+  width: 100%;
+}
+
+/* Focus lands on the panel only from script, after a control it held went away. */
+.panel:focus {
+  outline: none;
+}
+
+.header {
+  display: flex;
+  margin-bottom: var(--dcl-space-8);
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0 var(--dcl-space-16);
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.aside {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: var(--dcl-space-16);
+}
+
+.viewAll {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  color: var(--dcl-text-link);
+  font-family: "Inter", sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.viewAll:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.status,
+.count {
+  margin: 0 0 var(--dcl-space-16);
+  font-family: "Inter", sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+}
+
+.status {
+  color: var(--dcl-text-primary);
+}
+
+.count {
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  color: var(--dcl-text-secondary);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.errorAction {
+  margin-bottom: var(--dcl-space-16);
+}
+
+.spinner {
+  display: block;
+  margin: var(--dcl-space-24) 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dcl-space-16) var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-24) 0;
+  color: var(--dcl-text-primary);
+  font-family: "Inter", sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.name {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border: 1px solid var(--dcl-transparencies-white-10);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.name:hover {
+  border-color: var(--dcl-transparencies-white-20);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.nameTile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    var(--dcl-brand-ruby) 0%,
+    var(--dcl-brand-violet) 100%
+  );
+  color: var(--dcl-neutrals-snow);
+}
+
+.nameLabel {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-family: "Inter", sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameSuffix {
+  color: var(--dcl-text-secondary);
+  font-weight: 500;
+}
+
+.nameActions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--dcl-space-8);
+}
+
+@media (min-width: 600px) {
+  .nameActions {
+    flex-direction: row;
+  }
+}
+
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 28px var(--dcl-space-16);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .name {
+    transition: none;
+  }
+}
+
+.card {
   --card-rarity: var(--dcl-transparencies-black-40);
 
   position: relative;
@@ -16,7 +225,7 @@
   height: 360px;
   border-radius: var(--dcl-radius-md);
   color: var(--dcl-text-primary);
-  font-family: 'Inter', sans-serif;
+  font-family: "Inter", sans-serif;
   transition:
     transform 200ms ease-in-out,
     box-shadow 300ms ease-in-out;
@@ -54,8 +263,8 @@
   --card-rarity: var(--dcl-rarities-unique);
 }
 
-.root:hover,
-.root:focus-within {
+.card:hover,
+.card:focus-within {
   box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
   transform: translateY(-4px);
 }
@@ -115,7 +324,7 @@
 
 /* The title's link stretches over the whole card; the action sits above it. */
 .cardLink::after {
-  content: '';
+  content: "";
   position: absolute;
   z-index: 1;
   inset: 0;
@@ -222,8 +431,8 @@
   min-width: 0;
 }
 
-.root:hover .action,
-.root:focus-within .action {
+.card:hover .action,
+.card:focus-within .action {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
@@ -251,27 +460,15 @@
   }
 }
 
-.visuallyHidden {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  border: 0;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .root,
+  .card,
   .action,
   .badges {
     transition: none;
   }
 
-  .root:hover,
-  .root:focus-within {
+  .card:hover,
+  .card:focus-within {
     transform: none;
   }
 }

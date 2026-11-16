@@ -115,14 +115,6 @@
     "primitives": 15,
     "tokens": 0
   },
-  "apps/ui3/src/web/pages/stprofilecreationstab.css": {
-    "primitives": 10,
-    "tokens": 0
-  },
-  "apps/ui3/src/web/pages/stprofilemyassetstab.css": {
-    "primitives": 26,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/stprofileoverviewtab.css": {
     "primitives": 12,
     "tokens": 0

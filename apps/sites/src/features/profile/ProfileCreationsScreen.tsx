@@ -1,18 +1,6 @@
 import { useState } from "react";
 
-import {
-  CatalogCard,
-  CollectibleBadges,
-  type CatalogCardProps,
-} from "@dcl/one-ui/apps/sites/provisional/CatalogCard/CatalogCard";
-import { FilterChip, FilterChipGroup } from "@dcl/one-ui/apps/sites/provisional/FilterChip/FilterChip";
-import {
-  ProfileCollectibles,
-  ProfileCollectiblesItem,
-  ProfileCollectiblesViewAll,
-  type ProfileCollectiblesState,
-} from "@dcl/one-ui/apps/sites/provisional/profile/ProfileCollectibles";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Button } from "@dcl/one-ui";
 import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
 
 import { assetPage } from "@/core/lib/shop/redirects";
@@ -21,7 +9,22 @@ import type { CreationsCategory, ProfileCreation } from "@/data/lib/catalyst/mar
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { DEFAULT_CREATIONS_CATEGORY } from "@/data/lib/profile/queries";
 
-import { catalogueTotal, CollectibleLink, loadedRows, loadMore, receivedAny, useFocusNewRows } from "./collectibles";
+import {
+  catalogueTotal,
+  CollectibleBadges,
+  CollectibleCard,
+  CollectiblesItem,
+  CollectiblesPanel,
+  loadedRows,
+  loadMore,
+  receivedAny,
+  useCategoryTabs,
+  useFocusNewRows,
+  ViewAllLink,
+  type CategoryOption,
+  type CollectibleCardProps,
+  type CollectiblesState,
+} from "./collectibles";
 import { useProfileCreations } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -42,6 +45,19 @@ function displayName(profile: ProfileVM): string {
   return profile.name && profile.name !== profile.address ? profile.name : shortAddress(profile.address);
 }
 
+const CATEGORY_TABS: CategoryOption<CreationsCategory>[] = [
+  {
+    value: "wearable",
+    label: "Wearables",
+    icon: <BackpackUpperBody size={20} aria-hidden="true" />,
+  },
+  {
+    value: "emote",
+    label: "Emotes",
+    icon: <GeneralSecondaryBarEmotes size={20} aria-hidden="true" />,
+  },
+];
+
 function countLabel(shown: number, total: number): string {
   const noun = (n: number) => (n === 1 ? "1 creation" : `${n} creations`);
   return total > shown ? `Showing ${shown} of ${noun(total)}` : noun(shown);
@@ -50,14 +66,14 @@ function countLabel(shown: number, total: number): string {
 function CreationCard({ item, creator }: { item: ProfileCreation; creator: string }) {
   const href = assetPage(item.contractAddress, item.itemId, "item");
   const payment = item.payment;
-  const price: CatalogCardProps["price"] =
+  const price: CollectibleCardProps["price"] =
     payment.kind === "credits"
       ? { currency: "credits", amount: payment.credits }
       : payment.kind === "mana"
         ? { currency: "mana", amount: payment.mana, network: item.network }
         : undefined;
   return (
-    <CatalogCard
+    <CollectibleCard
       title={item.name}
       imageUrl={item.thumbnail}
       href={href}
@@ -69,16 +85,15 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: strin
       badges={<CollectibleBadges {...item.traits} />}
       action={
         payment.kind !== "none" ? (
-          <Button href={href} aria-label={`Buy ${item.name}`}>
+          <Button href={href} size="sm" aria-label={`Buy ${item.name}`}>
             Buy
           </Button>
         ) : (
-          <Button href={href} variant="secondary" aria-label={`View in Shop: ${item.name}`}>
+          <Button href={href} variant="secondary" size="sm" aria-label={`View in Shop: ${item.name}`}>
             View in Shop
           </Button>
         )
       }
-      LinkComponent={CollectibleLink}
     />
   );
 }
@@ -91,28 +106,11 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
   const focus = useFocusNewRows(rows.length, query.dataUpdatedAt + query.errorUpdatedAt);
   const creator = displayName(profile);
 
-  const filters = (
-    <FilterChipGroup label="Creations shown">
-      <FilterChip
-        icon={<BackpackUpperBody />}
-        label="Wearables"
-        active={category === "wearable"}
-        onSelect={() => setCategory("wearable")}
-      />
-      <FilterChip
-        icon={<GeneralSecondaryBarEmotes />}
-        label="Emotes"
-        active={category === "emote"}
-        onSelect={() => setCategory("emote")}
-      />
-    </FilterChipGroup>
-  );
+  const { filters, panel } = useCategoryTabs("Creations shown", CATEGORY_TABS, category, setCategory);
 
-  const viewAll = (
-    <ProfileCollectiblesViewAll href={creatorShopHref(profile.address)} label="View all" LinkComponent={CollectibleLink} />
-  );
+  const viewAll = <ViewAllLink href={creatorShopHref(profile.address)} label="View all" />;
 
-  let state: ProfileCollectiblesState;
+  let state: CollectiblesState;
   // With no data yet, a Try again refetch puts the query back to pending, so it shows as loading.
   if (query.isError && !query.data) {
     state = {
@@ -121,6 +119,7 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
       action: (
         <Button
           variant="secondary"
+          size="md"
           onClick={() => {
             focus.expectRowsFrom(0);
             void query.refetch();
@@ -142,28 +141,28 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
             action: loadMore(query, "creations", () => focus.expectRowsFrom(0)),
           }
         : rows.length === 0
-        ? {
-            kind: "empty-note",
-            message: own ? "Items you create will appear here." : "This account has not created anything yet.",
-          }
-        : {
-            kind: "list",
-            // The source shows no count here; it is only announced.
-            count: countLabel(rows.length, catalogueTotal(query.data)),
-            showCount: false,
-            children: rows.map((item) => (
-              <ProfileCollectiblesItem key={item.id}>
-                <CreationCard item={item} creator={creator} />
-              </ProfileCollectiblesItem>
-            )),
-            listRef: focus.listRef,
-            more: loadMore(query, "creations", () => focus.expectRowsFrom(rows.length)),
-          };
+          ? {
+              kind: "empty-note",
+              message: own ? "Items you create will appear here." : "This account has not created anything yet.",
+            }
+          : {
+              kind: "list",
+              // The source shows no count here; it is only announced.
+              count: countLabel(rows.length, catalogueTotal(query.data)),
+              showCount: false,
+              children: rows.map((item) => (
+                <CollectiblesItem key={item.id}>
+                  <CreationCard item={item} creator={creator} />
+                </CollectiblesItem>
+              )),
+              listRef: focus.listRef,
+              more: loadMore(query, "creations", () => focus.expectRowsFrom(rows.length)),
+            };
   }
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="creations" onTab={onTab}>
-      <ProfileCollectibles filters={filters} aside={viewAll} state={state} panelRef={focus.panelRef} />
+      <CollectiblesPanel filters={filters} aside={viewAll} panel={panel} state={state} panelRef={focus.panelRef} />
     </ProfileShell>
   );
 }

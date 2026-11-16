@@ -1,17 +1,53 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ComponentType, type ReactNode, type Ref } from "react";
 import { Link } from "react-router";
 
-import type { CatalogCardLinkProps } from "@dcl/one-ui/apps/sites/provisional/CatalogCard/CatalogCard";
-import { ProfileCollectiblesProgress } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileCollectibles";
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Button, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
+import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
+import {
+  BackpackBody,
+  BackpackEarrings,
+  BackpackEyebrows,
+  BackpackEyes,
+  BackpackEyewear,
+  BackpackFacialHair,
+  BackpackFeet,
+  BackpackGenderFemale,
+  BackpackGenderMale,
+  BackpackGenderUnisex,
+  BackpackHair,
+  BackpackHandwear,
+  BackpackHat,
+  BackpackHead,
+  BackpackHelmet,
+  BackpackLowerBody,
+  BackpackMask,
+  BackpackMouth,
+  BackpackSkins,
+  BackpackTiara,
+  BackpackUpperBody,
+  GeneralMana,
+  GeneralName,
+  GeneralPolygonMana,
+  GeneralRightArrow,
+  GeneralSmartItem,
+  ShopCredits,
+} from "@dcl/one-ui/foundations/icons";
 
 import type { CollectiblePage } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 
+import styles from "./collectibles.module.css";
+
 export type CollectiblesQuery<T> = UseInfiniteQueryResult<InfiniteData<CollectiblePage<T>>, Error>;
 
+export type CollectibleLinkProps = {
+  to: string;
+  className?: string | undefined;
+  children?: ReactNode;
+};
+
 /** Opening an item or token is a client navigation, loaded on hover or focus. */
-export function CollectibleLink({ to, ...props }: CatalogCardLinkProps) {
+export function CollectibleLink({ to, ...props }: CollectibleLinkProps) {
   return <Link to={to} prefetch="intent" {...props} />;
 }
 
@@ -55,13 +91,17 @@ export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest
     <>
       <span role="status">
         {fetching ? (
-          <ProfileCollectiblesProgress label={`Loading more ${noun}`} />
+          <>
+            <Spinner variant="light" aria-hidden="true" />
+            <span className={styles.visuallyHidden}>{`Loading more ${noun}`}</span>
+          </>
         ) : failed ? (
           `More ${noun} could not be loaded.`
         ) : null}
       </span>
       <Button
         variant="secondary"
+        size="md"
         // Not `disabled`: a disabled button drops the focus it holds.
         aria-disabled={fetching}
         onClick={() => {
@@ -105,4 +145,357 @@ export function useFocusNewRows(rows: number, readAt: number) {
       pending.current = index;
     },
   };
+}
+
+export type CategoryOption<T> = { value: T; label: string; icon?: ReactNode };
+
+/** The tabpanel the category tabs control. */
+export type CategoryPanel = {
+  role: "tabpanel";
+  id: string;
+  "aria-labelledby": string;
+};
+
+/**
+ * The category filter as the shared pill TabsBar, and the attributes of the tabpanel it controls.
+ * Choosing a tab is a button press; the arrows, Home and End move between them.
+ */
+export function useCategoryTabs<T extends string | null>(
+  label: string,
+  options: readonly CategoryOption<T>[],
+  selected: T,
+  onSelect: (value: T) => void,
+): { filters: ReactNode; panel: CategoryPanel } {
+  const ids = useId();
+  const tabId = (value: T) => `${ids}-${value ?? "all"}`;
+  const panelId = `${ids}-panel`;
+  const filters = (
+    <TabsBar label={label} variant="pill">
+      {options.map((option) => (
+        <Tabs
+          key={option.value ?? "all"}
+          id={tabId(option.value)}
+          variant="pill"
+          selected={option.value === selected}
+          aria-controls={panelId}
+          onClick={() => onSelect(option.value)}
+          label={
+            <span className={styles.tabLabel}>
+              {option.icon}
+              {option.label}
+            </span>
+          }
+        />
+      ))}
+    </TabsBar>
+  );
+  return {
+    filters,
+    panel: {
+      role: "tabpanel",
+      id: panelId,
+      "aria-labelledby": tabId(selected),
+    },
+  };
+}
+
+export type CollectiblesState =
+  | { kind: "loading"; label: string }
+  /** A read failed: say so, with the way to try again. Never shown as an empty list. */
+  | { kind: "error"; message: string; action?: ReactNode }
+  /** Nothing to list: an empty message, announced by its title, or a one-line note. */
+  | { kind: "empty"; label: string; children: ReactNode }
+  | { kind: "empty-note"; message: string }
+  | {
+      kind: "list";
+      /** Announced when loading ends; shown above the list unless `showCount` is false. */
+      count: string;
+      showCount?: boolean;
+      /** Cards in a grid, or full-width rows (NAMEs). */
+      layout?: "grid" | "rows";
+      children: ReactNode;
+      /** The list element, so the page can move focus to a row it loaded. */
+      listRef?: Ref<HTMLUListElement>;
+      /** Under the list: Load more, its progress, or why the next page failed. */
+      more?: ReactNode;
+    };
+
+export type CollectiblesPanelProps = {
+  /** The category tabs; shown above every state. */
+  filters?: ReactNode;
+  /** Beside the filters, e.g. a "View all" link. */
+  aside?: ReactNode;
+  /** The tabpanel attributes when `filters` are category tabs. */
+  panel?: CategoryPanel;
+  state: CollectiblesState;
+  /** Makes the panel focusable from script, so focus has somewhere to go when a control leaves. */
+  panelRef?: Ref<HTMLDivElement>;
+};
+
+/** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
+export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: CollectiblesPanelProps) {
+  const list = state.kind === "list" ? state : null;
+  const countShown = list !== null && list.showCount !== false;
+
+  return (
+    <div className={styles.root}>
+      {filters || aside ? (
+        <div className={styles.header}>
+          {filters}
+          {aside ? <div className={styles.aside}>{aside}</div> : null}
+        </div>
+      ) : null}
+      <div {...panel} ref={panelRef} className={styles.panel} tabIndex={panelRef ? -1 : undefined}>
+        {/* One live region, always mounted, so a screen reader hears how loading ended. */}
+        <p className={countShown ? styles.count : styles.status} role="status">
+          {state.kind === "loading" ? (
+            <>
+              <Spinner variant="light" className={styles.spinner} aria-hidden="true" />
+              <span className={styles.visuallyHidden}>{state.label}</span>
+            </>
+          ) : state.kind === "error" ? (
+            state.message
+          ) : state.kind === "empty-note" ? (
+            <span className={styles.note}>{state.message}</span>
+          ) : state.kind === "list" ? (
+            countShown ? (
+              state.count
+            ) : (
+              <span className={styles.visuallyHidden}>{state.count}</span>
+            )
+          ) : (
+            // The empty message below shows this title; the region only announces it.
+            <span className={styles.visuallyHidden}>{state.label}</span>
+          )}
+        </p>
+        {state.kind === "error" && state.action ? <div className={styles.errorAction}>{state.action}</div> : null}
+        {state.kind === "empty" ? state.children : null}
+        {list ? (
+          <>
+            <ul ref={list.listRef} className={list.layout === "rows" ? styles.rows : styles.grid}>
+              {list.children}
+            </ul>
+            {list.more ? <div className={styles.more}>{list.more}</div> : null}
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** One cell of the list; wraps a CollectibleCard or a NameRow. */
+export function CollectiblesItem({ children }: { children: ReactNode }) {
+  return <li className={styles.item}>{children}</li>;
+}
+
+/** The header's link to the full list elsewhere, with its chevron. */
+export function ViewAllLink({
+  href,
+  label,
+  LinkComponent = CollectibleLink,
+}: {
+  href: string;
+  label: string;
+  LinkComponent?: ComponentType<CollectibleLinkProps>;
+}) {
+  return (
+    <LinkComponent to={href} className={styles.viewAll}>
+      {label}
+      <GeneralRightArrow size={16} aria-hidden="true" />
+    </LinkComponent>
+  );
+}
+
+/** A NAME as a row: the NAME tile, the name and its `.dcl.eth` suffix, and its actions. */
+export function NameRow({
+  name,
+  suffix = ".dcl.eth",
+  actions,
+}: {
+  name: string;
+  suffix?: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className={styles.name}>
+      <span className={styles.nameTile} aria-hidden="true">
+        <GeneralName size={26} />
+      </span>
+      <p className={styles.nameLabel}>
+        {name}
+        <span className={styles.nameSuffix}>{suffix}</span>
+      </p>
+      {actions ? <div className={styles.nameActions}>{actions}</div> : null}
+    </div>
+  );
+}
+
+export type CollectibleRarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
+
+export type CollectibleCardProps = {
+  title: string;
+  imageUrl?: string;
+  /** A decorative glyph shown instead of an image that is missing or fails, e.g. a NAME's. */
+  placeholder?: ReactNode;
+  /** The item's or token's own page; the whole card opens it. */
+  href: string;
+  /** Paints the image surface and the rarity tag. Without it the card has neither. */
+  rarity?: CollectibleRarity;
+  /** The line under the title, e.g. "By Alice". */
+  byline?: ReactNode;
+  /** In MANA on its network, or in credits. */
+  price?:
+    { currency: "mana"; amount: string; network: "ethereum" | "polygon" } | { currency: "credits"; amount: string };
+  /** Shown where the price goes when there is none, e.g. "Not for sale". */
+  priceFallback?: string;
+  /** Glyphs next to the rarity tag; see `CollectibleBadges`. */
+  badges?: ReactNode;
+  /** Revealed over the badge row on hover or keyboard focus, e.g. Buy. */
+  action?: ReactNode;
+  LinkComponent?: ComponentType<CollectibleLinkProps>;
+};
+
+const RARITY_LABEL: Record<CollectibleRarity, string> = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+  exotic: "Exotic",
+  mythic: "Mythic",
+  unique: "Unique",
+};
+
+/**
+ * A wearable, emote, NAME or LAND as the catalogue lists it: its image on the rarity's colour,
+ * title, byline, price and badges. On hover or focus it lifts and slides its action in over the
+ * badges, as the source does. The design system has no catalogue card yet, so it is drawn here.
+ */
+export function CollectibleCard({
+  title,
+  imageUrl,
+  placeholder,
+  href,
+  rarity,
+  byline,
+  price,
+  priceFallback,
+  badges,
+  action,
+  LinkComponent = CollectibleLink,
+}: CollectibleCardProps) {
+  const { broken, ref, onError } = useBrokenImage(imageUrl);
+  const PriceMark =
+    price?.currency === "credits" ? ShopCredits : price?.network === "ethereum" ? GeneralMana : GeneralPolygonMana;
+  const rootClass = [styles.card, rarity && styles[rarity], action && styles.withAction].filter(Boolean).join(" ");
+
+  return (
+    <article className={rootClass}>
+      <div className={styles.media}>
+        {imageUrl && !broken ? (
+          <img ref={ref} className={styles.image} src={imageUrl} alt="" loading="lazy" onError={onError} />
+        ) : placeholder ? (
+          <span className={styles.placeholder} aria-hidden="true">
+            {placeholder}
+          </span>
+        ) : null}
+      </div>
+      <div className={styles.content}>
+        <h3 className={styles.title}>
+          {/* The title's link covers the card, so the whole card opens the item. */}
+          <LinkComponent to={href} className={styles.cardLink}>
+            {title}
+          </LinkComponent>
+        </h3>
+        {byline ? <div className={styles.byline}>{byline}</div> : null}
+        {price ? (
+          <p className={styles.price}>
+            <PriceMark size={32} aria-hidden="true" />
+            <span>
+              <span className={styles.visuallyHidden}>Price: </span>
+              {price.amount}
+              <span className={styles.visuallyHidden}>{price.currency === "credits" ? " credits" : " MANA"}</span>
+            </span>
+          </p>
+        ) : priceFallback ? (
+          <p className={styles.fallback}>{priceFallback}</p>
+        ) : null}
+        <div className={styles.badges}>
+          {rarity ? <span className={styles.rarity}>{RARITY_LABEL[rarity]}</span> : null}
+          {badges ? <span className={styles.info}>{badges}</span> : null}
+        </div>
+        {action ? <div className={styles.action}>{action}</div> : null}
+      </div>
+    </article>
+  );
+}
+
+type IconComponent = typeof BackpackHat;
+
+/** The catalogue's wearable slots, keyed as it spells them. */
+const CATEGORY_ICON: Record<string, IconComponent> = {
+  body_shape: BackpackBody,
+  earring: BackpackEarrings,
+  eyebrows: BackpackEyebrows,
+  eyes: BackpackEyes,
+  eyewear: BackpackEyewear,
+  facial_hair: BackpackFacialHair,
+  feet: BackpackFeet,
+  hair: BackpackHair,
+  hands_wear: BackpackHandwear,
+  hat: BackpackHat,
+  helmet: BackpackHelmet,
+  lower_body: BackpackLowerBody,
+  mask: BackpackMask,
+  mouth: BackpackMouth,
+  skin: BackpackSkins,
+  tiara: BackpackTiara,
+  top_head: BackpackHead,
+  upper_body: BackpackUpperBody,
+};
+
+function categoryLabel(category: string): string {
+  return category
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function Badge({ icon: Icon, label }: { icon: IconComponent; label: string }) {
+  return (
+    <span className={styles.badge} role="img" aria-label={label} title={label}>
+      <Icon size={20} aria-hidden="true" />
+    </span>
+  );
+}
+
+export type CollectibleBadgesProps = {
+  /** The wearable slot; a slot without a glyph (an emote's kind) shows none. */
+  category?: string;
+  /** `BaseMale` and `BaseFemale` together are unisex. */
+  bodyShapes?: readonly string[];
+  isSmart?: boolean;
+};
+
+/** A wearable's slot, body shape and smart badges, each named for assistive technology. */
+export function CollectibleBadges({ category, bodyShapes = [], isSmart = false }: CollectibleBadgesProps) {
+  const slot = category ? CATEGORY_ICON[category] : undefined;
+  const male = bodyShapes.some((shape) => shape.toLowerCase().includes("basemale"));
+  const female = bodyShapes.some((shape) => shape.toLowerCase().includes("basefemale"));
+  const body =
+    male && female
+      ? { icon: BackpackGenderUnisex, label: "Unisex" }
+      : male
+        ? { icon: BackpackGenderMale, label: "For male" }
+        : female
+          ? { icon: BackpackGenderFemale, label: "For female" }
+          : null;
+
+  return (
+    <>
+      {slot && category ? <Badge icon={slot} label={categoryLabel(category)} /> : null}
+      {body ? <Badge icon={body.icon} label={body.label} /> : null}
+      {isSmart ? <Badge icon={GeneralSmartItem} label="Smart wearable" /> : null}
+    </>
+  );
 }

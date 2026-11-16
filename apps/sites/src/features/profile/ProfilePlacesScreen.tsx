@@ -74,7 +74,7 @@ function countLabel(shown: number, total: number): string {
 }
 
 /** The icon frame, title, text and next step shown when a list has nothing in it. */
-function EmptyMessage({ icon, title, subtitle, action }: { icon: ReactNode; title: string; subtitle: string; action: ReactNode }) {
+export function EmptyMessage({ icon, title, subtitle, action }: { icon: ReactNode; title: string; subtitle: string; action: ReactNode }) {
   return (
     <div className={styles.empty}>
       <span className={styles.emptyIcon} aria-hidden="true">
