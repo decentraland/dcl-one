@@ -377,6 +377,8 @@ required before retirement of known older epochs, followed by operation-grant ex
 exact uncertain-SQL settlement and outstanding-handle checks. Unregistered historical
 sources cannot be forgotten from UUID inequality. Retirement does not write foreign
 assignment rows or discard independently retained cleanup/takeover obligations.
+Wallets present in the sorted complete current view retain their exact previous slots
+until reseeding; absent old wallets can still retire to free bounded capacity.
 
 This metadata is local authority, not mirrored catalogue state. Restore with writers
 stopped and admissions closed, then acquire a fresh UUID/epoch before reopening.

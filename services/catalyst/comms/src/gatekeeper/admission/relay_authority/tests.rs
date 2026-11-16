@@ -873,3 +873,108 @@ async fn exact_proof_material_and_signed_alg_time_grants_are_authority_checks() 
         DenialReason::NotAuthorized,
     );
 }
+
+#[tokio::test]
+async fn failed_generation_check_clears_only_the_matching_renewal_without_extending_its_lease() {
+    let (mut authority, policy) = authority();
+    let original = lease(
+        execute(
+            &authority,
+            Operation::Join(join_with_claims(claims(1000))),
+            100,
+        )
+        .await,
+    );
+    let context = renewal(&original);
+    let id = fixed::<16>(&original.lease_id).unwrap();
+    let expires = authority.leases.lock().unwrap().entries[&id].expires;
+    // A closed lazy pool deterministically faults the real generation-check branch without I/O.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgresql://fixture:fixture@127.0.0.1/fixture")
+        .unwrap();
+    pool.close().await;
+    let unavailable = pool.clone();
+    Arc::get_mut(&mut authority).unwrap().generation = Some((pool, "generation-retry".into()));
+    let source = Uuid::new_v4().to_string();
+    let failed = authority
+        .execute_with_source(
+            request(Operation::Renew(context.clone())),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_denied(failed, DenialReason::Unavailable);
+    {
+        let leases = authority.leases.lock().unwrap();
+        let retained = &leases.entries[&id];
+        assert_eq!(retained.expires, expires);
+        assert!(!retained.checking);
+        assert!(
+            authority
+                .binding(
+                    &context.pulse_instance,
+                    &context.connection_generation,
+                    &context.lease_id,
+                    &context.authority_incarnation
+                )
+                .unwrap()
+                .matches(retained)
+        );
+    }
+    // Restore this explicit fixture's original policy to model a recovered dependency.
+    Arc::get_mut(&mut authority).unwrap().generation = None;
+    let retried = lease(execute(&authority, Operation::Renew(context), 100).await);
+    assert_eq!(retried.lease_id, original.lease_id);
+    Arc::get_mut(&mut authority).unwrap().generation =
+        Some((unavailable.clone(), "generation-retry".into()));
+    policy.mode.store(3, Ordering::SeqCst);
+    let context = renewal(&retried);
+    {
+        let pending = authority.execute_with_source(
+            request(Operation::Renew(context.clone())),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        );
+        tokio::pin!(pending);
+        assert!(futures::poll!(&mut pending).is_pending());
+        assert!(matches!(authority.release(context), Ok(Reply::Released(_))));
+        policy.release.notify_one();
+        assert_denied(pending.await.result.unwrap(), DenialReason::Expired);
+        assert!(
+            authority.leases.lock().unwrap().entries.is_empty(),
+            "a released exact lease is never recreated by the generation-error cleanup"
+        );
+    }
+    Arc::get_mut(&mut authority).unwrap().generation = None;
+    policy.mode.store(0, Ordering::SeqCst);
+    let denied_original = lease(
+        execute(
+            &authority,
+            Operation::Join(join_with_claims(claims(1000))),
+            100,
+        )
+        .await,
+    );
+    policy.mode.store(1, Ordering::SeqCst);
+    Arc::get_mut(&mut authority).unwrap().generation =
+        Some((unavailable, "generation-retry".into()));
+    let denied = authority
+        .execute_with_source(
+            request(Operation::Renew(renewal(&denied_original))),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_denied(denied, DenialReason::NotAuthorized);
+    assert!(
+        authority.leases.lock().unwrap().entries.is_empty(),
+        "confirmed policy denial removes the lease even when the generation check also fails"
+    );
+}

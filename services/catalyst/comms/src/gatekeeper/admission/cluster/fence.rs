@@ -251,6 +251,7 @@ pub trait AssignmentFence: Send + Sync {
         &self,
         _binding: &crate::interfaces::PulseGenerationBinding,
         _limit: usize,
+        _current_targets: &[crate::protocol::bus::selection_view::SelectionTarget],
     ) {
     }
     async fn recover_selected_target(
@@ -362,6 +363,14 @@ fn validate_audience(audience: &str) -> Result<(), FenceError> {
 impl PgAssignmentFence {
     pub fn new(pool: PgPool, audience: String) -> Result<Self, FenceError> {
         Self::with_limit(pool, audience, super::peer_state::DEFAULT_PEER_STATE_MAX)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_selected_limit_for_test(
+        pool: PgPool,
+        audience: String,
+        limit: usize,
+    ) -> Result<Self, FenceError> {
+        Self::with_limit(pool, audience, limit)
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn unfenced_test(pool: PgPool, audience: String) -> Result<Self, FenceError> {
@@ -509,10 +518,11 @@ impl AssignmentFence for PgAssignmentFence {
         &self,
         binding: &crate::interfaces::PulseGenerationBinding,
         limit: usize,
+        current_targets: &[crate::protocol::bus::selection_view::SelectionTarget],
     ) {
         let _ = tokio::time::timeout(
             FENCE_CALL_TIMEOUT,
-            self.retire_obsolete(binding, limit.min(128)),
+            self.retire_obsolete(binding, limit.min(128), current_targets),
         )
         .await;
     }
@@ -1289,6 +1299,7 @@ impl PgAssignmentFence {
         &self,
         binding: &crate::interfaces::PulseGenerationBinding,
         limit: usize,
+        current_targets: &[crate::protocol::bus::selection_view::SelectionTarget],
     ) -> Result<(), FenceError> {
         if !self
             .completed_generation
@@ -1321,6 +1332,14 @@ impl PgAssignmentFence {
         }
         for (wallet, slot) in page {
             *cursor = Some(wallet.clone());
+            // The complete view is strictly wallet-sorted. Retain a still-selected
+            // predecessor until ordinary reseeding advances this exact slot in place.
+            if current_targets
+                .binary_search_by(|target| target.wallet.as_str().cmp(wallet.as_str()))
+                .is_ok()
+            {
+                continue;
+            }
             let (old_epoch, source, generation) = {
                 let desired = slot.desired.lock();
                 (desired.epoch, desired.source.clone(), desired.generation)

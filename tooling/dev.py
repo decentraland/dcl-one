@@ -852,7 +852,11 @@ def watch(*paths):
 
 
 def task(name):
+    if name in ("api-build", "api-run"):
+        print(f"foundation-dev task: {name} settings begin", file=sys.stderr, flush=True)
     config = settings()
+    if name in ("api-build", "api-run"):
+        print(f"foundation-dev task: {name} settings complete", file=sys.stderr, flush=True)
     if name in SERVICES:
         # The PID survives the exec into the service itself.
         (STATE / 'tasks').mkdir(exist_ok=True, mode=0o700)
@@ -893,15 +897,22 @@ def task(name):
         os.execve(binary, [str(binary), 'index'], runtime_env(config))
     elif name in ('api-build', 'api-run'):
         target = BACKEND / 'target'
+        print(f"foundation-dev task: {name} build begin", file=sys.stderr, flush=True)
         run(['cargo', 'build', '--locked', '--bin', 'catalyst', '--target-dir', target], cwd=BACKEND)
+        print(f"foundation-dev task: {name} build complete", file=sys.stderr, flush=True)
         binary = target / 'debug/catalyst'
+        print(f"foundation-dev task: {name} schema begin", file=sys.stderr, flush=True)
         apply_schema(config, binary)
+        print(f"foundation-dev task: {name} schema complete", file=sys.stderr, flush=True)
         if name == 'api-build':
             # Before the index process starts mirroring, so the snapshot's rows are not fetched again.
             seed_trades(config)
             seed_dev_flags(config)
             return
+        print(f"foundation-dev task: {name} catalog begin", file=sys.stderr, flush=True)
         import_asset_catalog(config, binary)
+        print(f"foundation-dev task: {name} catalog complete", file=sys.stderr, flush=True)
+        print(f"foundation-dev task: {name} serve exec", file=sys.stderr, flush=True)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})
 
 

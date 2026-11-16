@@ -423,7 +423,9 @@ discovery pass, a final current-binding check and the original operation-grant
 window. Exact uncertain SQL settlement and unchanged epoch/source/generation/map
 identity with no extra slot handles remain required. Unidentified historical source
 UUIDs stay retained; UUID inequality alone proves no supersession. Independent
-cleanup and takeover obligations keep their existing owners.
+cleanup and takeover obligations keep their existing owners. Wallets present in the
+sorted complete current view keep their exact predecessors until reseeding; absent
+old wallets can still retire to free capacity.
 
 Discovery runs as a cooperative future inside the existing subscriber job. It
 retains one complete bounded target vector and rotates through 128-target batches,

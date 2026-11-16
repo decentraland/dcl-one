@@ -99,7 +99,9 @@ impl ClusterSubscriber {
                 if !self.is_ready() || current.as_ref() != Some(&binding) {
                     break;
                 }
-                authority.retire_obsolete_generation(&binding, 128).await;
+                authority
+                    .retire_obsolete_generation(&binding, 128, &targets)
+                    .await;
                 let end = targets.len().min(offset + 128);
                 for target in &targets[offset..end] {
                     if tokio::time::timeout(

@@ -28,6 +28,8 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "gatekeeper::admission::relay_authority::tests::failed_generation_check_clears_only_the_matching_renewal_without_extending_its_lease",
+        "protocol::bus::selection_view::tests::complete_bad_digest_fails_at_the_last_page_and_valid_empty_views_complete",
         "pulse::application_relay::http::tests::generation_loss_refuses_a_late_http_lease_and_further_cached_admission",
         "gatekeeper::admission::cluster::generation::tests::exact_operation_permission_is_single_use_and_never_refreshes_its_deadline",
         "protocol::bus::selection_view::tests::bounded_selection_view_transfers_more_than_one_reply_and_refuses_mixed_or_missing_pages",
@@ -154,7 +156,12 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
         "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
         "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
-        "pulse::statistics::tests::producer_capacity_never_forgets_cursors_and_backlog_recovers_completely",
+        "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+        "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+        "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
+        "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+        "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+        "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
     ],
     ("catalyst_content", "lib"): [
         "entity::tests::deployment_metadata_retains_order_and_exact_scalars",
@@ -288,6 +295,7 @@ MANDATORY_ARCHIPELAGO = {
         "recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn",
     ],
     ("pulse_generation", "test"): [
+        "current_view_retains_exact_predecessor_until_reseed_and_reclaims_absent_slots_at_capacity",
         "mint_and_delivery_use_fresh_exact_source_permissions_after_cutover",
         "complete_view_recovery::started_strict_discovery_recovers_all_unchanged_targets_after_restart_without_hints",
         "room_authority::source_cutover_rejects_old_requests_and_inflight_old_lease_issuance",

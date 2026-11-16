@@ -405,7 +405,7 @@ impl RelayAuthority {
             Arc::clone(&entry.room)
         };
         let authorized = self.check_policy(&room, started).await;
-        let _generation = self.generation_guard(source, started).await?;
+        let generation = self.generation_guard(source, started).await;
         let mut leases = self.leases.lock().map_err(|_| DenialReason::Unavailable)?;
         let entry = leases
             .entries
@@ -418,7 +418,21 @@ impl RelayAuthority {
             leases.entries.remove(&binding.id);
             return Err(reason);
         }
-        if entry.expires <= Instant::now() || started + LEASE_TTL <= Instant::now() {
+        let expires = entry.expires;
+        let _generation = match generation {
+            Ok(guard) => guard,
+            Err(reason) => {
+                // The exact lease still exists and matches; the failed check grants
+                // nothing and leaves its original expiry available for a later retry.
+                leases
+                    .entries
+                    .get_mut(&binding.id)
+                    .ok_or(DenialReason::Expired)?
+                    .checking = false;
+                return Err(reason);
+            }
+        };
+        if expires <= Instant::now() || started + LEASE_TTL <= Instant::now() {
             leases.entries.remove(&binding.id);
             return Err(DenialReason::Expired);
         }
