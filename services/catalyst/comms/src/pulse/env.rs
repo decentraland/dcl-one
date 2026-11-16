@@ -204,7 +204,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_REPLAY_ENTRIES_PER_SOURCE",
-        "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
+        "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48, so every subscriber of an IPv6 provider that shares one /48 shares one quota, as clients behind one IPv4 NAT address do; raise it before binding IPv6 for such networks; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
     ),
     (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
