@@ -118,6 +118,18 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(text.count("location ^~ /cast/ {"), 1)
         self.assertNotIn("location /cast/ {", text)
 
+    def test_cast_stream_and_watch_links_are_sites_pages(self):
+        # The gatekeeper's links are {CAST2_URL}/s/<key> and /w/<location>, CAST2_URL = <origin>/cast.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["cast.s.$token.tsx", "cast.w.$location.tsx"], "internal": ["/metrics"],
+                 "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /cast/", "to": "/comms-gatekeeper$uri"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        for page in ("/cast/s/", "/cast/w/"):
+            with self.subTest(page=page):
+                self.assertIn(f"location ^~ {page} {{\nproxy_pass http://sites;", text)
+        self.assertEqual(text.count("location ^~ /cast/ {"), 1)
+
     def test_worlds_host_deploys_get_the_deploy_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],

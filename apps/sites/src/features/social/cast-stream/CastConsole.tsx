@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMachine } from "@xstate/react";
 import { useSearchParams } from "react-router";
@@ -7,7 +7,20 @@ import StCastStreamer from "@ui/web/pages/StCastStreamer";
 import StCastNotFound from "@ui/web/pages/StCastNotFound";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
-import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type TrackFn } from "./machine";
+import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
+
+/** What a real session adds to the console; the story pages leave it out. */
+export type LiveBindings = {
+  goLive: GoLiveFn;
+  stopShare: StopShareFn;
+  /** Calls `onEnded` when the browser ends the screen capture; answers the unsubscribe. */
+  bindShareEnded: (onEnded: () => void) => () => void;
+  /** The published media, shown in the live view. */
+  stage?: ReactNode;
+  /** Microphone and camera toggles next to the share and leave buttons. */
+  liveControls?: ReactNode;
+  participants?: number;
+};
 
 type CastConsoleProps = {
   trackCtx: TrackContext;
@@ -19,6 +32,7 @@ type CastConsoleProps = {
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
   track?: TrackFn;
+  live?: LiveBindings;
 };
 
 export default function CastConsole({
@@ -31,11 +45,13 @@ export default function CastConsole({
   endCast,
   shareScreen,
   track,
+  live,
 }: CastConsoleProps) {
   const [searchParams] = useSearchParams();
 
   const urlStep = (searchParams.get("step")?.trim() || initialStep) ?? undefined;
-  const stateId = slugToState(urlStep);
+  // A live session runs the whole flow once; only the story pages jump between steps.
+  const stateId = live ? slugToState(undefined) : slugToState(urlStep);
 
   return (
     <CastConsoleInner
@@ -49,6 +65,7 @@ export default function CastConsole({
       endCast={endCast}
       shareScreen={shareScreen}
       track={track}
+      live={live}
     />
   );
 }
@@ -63,6 +80,7 @@ type InnerProps = {
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
   track?: TrackFn;
+  live?: LiveBindings;
 };
 
 function CastConsoleInner({
@@ -75,8 +93,10 @@ function CastConsoleInner({
   endCast,
   shareScreen,
   track,
+  live,
 }: InnerProps) {
   const [, setSearchParams] = useSearchParams();
+  const [name, setName] = useState(identity ?? "");
 
   const snapshot = useRef(
     resolveCastSnapshot({
@@ -88,6 +108,8 @@ function CastConsoleInner({
       requestPermissions,
       endCast,
       shareScreen,
+      goLive: live?.goLive,
+      stopShare: live?.stopShare,
       track,
     }),
   ).current;
@@ -101,16 +123,22 @@ function CastConsoleInner({
       requestPermissions,
       endCast,
       shareScreen,
+      goLive: live?.goLive,
+      stopShare: live?.stopShare,
       track,
     },
     snapshot,
   });
+
+  const bindShareEnded = live?.bindShareEnded;
+  useEffect(() => bindShareEnded?.(() => send({ type: "SHARE_ENDED" })), [bindShareEnded, send]);
 
   const value = state.matches("live") ? "live" : (state.value as string);
   const step = stateToSlug(value);
 
   const lastStep = useRef<string | null>(null);
   useEffect(() => {
+    if (live) return;
     if (lastStep.current === step) return;
     lastStep.current = step;
     setSearchParams(
@@ -122,7 +150,7 @@ function CastConsoleInner({
       },
       { replace: true, preventScrollReset: true },
     );
-  }, [step, setSearchParams]);
+  }, [step, setSearchParams, live]);
 
   const placeName = state.context.info?.placeName ?? "Genesis Plaza";
   const displayName = state.context.identity || identity || "";
@@ -138,14 +166,17 @@ function CastConsoleInner({
           <StCastStreamer
             state="onboarding"
             streamName={placeName}
-            displayName={displayName}
+            displayName={name}
+            onNameChange={setName}
             toasts={[]}
           />
           <ConsoleControls label="Devices">
             <button
               type="button"
               className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES })}
+              onClick={() =>
+                send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name })
+              }
             >
               Continue with these devices
             </button>
@@ -203,7 +234,18 @@ function CastConsoleInner({
             state="onboarding"
             streamName={placeName}
             displayName={displayName}
-            toasts={[]}
+            toasts={
+              state.context.joinError
+                ? [
+                    {
+                      id: "join",
+                      title: "Could not join the cast",
+                      message: state.context.joinError,
+                      action: { label: "Retry", onClick: () => send({ type: "JOIN" }) },
+                    },
+                  ]
+                : []
+            }
           />
           <ConsoleControls label="Preview">
             <button
@@ -224,6 +266,10 @@ function CastConsoleInner({
         </>
       )}
 
+      {value === "joining" && (
+        <StCastStreamer state="joining" streamName={placeName} toasts={[]} />
+      )}
+
       {value === "live" &&
         (() => {
           const sharing = state.matches({ live: "sharing" });
@@ -234,7 +280,8 @@ function CastConsoleInner({
                 state="live"
                 streamName={placeName}
                 displayName={displayName || "Streamer"}
-                participants={1}
+                participants={live?.participants ?? 1}
+                stage={live?.stage}
                 toasts={
                   state.context.screenShareFailed
                     ? [
@@ -253,6 +300,7 @@ function CastConsoleInner({
                 }
               />
               <ConsoleControls label="Live">
+                {live?.liveControls}
                 <button
                   type="button"
                   className={

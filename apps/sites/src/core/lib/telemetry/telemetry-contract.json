@@ -423,7 +423,7 @@
       "loose": false,
       "props": {
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
@@ -438,6 +438,15 @@
         "reason": {
           "kind": "string",
           "optional": false
+        }
+      }
+    },
+    "cast_join_failed": {
+      "loose": false,
+      "props": {
+        "reason": {
+          "kind": "string",
+          "optional": true
         }
       }
     },
@@ -537,7 +546,7 @@
           "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
@@ -550,7 +559,7 @@
           "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
@@ -594,10 +603,10 @@
         },
         "room_id": {
           "kind": "string",
-          "optional": false
+          "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
@@ -632,6 +641,23 @@
         }
       }
     },
+    "cast_watch_refused": {
+      "loose": false,
+      "props": {
+        "kind": {
+          "kind": "enum-string",
+          "values": [
+            "error",
+            "waiting"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
     "cast_watch_unmuted": {
       "loose": false,
       "props": {}
@@ -644,7 +670,7 @@
           "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
