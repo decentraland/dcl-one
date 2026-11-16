@@ -273,7 +273,16 @@ pub(super) fn run_scene_thread(
         return;
     }
 
+    // `exports` and `onUpdate` may be accessors, so the lookup runs scene code.
+    watchdog.arm(budget_ms);
     let has_on_update = export_is_function(scope, context, "onUpdate");
+    watchdog.disarm();
+    if watchdog.was_terminated() {
+        tracing::error!(scene = %scene_hash, "onUpdate lookup exceeded wall-clock budget; aborting scene");
+        host.borrow_mut().pending_fetches.clear();
+        finish(&shared, &watchdog, wd_thread, &scene_hash);
+        return;
+    }
     if !has_on_update {
         tracing::warn!(
             scene = %scene_hash,

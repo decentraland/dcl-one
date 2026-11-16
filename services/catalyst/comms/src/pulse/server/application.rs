@@ -520,8 +520,13 @@ mod tests {
         use hmac::{Hmac, KeyInit, Mac};
         use sha2::{Digest, Sha256};
         let authority = Arc::new(
-            RelayAuthority::new(Arc::new(ComposedPolicy), "key".into(), vec![7; 32], [9; 32])
-                .unwrap(),
+            RelayAuthority::unfenced_test(
+                Arc::new(ComposedPolicy),
+                "key".into(),
+                vec![7; 32],
+                [9; 32],
+            )
+            .unwrap(),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}{AUTHORITY_PATH}", listener.local_addr().unwrap());
@@ -532,7 +537,8 @@ mod tests {
         });
         let peer = rig.peers[0];
         let mut relay = ApplicationRelay::new(Arc::new(
-            HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode([9; 32]), true).unwrap(),
+            HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode([9; 32]), true)
+                .unwrap(),
         ));
         relay.authenticated(
             peer,
