@@ -119,7 +119,7 @@ export interface ForwardEditBridgeOptions {
    */
   context: Pick<
     BevySceneContext,
-    'onChange' | 'Name' | 'getForwardableComponent' | 'editorComponents' | 'engine'
+    'onChange' | 'Name' | 'Transform' | 'getForwardableComponent' | 'editorComponents' | 'engine'
   >;
   /** The live engine window to send console commands to. */
   engineWindow: EngineWindow;
@@ -139,9 +139,17 @@ export interface ForwardEditBridgeOptions {
   /**
    * Whether the scene is currently frozen (paused). Read when forwarding arms so
    * animations that loaded playing are paused to match the editor's default-frozen
-   * state (#1382). Defaults to frozen (the editor boots static).
+   * state (#1382), and to decide whether editor Placeholders are shown (only while
+   * frozen). Defaults to frozen (the editor boots static).
    */
   isFrozen?: () => boolean;
+  /**
+   * Whether entities attached to the scene's camera (`engine.CameraEntity` and its
+   * descendants) should be hidden. While you edit with the free camera, the
+   * engine's camera entity IS the editor's fly-camera, so anything the scene
+   * parents to it would hang in front of the editor's view. Defaults to never.
+   */
+  hideCameraAttachments?: () => boolean;
 }
 
 /**
@@ -167,10 +175,16 @@ const ARM_DELAY_MS = 3000;
 export interface ForwardEditBridge {
   /** Tear down the change subscription + arm timer. */
   disconnect(): void;
-  /** Pause (frozen=true) or resume (false) GLTF animation playback by forwarding
-   * each animated entity's Animator with playing:false, or the authored value
-   * (#1382). Driven by the scene run/freeze toggle. */
-  setAnimationsFrozen(frozen: boolean): void;
+  /** Apply the scene run/freeze toggle to what the engine renders: pause
+   * (frozen=true) or resume (false) time-based playback by forwarding each
+   * Animator/video/audio/particle component with its paused override or the
+   * authored value (#1382), and show editor Placeholders only while frozen, so
+   * Play shows the scene as players will see it. */
+  setSceneFrozen(frozen: boolean): void;
+  /** Re-evaluate which camera-attached entities are hidden (see
+   * `hideCameraAttachments`). Call when its inputs change: the camera mode or the
+   * run state. */
+  refreshCameraAttachments(): void;
   /** Re-establish editor overrides after a scene reload (Stop/#1376), which
    * re-creates the engine entities: marks existing entities instantiated (no
    * re-`new_entity` → no id collision) and replays placeholder/visibility/pickable/
@@ -180,8 +194,9 @@ export interface ForwardEditBridge {
 
 export function createForwardEditBridge(options: ForwardEditBridgeOptions): ForwardEditBridge {
   const { context, engineWindow } = options;
-  // Default frozen — the editor boots static (see setAnimationsFrozen / #1382).
+  // Default frozen — the editor boots static (see setSceneFrozen / #1382).
   const isFrozen = options.isFrozen ?? (() => true);
+  const hideCameraAttachments = options.hideCameraAttachments ?? (() => false);
   // Guard every send behind a disposed flag: once the bridge is disconnected (a
   // Bevy iframe reboot swaps `engineWindow`, or the renderer unmounts), queued
   // tasks that are still draining must NOT keep posting to the now-stale window.
@@ -226,9 +241,15 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         }
       }
     }
-    for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
-      forwardPlaceholder(entity, false);
+    // A reloaded or rebooted engine has no placeholder GLTFs, so a running scene
+    // needs nothing removed.
+    if (isFrozen()) {
+      for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
+        forwardPlaceholder(entity, false);
+      }
     }
+    // The reload also dropped the forwarded visibility of camera attachments.
+    refreshCameraAttachments(true);
     // #1373: re-forward each loaded GltfContainer so forwardSet re-applies the
     // editor's pointer-pickable mask — a model saved without a pointer collider is
     // otherwise unclickable after a reload (the load burst that carried its
@@ -256,9 +277,9 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       }
     }
     // #1382: the editor boots frozen, but a scene loads with its Animator clips
-    // playing — pause them to match the frozen state (setAnimationsFrozen forwards
+    // playing — pause them to match the frozen state (setPlaybackFrozen forwards
     // playing:false; the toolbar toggle later resumes/re-pauses).
-    if (isFrozen()) setAnimationsFrozen(true);
+    if (isFrozen()) setPlaybackFrozen(true);
   };
 
   // Arm after a delay so the initial CRDT load burst is not forwarded (see
@@ -318,8 +339,10 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   //     Preview/live still hide it: the CRDT keeps the authored value; we only
   //     override what the ENGINE renders.
   //
-  // So the effective editor visibility is simply: visible unless Hide is set.
-  // Forward that as the engine's VisibilityComponent. Existing scene entities
+  // A third rule hides camera attachments while editing with the free camera (see
+  // refreshCameraAttachments). So the effective editor visibility is: visible
+  // unless Hide is set or it is a hidden camera attachment. Forward that as the
+  // engine's VisibilityComponent. Existing scene entities
   // already live in the engine, so we never `/new_entity` here — ensureInstantiated
   // only matters for a NEW entity edited before its model instantiates (a no-op
   // for entities the engine already loaded).
@@ -328,7 +351,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       | { value?: boolean }
       | null
       | undefined;
-    const visible = !hideValue?.value;
+    const visible = !hideValue?.value && !hiddenCameraAttachments.has(entity);
     enqueue(entity, async () => {
       await ensureInstantiated(entity);
       await forwardSet(entity, 'VisibilityComponent', { visible });
@@ -342,17 +365,19 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // placeholder src. Only forward it when the entity has no AUTHORED GltfContainer
   // (a real model already renders; the placeholder is for model-less items) — else
   // we'd clobber the real model. Editor-only: the CRDT keeps just the Placeholder
-  // component, so preview (which ignores editor components) never shows it.
+  // component, so preview (which ignores editor components) never shows it — and
+  // neither does Play: the placeholder shows only while the scene is frozen.
   const GLTF_CONTAINER = 'core::GltfContainer';
-  const forwardPlaceholder = (entity: Entity, deleted: boolean) => {
+  const forwardPlaceholder = (entity: Entity, deleted: boolean, frozen = isFrozen()) => {
     const authoredGltf = context.getForwardableComponent(GLTF_CONTAINER) as {
       getOrNull?: (e: Entity) => unknown;
     } | null;
     // A real authored model wins — never override it with a placeholder.
     if (authoredGltf?.getOrNull?.(entity) != null) return;
-    const placeholder = deleted
-      ? null
-      : (context.editorComponents.Placeholder.getOrNull(entity) as { src?: string } | null);
+    const placeholder =
+      deleted || !frozen
+        ? null
+        : (context.editorComponents.Placeholder.getOrNull(entity) as { src?: string } | null);
     enqueue(entity, async () => {
       await ensureInstantiated(entity);
       if (placeholder?.src) {
@@ -364,6 +389,50 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         ]);
       }
     });
+  };
+
+  // Camera attachments: entities whose Transform parent chain reaches
+  // engine.CameraEntity. While hidden (hideCameraAttachments), each one is
+  // forwarded invisible through forwardEditorVisibility. Every entity in the chain
+  // gets its own value because the engine only inherits a parent's visibility
+  // when that parent opts in with propagate_to_children.
+  let hiddenCameraAttachments = new Set<Entity>();
+  const findCameraAttachments = (): Set<Entity> => {
+    const attached = new Set<Entity>();
+    if (!hideCameraAttachments()) return attached;
+    const parents = new Map<Entity, Entity | undefined>();
+    for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
+      parents.set(entity, transform.parent);
+    }
+    for (const entity of parents.keys()) {
+      const visited = new Set<Entity>([entity]);
+      let parent = parents.get(entity);
+      while (parent !== undefined && !visited.has(parent)) {
+        if (parent === context.engine.CameraEntity) {
+          attached.add(entity);
+          break;
+        }
+        visited.add(parent);
+        parent = parents.get(parent);
+      }
+    }
+    return attached;
+  };
+  // Forward visibility for every entity whose camera-attachment state changed, or
+  // for every current attachment when `all` is set (after a reload).
+  function refreshCameraAttachments(all = false): void {
+    const previous = hiddenCameraAttachments;
+    hiddenCameraAttachments = findCameraAttachments();
+    for (const entity of hiddenCameraAttachments) {
+      if (all || !previous.has(entity)) forwardEditorVisibility(entity);
+    }
+    for (const entity of previous) {
+      if (!hiddenCameraAttachments.has(entity)) forwardEditorVisibility(entity);
+    }
+  }
+  const forgetEntity = (entity: Entity) => {
+    instantiated.delete(entity);
+    hiddenCameraAttachments.delete(entity);
   };
 
   const MESH_COLLIDER = 'core::MeshCollider';
@@ -433,7 +502,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // Suppress the initial load burst; forward only once armed.
       if (!shouldForward()) return;
       if (op === CrdtMessageType.DELETE_ENTITY) {
-        instantiated.delete(entity);
+        forgetEntity(entity);
         fire(`delete_entity ${entity}`, 'delete_entity', [String(entity)]);
         return;
       }
@@ -462,8 +531,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         // unless Hidden) — overriding any authored VisibilityComponent{false}.
         forwardEditorVisibility(entity);
         // A new entity that carries a Placeholder (and no authored model) — render
-        // its placeholder GLTF (a dropped Trigger Area etc.).
-        if (context.editorComponents.Placeholder.getOrNull(entity) != null) {
+        // its placeholder GLTF (a dropped Trigger Area etc.) while frozen.
+        if (isFrozen() && context.editorComponents.Placeholder.getOrNull(entity) != null) {
           forwardPlaceholder(entity, false);
         }
         return;
@@ -472,7 +541,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       const isEntityTeardown =
         op === CrdtMessageType.DELETE_COMPONENT && component.componentName === NAME_COMPONENT;
       if (isEntityTeardown) {
-        instantiated.delete(entity);
+        forgetEntity(entity);
         fire(`delete_entity ${entity}`, 'delete_entity', [String(entity)]);
         return;
       }
@@ -498,6 +567,14 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       const engineName = ENGINE_COMPONENT_NAMES[component.componentName];
       // Deferred (custom/schema) components: skip rather than mis-address them.
       if (!engineName) return;
+
+      // A reparent can move a subtree onto or off the camera.
+      if (
+        component.componentName === context.Transform.componentName &&
+        (hiddenCameraAttachments.size > 0 || hideCameraAttachments())
+      ) {
+        refreshCameraAttachments();
+      }
 
       if (op === CrdtMessageType.DELETE_COMPONENT) {
         fire(`delete_component ${entity} ${engineName}`, 'delete_component', [
@@ -667,13 +744,20 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // Freeze/resume all time-based playback (GLTF animation clips #1382, video #1469,
   // particle systems #1467) with the scene run state. Called on arm (boot frozen)
   // and by the run/freeze toggle.
-  const setAnimationsFrozen = (frozen: boolean) => {
+  const setPlaybackFrozen = (frozen: boolean) => {
     for (const engineName of FROZEN_OVERRIDES.keys()) {
       const component = context.getForwardableComponent(`core::${engineName}`);
       if (!component) continue;
       for (const [entity, value] of context.engine.getEntitiesWith(component)) {
         forwardFrozenOverride(entity, engineName, value, frozen);
       }
+    }
+  };
+
+  const setSceneFrozen = (frozen: boolean) => {
+    setPlaybackFrozen(frozen);
+    for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
+      forwardPlaceholder(entity, false, frozen);
     }
   };
 
@@ -703,7 +787,11 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       queues.clear();
       instantiated.clear();
     },
-    setAnimationsFrozen,
+    setSceneFrozen,
+    refreshCameraAttachments: () => {
+      // Before arming, the arm reconcile applies it once the scene is loaded.
+      if (shouldForward()) refreshCameraAttachments();
+    },
     reconcileAfterReload,
   };
 }

@@ -354,7 +354,194 @@ describe('createForwardEditBridge', () => {
     });
   });
 
-  describe('setAnimationsFrozen (#1382)', () => {
+  describe('when the scene runs (Play) with an editor Placeholder', () => {
+    const drain = async () => {
+      await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => setTimeout(r, 0));
+    };
+
+    it('should remove the placeholder GLTF on Play and restore it when frozen again', async () => {
+      const entity = ctx.engine.addEntity();
+      ctx.Name.create(entity, { value: 'Trigger Area' });
+      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/placeholder.glb' });
+      await ctx.engine.update(1);
+      await drain();
+      sent.length = 0;
+
+      bridge.setSceneFrozen(false);
+      await drain();
+      expect(
+        sent.some(
+          s =>
+            s.cmd === 'delete_component' &&
+            s.args[0] === String(entity) &&
+            s.args[1] === 'GltfContainer',
+        ),
+      ).toBe(true);
+
+      sent.length = 0;
+      bridge.setSceneFrozen(true);
+      await drain();
+      const write = sent.find(s => s.cmd === 'set_component' && s.args[1] === 'GltfContainer');
+      expect(write).toBeDefined();
+      expect(JSON.parse(write!.args[2]).src).toBe('assets/placeholder.glb');
+    });
+
+    it('should leave an authored GltfContainer alone on Play', async () => {
+      const GltfContainer = components.GltfContainer(ctx.engine);
+      const entity = ctx.engine.addEntity();
+      ctx.Name.create(entity, { value: 'Real Model' });
+      GltfContainer.create(entity, { src: 'assets/real.glb' });
+      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/placeholder.glb' });
+      await ctx.engine.update(1);
+      await drain();
+      sent.length = 0;
+
+      bridge.setSceneFrozen(false);
+      await drain();
+      expect(sent.some(s => s.cmd === 'delete_component' && s.args[1] === 'GltfContainer')).toBe(
+        false,
+      );
+    });
+
+    it('should not forward a Placeholder written while the scene runs', async () => {
+      bridge.disconnect();
+      bridge = createForwardEditBridge({
+        context: ctx,
+        engineWindow,
+        shouldForward: () => true,
+        isFrozen: () => false,
+        send: async (cmd, args) => {
+          sent.push({ cmd, args });
+          return '';
+        },
+      });
+      const entity = ctx.engine.addEntity();
+      ctx.Name.create(entity, { value: 'Trigger Area' });
+      ctx.editorComponents.Placeholder.create(entity, { src: 'assets/placeholder.glb' });
+      await ctx.engine.update(1);
+      await drain();
+
+      expect(
+        sent.some(
+          s =>
+            s.cmd === 'set_component' &&
+            s.args[1] === 'GltfContainer' &&
+            JSON.parse(s.args[2]).src === 'assets/placeholder.glb',
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe('when entities are attached to the camera', () => {
+    let hide: boolean;
+
+    const drain = async () => {
+      await new Promise(r => setTimeout(r, 0));
+      await new Promise(r => setTimeout(r, 0));
+    };
+    const lastVisibility = (entity: number): boolean | undefined => {
+      const writes = sent.filter(
+        s =>
+          s.cmd === 'set_component' &&
+          s.args[0] === String(entity) &&
+          s.args[1] === 'VisibilityComponent',
+      );
+      const last = writes[writes.length - 1];
+      return last ? JSON.parse(last.args[2]).visible : undefined;
+    };
+    const addEntity = (name: string, parent: number) => {
+      const entity = ctx.engine.addEntity();
+      ctx.Name.create(entity, { value: name });
+      ctx.Transform.create(entity, {
+        ...IDENTITY,
+        position: { x: 0, y: 0, z: 1 },
+        parent: parent as never,
+      });
+      return entity;
+    };
+
+    beforeEach(() => {
+      hide = true;
+      bridge.disconnect();
+      bridge = createForwardEditBridge({
+        context: ctx,
+        engineWindow,
+        shouldForward: () => true,
+        hideCameraAttachments: () => hide,
+        send: async (cmd, args) => {
+          sent.push({ cmd, args });
+          return '';
+        },
+      });
+    });
+
+    it('should hide the camera children and their descendants while editing with the free camera', async () => {
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      const grandchild = addEntity('Muzzle', child);
+      const other = addEntity('Tree', ctx.engine.RootEntity);
+      await ctx.engine.update(1);
+      await drain();
+
+      expect(lastVisibility(child)).toBe(false);
+      expect(lastVisibility(grandchild)).toBe(false);
+      expect(lastVisibility(other)).toBe(true);
+    });
+
+    it('should show them again once the camera is no longer the free editing camera', async () => {
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      expect(lastVisibility(child)).toBe(false);
+
+      hide = false;
+      bridge.refreshCameraAttachments();
+      await drain();
+      expect(lastVisibility(child)).toBe(true);
+    });
+
+    it('should keep an editor-hidden attachment hidden when it is shown again', async () => {
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      ctx.editorComponents.Hide.create(child, { value: true });
+      await ctx.engine.update(1);
+      await drain();
+
+      hide = false;
+      bridge.refreshCameraAttachments();
+      await drain();
+      expect(lastVisibility(child)).toBe(false);
+    });
+
+    it('should follow a reparent onto and off the camera', async () => {
+      const entity = addEntity('Lamp', ctx.engine.RootEntity);
+      await ctx.engine.update(1);
+      await drain();
+      expect(lastVisibility(entity)).toBe(true);
+
+      ctx.Transform.getMutable(entity).parent = ctx.engine.CameraEntity;
+      await ctx.engine.update(1);
+      await drain();
+      expect(lastVisibility(entity)).toBe(false);
+
+      ctx.Transform.getMutable(entity).parent = ctx.engine.RootEntity;
+      await ctx.engine.update(1);
+      await drain();
+      expect(lastVisibility(entity)).toBe(true);
+    });
+
+    it('should hide them again when overrides are replayed after a reload', async () => {
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      sent.length = 0;
+
+      bridge.reconcileAfterReload();
+      await drain();
+      expect(lastVisibility(child)).toBe(false);
+    });
+  });
+
+  describe('setSceneFrozen (#1382)', () => {
     it('should forward Animator with all states playing:false when frozen', async () => {
       const Animator = components.Animator(ctx.engine);
       const entity = ctx.engine.addEntity();
@@ -369,7 +556,7 @@ describe('createForwardEditBridge', () => {
       await new Promise(r => setTimeout(r, 0));
       sent.length = 0;
 
-      bridge.setAnimationsFrozen(true);
+      bridge.setSceneFrozen(true);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
@@ -388,7 +575,7 @@ describe('createForwardEditBridge', () => {
       await new Promise(r => setTimeout(r, 0));
       sent.length = 0;
 
-      bridge.setAnimationsFrozen(false);
+      bridge.setSceneFrozen(false);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
@@ -466,7 +653,7 @@ describe('createForwardEditBridge', () => {
       await new Promise(r => setTimeout(r, 0));
       sent.length = 0;
 
-      bridge.setAnimationsFrozen(true);
+      bridge.setSceneFrozen(true);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
@@ -484,7 +671,7 @@ describe('createForwardEditBridge', () => {
       await new Promise(r => setTimeout(r, 0));
       sent.length = 0;
 
-      bridge.setAnimationsFrozen(false);
+      bridge.setSceneFrozen(false);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
@@ -675,7 +862,7 @@ describe('createForwardEditBridge', () => {
       });
 
       sent.length = 0;
-      bridge.setAnimationsFrozen(false);
+      bridge.setSceneFrozen(false);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
@@ -758,7 +945,7 @@ describe('createForwardEditBridge', () => {
       await new Promise(r => setTimeout(r, 0));
       sent.length = 0;
 
-      bridge.setAnimationsFrozen(false);
+      bridge.setSceneFrozen(false);
       await new Promise(r => setTimeout(r, 0));
       await new Promise(r => setTimeout(r, 0));
 
