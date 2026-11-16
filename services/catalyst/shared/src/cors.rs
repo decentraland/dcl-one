@@ -173,6 +173,24 @@ impl HttpServerCors {
     }
 }
 
+/// The Registry's CORS, on both halves of `/asset-bundle-registry` (Explore's
+/// and Shop's): `@dcl/http-server` with the methods its
+/// `createServerComponent` lists and `maxAge: 86400` (`components.ts`),
+/// captured as `captures/abr/AB-12-preflight.json`.
+const REGISTRY: HttpServerCors = HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
+    max_age: "86400",
+    nosniff: false,
+    preflight_echoes_request: false,
+};
+
+/// The Registry's CORS ([`REGISTRY`]): every `OPTIONS` is a 204 preflight with
+/// origin `*`, with or without `Origin`; any other response gets origin `*`
+/// only when the request carries an `Origin`, and never exposed headers.
+pub async fn registry_cors(req: Request, next: Next) -> Response {
+    REGISTRY.run(req, next).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
