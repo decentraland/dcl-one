@@ -54,3 +54,9 @@
   --d-knob-on: var(--text);
   --d-knob-shadow: none;
 }
+.onLight:not(.on) {
+  background: var(--switch-off-on-light);
+}
+.onLight .knob {
+  background: var(--text);
+}

@@ -1,9 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 
+import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
+
 import type { AuthIdentity } from "../auth/types";
 import { fetchCreations } from "../catalyst/marketplace/index";
 import { fetchOwnedNames, fetchOwnedWearables } from "../catalyst/marketplace/account";
-import { fetchProfilePlaces } from "../catalyst/places/index";
+import { fetchFavoritePlaces, fetchProfilePlaces } from "../catalyst/places/profile-places";
 import { fetchUserBadges } from "../catalyst/social/badges";
 import { fetchUserPhotos } from "../catalyst/social/photos";
 import { fetchMyCommunities } from "../catalyst/social/profile-communities";
@@ -33,8 +35,13 @@ export const profileKeys = {
   ownedWearables: (address: string) =>
     ["profile", "owned-wearables", normalizeAddress(address)] as const,
   ownedNames: (address: string) => ["profile", "owned-names", normalizeAddress(address)] as const,
+  /** The wallets behind a list of places, sorted so the same set is one entry. */
+  placeOwners: (addresses: readonly string[]) =>
+    ["profile", "place-owners", [...new Set(addresses.map(normalizeAddress))].sort()] as const,
   myCommunities: (account: string) =>
     ["private", normalizeAddress(account), "profile", "communities"] as const,
+  myFavoritePlaces: (account: string) =>
+    ["private", normalizeAddress(account), "profile", "favorite-places"] as const,
 };
 
 /** Reads only run for a wallet address; anything else is a profile that cannot exist. */
@@ -97,6 +104,24 @@ export const ownedNamesQuery = (address: string) =>
     staleTime: PROFILE_STALE_MS,
     queryFn: ({ signal }) =>
       fetchOwnedNames(normalizeAddress(address), { first: PROFILE_PAGE }, { signal }),
+  });
+
+/** Each owner's display name and face, in one batch read. */
+export const placeOwnersQuery = (addresses: readonly string[]) => {
+  const queryKey = profileKeys.placeOwners(addresses);
+  return queryOptions({
+    queryKey,
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchCommunityProfiles([...queryKey[2]], { signal }),
+  });
+};
+
+/** The signed-in member's saved places; signed like the communities read, and keyed by account. */
+export const myFavoritePlacesQuery = (identity: AuthIdentity) =>
+  queryOptions({
+    queryKey: profileKeys.myFavoritePlaces(identity.signer),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchFavoritePlaces(identity, { limit: PROFILE_PLACES_LIMIT }, { signal }),
   });
 
 /** The identity signs the request and is never cached; the key names only its account. */

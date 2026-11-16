@@ -54,6 +54,8 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
+import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
@@ -452,6 +454,10 @@ export interface MapState {
   teleportToPlace: (x: number, y: number) => TravelOutcome
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
   changeRealm: (realm: string) => TravelOutcome
+  /** The home the engine holds: its realm (null for the default one) and parcel; null until it answers. */
+  home: { realm: string | null; parcel: string } | null
+  /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
+  setHome: (realm: string, parcel: { x: number; y: number }) => void
 }
 
 /** Live player pose for the minimap: position in world metres, yaws in degrees. */
@@ -1626,6 +1632,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current = driver
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    setMapTransport((msg) => driver.send(msg))
+    nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
@@ -1691,6 +1699,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             // The bridge pushes bindings at registration, but that can race the page's channel
             // subscription — re-request now that both ends are up (shortcut hints need them).
             driver.send({ kind: 'getBindings' })
+            // The map shows the home, so it is read once the player is in the world.
+            driver.send({ kind: 'getHomeScene' })
             if (pendingParcel.current != null) {
               driver.send({ kind: 'teleport', ...pendingParcel.current })
               pendingParcel.current = null
@@ -2062,6 +2072,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
           if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
+          // the map showed the change before the engine took it: read back the home it holds
+          if (msg.request === 'setHomeScene') driver.send({ kind: 'getHomeScene' })
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)
@@ -2256,7 +2268,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'events':
         case 'eventAttending':
         case 'eventPlaces':
+          // the Events page and the map both ask; each takes the answers to its own requests
           eventsData.onMessage(msg)
+          receiveMapReply(msg)
           break
         case 'communityChannels': {
           // the user's communities, in the order they already have (new ones last)
@@ -2359,6 +2373,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
           break
         case 'travelResult':
+          if (msg.ok) travelCount.traveled()
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
@@ -2488,6 +2503,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             }
           }
           break
+        case 'placesAt':
+        case 'placeSearch':
+        case 'placeLike':
+        case 'placeFavorite':
+        case 'placePhotos':
+          receiveMapReply(msg)
+          break
+        case 'mapPlayers':
+          nearbyPlayers.receive(msg.players)
+          break
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened': {
@@ -2586,6 +2611,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
     return () => {
       off()
+      setMapTransport(null)
+      nearbyPlayers.setTransport(null)
       driver.dispose()
       driverRef.current = null
     }
@@ -3199,7 +3226,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyOpen, anyPanelOpenExceptLobby])
-  const homeScene = useCallback(() => driverRef.current?.homeScene?.() ?? home, [home])
+  // The engine's answer wins over the boot snapshot, so a home set in this session is the one used.
+  const homeScene = useCallback(() => home ?? driverRef.current?.homeScene?.() ?? null, [home])
+  const setHomeScene = useCallback((realm: string, parcel: { x: number; y: number }) => {
+    setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}` })
+    driverRef.current?.send({ kind: 'setHomeScene', realm, parcel })
+  }, [])
   useEffect(() => {
     if ((!lobby && !lobbyOpen) || driverRef.current?.homeScene != null) return
     setHome(null)
@@ -4846,9 +4878,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       toggle: toggleMap,
       teleport: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleport(x, y), 'sent'),
       changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
-      teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent')
+      teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
+      home,
+      setHome: setHomeScene
     }
-  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, pickDestination, closeAllPanels])
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, home, setHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,

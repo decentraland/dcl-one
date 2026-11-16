@@ -2,7 +2,7 @@
 // page and the events' jump-in, each closes its page exactly once and leaves the lobby; a pick the
 // lobby refuses (sign-in still running) leaves the page open and says why.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import { useEventActions, type EventActions } from '../../features/events/useEventActions'
@@ -11,6 +11,9 @@ import { PlacesPage } from '../../features/places/PlacesPage'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { useEngineSession, type EngineSession } from '../../features/session/useEngineSession'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { fixMapPublicReads, receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
+import { placeOf } from '@explorer-core/test/mapFixtures'
+import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
 import { eventAt } from './eventFixtures'
 import { FakeDriver } from '../harness'
 
@@ -51,7 +54,8 @@ function renderHud(driver: FakeDriver = new FakeDriver()): Hud {
     }
     return (
       <SessionProvider value={session}>
-        <MapPage map={session.map} profile={session.profile} onNavigate={vi.fn()} />
+        {/* the lobby has no satellite view yet; the map's parcel picks are Genesis City's */}
+        <MapPage map={session.map} minimap={{ ...session.minimap, satelliteView: GENESIS_SATELLITE_VIEW }} profile={session.profile} gallery={session.gallery} onNavigate={vi.fn()} />
         <PlacesPage places={session.places} profile={session.profile} onNavigate={vi.fn()} onTeleport={(x, y) => session.map.teleportToPlace(x, y)} onVisitWorld={(realm) => session.map.changeRealm(realm)} />
         <Actions />
         <PopupHost />
@@ -85,11 +89,24 @@ async function inBusyLobby(): Promise<Hud> {
   return hud
 }
 
+/** The map's bridge requests, answered with the one place, at 10,-5; anything else finds nothing. */
+function serveMap(): void {
+  const plaza = placeOf({ ...PLACE, categories: [], user_count: 1, like_rate: null })
+  setMapTransport((request) => {
+    if (request.kind !== 'getPlacesAt') return
+    const places = plaza.positions.some((pos) => request.positions.includes(pos)) ? [plaza] : []
+    queueMicrotask(() => receiveMapReply({ kind: 'placesAt', request: request.request, places, failed: false }))
+  })
+}
+
 async function jumpInFromMap(): Promise<void> {
-  const view = screen.getByTestId('map-view')
-  fireEvent.mouseDown(view, { clientX: 5, clientY: 5 })
-  fireEvent.mouseUp(view, { clientX: 5, clientY: 5 })
-  await userEvent.click(await screen.findByRole('button', { name: 'JUMP IN' }))
+  // after the session has mounted: it sets the bridge transport of its own
+  serveMap()
+  // the view opens on parcel 0,0 at 7.372 px a parcel, its middle at 960,505: 10 east and 5 south
+  fireEvent.click(screen.getByTestId('map-view'), { clientX: 960 + 9.5 * 7.372, clientY: 505 + 5.5 * 7.372 })
+  const panel = screen.getByRole('complementary', { name: 'Places and events' })
+  await within(panel).findByRole('heading', { name: 'Plaza' })
+  await userEvent.click(within(panel).getByRole('button', { name: 'JUMP IN' }))
 }
 
 async function jumpInFromPlaces(): Promise<void> {
@@ -102,10 +119,13 @@ const REFUSED = 'Still signing in. Try again in a moment.'
 describe('travel from a page over the startup lobby', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{ ...PLACE, user_count: 1, like_rate: null }] }) }))
+    fixMapPublicReads({ pois: [], peers: [] })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
     resetPopups()
+    setMapTransport(null)
+    fixMapPublicReads(null)
   })
 
   it('the Map page: JUMP IN leaves the lobby and closes the map once', async () => {
