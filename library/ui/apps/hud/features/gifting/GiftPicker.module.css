@@ -1,0 +1,65 @@
+/* The gift picker (unity-explorer's gift selection popup): a header with the recipient and the search, the tabs, a
+   scrolling grid of item tiles, and a footer with the line and the two buttons. */
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 86vh;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.title {
+  margin: 0;
+  font-size: var(--font-title-l);
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+.address {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.search {
+  width: 260px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 136px);
+  grid-auto-rows: 140px;
+  gap: 8px;
+  justify-content: center;
+  min-height: 300px;
+  max-height: 460px;
+  padding: 8px 4px;
+  overflow-y: auto;
+}
+.cell {
+  display: flex;
+  justify-content: center;
+}
+.centre {
+  grid-column: 1 / -1;
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+  color: var(--text-dim);
+}
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.info {
+  flex: 1;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}

@@ -8,7 +8,8 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import giftIcon from '../../assets/gifting/gift.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
 import { nativeProfileImage } from '@hud-host'
@@ -322,6 +323,7 @@ export function ProfilePassport({
   onUnblock,
   onBlock,
   onReport,
+  onGift,
   inviteItems = [],
   onClose,
   onDirtyChange,
@@ -348,6 +350,8 @@ export function ProfilePassport({
   onUnblock?: (address: string) => void
   onBlock?: (address: string) => void
   onReport?: (address: string) => void
+  /** Open the gift picker for this user; absent where this session can't gift. */
+  onGift?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
   inviteItems?: ContextMenuItem[]
   onClose: () => void
@@ -375,6 +379,8 @@ export function ProfilePassport({
     setMenuOpen(false)
     fn(profile.address)
   }
+  // before Block, as the reference client's menu
+  if (!isSelf && onGift != null) options.push({ label: 'Gift', icon: <MaskIcon src={giftIcon} size={16} />, onClick: pick(onGift) })
   if (!isSelf && relationship !== 'blocked' && onBlock != null) {
     options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
   }

@@ -16,6 +16,8 @@ import { hexToColor3 } from '@explorer-core/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
+import { openGiftPicker } from '../gifting/GiftPicker'
+import { useGiftingAvailable } from '../gifting/useGifting'
 
 export function Passport({
   userId,
@@ -39,6 +41,7 @@ export function Passport({
   const a = userId.toLowerCase()
   const isSelf = !!session.profile.data && session.profile.data.address.toLowerCase() === a
   const known = useProfile(userId)
+  const canGift = useGiftingAvailable() && !isSelf
   const stored: Profile =
     known ??
     (isSelf && session.profile.data
@@ -113,6 +116,15 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onGift={
+        canGift
+          ? (a) => {
+              // the picker replaces the passport, as unity-explorer's does
+              onClose()
+              openGiftPicker({ address: a, name: friendUser.name })
+            }
+          : undefined
+      }
       inviteItems={inviteItems}
       onClose={onClose}
       photoActions={{

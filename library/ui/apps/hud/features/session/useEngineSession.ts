@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { EngineViewportRegion, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, GiftingPageMessage, GiftingQueryRequest, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -190,6 +190,9 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
 
 /** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
+/** A gift picker page request, without the id the session adds. */
+export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
+
 export interface CatalogQuery {
   page: number
   pageSize: number
@@ -1086,6 +1089,9 @@ export interface EngineSession {
   skybox: SkyboxState
   emotes: EmotesState
   backpack: BackpackState
+  /** One page of the player's owned on-chain wearables or emotes for the gift picker; answers a failed page when
+   *  the engine is gone. */
+  queryGifting: (q: GiftingQuery) => Promise<GiftingPageMessage>
   communities: CommunitiesState
   map: MapState
   minimap: MinimapState
@@ -1451,6 +1457,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const catalogReqId = useRef(0)
+  const giftingReqId = useRef(0)
+  const giftingWaiting = useRef(new Map<number, (page: GiftingPageMessage) => void>())
   const [equippedWearables, setEquippedWearables] = useState<Wearable[]>([])
   const [bodyShape, setBodyShape] = useState<string | undefined>(undefined)
   const [forceRender, setForceRenderState] = useState<string[]>([])
@@ -2087,6 +2095,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             setCatalogLoading(false)
           }
           break
+        case 'giftingPage': {
+          const answer = giftingWaiting.current.get(msg.requestId)
+          giftingWaiting.current.delete(msg.requestId)
+          answer?.(msg)
+          break
+        }
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
@@ -3748,6 +3762,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCatalogLoading(true)
     driverRef.current?.send({ kind: 'catalogQuery', catalog: 'wearables', requestId: catalogReqId.current, ...q })
   }, [])
+  const queryGifting = useCallback((q: GiftingQuery): Promise<GiftingPageMessage> => {
+    giftingReqId.current += 1
+    const requestId = giftingReqId.current
+    const driver = driverRef.current
+    if (driver == null) return Promise.resolve({ kind: 'giftingPage', catalog: q.catalog, items: [], total: 0, equipped: [], failed: true, requestId })
+    return new Promise((resolve) => {
+      giftingWaiting.current.set(requestId, resolve)
+      driver.send({ kind: 'giftingQuery', requestId, ...q })
+    })
+  }, [])
   const saveOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'saveOutfit', slot })
   }, [])
@@ -4924,6 +4948,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       markAllRead: markNotificationsRead
     },
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
+    queryGifting,
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,

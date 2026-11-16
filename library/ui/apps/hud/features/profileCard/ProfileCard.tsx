@@ -13,6 +13,8 @@ import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '@explorer-core/lib/identity'
 import { startCallWith } from '../voiceChat/callGate'
 import { offersInvite, useInviteToCommunityItems } from '../communities/InviteToCommunity'
+import { openGiftPicker } from '../gifting/GiftPicker'
+import { useGiftingAvailable } from '../gifting/useGifting'
 
 export function ProfileCard({
   userId,
@@ -22,6 +24,7 @@ export function ProfileCard({
   context,
   communityActions,
   invite = true,
+  gift = true,
   onMessage,
   onCall,
   onClose
@@ -34,6 +37,8 @@ export function ProfileCard({
   communityActions?: CardAction[]
   /** Offer Invite to Community (the voice panel's menu does not). */
   invite?: boolean
+  /** Offer Gift where this session can gift (the voice panel's menu does not). */
+  gift?: boolean
   /** Replaces opening the DM (a card opened over another popup closes that one first). */
   onMessage?: (address: string) => void
   /** Replaces starting the call, as `onMessage` does the DM. */
@@ -47,6 +52,7 @@ export function ProfileCard({
   // the user menus and the member menus offer it; the friend request and blocked lists' menus do not
   const isMe = session.profile.data?.address?.toLowerCase() === userId.toLowerCase()
   const inviteItems = useInviteToCommunityItems(userId, invite && offersInvite(isMe, context))
+  const canGift = useGiftingAvailable() && gift && !isMe
   return (
     <ProfileCardPresentation
       user={user}
@@ -68,6 +74,7 @@ export function ProfileCard({
       onMention={session.chat.mention}
       onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
       onCall={(u) => (onCall != null ? onCall(u.address) : startCallWith(session, u.address))}
+      onGift={canGift ? (u) => openGiftPicker({ address: u.address, name: u.name }) : undefined}
       hushed={session.nearbyMutes.muted.has(userId.toLowerCase())}
       onSetHushed={(u, hushed) => session.nearbyMutes.set(u.address, hushed)}
       onViewProfile={() => openPassport(userId)}
@@ -84,6 +91,8 @@ export interface ProfileCardOptions {
   communityActions?: CardAction[]
   /** Offer Invite to Community; on unless false. */
   invite?: boolean
+  /** Offer Gift where this session can gift; on unless false. */
+  gift?: boolean
   /** Replaces opening the DM with the user. */
   onMessage?: (address: string) => void
   /** Replaces starting a call with the user. */
@@ -95,7 +104,7 @@ export interface ProfileCardOptions {
 /** Open the world profile card as a popup, anchored at the given screen coords. */
 export function openProfileCard(userId: string, x: number, y: number, opts: ProfileCardOptions = {}): () => void {
   return openPopup(
-    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} communityActions={opts.communityActions} invite={opts.invite} onMessage={opts.onMessage} onCall={opts.onCall} onClose={close} />,
+    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} communityActions={opts.communityActions} invite={opts.invite} gift={opts.gift} onMessage={opts.onMessage} onCall={opts.onCall} onClose={close} />,
     { dim: false, onClose: opts.onClose }
   ) // anchored popover, no scrim dim
 }

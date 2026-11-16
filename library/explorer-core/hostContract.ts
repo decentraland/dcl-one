@@ -69,6 +69,38 @@ export interface HostDonations {
   onSent(fn: () => void): () => void
 }
 
+/** One token to gift: the HUD names it and its recipient; the host checks both and signs the transfer. */
+export interface GiftRequest {
+  /** The recipient's address. */
+  recipient: string
+  /** The token's full urn (the item urn and its token id). */
+  urn: string
+  tokenId: string
+  /** The recipient's name as the picker shows it; the host reads the profile again itself. */
+  recipientName: string
+}
+
+/** A token the host sent as a gift and the owned catalog may still list: hidden while its `transferredAt` is
+ *  the one it had when it was sent. */
+export interface PendingGift {
+  urn: string
+  /** Seconds since the epoch, as the owned catalog reported it when it was sent. */
+  transferredAt: number
+}
+
+/** Sending a wearable or emote as a gift, where the host's page holds a wallet that can sign (Sites /play). */
+export interface HostGifting {
+  /** Whether this session may gift here at all (the feature on, a web3 or managed sign-in, not a guest); false
+   *  on any failure. */
+  available(): Promise<boolean>
+  /** The tokens sent as gifts that may not have left the account yet. */
+  pending(): Promise<PendingGift[]>
+  /** Starts the host's transfer of the token, which shows its own progress, success and error. */
+  open(gift: GiftRequest & { transferredAt: number }): Promise<void>
+  /** Calls `fn` with each token the host sent; returns the unsubscribe. */
+  onSent(fn: (gift: PendingGift) => void): () => void
+}
+
 export interface HudHost {
   /** The URL this host loads a profile image from: the native HUD routes profile images through its
    *  own proxy, the web hosts load them as given. */
@@ -112,6 +144,8 @@ export interface HudHost {
   IN_WORLD_SHOP: boolean
   /** Donate, where this host can sign a tip; null where it can't (the Explorer's own HUD). */
   donations: HostDonations | null
+  /** Gifting, where this host can sign a transfer; null where it can't (the Explorer's own HUD). */
+  gifting: HostGifting | null
   /** The Sites build revision serving this page ('' when Sites reports none), or null where no Sites serves the HUD. */
   siteRevision(): string | null
   /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went

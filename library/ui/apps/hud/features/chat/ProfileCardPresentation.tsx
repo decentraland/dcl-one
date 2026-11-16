@@ -10,6 +10,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
+import giftIcon from '../../assets/gifting/gift.png'
 import hearIcon from '../../assets/voice/hear.png'
 import hushIcon from '../../assets/voice/hush.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
@@ -101,6 +102,7 @@ export function ProfileCardPresentation({
   onMention,
   onMessage,
   onCall,
+  onGift,
   hushed = false,
   onSetHushed,
   onViewProfile,
@@ -133,6 +135,8 @@ export function ProfileCardPresentation({
   onMessage?: (user: ChatUser) => void
   /** Ring the user (a private voice call). */
   onCall?: (user: ChatUser) => void
+  /** Open the gift picker for the user; absent where this session can't gift. */
+  onGift?: (user: ChatUser) => void
   /** The user's nearby voice is muted for the local user: the row reads Hear instead of Hush. */
   hushed?: boolean
   /** Mute (true) or unmute the user's nearby voice. */
@@ -187,6 +191,9 @@ export function ProfileCardPresentation({
   // unity-explorer's member menu offers Chat to every other member
   const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
+  // unity-explorer's member menu keeps Gift but greys it for a blocked member (either way); its other menus offer it
+  const showGift = other && context !== 'request' && context !== 'blocked' && !!onGift
+  const giftBlocked = community && (relationship === 'blocked' || blockedBy === true)
   // offered for a blocked user too
   const showHush = other && (context === 'default' || context === 'friend') && !!onSetHushed
 
@@ -254,13 +261,26 @@ export function ProfileCardPresentation({
       <span>Call</span>
     </button>
   )
+  const gift =
+    showGift &&
+    (giftBlocked ? (
+      <button type="button" className={styles.row} aria-disabled="true">
+        <MaskIcon src={giftIcon} size={16} />
+        <span>Gift</span>
+      </button>
+    ) : (
+      <button type="button" className={styles.row} onClick={run(onGift)}>
+        <MaskIcon src={giftIcon} size={16} />
+        <span>Gift</span>
+      </button>
+    ))
   const hush = showHush && (
     <button type="button" className={styles.row} onClick={() => { onClose(); onSetHushed?.(user, !hushed) }}>
       <MaskIcon src={hushed ? hearIcon : hushIcon} size={16} />
       <span>{hushed ? 'Hear' : 'Hush'}</span>
     </button>
   )
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showHush || hasDestructive || communityActions.length > 0 || !!invite)
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showGift || showHush || hasDestructive || communityActions.length > 0 || !!invite)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
       <MessageIcon />
@@ -301,6 +321,7 @@ export function ProfileCardPresentation({
               {viewProfile}
               {message}
               {call}
+              {gift}
               {communityActions.length > 0 && <div className={styles.divider} />}
               {communityActions.map((a, i) =>
                 a.disabledReason != null ? (
@@ -345,6 +366,7 @@ export function ProfileCardPresentation({
                 </button>
               )}
               {viewProfile}
+              {gift}
               {invite}
               {hasDestructive && <div className={styles.divider} />}
               {report}
