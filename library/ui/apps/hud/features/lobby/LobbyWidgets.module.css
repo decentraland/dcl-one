@@ -97,6 +97,9 @@
   height: 159px;
 }
 .liveRail {
+  /* as far as the live cards' shadow */
+  --rail-bleed-x: 6px;
+  --rail-bleed-bottom: 10px;
   width: 326px;
   height: 241px;
 }
@@ -109,6 +112,12 @@
   --rail-gap: 11px;
   width: 790px;
   height: 188px;
+}
+/* the photos' hover ring hangs 6px out on every side */
+.galleryRail {
+  --rail-bleed-x: 6px;
+  --rail-bleed-top: 6px;
+  --rail-bleed-bottom: 6px;
 }
 .narrowRail {
   width: 441px;

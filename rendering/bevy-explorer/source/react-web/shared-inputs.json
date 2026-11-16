@@ -7075,11 +7075,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
-      "sha256": "7a6be338de3d4ca2a4b77624c9036fc10583035e435f04ec86e81235af170d55"
+      "sha256": "d9b6752cbed4d8518a7d925fd09dc09af4e5f7d5e8870da607c825b7aef32f2b"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "sha256": "41c052291e0e3904f50f0a05d6159a22906a06ca9448c138af7a9563422e3672"
+      "sha256": "bbbaeb3c1366e9fbe509f68e633ac7c0a8782a5640a5a148f32c060443475dd2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.module.css",
@@ -7087,15 +7087,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "sha256": "3901655b3be472795abd59f6086d7b064a5c46da7d4b0070039bfc9f39230855"
+      "sha256": "ee9345b60bc3d5584d6ae05001e5a5a2fa27712163d2218fdc3c540ae220d22b"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "e380f48ed280edfcaf6496f42fc76b8faa7b626b54c97acc934eab0d97e6153a"
+      "sha256": "43c1e2adc42c842a7237fe9992859c7d98374f79b109988878d5c1f6e5e1bfa6"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "f8518c350284eb194193d747f8a236b746db640ca9dbf9866a71a31211f41b07"
+      "sha256": "2ddf96e7ccf9f333f825e2b2a2266d28cd2431ccda4d030234662262697077c5"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -7103,11 +7103,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "sha256": "310c77f62d0a5f8ac97f3ac49aa9ccd271357264113726ab6ccfae5a06f0b181"
+      "sha256": "3512367cbd14045195315492cdb0f3d733694441415bf62f4322f5532d3763d3"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.module.css",
-      "sha256": "61106107da98b2d65123031fe445894e5366612b4fbafdae2ca24faa7f7ce319"
+      "sha256": "9d8aac0f4f05e1f9cd1a644f354d3900f3811acf69f35b8d1ccb796e07cbf9e5"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
@@ -7115,7 +7115,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.module.css",
-      "sha256": "e2b19c4709fc7f6957a81a8feaf1bdcad3eb3ac8ae8dbc7531b8bd9686454580"
+      "sha256": "030bc6531c34301546fe66ba81a1a43c8fbb11e38081e32ab223730427f4c918"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
@@ -7391,7 +7391,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "7f14c58d4e56c3595a4ea24fffb797338eecbe87d8bbc47652792f34065f2c56"
+      "sha256": "f49bf2e0d610532253eda5238d6c177d21523ac9bd26877b65313a6c53c04607"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7755,7 +7755,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "f6bc287317e858b421d33aba01c5537d59f36361c0bc98c383f38331b606e8ca"
+      "sha256": "57244a941973460ca703c4378fdee8ba2c625cf5af5e65f53d7596be811bcfca"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyStageTab.test.tsx",
@@ -18822,21 +18822,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/assets/lobby/edit-icn.png",
       "kind": "native:runtime"
     },
@@ -19032,6 +19017,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
       "kind": "native:runtime"
     },
@@ -19212,21 +19212,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/ui/apps/hud/assets/lobby/icon-copy.png",
       "kind": "native:runtime"
     },
@@ -19328,6 +19313,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "kind": "test:runtime"
     },
     {
@@ -27758,6 +27758,36 @@
     {
       "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
       "to": "library/ui/apps/hud/features/backpack/BackpackModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "kind": "test:runtime"
     },
     {

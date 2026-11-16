@@ -51,9 +51,16 @@ function OnlineBadge({ count, className }: { count: number | null | undefined; c
   )
 }
 
+/** A profile picture: the profile's colour under the picture (or the default one), framed by the
+ *  same colour a fifth of the way to white. */
+export function profilePictureStyle(color: string, picture: string | null | undefined): React.CSSProperties {
+  return { backgroundColor: color, borderColor: `color-mix(in srgb, ${color} 80%, white)`, backgroundImage: `url("${picture || defaultProfile}")` }
+}
+
 export interface ConnectedFriend {
   address: string
   name: string
+  color: string
   picture?: string | null
 }
 
@@ -70,7 +77,7 @@ export function ConnectedFriends({ friends, onHover }: { friends: ConnectedFrien
         <span
           key={f.address}
           className={cx(styles.friendPicture, i > 0 && styles.overlapping)}
-          style={{ backgroundImage: `url("${f.picture || defaultProfile}")` }}
+          style={profilePictureStyle(f.color, f.picture)}
           onMouseMove={(e) => onHover?.(f, e)}
           onMouseLeave={() => onHover?.(null)}
         />
@@ -291,6 +298,9 @@ export function UpcomingEventCard({
 export type FriendPresence = 'online' | 'away' | 'offline'
 
 /** An online friend: picture with presence, name, where they are; a joinable friend shows JOIN on hover. */
+// The presence modifiers have their own names: the card shares this sheet with the online-count badge.
+const PRESENCE_CLASS: Record<FriendPresence, string | undefined> = { online: styles.presenceOnline, away: styles.presenceAway, offline: undefined }
+
 export function FriendCard({
   name,
   walletTag,
@@ -315,9 +325,9 @@ export function FriendCard({
   onJoin: () => void
 }): React.JSX.Element {
   return (
-    <div className={cx(styles.friend, joinable && styles.joinable, styles[presence])}>
+    <div className={cx(styles.friend, joinable && styles.joinable, PRESENCE_CLASS[presence])}>
       <button type="button" className={styles.cover} aria-label={`${name}'s profile`} onClick={onOpen} />
-      <span className={styles.friendPictureLarge} style={{ backgroundImage: `url("${picture || defaultProfile}")` }} />
+      <span className={styles.friendPictureLarge} style={profilePictureStyle(color, picture)} />
       <span className={styles.presence} />
       <span className={styles.friendName}>
         <span className={styles.friendNameText} style={{ color }}>
@@ -368,6 +378,7 @@ export function CommunityCard({
           <span className={cx(styles.membersText, styles.members)}>{members}</span>
         </span>
       </span>
+      <button type="button" className={styles.cover} aria-label={title} onClick={onView} />
       <button type="button" className={styles.view} aria-label={`View ${title}`} onClick={onView}>
         VIEW
       </button>

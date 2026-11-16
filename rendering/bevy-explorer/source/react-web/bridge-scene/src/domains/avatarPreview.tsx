@@ -13,7 +13,7 @@ import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PREVIEW_MAX_ZOOM, type EngineViewportRequest, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
@@ -21,7 +21,10 @@ import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
+// The lobby's camera layer, and the Backpack's: the Backpack opens over the lobby, whose avatar
+// and stage stay as they are on their own layer, out of its camera's sight.
 const LAYER = 10
+const BACKPACK_LAYER = 12
 // The Backpack background behind the avatar: the page's left-column purple, top to bottom.
 const BACKDROP_TOP = Color4.create(0.31, 0, 0.565, 1)
 const BACKDROP_BOTTOM = Color4.create(0.345, 0.078, 0.514, 1)
@@ -248,9 +251,10 @@ function createPreview(): void {
   const c = engine.addEntity()
 
   const lobby = stage === 'lobby'
+  const layer = lobby ? LAYER : BACKPACK_LAYER
   // the shape is added by syncShape once the player's look is known: an empty one would render
   // the default body, which the engine keeps on show until the real look has loaded
-  CameraLayers.create(a, { layers: [LAYER] })
+  CameraLayers.create(a, { layers: [layer] })
   Transform.create(a, {
     position: Vector3.create(8, 0, 8),
     rotation: FACING,
@@ -268,13 +272,13 @@ function createPreview(): void {
     const e = engine.addEntity()
     MeshRenderer.setCylinder(e, 1, 1)
     Material.setPbrMaterial(e, { albedoColor: layer.color, metallic: 0, roughness: 0.6 })
-    CameraLayers.create(e, { layers: [LAYER] })
+    CameraLayers.create(e, { layers: [BACKPACK_LAYER] })
     Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: Vector3.create(layer.scale, layer.height, layer.scale) })
     return e
   })
 
   CameraLayer.create(c, {
-    layer: LAYER,
+    layer,
     // the Backpack is lit flat; the lobby's engine stage brings its own key light
     directionalLight: false,
     showAvatars: false,
@@ -285,7 +289,7 @@ function createPreview(): void {
   TextureCamera.create(c, {
     width: res.width,
     height: res.height,
-    layer: LAYER,
+    layer,
     clearColor: Color4.create(0, 0, 0, 0),
     mode: lobby
       ? { $case: 'perspective', perspective: { fieldOfView: LOBBY_FOV } }
@@ -395,6 +399,61 @@ function disposePreview(): void {
   if (standbyEntity != null) engine.removeEntity(standbyEntity)
   if (cameraEntity != null) engine.removeEntity(cameraEntity)
   podiumEntities.forEach((e) => engine.removeEntity(e))
+  clearPreview()
+}
+
+// A preview's own state: the lobby's is kept aside, its avatar and stage as they are, while the
+// Backpack opens over the lobby, and the lobby takes it back when the Backpack closes.
+type PreviewState = ReturnType<typeof takeState>
+let parkedLobby: PreviewState | null = null
+
+function takeState() {
+  return { rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, shownLook, standbyLook, turn, shownYaw, swapReady, expecting, wanted, standbyWanted, preload, showLoad, standbyLoad, shownLoaded, zoom, zoomShift }
+}
+
+function putState(s: PreviewState): void {
+  ;({ rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, shownLook, standbyLook, turn, shownYaw, swapReady, expecting, wanted, standbyWanted, preload, showLoad, standbyLoad, shownLoaded, zoom, zoomShift } = s)
+}
+
+function parkLobby(): void {
+  parkedLobby = takeState()
+  clearPreview()
+  rect = null
+  stageUp = false
+  cheerPending = false
+  greeted = false
+}
+
+function unparkLobby(): void {
+  if (parkedLobby == null) return
+  putState(parkedLobby)
+  parkedLobby = null
+  // the Backpack's item preview is its own: the lobby wears the look
+  previewUrns = null
+}
+
+// The lobby never came back (it closed while the Backpack was open): its avatar and stage go too.
+function disposeParkedLobby(): void {
+  if (parkedLobby == null) return
+  const current = takeState()
+  putState(parkedLobby)
+  parkedLobby = null
+  disposePreview()
+  putState(current)
+}
+
+// Window resized → re-size the render target to the hole, not just re-aspect it.
+function fitCamera(): void {
+  if (rect == null || cameraEntity == null) return
+  const res = camRes(rect)
+  const cam = TextureCamera.getMutableOrNull(cameraEntity)
+  if (cam != null && (cam.width !== res.width || cam.height !== res.height)) {
+    cam.width = res.width
+    cam.height = res.height
+  }
+}
+
+function clearPreview(): void {
   avatarEntity = null
   standbyEntity = null
   cameraEntity = null
@@ -576,13 +635,47 @@ function pollStage(dt: number): void {
 }
 
 export function registerAvatarPreview(ctx: Ctx): void {
-  ctx.on('engineViewport', (msg) => {
+  // The lobby page under the Backpack keeps reporting its region: its latest report, for when the
+  // Backpack closes and the lobby had no stage to set aside (it opened under the Backpack).
+  let lobbyUnder: EngineViewportRequest | null = null
+  const onViewport = (msg: EngineViewportRequest): void => {
     if (msg.region !== 'avatarPreview' && msg.region !== 'lobby') return
     const nextStage: Stage = msg.region === 'lobby' ? 'lobby' : 'backpack'
+    if (stage === 'backpack' && avatarEntity != null) {
+      // the lobby under the open Backpack: its stage, set aside, follows its region or goes with it
+      if (nextStage === 'lobby') {
+        lobbyUnder = msg.rect == null ? null : msg
+        if (msg.rect == null) disposeParkedLobby()
+        else if (parkedLobby != null) {
+          parkedLobby.rect = msg.rect
+          parkedLobby.dpr = msg.dpr ?? 1
+        }
+        return
+      }
+      // the Backpack closing over the lobby hands the stage straight back, as it was
+      if (msg.rect == null && (parkedLobby != null || lobbyUnder != null)) {
+        const under = lobbyUnder
+        lobbyUnder = null
+        disposePreview()
+        if (parkedLobby == null) {
+          if (under != null) onViewport(under)
+          return
+        }
+        stage = 'lobby'
+        unparkLobby()
+        fitCamera()
+        announceLobbyStage(ctx).catch((e) => {
+          console.error('[avatarPreview] lobby stage', e)
+        })
+        return
+      }
+    }
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
     if (msg.rect == null && nextStage !== stage) return
     if (nextStage !== stage) {
-      disposePreview()
+      // the Backpack opening over the lobby sets the lobby's avatar and stage aside, as they are
+      if (nextStage === 'backpack' && stage === 'lobby' && avatarEntity != null) parkLobby()
+      else disposePreview()
       stage = nextStage
       framing = framingFrom = framingTo = FRAMING.body
       framingT = 1
@@ -606,15 +699,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
     rect = msg.rect
     dpr = msg.dpr ?? 1
     if (avatarEntity == null) createPreview()
-    else if (!same && cameraEntity != null) {
-      // Window resized → re-size the render target to the hole, not just re-aspect it.
-      const res = camRes(rect)
-      const cam = TextureCamera.getMutableOrNull(cameraEntity)
-      if (cam != null && (cam.width !== res.width || cam.height !== res.height)) {
-        cam.width = res.width
-        cam.height = res.height
-      }
-    }
+    else if (!same) fitCamera()
     // told again for a stage carried over (the guest start page's into the lobby, the lobby's
     // back to it on logout): the page taking it over may have put its stand-in back up
     if (stage === 'lobby') {
@@ -622,7 +707,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
         console.error('[avatarPreview] lobby stage', e)
       })
     }
-  })
+  }
+  ctx.on('engineViewport', onViewport)
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
@@ -636,6 +722,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
   ctx.push(() => {
     if (disposeIn > 0 && --disposeIn === 0) {
       disposePreview()
+      disposeParkedLobby()
       rect = null
     }
     const due = frameWaiters.filter((w) => --w.frames <= 0)
@@ -770,7 +857,7 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {
     await waitFrames(3)
-    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(LAYER), String(THUMBNAIL_SIZE)])
+    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(stage === 'lobby' ? LAYER : BACKPACK_LAYER), String(THUMBNAIL_SIZE)])
     return `data:image/png;base64,${png}`
   } catch (e) {
     console.error('[avatarPreview] thumbnail capture failed', e)

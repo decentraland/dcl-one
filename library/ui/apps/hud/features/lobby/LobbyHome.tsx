@@ -15,7 +15,6 @@ import mouseLeft from '../../assets/lobby/icon-mouse-left.png'
 import notificationsOff from '../../assets/lobby/notifications-off.png'
 import notificationsOn from '../../assets/lobby/notifications-on.png'
 import placesIcon from '../../assets/lobby/places-off.png'
-import defaultProfile from '../../assets/lobby/default-profile-thumbnail.png'
 import { ContextMenu, MaskIcon, showToast } from '../../design'
 import { siteUrl, isNativeHud } from '@hud-host'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
@@ -41,7 +40,7 @@ import { useStoredProfile } from '../login/useStoredProfile'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
 import type { Destination } from '../session/useEngineSession'
-import type { ConnectedFriend } from './LobbyCards'
+import { profilePictureStyle, type ConnectedFriend } from './LobbyCards'
 import { CustomizeModal, DropMarker, EditorGrids, WidgetHandle, WidgetPreview, useLayoutEditor } from './LobbyEditor'
 import { LobbyProfileMenu } from './LobbyProfileMenu'
 import { LobbyWidget, widgetShown, type LobbyWidgetContext } from './LobbyWidgets'
@@ -66,11 +65,12 @@ function clipToModal(rect: Rect | null): { x: number; y: number; width: number; 
 }
 
 /** Until the engine has drawn the stage, the page shows the chosen look's backdrop and the account's
- *  snapshot, so the lobby never shows an empty or half-loaded centre. */
-export function StandInStage({ hidden, body, preset }: { hidden: boolean; body?: string; preset?: string }): React.JSX.Element {
+ *  snapshot, so the lobby never shows an empty or half-loaded centre. `instant` shows or hides it
+ *  without the fade. */
+export function StandInStage({ hidden, instant, body, preset }: { hidden: boolean; instant?: boolean; body?: string; preset?: string }): React.JSX.Element {
   const backdrop = STAGE_BACKDROPS[lobbyStagePreset(preset).id]
   return (
-    <div className={cx(styles.standIn, hidden && styles.standInHidden)} aria-hidden="true">
+    <div className={cx(styles.standIn, hidden && styles.standInHidden, instant && styles.standInInstant)} aria-hidden="true">
       <img className={styles.standInBackdrop} src={backdrop} alt="" />
       <div className={styles.standInFloor} />
       {body && <img className={styles.standInAvatar} src={body} alt="" draggable={false} />}
@@ -246,7 +246,7 @@ export function LobbyHome({
     (addresses: string[] | null | undefined): ConnectedFriend[] =>
       (addresses ?? []).flatMap((a) => {
         const f = onlineByAddress.get(a.toLowerCase())
-        return f ? [{ address: f.address, name: f.name, picture: f.picture ?? null }] : []
+        return f ? [{ address: f.address, name: f.name, color: userColor(f.address, f.name, f.claimed, f.nameColor), picture: f.picture ?? null }] : []
       }),
     [onlineByAddress]
   )
@@ -383,6 +383,20 @@ export function LobbyHome({
     if (interestError != null) showToast('Something went wrong, please try again.')
   }, [interestError])
 
+  // The stand-in covers the stage under the Backpack, which the engine keeps as it is: the Backpack
+  // opening or closing shows or hides it at once; only the stage coming up fades it out.
+  const [standInFade, setStandInFade] = useState(true)
+  const [readyBefore, setReadyBefore] = useState(session.lobbyStageReady)
+  const [backpackBefore, setBackpackBefore] = useState(session.backpack.open)
+  if (session.backpack.open !== backpackBefore) {
+    setBackpackBefore(session.backpack.open)
+    setStandInFade(false)
+  }
+  if (session.lobbyStageReady !== readyBefore) {
+    setReadyBefore(session.lobbyStageReady)
+    setStandInFade(true)
+  }
+
   // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar.
   const hole = session.backpack.open ? clipToModal(session.avatarPreviewRect) : null
   const scale = rootRef.current != null ? rootRef.current.getBoundingClientRect().width / (rootRef.current.offsetWidth || 1) || 1 : 1
@@ -434,13 +448,15 @@ export function LobbyHome({
   }
 
   const unread = session.notifications.unread
-  const nameColor = profile ? userColor(profile.address, profile.name, profile.hasClaimedName) : 'var(--lobby-snow)'
+  const nameColor = profile ? userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor) : 'var(--lobby-snow)'
 
   return (
     <div ref={rootRef} className={cx(styles.root, editing && styles.editing)} style={backpackHole}>
-      {/* the Backpack modal takes the avatar preview while it's open; the stage comes back after */}
-      <div className={styles.stage}>{!session.backpack.open && <EngineViewport region="lobby" report={setEngineViewport} />}</div>
-      <StandInStage hidden={session.lobbyStageReady && !session.backpack.open} body={stored.body} preset={session.lobbyStage.preset} />
+      {/* the Backpack opens over the lobby: the engine sets the lobby's stage aside, as it is, until it closes */}
+      <div className={styles.stage}>
+        <EngineViewport region="lobby" report={setEngineViewport} />
+      </div>
+      <StandInStage hidden={session.lobbyStageReady && !session.backpack.open} instant={!standInFade} body={stored.body} preset={session.lobbyStage.preset} />
       <div className={styles.gradient} />
       <div className={styles.overlay} />
 
@@ -505,7 +521,7 @@ export function LobbyHome({
           {unread > 0 && <span className={styles.badge}>{unread}</span>}
         </button>
         <button type="button" className={cx(styles.barButton, styles.profile)} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
-          <span className={styles.profilePicture} style={{ backgroundImage: `url("${profile?.picture || defaultProfile}")` }} />
+          <span className={styles.profilePicture} style={profilePictureStyle(nameColor, profile?.picture)} />
           <span className={styles.profileName}>{profile?.name || 'Guest'}</span>
         </button>
         {onClose && (

@@ -12,6 +12,13 @@ import { receiveProfile, resetProfileStore, setProfileRequester } from '../../fe
 import { SessionProvider } from '../../features/session/SessionContext'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import { fakeSession } from '../harness'
+import { openCommunityModal } from '../../features/communities/CommunityModal'
+import { profilePictureStyle } from '../../features/lobby/LobbyCards'
+
+vi.mock('../../features/communities/CommunityModal', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../features/communities/CommunityModal')>()),
+  openCommunityModal: vi.fn(() => () => undefined)
+}))
 
 vi.mock('@explorer-core/features/lobby/lobbyApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@explorer-core/features/lobby/lobbyApi')>()),
@@ -228,6 +235,34 @@ describe('lobby layout editor', () => {
     expect(getPref(PREF.lobbyLayout)).not.toContain('Landing4By3')
   })
 
+  it("fills a friend's picture with their profile colour, framed a fifth of the way to white", async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online', claimed: true, nameColor: { r: 1, g: 0, b: 0 } }]
+    render(lobby(session))
+    const card = (await screen.findByRole('button', { name: "Mojito's profile" })).parentElement as HTMLElement
+    const picture = card.querySelector('[style*="background-image"]') as HTMLElement
+    expect(picture.style.backgroundColor).toBe('rgb(255, 0, 0)')
+  })
+
+  it('colours the pictures of the friends at a place the same way', () => {
+    const style = profilePictureStyle('rgb(1, 2, 3)', null)
+    expect(style.backgroundColor).toBe('rgb(1, 2, 3)')
+    expect(style.borderColor).toBe('color-mix(in srgb, rgb(1, 2, 3) 80%, white)')
+    expect(String(style.backgroundImage)).toMatch(/^url\(/)
+  })
+
+  it('opens a community from anywhere on its card', () => {
+    setPref(PREF.lobbyLayout, JSON.stringify({ Version: 1, Entries: [{ Corner: 'TopRight', Widget: 'Communities4By2', X: 0, Y: 0 }] }))
+    const session = fakeSession()
+    session.communities.list = [{ id: 'c1', name: 'Builders', description: '', membersCount: 3, role: 'member', ownerName: 'o' }]
+    render(lobby(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Builders' }))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
+    fireEvent.click(screen.getByRole('button', { name: 'View Builders' }))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledTimes(2)
+  })
+
   it('lists only the widgets off the grids and places one from the keyboard', () => {
     render(lobby(fakeSession()))
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
@@ -250,6 +285,15 @@ describe('lobby profile menu and visit', () => {
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Sign Out' }))
     expect(session.logout).toHaveBeenCalledOnce()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it("fills the top bar's picture with the player's name colour", () => {
+    const session = fakeSession()
+    session.profile.data = { address: '0xme', name: 'Tester', hasClaimedName: true, nameColor: { r: 0, g: 1, b: 0 }, isGuest: false }
+    render(lobby(session))
+    const button = screen.getByRole('button', { name: /tester/i, expanded: false })
+    const picture = button.querySelector('[style*="background-image"]') as HTMLElement
+    expect(picture.style.backgroundColor).toBe('rgb(0, 255, 0)')
   })
 
   it('reports the visit opened and closed, and idles the avatar while up', () => {

@@ -4,15 +4,20 @@
   display: flex;
   flex-direction: column;
 }
+/* A rail whose cards draw past their edges (a hover ring, a shadow) bleeds its viewport by
+   --rail-bleed-x sideways and --rail-bleed-top/-bottom, so the clip falls there instead of at the
+   cards; the padding keeps the cards in place. */
 .viewport {
   position: relative;
   flex: 1 1 auto;
+  margin: calc(-1 * var(--rail-bleed-top, 0px)) calc(-1 * var(--rail-bleed-x, 0px)) calc(-1 * var(--rail-bleed-bottom, 0px));
+  padding: var(--rail-bleed-top, 0px) var(--rail-bleed-x, 0px) var(--rail-bleed-bottom, 0px);
   overflow: hidden;
   touch-action: pan-y;
 }
 .strip {
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: var(--rail-bleed-top, 0px) auto var(--rail-bleed-bottom, 0px) var(--rail-bleed-x, 0px);
   display: flex;
   gap: var(--rail-gap, 8px);
   transition: transform var(--lobby-dur-snap) ease-out;

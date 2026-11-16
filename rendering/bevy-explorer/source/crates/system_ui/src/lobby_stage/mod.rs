@@ -160,15 +160,24 @@ fn render_layer(
     Some((base * 15 + (layer - 1).min(15)) as usize)
 }
 
+/// A camera the stage may face: what it renders, how it projects, and its exposure.
+type StageCamera = (
+    Entity,
+    &'static GlobalTransform,
+    &'static RenderLayers,
+    &'static Projection,
+    Option<&'static Exposure>,
+);
+
 #[allow(clippy::too_many_arguments)]
 fn sync_stage(
     mut commands: Commands,
     request: Res<StageRequest>,
-    stages: Query<(Entity, &Stage)>,
+    mut stages: Query<(Entity, &mut Stage)>,
     cache: Res<TextureLayersCache>,
     roots: Query<Entity, (With<SuperUserScene>, With<RendererSceneContext>)>,
     root_transforms: Query<&GlobalTransform, (With<SuperUserScene>, With<RendererSceneContext>)>,
-    cameras: Query<(Entity, &GlobalTransform, &RenderLayers, Option<&Exposure>), With<Camera3d>>,
+    cameras: Query<StageCamera, With<Camera3d>>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut builder: StageAssets,
@@ -178,7 +187,17 @@ fn sync_stage(
         Some((stage, render_layer))
     });
 
-    for (entity, stage) in &stages {
+    // The stage faces the perspective camera that renders its layer. A texture camera is rebuilt
+    // whenever its size changes (a window resize), so the camera is looked up again every frame
+    // rather than kept from when the stage was built.
+    let camera_for = |render_layer: usize| {
+        let layers = RenderLayers::layer(render_layer);
+        cameras
+            .iter()
+            .find(|(_, _, l, p, _)| **l == layers && matches!(p, Projection::Perspective(_)))
+    };
+
+    for (entity, mut stage) in &mut stages {
         let keep = wanted.as_ref().is_some_and(|(want, render_layer)| {
             presets::preset(&want.preset).id == stage.preset.id
                 && want.layer == stage.layer
@@ -186,6 +205,11 @@ fn sync_stage(
         });
         if !keep {
             commands.entity(entity).despawn();
+            continue;
+        }
+        let camera = camera_for(stage.render_layer).map(|(c, ..)| c);
+        if stage.camera != camera {
+            stage.camera = camera;
         }
     }
 
@@ -201,9 +225,7 @@ fn sync_stage(
     }
     // wait for the camera that renders the layer: the stage faces it
     let layers = RenderLayers::layer(render_layer);
-    let Some((camera, camera_transform, _, exposure)) =
-        cameras.iter().find(|(_, _, l, _)| **l == layers)
-    else {
+    let Some((camera, camera_transform, _, _, exposure)) = camera_for(render_layer) else {
         return;
     };
     let Some((scene_root, root_transform)) = roots

@@ -3050,10 +3050,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setHome(null)
     driverRef.current?.send({ kind: 'getHomeScene' })
   }, [lobby, lobbyOpen])
-  // Opening the Backpack or the lobby rebuilds the stage, so the page's stand-in shows again.
-  useEffect(() => {
-    if (backpackOpen) setLobbyStageReady(false)
-  }, [backpackOpen])
   const travelFromLobbyInWorld = useCallback(
     (dest: Destination) => {
       if (dest == null) {

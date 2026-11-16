@@ -617,10 +617,10 @@
   background: var(--lobby-silver);
   pointer-events: none;
 }
-.online .presence {
+.presenceOnline .presence {
   background: var(--lobby-status-online);
 }
-.away .presence {
+.presenceAway .presence {
   background: var(--lobby-status-away);
 }
 .friendName {

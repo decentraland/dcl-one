@@ -33,6 +33,9 @@
 .standInHidden {
   opacity: 0;
 }
+.standInInstant {
+  transition: none;
+}
 .standInBackdrop {
   position: absolute;
   inset: 0;
@@ -208,8 +211,10 @@
   padding: 0 24px 0 4px;
 }
 .profilePicture {
+  box-sizing: border-box;
   width: 32px;
   height: 32px;
+  border: 1px solid var(--lobby-white-20);
   border-radius: 16px;
   background: var(--white) center / cover no-repeat;
 }

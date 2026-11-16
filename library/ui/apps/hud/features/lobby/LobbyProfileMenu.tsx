@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react'
 import bugIcon from '../../assets/lobby/bug-icon.png'
 import checkmark from '../../assets/lobby/checkmark-icn-thin.png'
 import copyIcon from '../../assets/lobby/icon-copy.png'
-import defaultProfile from '../../assets/lobby/default-profile-thumbnail.png'
 import leaveIcon from '../../assets/lobby/leave-icon.png'
 import playersIcon from '../../assets/lobby/players-icn.png'
 import settingsIcon from '../../assets/lobby/settings-icn.png'
@@ -14,6 +13,7 @@ import signOutIcon from '../../assets/lobby/sign-out-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
 import { MaskIcon } from '../../design'
 import { siteUrl } from '@hud-host'
+import { profilePictureStyle } from './LobbyCards'
 import styles from './LobbyProfileMenu.module.css'
 
 const COPIED_MS = 1000
@@ -87,7 +87,7 @@ export function LobbyProfileMenu({
       <div className={styles.backdrop} onClick={onClose} />
       <div className={`${styles.panel} ${withClose ? styles.withClose : ''}`.trim()} role="menu" aria-label="Profile menu">
         <div className={styles.identity}>
-          <span className={styles.picture} style={{ backgroundImage: `url("${picture || defaultProfile}")` }} />
+          <span className={styles.picture} style={profilePictureStyle(nameColor, picture)} />
           <div className={styles.texts}>
             <div className={styles.nameRow}>
               <span className={styles.name} style={{ color: nameColor }}>

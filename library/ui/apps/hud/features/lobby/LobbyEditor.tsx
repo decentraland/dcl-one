@@ -373,12 +373,8 @@ export function CustomizeModal({
                       role="radio"
                       aria-checked={w === chosen}
                       className={`${styles.size} ${w === chosen ? styles.sizeSelected : ''}`.trim()}
-                      onPointerDown={(e) => {
-                        setSizes((s) => ({ ...s, [family]: w }))
-                        e.stopPropagation()
-                        const s = widgetSpan(w)
-                        onStart(w, e, { width: spanSize(s.x), height: spanSize(s.y) })
-                      }}
+                      // a size toggle takes the pointer for itself: it picks the size, the row drags
+                      onPointerDown={(e) => e.stopPropagation()}
                       onClick={() => setSizes((s) => ({ ...s, [family]: w }))}
                     >
                       x{widgetCardCount(w)}
