@@ -7,7 +7,9 @@ const net = vi.hoisted(() => ({
   fetchUserPhotos: vi.fn(),
   fetchOwnedWearables: vi.fn(),
   fetchOwnedNames: vi.fn(),
+  fetchUserBadges: vi.fn(),
 }));
+vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: net.fetchUserBadges }));
 vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/profile")>()),
   fetchProfile: net.fetchProfile,
@@ -127,6 +129,14 @@ describe("profile loader, dehydrated state", () => {
     expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.creations(A)]);
     expect(net.fetchProfilePlaces).not.toHaveBeenCalled();
     expect(net.fetchUserPhotos).not.toHaveBeenCalled();
+  });
+
+  it("dehydrates the badges with the profile on Overview", async () => {
+    net.fetchUserBadges.mockResolvedValue([]);
+
+    const out = await run(`/profile/${A}`, { address: A });
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.badges(A)]);
   });
 
   it("leaves a failed optional read to the browser and still renders", async () => {

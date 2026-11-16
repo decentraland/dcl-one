@@ -6,6 +6,7 @@ import { sidLoader } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import {
+  badgesQuery,
   canReadProfile,
   creationsQuery,
   ownedNamesQuery,
@@ -41,6 +42,8 @@ function keepQuery(path: string, url: URL): string {
 /** `assets` reaches here only for the member's own profile: `readProfileTab` refuses it otherwise. */
 function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
   switch (tab) {
+    case "overview":
+      return client.prefetchQuery(badgesQuery(address));
     case "creations":
       return client.prefetchQuery(creationsQuery(address));
     case "places":

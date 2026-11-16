@@ -1,0 +1,16 @@
+/* The emoji panel's toggle: the chat's emoji icon, idle, hovered and selected (the panel open). */
+.button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  background: url('../../assets/chat/emoji-idle.png') center / contain no-repeat;
+}
+.button:hover {
+  background-image: url('../../assets/chat/emoji-hover.png');
+}
+.on,
+.on:hover {
+  background-image: url('../../assets/chat/emoji-selected.png');
+}
