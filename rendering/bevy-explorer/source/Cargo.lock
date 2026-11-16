@@ -11221,7 +11221,6 @@ dependencies = [
  "ttf-parser 0.21.1",
  "ui_core",
  "unicode-segmentation",
- "url",
  "urlencoding",
  "wallet",
  "web-time",

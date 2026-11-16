@@ -29,8 +29,6 @@ const TITLE_BASE_Y = -1.2
 
 export interface MapCamera {
   viewportRef: (el: HTMLDivElement | null) => void
-  /** Where the camera is right now, for what draws itself each frame. */
-  view: { current: MapView }
   level: number
   /** The map-unit rectangle in view, refreshed when it moves by a meaningful amount. */
   visible: { xMin: number; yMin: number; xMax: number; yMax: number }
@@ -291,7 +289,7 @@ export function useMapCamera(): MapCamera {
   }, [])
 
   return useMemo(
-    () => ({ viewportRef, view, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag }),
+    () => ({ viewportRef, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag }),
     [viewportRef, level, visible, setPosition, translateTo, zoom, resetZoom, blockZoom, parcelAt, beginDrag, drag, endDrag]
   )
 }

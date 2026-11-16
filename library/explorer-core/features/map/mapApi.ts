@@ -1,74 +1,121 @@
 // The full-screen map's server reads and writes.
 //
 // Requests the services answer per signer (places, events, a place's photos, and every write)
-// go through the bridge scene, where the engine signs them as the player. The two reads that
-// carry no identity (the points-of-interest list and the connected players) are plain fetches.
+// go through the bridge scene's places and events domains, where the engine signs them as the
+// player. The two reads that carry no identity (the points-of-interest list and the connected
+// players) are plain fetches.
 
 import { serviceUrl } from '@hud-host'
-import type { MapApiRequest, MapApiResultMessage } from '../../engine/protocol'
+import type {
+  EventAttendingMessage,
+  EventData,
+  EventsMessage,
+  GetEventsRequest,
+  GetPlacePhotosRequest,
+  GetPlacesAtRequest,
+  PlaceFavoriteMessage,
+  PlaceLikeMessage,
+  PlacePhoto,
+  PlacePhotosMessage,
+  PlaceSearchMessage,
+  PlaceSearchOrder,
+  PlacesAtMessage,
+  SceneToPage,
+  SearchPlacesRequest,
+  SetEventAttendingRequest,
+  SetPlaceFavoriteRequest,
+  SetPlaceLikeRequest
+} from '../../engine/protocol'
+import { nextRequestId } from '../../engine/requestIds'
+import type { DiscoverPlace } from '../places/placesApi'
 import { parcelKey, type Vec2 } from './mapCoords'
 
-type Send = (id: number, request: MapApiRequest) => void
-type Pending = { resolve: (data: unknown) => void; reject: (error: Error) => void }
+export type { PlacePhoto }
 
-let send: Send | null = null
-let nextId = 1
-const pending = new Map<number, Pending>()
+export type MapRequest =
+  | GetEventsRequest
+  | SetEventAttendingRequest
+  | GetPlacesAtRequest
+  | SearchPlacesRequest
+  | SetPlaceLikeRequest
+  | SetPlaceFavoriteRequest
+  | GetPlacePhotosRequest
+
+type MapReply = EventsMessage | EventAttendingMessage | PlacesAtMessage | PlaceSearchMessage | PlaceLikeMessage | PlaceFavoriteMessage | PlacePhotosMessage
+
+/** How long the map waits for the bridge's answer before it gives up on a request. */
+const MAP_REPLY_TIMEOUT_MS = 10_000
+
+type Waiting = { settle: (msg: MapReply) => void; fail: (error: Error) => void }
+
+let send: ((msg: MapRequest) => void) | null = null
+const waiting = new Map<string, Waiting>()
+
+// The answer to a reminder change names its event, every other answer the request it answers.
+const replyKey = (msg: MapReply): string => (msg.kind === 'eventAttending' ? `eventAttending:${msg.eventId}` : `${msg.kind}:${msg.request}`)
 
 /** Wire the bridge in (the session does, once it has a driver); null when the bridge goes away. */
-export function setMapApiTransport(transport: Send | null): void {
+export function setMapTransport(transport: ((msg: MapRequest) => void) | null): void {
   send = transport
   if (transport == null) {
-    for (const p of pending.values()) p.reject(new Error('The map lost its connection'))
-    pending.clear()
+    for (const w of waiting.values()) w.fail(new Error('The map lost its connection'))
+    waiting.clear()
   }
 }
 
-/** Deliver the bridge's answer to the request that is waiting for it. */
-export function resolveMapApi(msg: MapApiResultMessage): void {
-  const p = pending.get(msg.id)
-  if (p == null) return
-  pending.delete(msg.id)
-  if (msg.ok) p.resolve(msg.data)
-  else p.reject(new Error(msg.error ?? 'The request failed'))
+/** Hand the map the bridge's answers to its requests; anything else is ignored. */
+export function receiveMapReply(msg: SceneToPage): void {
+  switch (msg.kind) {
+    case 'events':
+    case 'eventAttending':
+    case 'placesAt':
+    case 'placeSearch':
+    case 'placeLike':
+    case 'placeFavorite':
+    case 'placePhotos':
+      waiting.get(replyKey(msg))?.settle(msg)
+  }
 }
 
-function request<T>(req: MapApiRequest): Promise<T> {
-  if (send == null) return Promise.reject(new Error('The map is not connected'))
-  const id = nextId++
-  return new Promise<T>((resolve, reject) => {
-    pending.set(id, { resolve: resolve as (data: unknown) => void, reject })
-    send?.(id, req)
+function ask<R extends MapReply>(msg: MapRequest, key: string): Promise<R> {
+  const transport = send
+  if (transport == null) return Promise.reject(new Error('The map is not connected'))
+  waiting.get(key)?.fail(new Error('Asked again'))
+  return new Promise<R>((resolve, reject) => {
+    const done = (): void => {
+      clearTimeout(timer)
+      if (waiting.get(key) === entry) waiting.delete(key)
+    }
+    const entry: Waiting = {
+      settle: (reply) => {
+        done()
+        if ((reply as { failed?: boolean }).failed === true) reject(new Error('The request failed'))
+        else resolve(reply as R)
+      },
+      fail: (error) => {
+        done()
+        reject(error)
+      }
+    }
+    const timer = setTimeout(() => entry.fail(new Error('The bridge did not answer')), MAP_REPLY_TIMEOUT_MS)
+    waiting.set(key, entry)
+    transport(msg)
   })
 }
 
-export interface MapPlace {
-  id: string
-  title: string
-  description?: string | null
-  image?: string | null
-  owner?: string | null
-  contact_name?: string | null
-  creator_address?: string | null
-  positions: string[]
-  base_position: string
-  categories?: string[]
-  world_name?: string | null
-  likes?: number
-  dislikes?: number
-  favorites?: number
-  like_rate?: number | string | null
-  user_count?: number
-  user_like?: boolean
-  user_dislike?: boolean
-  user_favorite?: boolean
+type WithoutRequest<T> = T extends unknown ? Omit<T, 'request'> : never
+
+/** Send a request that carries an id, and wait for the `answer` that echoes it. */
+function askFor<R extends Exclude<MapReply, EventAttendingMessage>>(answer: R['kind'], msg: WithoutRequest<Exclude<MapRequest, SetEventAttendingRequest>>): Promise<R> {
+  const request = nextRequestId()
+  return ask<R>({ ...msg, request } as MapRequest, `${answer}:${request}`)
 }
 
-export const EMPTY_PLACE_ID = 'fake_id'
+const EMPTY_PLACE_ID = 'fake_id'
 const EMPTY_PLACE_IMAGE = `${serviceUrl('catalyst')}/content/contents/bafkreidj26s7aenyxfthfdibnqonzqm5ptc4iamml744gmcyuokewkr76y`
 
 /** What the map shows for a parcel no place covers. */
-export function emptyPlace(parcel: Vec2): MapPlace {
+export function emptyPlace(parcel: Vec2): DiscoverPlace {
   return {
     id: EMPTY_PLACE_ID,
     title: 'Empty place',
@@ -91,31 +138,31 @@ export function emptyPlace(parcel: Vec2): MapPlace {
   }
 }
 
-export const isEmptyPlace = (place: MapPlace): boolean => place.id === EMPTY_PLACE_ID
-export const isWorldPlace = (place: MapPlace): boolean => place.world_name != null && place.world_name !== ''
+export const isEmptyPlace = (place: DiscoverPlace): boolean => place.id === EMPTY_PLACE_ID
+export const isWorldPlace = (place: DiscoverPlace): boolean => place.world_name != null && place.world_name !== ''
 
 const ROADS = ['Tram Line', 'Long Road']
 /** Roads span the city, so their place is identified by the parcel the player picked. */
 export const isRoad = (title: string): boolean => ROADS.includes(title)
 
-export function likeRate(place: MapPlace): number | null {
+export function likeRate(place: DiscoverPlace): number | null {
   const raw = place.like_rate
   if (raw == null || raw === '') return null
   const value = typeof raw === 'number' ? raw : Number(raw)
   return Number.isFinite(value) ? value : null
 }
 
-export async function fetchPlacesAt(parcels: readonly Vec2[]): Promise<MapPlace[]> {
+export async function fetchPlacesAt(parcels: readonly Vec2[]): Promise<DiscoverPlace[]> {
   if (parcels.length === 0) return []
-  const res = await request<{ data?: MapPlace[] }>({ op: 'places', positions: parcels.map(parcelKey) })
-  return res?.data ?? []
+  const res = await askFor<PlacesAtMessage>('placesAt', { kind: 'getPlacesAt', positions: parcels.map(parcelKey) })
+  return res.places
 }
 
-export async function fetchPlaceAt(parcel: Vec2): Promise<MapPlace | null> {
+export async function fetchPlaceAt(parcel: Vec2): Promise<DiscoverPlace | null> {
   return (await fetchPlacesAt([parcel]))[0] ?? null
 }
 
-export type MapSort = 'most_active' | 'like_score' | 'created_at'
+export type MapSort = PlaceSearchOrder
 export const SEARCH_PAGE_SIZE = 50
 
 export interface MapSearch {
@@ -128,31 +175,21 @@ export interface MapSearch {
 }
 
 export interface MapSearchResult {
-  places: MapPlace[]
+  places: DiscoverPlace[]
   total: number
 }
 
-const queryValue = (value: string): string => encodeURIComponent(value).replace(/%20/g, '+')
-
-export function searchQuery(search: MapSearch): string {
-  const params = [
-    `search=${queryValue(search.text)}`,
-    `offset=${search.page * SEARCH_PAGE_SIZE}`,
-    `limit=${SEARCH_PAGE_SIZE}`,
-    `order_by=${search.sort}`,
-    'order=desc',
-    `categories=${search.favorites ? '' : search.category}`,
-    'with_realms_detail=true',
-    'only_sdk7=true'
-  ]
-  if (search.favorites) params.push('only_favorites=true')
-  return params.join('&')
-}
-
 export async function searchPlaces(search: MapSearch): Promise<MapSearchResult> {
-  const res = await request<{ data?: MapPlace[]; total?: number }>({ op: 'destinations', query: searchQuery(search) })
-  const places = res?.data ?? []
-  return { places, total: res?.total ?? places.length }
+  const res = await askFor<PlaceSearchMessage>('placeSearch', {
+    kind: 'searchPlaces',
+    search: search.text,
+    category: search.category,
+    favorites: search.favorites,
+    orderBy: search.sort,
+    offset: search.page * SEARCH_PAGE_SIZE,
+    limit: SEARCH_PAGE_SIZE
+  })
+  return { places: res.places, total: res.total }
 }
 
 export interface LikeResult {
@@ -164,9 +201,8 @@ export interface LikeResult {
 
 /** Like (true), dislike (false) or clear (null) the player's vote on a place. */
 export async function setPlaceLike(id: string, like: boolean | null): Promise<LikeResult> {
-  const res = await request<{ data?: LikeResult }>({ op: 'placeLike', id, like })
-  if (res?.data == null) throw new Error('The place did not take the vote')
-  return res.data
+  const { likes, dislikes, user_like, user_dislike } = await askFor<PlaceLikeMessage>('placeLike', { kind: 'setPlaceLike', placeId: id, like })
+  return { likes, dislikes, user_like, user_dislike }
 }
 
 export interface FavoriteResult {
@@ -175,9 +211,8 @@ export interface FavoriteResult {
 }
 
 export async function setPlaceFavorite(id: string, favorite: boolean): Promise<FavoriteResult> {
-  const res = await request<{ data?: FavoriteResult }>({ op: 'placeFavorite', id, favorite })
-  if (res?.data == null) throw new Error('The place did not take the favourite')
-  return res.data
+  const { favorites, user_favorite } = await askFor<PlaceFavoriteMessage>('placeFavorite', { kind: 'setPlaceFavorite', placeId: id, favorite })
+  return { favorites, user_favorite }
 }
 
 /** Share of likes among the votes, 0..1, as the services compute it; null when nobody voted. */
@@ -186,51 +221,22 @@ export function likeRateOf(likes: number, dislikes: number): number | null {
   return total > 0 ? likes / total : null
 }
 
-export interface MapEvent {
-  id: string
-  name: string
-  image?: string | null
-  description?: string | null
-  x: number
-  y: number
-  coordinates?: [number, number]
-  world?: boolean
-  server?: string | null
-  live?: boolean
-  attending?: boolean
-  total_attendees?: number
-  user_name?: string | null
-  start_at: string
-  finish_at?: string
-  next_start_at?: string
-  next_finish_at?: string
-  recurrent_dates?: string[]
+async function events(params: Pick<GetEventsRequest, 'list' | 'positions'>): Promise<EventData[]> {
+  return (await askFor<EventsMessage>('events', { kind: 'getEvents', ...params })).events
 }
 
-async function events(query: string): Promise<MapEvent[]> {
-  const res = await request<{ data?: MapEvent[] }>({ op: 'events', query })
-  return Array.isArray(res?.data) ? res.data : []
+export function fetchLiveEvents(): Promise<EventData[]> {
+  return events({ list: 'live' })
 }
 
-export function fetchLiveEvents(): Promise<MapEvent[]> {
-  return events('list=live')
-}
-
-export function fetchEventsAt(parcels: readonly Vec2[], onlyLive: boolean): Promise<MapEvent[]> {
+export function fetchEventsAt(parcels: readonly Vec2[], onlyLive: boolean): Promise<EventData[]> {
   if (parcels.length === 0) return Promise.resolve([])
-  const positions = parcels.map((p) => `positions[]=${p.x},${p.y}`).join('&')
-  return events(onlyLive ? `${positions}&list=live` : positions)
+  const positions = parcels.map((p) => ({ x: p.x, y: p.y }))
+  return events(onlyLive ? { positions, list: 'live' } : { positions })
 }
 
 export async function setEventAttending(id: string, attending: boolean): Promise<void> {
-  await request<unknown>({ op: 'eventAttend', id, attending })
-}
-
-export interface PlacePhoto {
-  id: string
-  url: string
-  thumbnailUrl?: string
-  dateTime?: string
+  await ask<EventAttendingMessage>({ kind: 'setEventAttending', eventId: id, attending }, `eventAttending:${id}`)
 }
 
 export interface PlacePhotos {
@@ -242,9 +248,8 @@ export interface PlacePhotos {
 export const PHOTOS_PAGE_SIZE = 100
 
 export async function fetchPlacePhotos(placeId: string, offset: number): Promise<PlacePhotos> {
-  const res = await request<{ images?: PlacePhoto[]; maxImages?: number }>({ op: 'placePhotos', id: placeId, offset, limit: PHOTOS_PAGE_SIZE })
-  const images = (res?.images ?? []).filter((i) => typeof i.url === 'string')
-  return { images, total: res?.maxImages ?? images.length }
+  const { images, total } = await askFor<PlacePhotosMessage>('placePhotos', { kind: 'getPlacePhotos', placeId, offset, limit: PHOTOS_PAGE_SIZE })
+  return { images, total }
 }
 
 let fixedPublicReads: { pois: Vec2[]; peers: Peer[] } | null = null

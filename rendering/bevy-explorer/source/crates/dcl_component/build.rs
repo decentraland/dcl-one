@@ -28,7 +28,6 @@ fn gen_sdk_components() -> Result<()> {
         "asset_load_loading_state",
         "engine_info",
         "billboard",
-        "map_pin",
         "raycast",
         "raycast_result",
         "mesh_renderer",

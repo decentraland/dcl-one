@@ -375,7 +375,6 @@
   --map-title-stroke: var(--black);
   --map-exit-hover: rgba(255, 0, 0, 0.1);
   --map-dur-marker: 500ms; /* a marker's hover and appear */
-  --map-dur-pin: 400ms;
   --map-dur-panel: 500ms;
   --map-dur-notice: 300ms;
   --ease-outback: cubic-bezier(0.34, 1.56, 0.64, 1);

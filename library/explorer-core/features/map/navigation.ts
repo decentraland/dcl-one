@@ -1,7 +1,7 @@
 // The route the player is following on the map: one destination parcel, shown until they
 // arrive, stop it, or jump in to it.
 
-import type { MapPlace } from './mapApi'
+import type { DiscoverPlace } from '../places/placesApi'
 import { parcelCenter, parseParcel, type Vec2 } from './mapCoords'
 
 export interface Destination {
@@ -20,13 +20,13 @@ export interface NavigationStore {
   subscribe: (listener: () => void) => () => void
   getSnapshot: () => Destination | null
   /** Route to a place: its only parcel, or its base parcel. */
-  start: (place: MapPlace | null) => void
+  start: (place: DiscoverPlace | null) => void
   stop: () => void
   /** The player's marker moved; true when that brought them to the destination. */
   playerMoved: (position: Vec2) => boolean
 }
 
-export function destinationParcel(place: MapPlace | null): Vec2 {
+export function destinationParcel(place: DiscoverPlace | null): Vec2 {
   return (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
 }
 

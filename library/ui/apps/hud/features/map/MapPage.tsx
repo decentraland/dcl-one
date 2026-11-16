@@ -2,15 +2,17 @@
 // and Layers panel, and the panel of search results, places and events on the right.
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { DEFAULT_REALM } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
-import { homeStore, isHomePlace } from '@explorer-core/features/map/home'
-import { isRoad, isWorldPlace, type MapEvent, type MapPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
+import { homeOf, isHomePlace } from '@explorer-core/features/map/home'
+import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import type { EventData } from '@explorer-core/engine/protocol'
 import { parseParcel, playerMarkerPosition, worldToGrid, type Vec2 } from '@explorer-core/features/map/mapCoords'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
 import { destinationParcel, navigation } from '@explorer-core/features/map/navigation'
-import { scenePins, type ScenePin } from '@explorer-core/features/map/scenePins'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
@@ -21,7 +23,6 @@ import { DestinationBanner } from './DestinationBanner'
 import { LayersPanel } from './LayersPanel'
 import { MapCanvas } from './MapCanvas'
 import { MapToolbar } from './MapToolbar'
-import { PinsLayer } from './PinsLayer'
 import { RouteLayer } from './RouteLayer'
 import { WorldWarning } from './WorldWarning'
 import { EventInfo } from './panel/EventInfo'
@@ -57,9 +58,8 @@ export function MapPage({
   const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
   const nav = useMemo(() => new Navmap(), [])
   const snap = useSyncExternalStore(nav.subscribe, nav.getSnapshot)
-  const home = useSyncExternalStore(homeStore.subscribe, homeStore.getSnapshot)
+  const home = useMemo(() => homeOf(map.home), [map.home])
   const destination = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
-  const pins = useSyncExternalStore(scenePins.subscribe, scenePins.getSnapshot)
   const [layersOpen, setLayersOpen] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [warning, setWarning] = useState(false)
@@ -127,14 +127,6 @@ export function MapPage({
     },
     [nav]
   )
-  const onPin = useCallback(
-    (pin: ScenePin): void => {
-      setSelected(null)
-      // the place under the pin opens fresh, then again as a parcel picked on the map
-      void nav.selectParcel(pin.parcel, false).then((shown) => shown && nav.selectParcel(pin.parcel, true))
-    },
-    [nav]
-  )
   const showHome = useCallback((): void => {
     if (home.world != null) return
     const parcel = home.parcel ?? { x: 0, y: 0 }
@@ -169,23 +161,20 @@ export function MapPage({
     map.teleportToPlace(view.event.x, view.event.y)
     close()
   }
-  const setHome = (place: MapPlace, origin: Vec2 | null, on: boolean): void => {
-    if (!on) {
-      homeStore.set(null)
-      return
-    }
+  // Home can be set, not cleared: the engine keeps one home, the default until one is set.
+  const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
     if (isWorldPlace(place)) {
-      if (place.world_name != null) homeStore.set({ world: place.world_name })
+      if (place.world_name != null) map.setHome(place.world_name, { x: 0, y: 0 })
       return
     }
     const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
-    if (parcel != null) homeStore.set({ parcel })
+    if (parcel != null) map.setHome(DEFAULT_REALM, parcel)
   }
 
-  const placeIsHome = (place: MapPlace, origin: Vec2 | null): boolean =>
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean =>
     isHomePlace(home, place) || (isRoad(place.title) && origin != null && home.world == null && home.parcel?.x === origin.x && home.parcel.y === origin.y)
 
-  const navigatingTo = (place: MapPlace): boolean => {
+  const navigatingTo = (place: DiscoverPlace): boolean => {
     if (destination == null || isWorldPlace(place)) return false
     const end = destinationParcel(place)
     return destination.parcel.x === end.x && destination.parcel.y === end.y
@@ -219,7 +208,6 @@ export function MapPage({
           onHome={showHome}
         >
           <RouteLayer destination={destination} pose={pose} active={open} />
-          {layers.has('pins') && <PinsLayer pins={pins} onPick={onPin} />}
         </MapCanvas>
 
         <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
@@ -275,11 +263,11 @@ export function MapPage({
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
               navigating={navigatingTo(snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={(on) => snap.place != null && setHome(snap.place.place, snap.place.origin, on)}
+              onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}
-              onOpenEvent={(event: MapEvent) => void nav.selectEvent(event, snap.place?.place ?? null)}
+              onOpenEvent={(event: EventData) => void nav.selectEvent(event, snap.place?.place ?? null)}
               onOpenPhoto={(photos, index) => setPhoto({ photos, index })}
             />
           )}

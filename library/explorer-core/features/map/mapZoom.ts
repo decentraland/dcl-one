@@ -16,7 +16,7 @@ const CLOSEST_ZOOM = CLOSEST_ZOOM_PARCELS * PARCEL_UNITS
 /** How far each level sits between the farthest (0) and closest (1) view. */
 const LEVEL_CURVE = [0, 0.14049491, 0.36240783, 0.5673127, 0.7490243, 0.9013244, 1]
 
-export const ZOOM_LEVELS = LEVEL_CURVE.length
+const ZOOM_LEVELS = LEVEL_CURVE.length
 export const MAX_ZOOM_LEVEL = ZOOM_LEVELS - 1
 export const DEFAULT_ZOOM_LEVEL = Math.floor((ZOOM_LEVELS - 1) / 2)
 export const ZOOM_STEP_SECONDS = 0.3
@@ -64,7 +64,7 @@ export function userMarkerScale(ortho: number): number {
 const PIN_MIN_SCALE = 35
 const PIN_SIZE_MULTIPLIER = 0.6
 
-/** Scene pins: larger than place markers, and never smaller than their minimum once past the base zoom. */
+/** The route's destination pin: larger than place markers, and never smaller than its minimum once past the base zoom. */
 export function pinMarkerScale(ortho: number): number {
   const ratio = ortho / BASE_ZOOM
   return ratio < 1 ? ratio * PIN_MIN_SCALE : Math.max(ratio * PIN_MIN_SCALE * PIN_SIZE_MULTIPLIER, PIN_MIN_SCALE)

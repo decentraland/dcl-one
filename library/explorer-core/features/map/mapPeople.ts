@@ -1,19 +1,7 @@
-// What the engine tells the map about the world around the player: the pins scenes put on the
-// map, and the other players it holds.
+// What the engine tells the map about the world around the player: the other players it holds,
+// and the player's own teleports.
 
-import type { MapPinInfo } from '../../engine/generated'
 import type { MapPlayer } from '../../engine/protocol'
-import { parcelCenter, type Vec2 } from './mapCoords'
-
-export interface ScenePin {
-  id: string
-  parcel: Vec2
-  position: Vec2
-  title: string
-  description: string
-  /** The scene's own icon; null draws the default pin. */
-  icon: string | null
-}
 
 function store<T>(initial: T): { subscribe: (listener: () => void) => () => void; getSnapshot: () => T; set: (value: T) => void } {
   let value = initial
@@ -31,23 +19,9 @@ function store<T>(initial: T): { subscribe: (listener: () => void) => () => void
   }
 }
 
-const pins = store<ScenePin[]>([])
 const players = store<MapPlayer[]>([])
 const travels = store(0)
 let watch: ((on: boolean) => void) | null = null
-
-export const scenePins = {
-  subscribe: pins.subscribe,
-  getSnapshot: pins.getSnapshot,
-  receive(list: readonly MapPinInfo[]): void {
-    pins.set(
-      list.map((pin) => {
-        const parcel = { x: pin.x, y: pin.y }
-        return { id: pin.id, parcel, position: parcelCenter(parcel), title: pin.title, description: pin.description, icon: pin.icon }
-      })
-    )
-  }
-}
 
 export const nearbyPlayers = {
   subscribe: players.subscribe,

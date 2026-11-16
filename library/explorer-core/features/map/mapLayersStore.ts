@@ -1,9 +1,9 @@
 // Which layers the full-screen map shows. Held for the session only: a restart brings the
 // defaults back.
 
-export type MapLayer = 'liveEvents' | 'pois' | 'pins' | 'people' | 'satellite' | 'parcels'
+export type MapLayer = 'liveEvents' | 'pois' | 'people' | 'satellite' | 'parcels'
 
-const DEFAULT_LAYERS: readonly MapLayer[] = ['liveEvents', 'pois', 'pins', 'people', 'satellite']
+const DEFAULT_LAYERS: readonly MapLayer[] = ['liveEvents', 'pois', 'people', 'satellite']
 
 export interface MapLayersStore {
   subscribe: (listener: () => void) => () => void

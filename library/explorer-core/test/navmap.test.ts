@@ -1,14 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { MapEvent, MapPlace, MapSearch } from '../features/map/mapApi'
-import { homeOf, isHomePlace, createHomeStore, NO_HOME } from '../features/map/home'
+import type { MapSearch } from '../features/map/mapApi'
+import type { DiscoverPlace } from '../features/places/placesApi'
+import type { EventData } from '../engine/protocol'
+import { homeOf, isHomePlace, NO_HOME } from '../features/map/home'
 import { createNavigationStore, destinationParcel } from '../features/map/navigation'
 import { Navmap, pagination, type NavmapApi } from '../features/map/navmap'
 import { parcelCenter } from '../features/map/mapCoords'
 import { calendarLink, eventSchedule, eventShareLinks, jumpInLink, placeShareLinks, upcomingDates } from '../features/map/shareLinks'
-import { searchQuery } from '../features/map/mapApi'
+import { eventOf, placeOf } from './mapFixtures'
 
-const place = (id: string, title: string, positions: string[], extra: Partial<MapPlace> = {}): MapPlace => ({ id, title, positions, base_position: positions[0], ...extra })
-const event = (id: string, x: number, y: number, extra: Partial<MapEvent> = {}): MapEvent => ({ id, name: `Event ${id}`, x, y, start_at: '2026-11-10T10:00:00.000Z', ...extra })
+const place = (id: string, title: string, positions: string[], extra: Partial<DiscoverPlace> = {}): DiscoverPlace => placeOf({ id, title, positions, ...extra })
+const event = (id: string, x: number, y: number, extra: Partial<EventData> = {}): EventData => eventOf({ id, name: `Event ${id}`, x, y, start_at: '2026-11-10T10:00:00.000Z', ...extra })
 
 const PLAZA = place('plaza', 'Genesis Plaza', ['0,0', '1,0'])
 const CLUB = place('club', 'Sugar Club', ['-20,60'])
@@ -17,8 +19,8 @@ const WORLD = place('world', 'Mansion', ['0,0'], { world_name: 'mansion.dcl.eth'
 function setup(over: Partial<NavmapApi> = {}): { nav: Navmap; api: { [K in keyof NavmapApi]: ReturnType<typeof vi.fn> }; moves: unknown[] } {
   const api = {
     searchPlaces: vi.fn(async (_search: MapSearch) => ({ places: [PLAZA, CLUB, WORLD], total: 3 })),
-    fetchPlaceAt: vi.fn(async () => PLAZA as MapPlace | null),
-    fetchEventsAt: vi.fn(async () => [] as MapEvent[]),
+    fetchPlaceAt: vi.fn(async () => PLAZA as DiscoverPlace | null),
+    fetchEventsAt: vi.fn(async () => [] as EventData[]),
     ...over
   }
   const nav = new Navmap(api as unknown as NavmapApi)
@@ -125,8 +127,8 @@ describe('map search', () => {
   })
 
   it('leaves a search that is still on its way behind when a place is opened', async () => {
-    let answer: (result: { places: MapPlace[]; total: number }) => void = () => undefined
-    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: MapPlace[]; total: number }>((resolve) => (answer = resolve))) })
+    let answer: (result: { places: DiscoverPlace[]; total: number }) => void = () => undefined
+    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: DiscoverPlace[]; total: number }>((resolve) => (answer = resolve))) })
     nav.typeText('club')
     nav.submitSearch()
     await settle()
@@ -146,9 +148,9 @@ describe('map search', () => {
   })
 
   it('goes back to the list from a place opened while its live badges were still being read', async () => {
-    let answer: (events: MapEvent[]) => void = () => undefined
+    let answer: (events: EventData[]) => void = () => undefined
     let reads = 0
-    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 0 ? new Promise<MapEvent[]>((resolve) => (answer = resolve)) : Promise.resolve([]))) })
+    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 0 ? new Promise<EventData[]>((resolve) => (answer = resolve)) : Promise.resolve([]))) })
     nav.typeText('club')
     nav.submitSearch()
     await settle()
@@ -180,17 +182,6 @@ describe('map search', () => {
     expect(s.handle).toBeNull()
   })
 
-  it('builds the destinations query the services expect', () => {
-    expect(searchQuery({ text: 'sugar club', category: 'music', favorites: false, sort: 'like_score', page: 2 })).toBe(
-      'search=sugar+club&offset=100&limit=50&order_by=like_score&order=desc&categories=music&with_realms_detail=true&only_sdk7=true'
-    )
-    expect(searchQuery({ text: '', category: '', favorites: true, sort: 'most_active', page: 0 })).toContain('&only_favorites=true')
-    // what the player typed stays one value
-    const typed = searchQuery({ text: 'a&only_favorites=true #b%c+d', category: '', favorites: false, sort: 'most_active', page: 0 })
-    expect(typed.startsWith('search=a%26only_favorites%3Dtrue+%23b%25c%2Bd&offset=0&')).toBe(true)
-    expect(new URLSearchParams(typed).get('search')).toBe('a&only_favorites=true #b%c+d')
-    expect(new URLSearchParams(typed).has('only_favorites')).toBe(false)
-  })
 })
 
 describe('map categories', () => {
@@ -404,7 +395,7 @@ describe('map history', () => {
   })
 
   it('drops a search answer that a newer search has replaced', async () => {
-    let resolveFirst!: (value: { places: MapPlace[]; total: number }) => void
+    let resolveFirst!: (value: { places: DiscoverPlace[]; total: number }) => void
     const searchPlaces = vi
       .fn()
       .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
@@ -421,10 +412,10 @@ describe('map history', () => {
   })
 
   it('tells a parcel that opened from one a newer pick replaced', async () => {
-    let answerFirst!: (place: MapPlace | null) => void
+    let answerFirst!: (place: DiscoverPlace | null) => void
     const fetchPlaceAt = vi
       .fn()
-      .mockImplementationOnce(() => new Promise<MapPlace | null>((resolve) => (answerFirst = resolve)))
+      .mockImplementationOnce(() => new Promise<DiscoverPlace | null>((resolve) => (answerFirst = resolve)))
       .mockImplementation(async () => CLUB)
     const { nav } = setup({ fetchPlaceAt })
     const first = nav.selectParcel({ x: 0, y: 0 }, false)
@@ -436,10 +427,10 @@ describe('map history', () => {
   })
 
   it('tells a parcel replaced while its events were being read', async () => {
-    let answerEvents!: (events: MapEvent[]) => void
+    let answerEvents!: (events: EventData[]) => void
     const fetchEventsAt = vi
       .fn()
-      .mockImplementationOnce(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve)))
+      .mockImplementationOnce(() => new Promise<EventData[]>((resolve) => (answerEvents = resolve)))
       .mockImplementation(async () => [])
     const fetchPlaceAt = vi.fn().mockImplementationOnce(async () => PLAZA).mockImplementation(async () => CLUB)
     const { nav } = setup({ fetchPlaceAt, fetchEventsAt })
@@ -455,10 +446,10 @@ describe('map history', () => {
   })
 
   it('goes back to a place whose events arrive after an event was opened', async () => {
-    let answerEvents!: (events: MapEvent[]) => void
+    let answerEvents!: (events: EventData[]) => void
     const fetchEventsAt = vi
       .fn()
-      .mockImplementationOnce(() => new Promise<MapEvent[]>((resolve) => (answerEvents = resolve)))
+      .mockImplementationOnce(() => new Promise<EventData[]>((resolve) => (answerEvents = resolve)))
       .mockImplementation(async () => [])
     const { nav } = setup({ fetchEventsAt })
     const opened = nav.selectPlace(CLUB)
@@ -476,7 +467,7 @@ describe('map history', () => {
 
   it('goes back to the list from a place whose events are still being read', async () => {
     let reads = 0
-    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 1 ? new Promise<MapEvent[]>(() => undefined) : Promise.resolve([]))) })
+    const { nav } = setup({ fetchEventsAt: vi.fn(() => (reads++ === 1 ? new Promise<EventData[]>(() => undefined) : Promise.resolve([]))) })
     nav.typeText('club')
     nav.submitSearch()
     await settle()
@@ -492,8 +483,8 @@ describe('map history', () => {
   })
 
   it('leaves a search that is still on its way behind when the bar is cleared', async () => {
-    let answer!: (result: { places: MapPlace[]; total: number }) => void
-    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: MapPlace[]; total: number }>((resolve) => (answer = resolve))) })
+    let answer!: (result: { places: DiscoverPlace[]; total: number }) => void
+    const { nav } = setup({ searchPlaces: vi.fn(() => new Promise<{ places: DiscoverPlace[]; total: number }>((resolve) => (answer = resolve))) })
     nav.typeText('club')
     nav.submitSearch()
     await settle()
@@ -511,8 +502,8 @@ describe('map history', () => {
   })
 
   it('leaves an event whose place arrives after a place was opened out of the panel', async () => {
-    let answerPlace!: (place: MapPlace | null) => void
-    const { nav } = setup({ fetchPlaceAt: vi.fn(() => new Promise<MapPlace | null>((resolve) => (answerPlace = resolve))) })
+    let answerPlace!: (place: DiscoverPlace | null) => void
+    const { nav } = setup({ fetchPlaceAt: vi.fn(() => new Promise<DiscoverPlace | null>((resolve) => (answerPlace = resolve))) })
     void nav.selectEvent(event('e', 0, 0))
     await settle()
     await nav.selectPlace(CLUB)
@@ -542,10 +533,10 @@ describe('map panel handle', () => {
 })
 
 describe('home', () => {
-  it('reads a pinned default-realm home as a parcel and any other realm as a world', () => {
-    expect(homeOf({ realm: 'main', parcel: { x: 3, y: 4 }, pinned: true }, 'main')).toEqual({ parcel: { x: 3, y: 4 }, world: null })
-    expect(homeOf({ realm: 'mansion.dcl.eth', parcel: { x: 0, y: 0 }, pinned: true }, 'main')).toEqual({ parcel: null, world: 'mansion.dcl.eth' })
-    expect(homeOf({ realm: 'main', parcel: { x: 0, y: 0 }, pinned: false }, 'main')).toEqual(NO_HOME)
+  it('reads a default-realm home as a parcel and any other realm as a world', () => {
+    expect(homeOf({ realm: null, parcel: '3,4' })).toEqual({ parcel: { x: 3, y: 4 }, world: null })
+    expect(homeOf({ realm: 'mansion.dcl.eth', parcel: '0,0' })).toEqual({ parcel: null, world: 'mansion.dcl.eth' })
+    expect(homeOf(null)).toEqual(NO_HOME)
   })
 
   it('counts any parcel of a place as home, and a world by its name', () => {
@@ -554,30 +545,6 @@ describe('home', () => {
     expect(isHomePlace({ parcel: null, world: 'mansion.dcl.eth' }, WORLD)).toBe(true)
     expect(isHomePlace({ parcel: null, world: 'mansion.dcl.eth' }, PLAZA)).toBe(false)
     expect(isHomePlace(NO_HOME, PLAZA)).toBe(false)
-  })
-
-  it('shows a change at once and sends it to the engine', () => {
-    const store = createHomeStore()
-    const sent: unknown[] = []
-    store.setTransport((change) => sent.push(change))
-    store.set({ parcel: { x: 2, y: 3 } })
-    expect(store.getSnapshot()).toEqual({ parcel: { x: 2, y: 3 }, world: null })
-    store.set({ world: 'mansion.dcl.eth' })
-    expect(store.getSnapshot()).toEqual({ parcel: null, world: 'mansion.dcl.eth' })
-    store.set(null)
-    expect(store.getSnapshot()).toEqual(NO_HOME)
-    expect(sent).toEqual([{ parcel: { x: 2, y: 3 } }, { world: 'mansion.dcl.eth' }, null])
-  })
-
-  it('holds no home once the engine is gone', () => {
-    const store = createHomeStore()
-    const heard = vi.fn()
-    store.subscribe(heard)
-    store.setTransport(() => undefined)
-    store.set({ parcel: { x: 2, y: 3 } })
-    store.setTransport(null)
-    expect(store.getSnapshot()).toEqual(NO_HOME)
-    expect(heard).toHaveBeenCalledTimes(2)
   })
 })
 

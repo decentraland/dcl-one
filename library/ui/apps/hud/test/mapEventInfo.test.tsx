@@ -4,15 +4,17 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MapEvent, MapPlace } from '@explorer-core/features/map/mapApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import type { EventData } from '@explorer-core/engine/protocol'
+import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 
 const setEventAttending = vi.hoisted(() => vi.fn())
 vi.mock('@explorer-core/features/map/mapApi', async (importOriginal) => ({ ...(await importOriginal<object>()), setEventAttending }))
 
 import { EventInfo } from '../features/map/panel/EventInfo'
 
-const PLACE: MapPlace = { id: 'plaza', title: 'Genesis Plaza', positions: ['0,0'], base_position: '0,0' }
-const EVENT: MapEvent = { id: 'e', name: 'Party', x: 0, y: 0, start_at: '2099-01-01T10:00:00.000Z', attending: false, total_attendees: 4 }
+const PLACE: DiscoverPlace = placeOf({ id: 'plaza', title: 'Genesis Plaza', positions: ['0,0'] })
+const EVENT: EventData = eventOf({ id: 'e', name: 'Party', x: 0, y: 0, start_at: '2099-01-01T10:00:00.000Z', attending: false, total_attendees: 4 })
 
 function Panel(): React.JSX.Element {
   const [event, setEvent] = useState(EVENT)

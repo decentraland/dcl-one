@@ -6,7 +6,7 @@ import { fetchLiveEvents, fetchPeers, fetchPlacesAt, fetchPoiParcels, type Peer 
 import { userMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
 import type { MapLayer } from '@explorer-core/features/map/mapLayersStore'
 import { liveEventMarkers, poiMarkers, type EventMarker, type PlaceMarker } from '@explorer-core/features/map/mapMarkers'
-import { nearbyPlayers, travelCount } from '@explorer-core/features/map/scenePins'
+import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
 
 const LIVE_EVENTS_POLL_MS = 5 * 60 * 1000
 

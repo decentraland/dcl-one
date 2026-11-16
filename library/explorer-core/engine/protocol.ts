@@ -12,7 +12,6 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
-  MapPinInfo,
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
@@ -248,11 +247,15 @@ export type PageToScene =
   | GetEventsRequest
   | SetEventAttendingRequest
   | GetEventPlacesRequest
+  | GetPlacesAtRequest
+  | SearchPlacesRequest
+  | SetPlaceLikeRequest
+  | SetPlaceFavoriteRequest
+  | GetPlacePhotosRequest
   | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
   | SetHomeSceneRequest
-  | UnsetHomeSceneRequest
   | GetWelcomeRequest
   | ExpectLookRequest
   | ShowLookRequest
@@ -272,7 +275,6 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
-  | MapApiRequestMessage
   | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
@@ -863,16 +865,11 @@ export interface HomeSceneMessage extends HomeScene {
   kind: 'homeScene'
 }
 
-/** Pin a home for the signed-in wallet: a parcel of `realm` (answered with `homeScene`). */
+/** Pin the home scene: a parcel of `realm` (answered with `homeScene`). */
 export interface SetHomeSceneRequest {
   kind: 'setHomeScene'
   realm: string
   parcel: { x: number; y: number }
-}
-
-/** Leave the signed-in wallet without a pinned home (answered with `homeScene`). */
-export interface UnsetHomeSceneRequest {
-  kind: 'unsetHomeScene'
 }
 
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
@@ -1799,45 +1796,6 @@ export interface DeleteGalleryPhotoRequest {
   id: string
 }
 
-/** One of the full-screen map's requests the engine signs as the player. The page builds the
- *  query; the scene picks the service, signs and sends. */
-export type MapApiRequest =
-  /** The places covering these `x,y` parcels. */
-  | { op: 'places'; positions: string[] }
-  /** A destinations search; `query` is the request's query string. */
-  | { op: 'destinations'; query: string }
-  /** An events read; `query` is the request's query string. */
-  | { op: 'events'; query: string }
-  /** Like (true), dislike (false) or clear (null) the player's vote on a place. */
-  | { op: 'placeLike'; id: string; like: boolean | null }
-  | { op: 'placeFavorite'; id: string; favorite: boolean }
-  /** Add the player to, or remove them from, an event's attendees. */
-  | { op: 'eventAttend'; id: string; attending: boolean }
-  /** A page of the photos taken at a place. */
-  | { op: 'placePhotos'; id: string; offset: number; limit: number }
-
-export interface MapApiRequestMessage {
-  kind: 'mapApi'
-  /** Echoed in the answer. */
-  id: number
-  request: MapApiRequest
-}
-
-/** The service's answer to a `mapApi` request: its parsed body, or why there is none. */
-export interface MapApiResultMessage {
-  kind: 'mapApiResult'
-  id: number
-  ok: boolean
-  data?: unknown
-  error?: string
-}
-
-/** The pins scenes put on the map (scene → page): the whole set, each time it changes. */
-export interface MapPinsMessage {
-  kind: 'mapPins'
-  pins: MapPinInfo[]
-}
-
 /** Another player the engine has in the world, in world metres. */
 export interface MapPlayer {
   address: string
@@ -2380,6 +2338,11 @@ export type SceneToPage =
   | EventsMessage
   | EventAttendingMessage
   | EventPlacesMessage
+  | PlacesAtMessage
+  | PlaceSearchMessage
+  | PlaceLikeMessage
+  | PlaceFavoriteMessage
+  | PlacePhotosMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage
@@ -2391,8 +2354,6 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | LookShownMessage
   | GalleryMessage
-  | MapApiResultMessage
-  | MapPinsMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
   | GalleryWriteMessage
@@ -2438,6 +2399,8 @@ export interface EventData {
   connected_addresses: string[]
   community_id: string | null
   place_id: string | null
+  /** The parcel the event is held at when it differs from `x`,`y`; null when it doesn't. */
+  coordinates?: [number, number] | null
 }
 
 /** A list of events (page → scene → events service, signed so each event carries `attending`).
@@ -2450,6 +2413,8 @@ export interface GetEventsRequest {
   from?: string
   to?: string
   list?: 'live' | 'highlight'
+  /** Only the events held at these parcels. */
+  positions?: { x: number; y: number }[]
   limit?: number
   offset?: number
 }
@@ -2501,3 +2466,133 @@ export interface EventPlacesMessage {
 export type Envelope =
   | { to: 'scene'; msg: PageToScene }
   | { to: 'page'; msg: SceneToPage }
+
+// ---- places ----------------------------------------------------------------
+
+/** A place as the places service lists it (places, destinations). */
+export interface DiscoverPlace {
+  id: string
+  title: string
+  description: string
+  image: string
+  positions: string[]
+  base_position?: string
+  owner: string | null
+  contact_name?: string
+  categories?: string[]
+  favorites?: number
+  likes?: number
+  dislikes?: number
+  user_count?: number
+  user_name?: string
+  world?: boolean
+  world_name?: string
+  /** In the places API's curated set — the Featured rail. */
+  highlighted?: boolean
+  live?: boolean
+  live_event_name?: string | null
+  /** Share of likes among the votes, 0..1; the service sends it as a number or a string. */
+  like_rate?: number | string | null
+  creator_address?: string | null
+  /** The signed-in user's own vote and favourite (signed reads only). */
+  user_like?: boolean
+  user_dislike?: boolean
+  user_favorite?: boolean
+}
+
+// The full-screen map's reads and writes on places (page → scene → places service). Signed, so
+// each place carries the signed-in user's own like, dislike and favourite. Every request is
+// answered, a failed one with `failed`.
+
+/** The places covering these `x,y` parcels. */
+export interface GetPlacesAtRequest {
+  kind: 'getPlacesAt'
+  /** Echoed in the answer. */
+  request: number
+  positions: string[]
+}
+export interface PlacesAtMessage {
+  kind: 'placesAt'
+  request: number
+  places: DiscoverPlace[]
+  failed?: boolean
+}
+
+export type PlaceSearchOrder = 'most_active' | 'like_score' | 'created_at'
+
+/** A page of the destinations search: places and worlds, by text, category or the user's favourites. */
+export interface SearchPlacesRequest {
+  kind: 'searchPlaces'
+  request: number
+  search: string
+  /** Lowercase category name; '' for none. */
+  category: string
+  favorites: boolean
+  orderBy: PlaceSearchOrder
+  offset: number
+  limit: number
+}
+export interface PlaceSearchMessage {
+  kind: 'placeSearch'
+  request: number
+  places: DiscoverPlace[]
+  /** How many places match in all. */
+  total: number
+  failed?: boolean
+}
+
+/** Like (true), dislike (false) or clear (null) the signed-in user's vote on a place. */
+export interface SetPlaceLikeRequest {
+  kind: 'setPlaceLike'
+  request: number
+  placeId: string
+  like: boolean | null
+}
+export interface PlaceLikeMessage {
+  kind: 'placeLike'
+  request: number
+  likes: number
+  dislikes: number
+  user_like: boolean
+  user_dislike: boolean
+  failed?: boolean
+}
+
+export interface SetPlaceFavoriteRequest {
+  kind: 'setPlaceFavorite'
+  request: number
+  placeId: string
+  favorite: boolean
+}
+export interface PlaceFavoriteMessage {
+  kind: 'placeFavorite'
+  request: number
+  favorites: number
+  user_favorite: boolean
+  failed?: boolean
+}
+
+/** A photo taken at a place (camera-reel). */
+export interface PlacePhoto {
+  id: string
+  url: string
+  thumbnailUrl?: string
+  dateTime?: string
+}
+
+/** A page of the photos taken at a place (page → scene → camera-reel). */
+export interface GetPlacePhotosRequest {
+  kind: 'getPlacePhotos'
+  request: number
+  placeId: string
+  offset: number
+  limit: number
+}
+export interface PlacePhotosMessage {
+  kind: 'placePhotos'
+  request: number
+  images: PlacePhoto[]
+  /** How many photos the place has in all. */
+  total: number
+  failed?: boolean
+}

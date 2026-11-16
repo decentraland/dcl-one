@@ -10,8 +10,7 @@ import type { MapLayer } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import type { CategoryKey } from '@explorer-core/features/map/navmap'
 import type { PlayerPose } from '../session/useEngineSession'
-import { CAT_PINS, MARKER_ART } from './mapArt'
-import { OceanLayer } from './OceanLayer'
+import { CAT_PINS, MARKER_ART, SEA_ART, SEA_SIZE } from './mapArt'
 import type { MapCamera } from './useMapCamera'
 import styles from './MapCanvas.module.css'
 
@@ -265,7 +264,7 @@ export interface MapCanvasProps {
   selected: string | null
   resultHover: string | null
   resultSelected: string | null
-  /** Extra layers drawn among the markers (scene pins, the route). */
+  /** Extra layers drawn among the markers (the route). */
   children?: React.ReactNode
   onParcel: (parcel: Vec2) => void
   onEvent: (marker: EventMarker) => void
@@ -354,7 +353,11 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
       onClick={onClick}
       onWheel={onWheel}
     >
-      {layers.has('satellite') && <OceanLayer view={camera.view} />}
+      {layers.has('satellite') && (
+        <div className={styles.world}>
+          <img className={styles.chunk} style={{ '--cx': 0, '--cy': 0, '--size': SEA_SIZE } as CSSProperties} src={SEA_ART} alt="" draggable={false} decoding="async" />
+        </div>
+      )}
       {parcelsOn && <Atlas chunks={parcels} visible={camera.visible} loadingTile />}
       {layers.has('satellite') && (
         <>

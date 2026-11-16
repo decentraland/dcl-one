@@ -2,10 +2,10 @@
 // interest and connected players, and writes that stick for the session.
 
 import { serviceUrl } from '@hud-host'
-import type { MapEvent, MapPlace, Peer } from '../features/map/mapApi'
+import type { Peer } from '../features/map/mapApi'
+import type { DiscoverPlace } from '../features/places/placesApi'
 import type { Vec2 } from '../features/map/mapCoords'
-import type { MapPinInfo } from './generated'
-import type { MapApiRequest, MapPlayer } from './protocol'
+import type { EventData, MapPlayer, PageToScene, SceneToPage, SearchPlacesRequest } from './protocol'
 
 const image = (x: number, y: number): string => `${serviceUrl('mapApi')}/v2/parcels/${x}/${y}/map.png?width=512&height=256&size=16`
 
@@ -15,7 +15,7 @@ function block(x0: number, y0: number, w: number, h: number): string[] {
   return out
 }
 
-function place(id: string, title: string, positions: string[], categories: string[], users: number, likes: number, dislikes: number): MapPlace {
+function place(id: string, title: string, positions: string[], categories: string[], users: number, likes: number, dislikes: number): DiscoverPlace {
   const [x, y] = positions[0].split(',').map(Number)
   return {
     id,
@@ -28,7 +28,7 @@ function place(id: string, title: string, positions: string[], categories: strin
     positions,
     base_position: positions[0],
     categories,
-    world_name: null,
+    world_name: undefined,
     likes,
     dislikes,
     favorites: 3,
@@ -40,7 +40,7 @@ function place(id: string, title: string, positions: string[], categories: strin
   }
 }
 
-const PLACES: MapPlace[] = [
+const PLACES: DiscoverPlace[] = [
   place('mock-plaza', 'Genesis Plaza', block(-9, -9, 19, 19), ['poi', 'social'], 42, 900, 40),
   place('mock-casino', 'Tominoya', block(-120, 130, 4, 4), ['poi', 'game'], 12, 300, 60),
   place('mock-museum', 'Museum District', block(16, 80, 6, 4), ['poi', 'art'], 7, 210, 9),
@@ -60,31 +60,40 @@ const PLACES: MapPlace[] = [
 
 const HOUR = 3_600_000
 
-function event(id: string, name: string, at: MapPlace, live: boolean, startOffsetMs: number, recurring = 0): MapEvent {
-  const [x, y] = at.base_position.split(',').map(Number)
+function event(id: string, name: string, at: DiscoverPlace, live: boolean, startOffsetMs: number, recurring = 0): EventData {
+  const [x, y] = (at.base_position ?? '0,0').split(',').map(Number)
   const start = Date.now() + startOffsetMs
   return {
     id,
     name,
     image: at.image,
+    image_vertical: null,
     description: `${name}, hosted at ${at.title}.\nhttps://decentraland.org/events`,
     x,
     y,
     coordinates: [x, y],
+    server: null,
     world: false,
     live,
     attending: false,
     total_attendees: 37,
     user_name: 'MockHost',
+    scene_name: at.title,
+    highlighted: false,
     start_at: new Date(start).toISOString(),
     finish_at: new Date(start + 2 * HOUR).toISOString(),
     next_start_at: new Date(start).toISOString(),
     next_finish_at: new Date(start + 2 * HOUR).toISOString(),
-    recurrent_dates: Array.from({ length: recurring }, (_, i) => new Date(start + i * 24 * HOUR).toISOString())
+    duration: 2 * HOUR,
+    recurrent: recurring > 0,
+    recurrent_dates: Array.from({ length: recurring }, (_, i) => new Date(start + i * 24 * HOUR).toISOString()),
+    connected_addresses: [],
+    community_id: null,
+    place_id: at.id
   }
 }
 
-const EVENTS: MapEvent[] = [
+const EVENTS: EventData[] = [
   event('mock-event-1', 'Friday Night Party', PLACES[3], true, -HOUR),
   event('mock-event-2', 'Plaza Meetup', PLACES[0], true, -20 * 60_000),
   event('mock-event-3', 'Gallery Opening', PLACES[4], false, 26 * HOUR, 3),
@@ -106,95 +115,84 @@ export const MOCK_PEERS: Peer[] = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', x: 1600, z: 1600 }
 ]
 
-/** Pins a mock scene put on the map: one with the default pin, one with its own icon. */
-export const MOCK_PINS: MapPinInfo[] = [
-  { id: 'mock-scene:512', x: 12, y: 6, title: 'Treasure Hunt', description: 'Find the hidden chest.', icon: null },
-  { id: 'mock-scene:513', x: -14, y: 10, title: 'Race Start', description: 'The race begins here.', icon: `${serviceUrl('mapApi')}/v2/parcels/-14/10/map.png?width=72&height=72&size=8` }
-]
-
 /** Players the mock engine holds near the player, in world metres. */
 export const MOCK_NEARBY_PLAYERS: MapPlayer[] = [
   { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', x: 24, z: -30 },
   { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', x: 80, z: 64 }
 ]
 
-const covers = (p: MapPlace, positions: readonly string[]): boolean => positions.some((pos) => p.positions.includes(pos))
+const covers = (p: DiscoverPlace, positions: readonly string[]): boolean => positions.some((pos) => p.positions.includes(pos))
 
-function search(query: string): { ok: boolean; data: MapPlace[]; total: number } {
-  const params = new URLSearchParams(query)
-  const text = (params.get('search') ?? '').toLowerCase()
-  const category = params.get('categories') ?? ''
-  const offset = Number(params.get('offset') ?? 0)
-  const limit = Number(params.get('limit') ?? 50)
+function search(msg: SearchPlacesRequest): { places: DiscoverPlace[]; total: number } {
+  const text = msg.search.toLowerCase()
+  const category = msg.favorites ? '' : msg.category
   let hits = PLACES.filter((p) => p.title.toLowerCase().includes(text))
   if (category !== '') hits = hits.filter((p) => p.categories?.includes(category))
-  if (params.get('only_favorites') === 'true') hits = hits.filter((p) => p.user_favorite)
-  const order = params.get('order_by')
+  if (msg.favorites) hits = hits.filter((p) => p.user_favorite)
   hits = [...hits].sort((a, b) =>
-    order === 'like_score' ? Number(b.like_rate ?? 0) - Number(a.like_rate ?? 0) : order === 'created_at' ? 0 : (b.user_count ?? 0) - (a.user_count ?? 0)
+    msg.orderBy === 'like_score' ? Number(b.like_rate ?? 0) - Number(a.like_rate ?? 0) : msg.orderBy === 'created_at' ? 0 : (b.user_count ?? 0) - (a.user_count ?? 0)
   )
-  return { ok: true, data: hits.slice(offset, offset + limit), total: hits.length }
+  return { places: hits.slice(msg.offset, msg.offset + msg.limit), total: hits.length }
 }
 
-function eventsFor(query: string): { ok: boolean; data: MapEvent[] } {
-  const params = new URLSearchParams(query)
-  const positions = params.getAll('positions[]')
-  let hits = EVENTS
-  if (params.get('list') === 'live') hits = hits.filter((e) => e.live)
-  if (positions.length > 0) {
-    hits = hits.filter((e) => {
-      const at = PLACES.find((p) => p.positions.includes(`${e.x},${e.y}`))
-      return positions.includes(`${e.x},${e.y}`) || (at != null && covers(at, positions))
-    })
-  }
-  return { ok: true, data: hits }
+function eventsAt(positions: string[], live: boolean): EventData[] {
+  return EVENTS.filter((e) => {
+    if (live && !e.live) return false
+    const at = PLACES.find((p) => p.positions.includes(`${e.x},${e.y}`))
+    return positions.includes(`${e.x},${e.y}`) || (at != null && covers(at, positions))
+  })
 }
 
-/** The mock's answer to one of the map's signed requests; throws where the service would refuse. */
-export function mockMapApi(request: MapApiRequest): unknown {
-  switch (request.op) {
-    case 'places':
-      return { ok: true, data: PLACES.filter((p) => (p.world_name ?? '') === '' && covers(p, request.positions)) }
-    case 'destinations':
-      return search(request.query)
-    case 'events':
-      return eventsFor(request.query)
-    case 'placeLike': {
-      const p = PLACES.find((x) => x.id === request.id)
-      if (p == null) throw new Error('HTTP 404: place not found')
-      p.likes = (p.likes ?? 0) - (p.user_like ? 1 : 0) + (request.like === true ? 1 : 0)
-      p.dislikes = (p.dislikes ?? 0) - (p.user_dislike ? 1 : 0) + (request.like === false ? 1 : 0)
-      p.user_like = request.like === true
-      p.user_dislike = request.like === false
+const placeById = (id: string): DiscoverPlace | undefined => PLACES.find((x) => x.id === id)
+
+/** The mock's answer to one of the map's requests: the places ones, the events held at parcels and
+ *  a reminder on one of the map's events. Null for anything else, which the mock bridge answers. */
+export function mockMapReply(msg: PageToScene): SceneToPage | null {
+  switch (msg.kind) {
+    case 'getPlacesAt':
+      return { kind: 'placesAt', request: msg.request, places: PLACES.filter((p) => (p.world_name ?? '') === '' && covers(p, msg.positions)) }
+    case 'searchPlaces':
+      return { kind: 'placeSearch', request: msg.request, ...search(msg) }
+    case 'getEvents':
+      if (msg.positions == null) return null
+      return { kind: 'events', request: msg.request, events: eventsAt(msg.positions.map((p) => `${p.x},${p.y}`), msg.list === 'live') }
+    case 'setPlaceLike': {
+      const p = placeById(msg.placeId)
+      if (p == null) return { kind: 'placeLike', request: msg.request, likes: 0, dislikes: 0, user_like: false, user_dislike: false, failed: true }
+      p.likes = (p.likes ?? 0) - (p.user_like === true ? 1 : 0) + (msg.like === true ? 1 : 0)
+      p.dislikes = (p.dislikes ?? 0) - (p.user_dislike === true ? 1 : 0) + (msg.like === false ? 1 : 0)
+      p.user_like = msg.like === true
+      p.user_dislike = msg.like === false
       p.like_rate = p.likes + p.dislikes > 0 ? p.likes / (p.likes + p.dislikes) : null
-      return { ok: true, data: { likes: p.likes, dislikes: p.dislikes, user_like: p.user_like, user_dislike: p.user_dislike } }
+      return { kind: 'placeLike', request: msg.request, likes: p.likes, dislikes: p.dislikes, user_like: p.user_like, user_dislike: p.user_dislike }
     }
-    case 'placeFavorite': {
-      const p = PLACES.find((x) => x.id === request.id)
-      if (p == null) throw new Error('HTTP 404: place not found')
-      p.favorites = (p.favorites ?? 0) + (request.favorite ? 1 : 0) - (p.user_favorite ? 1 : 0)
-      p.user_favorite = request.favorite
-      return { ok: true, data: { favorites: p.favorites, user_favorite: p.user_favorite } }
+    case 'setPlaceFavorite': {
+      const p = placeById(msg.placeId)
+      if (p == null) return { kind: 'placeFavorite', request: msg.request, favorites: 0, user_favorite: false, failed: true }
+      p.favorites = (p.favorites ?? 0) + (msg.favorite ? 1 : 0) - (p.user_favorite === true ? 1 : 0)
+      p.user_favorite = msg.favorite
+      return { kind: 'placeFavorite', request: msg.request, favorites: p.favorites, user_favorite: p.user_favorite }
     }
-    case 'eventAttend': {
-      const e = EVENTS.find((x) => x.id === request.id)
-      if (e == null) throw new Error('HTTP 404: event not found')
-      e.total_attendees = (e.total_attendees ?? 0) + (request.attending ? 1 : 0) - (e.attending ? 1 : 0)
-      e.attending = request.attending
-      return { ok: true, data: [] }
+    case 'setEventAttending': {
+      const e = EVENTS.find((x) => x.id === msg.eventId)
+      if (e == null) return null
+      e.total_attendees = e.total_attendees + (msg.attending ? 1 : 0) - (e.attending ? 1 : 0)
+      e.attending = msg.attending
+      return { kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }
     }
-    case 'placePhotos': {
-      const p = PLACES.find((x) => x.id === request.id)
+    case 'getPlacePhotos': {
+      const p = placeById(msg.placeId)
       const count = p?.id === 'mock-plaza' ? 5 : 0
       const [x, y] = (p?.base_position ?? '0,0').split(',').map(Number)
       const images = Array.from({ length: count }, (_, i) => ({
         id: `mock-photo-${i}`,
         url: image(x + i, y),
         thumbnailUrl: image(x + i, y),
-        isPublic: true,
         dateTime: String(Date.now() - i * 24 * HOUR)
       }))
-      return { images: images.slice(request.offset, request.offset + request.limit), maxImages: count }
+      return { kind: 'placePhotos', request: msg.request, images: images.slice(msg.offset, msg.offset + msg.limit), total: count }
     }
+    default:
+      return null
   }
 }

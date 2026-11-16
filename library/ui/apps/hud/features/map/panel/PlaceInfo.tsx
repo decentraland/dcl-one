@@ -14,10 +14,10 @@ import {
   setEventAttending,
   setPlaceFavorite,
   setPlaceLike,
-  type MapEvent,
-  type MapPlace,
   type PlacePhoto
 } from '@explorer-core/features/map/mapApi'
+import type { EventData } from '@explorer-core/engine/protocol'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { parcelKey, parseParcel, type Vec2 } from '@explorer-core/features/map/mapCoords'
 import type { PlaceView } from '@explorer-core/features/map/navmap'
 import { eventSchedule, eventShareLinks, placeShareLinks } from '@explorer-core/features/map/shareLinks'
@@ -52,7 +52,7 @@ function ActionButton({ label, on, icon, iconOn, disabled, size, flipped, onClic
   )
 }
 
-function EventRow({ event, placeUsers, referrer, onOpen }: { event: MapEvent; placeUsers: number; referrer: string | undefined; onOpen: () => void }): React.JSX.Element {
+function EventRow({ event, placeUsers, referrer, onOpen }: { event: EventData; placeUsers: number; referrer: string | undefined; onOpen: () => void }): React.JSX.Element {
   const [attending, setAttending] = useState(event.attending === true)
   const [sharing, setSharing] = useState(false)
   const reminds = useRef(0)
@@ -103,8 +103,8 @@ function EventRow({ event, placeUsers, referrer, onOpen }: { event: MapEvent; pl
   )
 }
 
-function EventsTab({ place, referrer, onOpenEvent }: { place: MapPlace; referrer: string | undefined; onOpenEvent: (event: MapEvent) => void }): React.JSX.Element {
-  const [events, setEvents] = useState<MapEvent[] | null>(null)
+function EventsTab({ place, referrer, onOpenEvent }: { place: DiscoverPlace; referrer: string | undefined; onOpenEvent: (event: EventData) => void }): React.JSX.Element {
+  const [events, setEvents] = useState<EventData[] | null>(null)
   useEffect(() => {
     let live = true
     const parcels = place.positions.map(parseParcel).filter((p): p is Vec2 => p != null)
@@ -203,12 +203,13 @@ export interface PlaceInfoProps {
   isHome: boolean
   /** The route the player follows ends at this place. */
   navigating: boolean
-  onPlaceChange: (place: MapPlace) => void
-  onHome: (home: boolean) => void
+  onPlaceChange: (place: DiscoverPlace) => void
+  /** Make this place home; it stays home until another place is set. */
+  onHome: () => void
   onStartNavigation: () => void
   onStopNavigation: () => void
   onJumpIn: () => void
-  onOpenEvent: (event: MapEvent) => void
+  onOpenEvent: (event: EventData) => void
   onOpenPhoto: (photos: PlacePhoto[], index: number) => void
 }
 
@@ -334,7 +335,7 @@ export function PlaceInfo({ view, referrer, isHome, navigating, onPlaceChange, o
             size={26}
             onClick={favourite}
           />
-          <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={() => onHome(!isHome)} />
+          <ActionButton label="Set as Home" on={isHome} icon={PANEL_ART.homeOutline} iconOn={PANEL_ART.homeSolid} size={26} onClick={() => !isHome && onHome()} />
           {donate.visible && (
             <button type="button" className={styles.action} aria-label="Donate" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
               <MaskIcon src={tipIcon} size={26} />

@@ -22,9 +22,7 @@ import pinMusic from '../../assets/map/pins/music.png'
 import pinShop from '../../assets/map/pins/shop.png'
 import pinSocial from '../../assets/map/pins/social.png'
 import pinSports from '../../assets/map/pins/sports.png'
-import oceanGround from '../../assets/map/ocean/ground.png'
-import oceanHeight from '../../assets/map/ocean/height.png'
-import oceanNoise from '../../assets/map/ocean/noise.png'
+import sea from '../../assets/map/sea.webp'
 import markersCompass from '../../assets/map/markers/compass.png'
 import markersDestination from '../../assets/map/markers/destination.png'
 import markersDestinationEllipse from '../../assets/map/markers/destination-ellipse.png'
@@ -33,9 +31,7 @@ import markersGeneric from '../../assets/map/markers/generic.png'
 import markersHome from '../../assets/map/markers/home.png'
 import markersLive from '../../assets/map/markers/live.png'
 import markersParcelSelector from '../../assets/map/markers/parcel-selector.png'
-import markersPinOutline from '../../assets/map/markers/pin-outline.png'
 import markersPoi from '../../assets/map/markers/poi.png'
-import markersQuest from '../../assets/map/markers/quest.png'
 import iconsCenterHome from '../../assets/map/icons/center-home.png'
 import iconsCenterPlayer from '../../assets/map/icons/center-player.png'
 import iconsLayerLive from '../../assets/map/icons/layer-live.png'
@@ -96,7 +92,9 @@ export function pinForCategories(categories: string[]): string {
   return CAT_ICONS.all
 }
 
-export const OCEAN_ART = { ground: oceanGround, height: oceanHeight, noise: oceanNoise } as const
+/** The sea and shores around Genesis City, rendered once; it covers SEA_SIZE map units square, centred on the origin. */
+export const SEA_ART = sea
+export const SEA_SIZE = 24000
 
 export const MARKER_ART = {
   compass: markersCompass,
@@ -107,9 +105,7 @@ export const MARKER_ART = {
   home: markersHome,
   live: markersLive,
   parcelSelector: markersParcelSelector,
-  pinOutline: markersPinOutline,
-  poi: markersPoi,
-  quest: markersQuest
+  poi: markersPoi
 } as const
 
 export const MAP_ICONS = {

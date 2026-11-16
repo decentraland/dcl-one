@@ -4,7 +4,9 @@ import { clusterCellSize, clusterMarkers } from '../features/map/clusters'
 import { parcelCenter, parcelWithinBounds, playerMarkerPosition, positionToCoords } from '../features/map/mapCoords'
 import { createMapLayersStore } from '../features/map/mapLayersStore'
 import { liveEventMarkers, poiMarkers, resultMarkers } from '../features/map/mapMarkers'
-import type { MapEvent, MapPlace } from '../features/map/mapApi'
+import type { DiscoverPlace } from '../features/places/placesApi'
+import type { EventData } from '../engine/protocol'
+import { eventOf, placeOf } from './mapFixtures'
 import {
   BASE_ZOOM,
   DEFAULT_ZOOM_LEVEL,
@@ -146,8 +148,8 @@ describe('clusters', () => {
 })
 
 describe('marker layers', () => {
-  const place = (id: string, title: string, positions: string[], world = ''): MapPlace => ({ id, title, positions, base_position: positions[0], world_name: world })
-  const event = (id: string, x: number, y: number, world = false): MapEvent => ({ id, name: `Event ${id}`, x, y, world, start_at: '' })
+  const place = (id: string, title: string, positions: string[], world = ''): DiscoverPlace => placeOf({ id, title, positions, world_name: world })
+  const event = (id: string, x: number, y: number, world = false): EventData => eventOf({ id, name: `Event ${id}`, x, y, world, start_at: '' })
 
   it('marks one live event per parcel and none in a world', () => {
     const markers = liveEventMarkers([event('a', 1, 2), event('b', 1, 2), event('c', 9, 9, true)])
@@ -174,9 +176,9 @@ describe('marker layers', () => {
 })
 
 describe('map layers store', () => {
-  it('starts with the pins, people and satellite on and parcels off', () => {
+  it('starts with the markers, people and satellite on and parcels off', () => {
     const store = createMapLayersStore()
-    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pins', 'pois', 'satellite'])
+    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pois', 'satellite'])
   })
 
   it('tells subscribers of a change and keeps one map type on', () => {

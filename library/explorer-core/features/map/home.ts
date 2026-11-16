@@ -1,7 +1,6 @@
-// The player's home: one parcel of Genesis City, or a world. Kept by the engine for the
-// signed-in wallet; this is the page's copy of it and the way to change it.
+// The player's home as the map reads it: one parcel of Genesis City, or a world.
 
-import type { MapPlace } from './mapApi'
+import type { DiscoverPlace } from '../places/placesApi'
 import { isWorldPlace } from './mapApi'
 import { parseParcel, type Vec2 } from './mapCoords'
 
@@ -14,56 +13,15 @@ export interface Home {
 
 export const NO_HOME: Home = { parcel: null, world: null }
 
-export type HomeChange = { parcel: Vec2 } | { world: string } | null
-
-export interface HomeStore {
-  subscribe: (listener: () => void) => () => void
-  getSnapshot: () => Home
-  /** The engine's word on what home is. */
-  receive: (home: Home) => void
-  /** Make a parcel or a world home, or (`null`) have no home. */
-  set: (change: HomeChange) => void
-  /** Wire the engine in; null when it goes away. */
-  setTransport: (send: ((change: HomeChange) => void) | null) => void
+/** The home the session holds: a realm (null for the default one) and an `x,y` parcel. */
+export function homeOf(scene: { realm: string | null; parcel: string } | null): Home {
+  if (scene == null) return NO_HOME
+  if (scene.realm != null) return { parcel: null, world: scene.realm }
+  return { parcel: parseParcel(scene.parcel), world: null }
 }
-
-export function createHomeStore(): HomeStore {
-  let home = NO_HOME
-  let send: ((change: HomeChange) => void) | null = null
-  const listeners = new Set<() => void>()
-  const commit = (next: Home): void => {
-    home = next
-    listeners.forEach((l) => l())
-  }
-  return {
-    subscribe: (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    getSnapshot: () => home,
-    receive: commit,
-    set: (change) => {
-      commit(change == null ? NO_HOME : 'world' in change ? { parcel: null, world: change.world } : { parcel: change.parcel, world: null })
-      send?.(change)
-    },
-    setTransport: (transport) => {
-      send = transport
-      // without the engine nothing vouches for the home the page last held
-      if (transport == null && home !== NO_HOME) commit(NO_HOME)
-    }
-  }
-}
-
-/** The home an engine answer describes. A pinned realm other than the default one is a world. */
-export function homeOf(scene: { realm: string; parcel: Vec2; pinned: boolean }, defaultRealm: string): Home {
-  if (!scene.pinned) return NO_HOME
-  return scene.realm === defaultRealm ? { parcel: { x: scene.parcel.x, y: scene.parcel.y }, world: null } : { parcel: null, world: scene.realm }
-}
-
-export const homeStore = createHomeStore()
 
 /** Home is one parcel, so any parcel of a place makes the whole place home. */
-export function isHomePlace(home: Home, place: MapPlace): boolean {
+export function isHomePlace(home: Home, place: DiscoverPlace): boolean {
   if (isWorldPlace(place)) return home.world === place.world_name
   const at = home.parcel
   if (home.world != null || at == null) return false

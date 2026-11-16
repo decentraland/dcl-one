@@ -164,7 +164,6 @@ impl DclProtoComponent for sdk::components::PbAudioAnalysis {}
 impl DclProtoComponent for sdk::components::PbUiInputBinding {}
 impl DclProtoComponent for sdk::components::PbAvatarNametag {}
 impl DclProtoComponent for sdk::components::PbExplorerItemPurchaseResult {}
-impl DclProtoComponent for sdk::components::PbMapPin {}
 
 // PositionFree markers for types used with GlobalCrdtState::update_crdt
 // (these contain no embedded position data requiring localization)

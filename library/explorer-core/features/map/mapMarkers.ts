@@ -1,6 +1,7 @@
 // What each marker layer of the full-screen map draws for the data it is given.
 
-import type { MapEvent, MapPlace } from './mapApi'
+import type { DiscoverPlace } from '../places/placesApi'
+import type { EventData } from '../../engine/protocol'
 import { isWorldPlace } from './mapApi'
 import { parcelCenter, parcelKey, parseParcel, type Vec2 } from './mapCoords'
 import { parcelsCenter } from './parcelsCenter'
@@ -8,7 +9,7 @@ import { parcelsCenter } from './parcelsCenter'
 const MAX_TITLE_LENGTH = 29
 const EMPTY_PARCEL_NAME = 'Empty parcel'
 
-export const markerTitle = (title: string): string => (title.length > MAX_TITLE_LENGTH ? title.slice(0, MAX_TITLE_LENGTH) : title)
+const markerTitle = (title: string): string => (title.length > MAX_TITLE_LENGTH ? title.slice(0, MAX_TITLE_LENGTH) : title)
 
 export interface PlaceMarker {
   id: string
@@ -16,7 +17,7 @@ export interface PlaceMarker {
   key: Vec2
   position: Vec2
   title: string
-  place: MapPlace
+  place: DiscoverPlace
 }
 
 export interface EventMarker {
@@ -24,10 +25,10 @@ export interface EventMarker {
   key: Vec2
   position: Vec2
   title: string
-  event: MapEvent
+  event: EventData
 }
 
-function placeParcels(place: MapPlace): Vec2[] {
+function placeParcels(place: DiscoverPlace): Vec2[] {
   const out: Vec2[] = []
   for (const p of place.positions ?? []) {
     const parcel = parseParcel(p)
@@ -37,13 +38,13 @@ function placeParcels(place: MapPlace): Vec2[] {
 }
 
 /** The parcel a place's marker stands on, or null for a place without parcels. */
-export function placeMarkerParcel(place: MapPlace): Vec2 | null {
+function placeMarkerParcel(place: DiscoverPlace): Vec2 | null {
   const parcels = placeParcels(place)
   return parcels.length > 0 ? parcelsCenter(parcels) : null
 }
 
 /** One marker per live event that is not in a world; where two share a parcel the first stands. */
-export function liveEventMarkers(events: readonly MapEvent[]): EventMarker[] {
+export function liveEventMarkers(events: readonly EventData[]): EventMarker[] {
   const seen = new Set<string>()
   const out: EventMarker[] = []
   for (const event of events) {
@@ -58,7 +59,7 @@ export function liveEventMarkers(events: readonly MapEvent[]): EventMarker[] {
 }
 
 /** Points of interest, keyed and drawn on each place's centre parcel. */
-export function poiMarkers(places: readonly MapPlace[]): PlaceMarker[] {
+export function poiMarkers(places: readonly DiscoverPlace[]): PlaceMarker[] {
   const seen = new Set<string>()
   const out: PlaceMarker[] = []
   for (const place of places) {
@@ -73,7 +74,7 @@ export function poiMarkers(places: readonly MapPlace[]): PlaceMarker[] {
 }
 
 /** Search and category results: keyed by base parcel, drawn on the centre parcel; worlds have no place on the map. */
-export function resultMarkers(places: readonly MapPlace[]): PlaceMarker[] {
+export function resultMarkers(places: readonly DiscoverPlace[]): PlaceMarker[] {
   const seen = new Set<string>()
   const out: PlaceMarker[] = []
   for (const place of places) {

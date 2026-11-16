@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { mapLayers, type MapLayer } from '@explorer-core/features/map/mapLayersStore'
 import { Toggle } from '../../design'
-import { MAP_ICONS, MARKER_ART } from './mapArt'
+import { MAP_ICONS } from './mapArt'
 import styles from './MapChrome.module.css'
 
 function Row({ layer, label, icon, layers }: { layer: MapLayer; label: string; icon?: string; layers: ReadonlySet<MapLayer> }): React.JSX.Element {
@@ -37,7 +37,6 @@ export function LayersPanel(): React.JSX.Element {
         <h3 className={styles.layersHeading}>PINS</h3>
         <Row layer="liveEvents" label="Live Events" icon={MAP_ICONS.layerLive} layers={layers} />
         <Row layer="pois" label="Points of interest" icon={MAP_ICONS.layerPoi} layers={layers} />
-        <Row layer="pins" label="Quest Mini-Games" icon={MARKER_ART.quest} layers={layers} />
       </div>
       <hr className={styles.layersRule} />
       <div className={styles.layersSection}>

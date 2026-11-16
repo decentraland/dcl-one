@@ -11,12 +11,12 @@ import {
   fetchPlaceAt,
   isWorldPlace,
   searchPlaces,
-  type MapEvent,
-  type MapPlace,
   type MapSearch,
   type MapSearchResult,
   type MapSort
 } from './mapApi'
+import type { EventData } from '../../engine/protocol'
+import type { DiscoverPlace } from '../places/placesApi'
 import { parseParcel, type Vec2 } from './mapCoords'
 import { resultMarkers, type PlaceMarker } from './mapMarkers'
 import { CAMERA_MOVE_SECONDS } from './mapZoom'
@@ -56,20 +56,20 @@ interface SearchParams {
 }
 
 export interface PlaceView {
-  place: MapPlace
+  place: DiscoverPlace
   /** The parcel the player picked, where the place was reached through one. */
   origin: Vec2 | null
   /** Jump In lands on `origin` rather than the place's base parcel. */
   landOnOrigin: boolean
   /** The place's first live event, once read. */
-  liveEvent: MapEvent | null
+  liveEvent: EventData | null
   /** Steps each time the panel opens on a place, so the view starts over. */
   visit: number
 }
 
 export interface EventView {
-  event: MapEvent
-  place: MapPlace
+  event: EventData
+  place: DiscoverPlace
   visit: number
 }
 
@@ -95,7 +95,7 @@ export interface NavmapSnapshot {
     /** False once back has dismissed the list. */
     shown: boolean
     loading: boolean
-    places: MapPlace[]
+    places: DiscoverPlace[]
     /** Base parcels of the listed places with a live event. */
     live: ReadonlySet<string>
     page: number
@@ -117,8 +117,8 @@ export interface NavmapSnapshot {
 
 type Entry =
   | { type: 'search'; params: SearchParams; result: MapSearchResult | null; live: Set<string> | null }
-  | { type: 'place'; place: MapPlace; events: MapEvent[] | null }
-  | { type: 'event'; event: MapEvent; place: MapPlace | null }
+  | { type: 'place'; place: DiscoverPlace; events: EventData[] | null }
+  | { type: 'event'; event: EventData; place: DiscoverPlace | null }
 
 export interface NavmapEffects {
   /** Bring a parcel to the centre of the map over `seconds`. */
@@ -333,18 +333,18 @@ export class Navmap {
   }
 
   /** The pointer entering or leaving a result. Worlds have no place on the map. */
-  hoverResult(place: MapPlace, hovered: boolean): void {
+  hoverResult(place: DiscoverPlace, hovered: boolean): void {
     if (isWorldPlace(place)) return
     this.set({ resultHover: hovered ? place.base_position : null })
   }
 
-  clickResult(place: MapPlace): void {
+  clickResult(place: DiscoverPlace): void {
     if (!isWorldPlace(place)) this.set({ resultSelected: place.base_position, resultHover: null })
     void this.selectPlace(place, { fromSearch: true })
   }
 
   /** Resolves to false when something newer was opened before the place was shown. */
-  async selectPlace(place: MapPlace, options: { fromSearch?: boolean; origin?: Vec2 | null; landOnOrigin?: boolean } = {}): Promise<boolean> {
+  async selectPlace(place: DiscoverPlace, options: { fromSearch?: boolean; origin?: Vec2 | null; landOnOrigin?: boolean } = {}): Promise<boolean> {
     const { fromSearch = false, origin = null, landOnOrigin = false } = options
     this.supersedeSearch()
     if (!fromSearch) this.set({ searchMarkers: [], categoryMarkers: [], resultHover: null, resultSelected: null })
@@ -361,7 +361,7 @@ export class Navmap {
   /** A parcel picked on the map: its place, or an empty one. */
   async selectParcel(parcel: Vec2, fromSearch: boolean): Promise<boolean> {
     const run = ++this.viewRun
-    let place: MapPlace | null = null
+    let place: DiscoverPlace | null = null
     try {
       place = await this.api.fetchPlaceAt(parcel)
     } catch {
@@ -374,7 +374,7 @@ export class Navmap {
   /** Open the home parcel's place; Jump In from it lands on that parcel. */
   async selectParcelAsHome(parcel: Vec2): Promise<boolean> {
     const run = ++this.viewRun
-    let place: MapPlace | null = null
+    let place: DiscoverPlace | null = null
     try {
       place = await this.api.fetchPlaceAt(parcel)
     } catch {
@@ -416,7 +416,7 @@ export class Navmap {
   }
 
   /** Replace the open place's data after a like, a favourite or a vote changed it. */
-  updatePlace(place: MapPlace): void {
+  updatePlace(place: DiscoverPlace): void {
     const view = this.state.place
     if (view == null || view.place.id !== place.id) return
     const top = this.history[this.history.length - 1]
@@ -424,7 +424,7 @@ export class Navmap {
     this.set({ place: { ...view, place } })
   }
 
-  async selectEvent(event: MapEvent, place: MapPlace | null = null): Promise<void> {
+  async selectEvent(event: EventData, place: DiscoverPlace | null = null): Promise<void> {
     this.supersedeSearch()
     const entry: Entry = { type: 'event', event, place }
     if (await this.showEvent(entry)) this.push(entry)
@@ -451,7 +451,7 @@ export class Navmap {
   }
 
   /** Replace the open event's data after the player's interest changed it. */
-  updateEvent(event: MapEvent): void {
+  updateEvent(event: EventData): void {
     const view = this.state.event
     if (view == null || view.event.id !== event.id) return
     const top = this.history[this.history.length - 1]

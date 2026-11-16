@@ -1,97 +1,89 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { MapApiRequest } from '@explorer-core/engine/protocol'
-import { homeStore, NO_HOME } from '@explorer-core/features/map/home'
-import { fixMapPublicReads, resolveMapApi, setMapApiTransport, type MapEvent, type MapPlace } from '@explorer-core/features/map/mapApi'
+import { DEFAULT_REALM } from '@hud-host'
+import type { SceneToPage } from '@explorer-core/engine/protocol'
+import { fixMapPublicReads, receiveMapReply, setMapTransport, type MapRequest } from '@explorer-core/features/map/mapApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import type { EventData } from '@explorer-core/engine/protocol'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
-import { scenePins } from '@explorer-core/features/map/scenePins'
+import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
 import type { MapState } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
-const place = (id: string, title: string, positions: string[], extra: Partial<MapPlace> = {}): MapPlace => ({
-  id,
-  title,
-  description: `About ${title}`,
-  image: '',
-  contact_name: 'Creator',
-  positions,
-  base_position: positions[0],
-  categories: ['social'],
-  likes: 3,
-  dislikes: 1,
-  like_rate: 0.75,
-  user_count: 7,
-  ...extra
-})
-const event = (id: string, name: string, x: number, y: number, extra: Partial<MapEvent> = {}): MapEvent => ({
-  id,
-  name,
-  x,
-  y,
-  description: `About ${name}`,
-  user_name: 'Host',
-  total_attendees: 4,
-  start_at: '2026-11-10T10:00:00.000Z',
-  ...extra
-})
+const place = (id: string, title: string, positions: string[], extra: Partial<DiscoverPlace> = {}): DiscoverPlace =>
+  placeOf({
+    id,
+    title,
+    description: `About ${title}`,
+    contact_name: 'Creator',
+    positions,
+    categories: ['social'],
+    likes: 3,
+    dislikes: 1,
+    like_rate: 0.75,
+    user_count: 7,
+    ...extra
+  })
+const event = (id: string, name: string, x: number, y: number, extra: Partial<EventData> = {}): EventData =>
+  eventOf({ id, name, x, y, description: `About ${name}`, user_name: 'Host', total_attendees: 4, start_at: '2026-11-10T10:00:00.000Z', ...extra })
 
 const PLAZA = place('plaza', 'Genesis Plaza', ['0,0'])
 const CLUB = place('club', 'Sugar Club', ['-20,60'])
 
 interface Services {
   /** Places by the parcel they cover. */
-  places?: MapPlace[]
-  search?: MapPlace[]
+  places?: DiscoverPlace[]
+  search?: DiscoverPlace[]
   total?: number
-  events?: MapEvent[]
+  events?: EventData[]
   photos?: number
-  /** Requests the service refuses. */
-  fail?: MapApiRequest['op'][]
+  /** Requests the services refuse. */
+  fail?: MapRequest['kind'][]
 }
 
-/** Answer the map's signed requests from fixed data, and record them. */
-function serve(services: Services = {}): MapApiRequest[] {
-  const seen: MapApiRequest[] = []
-  const answer = (request: MapApiRequest): unknown => {
-    if (services.fail?.includes(request.op)) throw new Error('HTTP 500')
-    switch (request.op) {
-      case 'places':
-        return { ok: true, data: (services.places ?? []).filter((p) => p.positions.some((pos) => request.positions.includes(pos))) }
-      case 'destinations':
-        return { ok: true, data: services.search ?? [], total: services.total ?? services.search?.length ?? 0 }
-      case 'events': {
-        const live = request.query.includes('list=live')
-        return { ok: true, data: (services.events ?? []).filter((e) => !live || e.live === true) }
+/** Answer the map's requests to the bridge from fixed data, and record them. */
+function serve(services: Services = {}): MapRequest[] {
+  const seen: MapRequest[] = []
+  const failed = (request: MapRequest): boolean => services.fail?.includes(request.kind) === true
+  const answer = (request: MapRequest): SceneToPage => {
+    switch (request.kind) {
+      case 'getPlacesAt':
+        return { kind: 'placesAt', request: request.request, places: (services.places ?? []).filter((p) => p.positions.some((pos) => request.positions.includes(pos))), failed: failed(request) }
+      case 'searchPlaces':
+        return { kind: 'placeSearch', request: request.request, places: services.search ?? [], total: services.total ?? services.search?.length ?? 0, failed: failed(request) }
+      case 'getEvents': {
+        const live = request.list === 'live'
+        return { kind: 'events', request: request.request, events: (services.events ?? []).filter((e) => !live || e.live), failed: failed(request) }
       }
-      case 'placeLike':
-        return { ok: true, data: { likes: 4, dislikes: 1, user_like: request.like === true, user_dislike: request.like === false } }
-      case 'placeFavorite':
-        return { ok: true, data: { favorites: 1, user_favorite: request.favorite } }
-      case 'eventAttend':
-        return { ok: true, data: [] }
-      case 'placePhotos':
-        return { images: Array.from({ length: services.photos ?? 0 }, (_, i) => ({ id: `photo-${i}`, url: `https://photos.test/${i}.jpg` })), maxImages: services.photos ?? 0 }
+      case 'setPlaceLike':
+        return { kind: 'placeLike', request: request.request, likes: 4, dislikes: 1, user_like: request.like === true, user_dislike: request.like === false, failed: failed(request) }
+      case 'setPlaceFavorite':
+        return { kind: 'placeFavorite', request: request.request, favorites: 1, user_favorite: request.favorite, failed: failed(request) }
+      case 'setEventAttending':
+        return { kind: 'eventAttending', eventId: request.eventId, attending: request.attending, failed: failed(request) }
+      case 'getPlacePhotos':
+        return {
+          kind: 'placePhotos',
+          request: request.request,
+          images: Array.from({ length: services.photos ?? 0 }, (_, i) => ({ id: `photo-${i}`, url: `https://photos.test/${i}.jpg` })),
+          total: services.photos ?? 0,
+          failed: failed(request)
+        }
     }
   }
-  setMapApiTransport((id, request) => {
+  setMapTransport((request) => {
     seen.push(request)
-    queueMicrotask(() => {
-      try {
-        resolveMapApi({ kind: 'mapApiResult', id, ok: true, data: answer(request) })
-      } catch (e) {
-        resolveMapApi({ kind: 'mapApiResult', id, ok: false, error: String(e) })
-      }
-    })
+    queueMicrotask(() => receiveMapReply(answer(request)))
   })
   return seen
 }
 
 function renderMap(over: Partial<MapState> = {}, genesis = true): MapState {
   const session = fakeSession()
-  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn(), ...over }
+  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn(), setHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
   render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
   return map
@@ -112,14 +104,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  setMapApiTransport(null)
+  setMapTransport(null)
   fixMapPublicReads(null)
-  for (const layer of ['liveEvents', 'pois', 'pins', 'people'] as const) mapLayers.set(layer, true)
+  for (const layer of ['liveEvents', 'pois', 'people'] as const) mapLayers.set(layer, true)
   mapLayers.setMapType('satellite')
-  homeStore.setTransport(null)
-  homeStore.receive(NO_HOME)
   navigation.stop()
-  scenePins.receive([])
 })
 
 describe('map page controls', () => {
@@ -209,7 +198,7 @@ describe('map layers', () => {
     renderMap()
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
     const layers = screen.getByRole('region', { name: 'Layers' })
-    for (const name of ['Live Events', 'Points of interest', 'Quest Mini-Games', 'People']) {
+    for (const name of ['Live Events', 'Points of interest', 'People']) {
       expect(within(layers).getByRole('switch', { name })).toBeChecked()
     }
     expect(within(layers).getByRole('radio', { name: 'Satellite' })).toBeChecked()
@@ -217,18 +206,6 @@ describe('map layers', () => {
     expect(within(layers).getByRole('radio', { name: 'Parcels' })).toBeChecked()
     expect(within(layers).getByRole('radio', { name: 'Satellite' })).not.toBeChecked()
     expect(view().querySelector('img[src*="/v1/map.png"]')).not.toBeNull()
-  })
-
-  it('draws the pins scenes put on the map, and hides them with their layer', async () => {
-    serve({ places: [PLAZA] })
-    scenePins.receive([{ id: 'scene:1', x: 0, y: 0, title: 'Treasure Hunt', description: '', icon: null }])
-    renderMap()
-    await userEvent.click(marker('Treasure Hunt'))
-    expect(await within(panel()).findByRole('heading', { name: 'Genesis Plaza' })).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
-    await userEvent.click(screen.getByRole('switch', { name: 'Quest Mini-Games' }))
-    expect(within(view()).queryByRole('button', { name: 'Treasure Hunt' })).not.toBeInTheDocument()
   })
 })
 
@@ -255,9 +232,10 @@ describe('map search', () => {
 
   it('shows placeholders until the search answers', async () => {
     let answer: (() => void) | null = null
-    setMapApiTransport((id, request) => {
-      if (request.op === 'destinations') answer = () => resolveMapApi({ kind: 'mapApiResult', id, ok: true, data: { ok: true, data: [PLAZA], total: 1 } })
-      else queueMicrotask(() => resolveMapApi({ kind: 'mapApiResult', id, ok: true, data: { ok: true, data: [] } }))
+    setMapTransport((request) => {
+      if (request.kind === 'searchPlaces') answer = () => receiveMapReply({ kind: 'placeSearch', request: request.request, places: [PLAZA], total: 1 })
+      else if (request.kind === 'getEvents') queueMicrotask(() => receiveMapReply({ kind: 'events', request: request.request, events: [] }))
+      else if (request.kind === 'getPlacesAt') queueMicrotask(() => receiveMapReply({ kind: 'placesAt', request: request.request, places: [] }))
     })
     renderMap()
     await search('plaza')
@@ -272,7 +250,7 @@ describe('map search', () => {
     await search('plaza')
     await within(panel()).findByRole('list', { name: 'Results' })
     await userEvent.click(within(panel()).getByRole('button', { name: 'Newest' }))
-    await waitFor(() => expect(seen.filter((r) => r.op === 'destinations').at(-1)).toMatchObject({ query: expect.stringContaining('order_by=created_at') }))
+    await waitFor(() => expect(seen.filter((r) => r.kind === 'searchPlaces').at(-1)).toMatchObject({ orderBy: 'created_at' }))
     expect(within(panel()).getByRole('button', { name: 'Newest' })).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -283,7 +261,7 @@ describe('map search', () => {
     await within(panel()).findByRole('list', { name: 'Results' })
     expect(within(panel()).getByRole('button', { name: 'Prev' })).toBeDisabled()
     await userEvent.click(within(panel()).getByRole('button', { name: 'Next' }))
-    await waitFor(() => expect(seen.filter((r) => r.op === 'destinations').at(-1)).toMatchObject({ query: expect.stringContaining('offset=50') }))
+    await waitFor(() => expect(seen.filter((r) => r.kind === 'searchPlaces').at(-1)).toMatchObject({ offset: 50 }))
   })
 
   it('searches a category from its chip and shows its name in the read-only field', async () => {
@@ -291,7 +269,7 @@ describe('map search', () => {
     renderMap()
     await userEvent.click(screen.getByRole('button', { name: 'Music' }))
     expect(screen.getByRole('button', { name: 'Music' })).toHaveAttribute('aria-pressed', 'true')
-    await waitFor(() => expect(seen.find((r) => r.op === 'destinations')).toMatchObject({ query: expect.stringContaining('categories=music') }))
+    await waitFor(() => expect(seen.find((r) => r.kind === 'searchPlaces')).toMatchObject({ category: 'music' }))
     const field = screen.getByRole('textbox', { name: 'Search' })
     expect(field).toHaveValue('Music')
     expect(field).toHaveAttribute('readonly')
@@ -369,14 +347,14 @@ describe('map place panel', () => {
     await userEvent.click(like)
     expect(like).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() => expect(within(panel()).getByText('80%')).toBeInTheDocument())
-    expect(seen).toContainEqual({ op: 'placeLike', id: 'club', like: true })
+    expect(seen).toContainEqual(expect.objectContaining({ kind: 'setPlaceLike', placeId: 'club', like: true }))
 
     await userEvent.click(like)
-    expect(seen).toContainEqual({ op: 'placeLike', id: 'club', like: null })
+    expect(seen).toContainEqual(expect.objectContaining({ kind: 'setPlaceLike', placeId: 'club', like: null }))
   })
 
   it('puts a like back when the service refuses it', async () => {
-    serve({ search: [CLUB], fail: ['placeLike'] })
+    serve({ search: [CLUB], fail: ['setPlaceLike'] })
     renderMap()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
@@ -394,37 +372,39 @@ describe('map place panel', () => {
     const favourite = await within(panel()).findByRole('button', { name: 'Favorite' })
     await userEvent.click(favourite)
     expect(favourite).toHaveAttribute('aria-pressed', 'true')
-    expect(seen).toContainEqual({ op: 'placeFavorite', id: 'club', favorite: true })
+    expect(seen).toContainEqual(expect.objectContaining({ kind: 'setPlaceFavorite', placeId: 'club', favorite: true }))
 
-    serve({ search: [CLUB], fail: ['placeFavorite'] })
+    serve({ search: [CLUB], fail: ['setPlaceFavorite'] })
     await userEvent.click(favourite)
     await waitFor(() => expect(favourite).toHaveAttribute('aria-pressed', 'true'))
   })
 
-  it('makes a place home, marks it on the map, and takes it back', async () => {
+  it('makes a place home', async () => {
     serve({ search: [CLUB], places: [CLUB] })
-    const sent: unknown[] = []
-    homeStore.setTransport((change) => sent.push(change))
-    renderMap()
+    const map = renderMap()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
     const home = await within(panel()).findByRole('button', { name: 'Set as Home' })
-    expect(within(view()).queryByRole('button', { name: 'Home' })).not.toBeInTheDocument()
+    expect(home).toHaveAttribute('aria-pressed', 'false')
     await userEvent.click(home)
-    expect(home).toHaveAttribute('aria-pressed', 'true')
-    expect(sent).toEqual([{ parcel: { x: -20, y: 60 } }])
-    expect(marker('Home')).toBeInTheDocument()
+    expect(vi.mocked(map.setHome)).toHaveBeenCalledWith(DEFAULT_REALM, { x: -20, y: 60 })
+  })
 
+  it('marks the home on the map, and keeps it home when pressed again', async () => {
+    serve({ search: [CLUB], places: [CLUB] })
+    const map = renderMap({ home: { realm: null, parcel: '-20,60' } })
+    expect(marker('Home')).toBeInTheDocument()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    const home = await within(panel()).findByRole('button', { name: 'Set as Home' })
+    expect(home).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(home)
-    expect(sent.at(-1)).toBeNull()
-    expect(within(view()).queryByRole('button', { name: 'Home' })).not.toBeInTheDocument()
+    expect(vi.mocked(map.setHome)).not.toHaveBeenCalled()
   })
 
   it('makes a world home by its name, and jumps in to it by its realm', async () => {
     const world = place('w', 'Mansion', ['0,0'], { world_name: 'mansion.dcl.eth' })
     serve({ search: [world] })
-    const sent: unknown[] = []
-    homeStore.setTransport((change) => sent.push(change))
     const map = renderMap()
     await search('mansion')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Mansion/ }))
@@ -432,15 +412,14 @@ describe('map place panel', () => {
     expect(within(panel()).queryByRole('button', { name: 'start navigation' })).not.toBeInTheDocument()
     expect(within(panel()).getByText('mansion.dcl.eth')).toBeInTheDocument()
     await userEvent.click(within(panel()).getByRole('button', { name: 'Set as Home' }))
-    expect(sent).toEqual([{ world: 'mansion.dcl.eth' }])
+    expect(vi.mocked(map.setHome)).toHaveBeenCalledWith('mansion.dcl.eth', { x: 0, y: 0 })
     await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
     expect(vi.mocked(map.changeRealm)).toHaveBeenCalledWith('mansion.dcl.eth')
   })
 
   it('opens the home place from the home control', async () => {
     serve({ places: [CLUB] })
-    homeStore.receive({ parcel: { x: -20, y: 60 }, world: null })
-    renderMap()
+    renderMap({ home: { realm: null, parcel: '-20,60' } })
     await userEvent.click(screen.getByRole('button', { name: 'Center on home' }))
     expect(await within(panel()).findByRole('heading', { name: 'Sugar Club' })).toBeInTheDocument()
     expect(within(panel()).getByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'true')
@@ -459,7 +438,7 @@ describe('map place panel', () => {
     // the focus stays where the player moved it when something else on the page changes
     const copy = within(menu).getByRole('menuitem', { name: 'Copy Link' })
     copy.focus()
-    act(() => scenePins.receive([{ id: 'scene:1', x: 3, y: 3, title: 'Pin', description: '', icon: null }]))
+    act(() => mapLayers.set('people', false))
     expect(copy).toHaveFocus()
     fireEvent.click(copy)
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/jump/?position=-20,60'))
@@ -539,7 +518,7 @@ describe('map event panel', () => {
     const remind = within(p).getByRole('button', { name: 'remind me' })
     await userEvent.click(remind)
     expect(remind).toHaveAttribute('aria-pressed', 'true')
-    expect(seen).toContainEqual({ op: 'eventAttend', id: 'later', attending: true })
+    expect(seen).toContainEqual({ kind: 'setEventAttending', eventId: 'later', attending: true })
     const links = within(p).getAllByRole('link', { name: 'add to calendar' })
     expect(links).toHaveLength(2)
     expect(links[0]).toHaveAttribute('href', expect.stringContaining('dates=20300101T100000Z/20300101T110000Z'))
@@ -549,7 +528,7 @@ describe('map event panel', () => {
   })
 
   it('puts the interest back when the service refuses it', async () => {
-    serve({ search: [CLUB], events: [event('later', 'Trivia Night', -20, 60)], fail: ['eventAttend'] })
+    serve({ search: [CLUB], events: [event('later', 'Trivia Night', -20, 60)], fail: ['setEventAttending'] })
     renderMap()
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))

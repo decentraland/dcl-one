@@ -30,14 +30,6 @@
   transform-origin: 0 0;
   pointer-events: none;
 }
-/* The sea, behind everything on the map. */
-.ocean {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
 /* A rectangle of --w by --h centred on (--cx, --cy), map units. */
 .patch {
   position: absolute;
@@ -296,77 +288,6 @@ button.marker:focus-visible .clusterIcon {
   -webkit-text-stroke: calc(var(--unit) * 0.084) var(--map-title-stroke);
 }
 
-/* ---- scene pins ---- */
-/* A white disc with the pin's icon cut round, sized by its own zoom rule (--pin-unit). */
-.scenePinPulse,
-.scenePinScaler {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
-}
-.scenePinPulse {
-  animation: pulse 1s linear infinite;
-}
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.3);
-  }
-}
-.scenePinScaler {
-  transition: transform var(--map-dur-marker) var(--ease-outback);
-}
-.scenePin:hover .scenePinPulse {
-  animation: none;
-}
-.scenePin:hover .scenePinScaler {
-  transform: scale(1.2);
-  transition-duration: var(--map-dur-pin);
-}
-.scenePinDisc,
-.scenePinIcon,
-.scenePinDefault,
-.scenePinOutline {
-  position: absolute;
-  --d: 0.64;
-  width: calc(var(--pin-unit) * var(--d));
-  height: calc(var(--pin-unit) * var(--d));
-  left: calc(var(--pin-unit) * var(--d) / -2);
-  top: calc(var(--pin-unit) * (var(--d) / -2 - 0.0165));
-}
-.scenePinDisc {
-  border-radius: var(--r-pill);
-  background: var(--white);
-}
-.scenePinDefault {
-  --d: 0.58;
-}
-.scenePinIcon {
-  --d: 0.648;
-  border-radius: var(--r-pill);
-  background-repeat: no-repeat;
-  background-position: left bottom;
-  background-size: calc(var(--pin-unit) * var(--d) * var(--iw)) calc(var(--pin-unit) * var(--d) * var(--ih));
-  clip-path: circle(calc(var(--pin-unit) * 0.32));
-}
-.scenePinOutline {
-  --d: 0.72;
-  top: calc(var(--pin-unit) * (var(--d) / -2 + 0.34));
-  opacity: 0;
-}
-.scenePin:hover .scenePinOutline {
-  opacity: 1;
-}
-button.scenePin:focus-visible .scenePinDisc {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
-}
-
 /* ---- the route ---- */
 /* Dots as long as the gaps between them, laid from the destination towards the player. */
 .route {
@@ -432,11 +353,7 @@ button.scenePin:focus-visible .scenePinDisc {
   }
   button.marker,
   .playerRing,
-  .destinationEllipse,
-  .scenePinPulse {
+  .destinationEllipse {
     animation: none;
-  }
-  .scenePinScaler {
-    transition: none;
   }
 }

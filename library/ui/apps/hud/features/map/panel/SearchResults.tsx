@@ -1,6 +1,7 @@
 // The results of a search or a category: sort chips, the list, and paging.
 
-import { isWorldPlace, type MapPlace, type MapSort } from '@explorer-core/features/map/mapApi'
+import { isWorldPlace, type MapSort } from '@explorer-core/features/map/mapApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { pagination, type NavmapSnapshot } from '@explorer-core/features/map/navmap'
 import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
@@ -14,7 +15,7 @@ const SORTS: { key: MapSort; label: string; className: string }[] = [
 
 const SKELETONS = Array.from({ length: 8 }, (_, i) => i)
 
-function Result({ place, live, onHover, onClick }: { place: MapPlace; live: boolean; onHover: (hovered: boolean) => void; onClick: () => void }): React.JSX.Element {
+function Result({ place, live, onHover, onClick }: { place: DiscoverPlace; live: boolean; onHover: (hovered: boolean) => void; onClick: () => void }): React.JSX.Element {
   const creator = place.contact_name
   const users = place.user_count ?? 0
   return (
@@ -60,15 +61,15 @@ export function SearchResults({
   results: NavmapSnapshot['results']
   sort: MapSort
   onSort: (sort: MapSort) => void
-  onHover: (place: MapPlace, hovered: boolean) => void
-  onPick: (place: MapPlace) => void
+  onHover: (place: DiscoverPlace, hovered: boolean) => void
+  onPick: (place: DiscoverPlace) => void
   onPage: (delta: 1 | -1) => void
 }): React.JSX.Element {
   const pages = pagination(results.total, results.page)
   // the list shows one row per base parcel; worlds all sit on 0,0, so they are told apart by id
   const seen = new Set<string>()
   const rows = results.places.filter((p) => {
-    const key = isWorldPlace(p) ? p.id : p.base_position
+    const key = isWorldPlace(p) ? p.id : (p.base_position ?? '')
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -106,9 +107,9 @@ export function SearchResults({
           <ul className={styles.resultList} aria-label="Results">
             {rows.map((p) => (
               <Result
-                key={isWorldPlace(p) ? p.id : p.base_position}
+                key={isWorldPlace(p) ? p.id : (p.base_position ?? '')}
                 place={p}
-                live={!isWorldPlace(p) && results.live.has(p.base_position)}
+                live={!isWorldPlace(p) && results.live.has(p.base_position ?? '')}
                 onHover={(hovered) => onHover(p, hovered)}
                 onClick={() => onPick(p)}
               />

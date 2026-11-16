@@ -1,7 +1,8 @@
 // An event in the map's panel: when it runs, who hosts it and where, and its time table.
 
 import { useRef, useState } from 'react'
-import { setEventAttending, type MapEvent } from '@explorer-core/features/map/mapApi'
+import { setEventAttending } from '@explorer-core/features/map/mapApi'
+import type { EventData } from '@explorer-core/engine/protocol'
 import type { EventView } from '@explorer-core/features/map/navmap'
 import { calendarLink, eventSchedule, eventShareLinks, upcomingDates } from '@explorer-core/features/map/shareLinks'
 import { MaskIcon } from '../../../design/MaskIcon'
@@ -18,7 +19,7 @@ export function EventInfo({
 }: {
   view: EventView
   referrer: string | undefined
-  onEventChange: (event: MapEvent) => void
+  onEventChange: (event: EventData) => void
   onJumpIn: () => void
 }): React.JSX.Element {
   const { event, place } = view
