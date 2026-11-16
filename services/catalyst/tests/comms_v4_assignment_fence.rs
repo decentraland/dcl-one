@@ -186,73 +186,9 @@ async fn selected_realm_ownership_tracks_native_without_ws_and_borrows_external_
     fixture.finish().await;
 }
 
-/// Drops the first armed COMMIT CommandComplete after PostgreSQL executed it.
-/// All SQL and row locks are real; only the acknowledgment transport is faulted.
-struct LostCommitProxy {
-    pool: PgPool,
-    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    task: tokio::task::JoinHandle<()>,
-}
-impl LostCommitProxy {
-    async fn start(pool: &PgPool) -> Self {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let options = pool.connect_options();
-        let host = options.get_host().to_string();
-        let port = options.get_port();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let proxy_port = listener.local_addr().unwrap().port();
-        let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let fault = armed.clone();
-        let task = tokio::spawn(async move {
-            let mut connections = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    accepted = listener.accept(), if connections.len()<4 => {
-                        let (client,_) = accepted.unwrap(); let host=host.clone(); let fault=fault.clone();
-                        connections.spawn(async move {
-                            let server=tokio::net::TcpStream::connect((host.as_str(),port)).await.unwrap();
-                            let (mut client_read,mut client_write)=client.into_split();
-                            let (mut server_read,mut server_write)=server.into_split();
-                            let upstream=tokio::io::copy(&mut client_read,&mut server_write);
-                            let downstream=async {
-                                loop {
-                                    let mut header=[0u8;5]; if server_read.read_exact(&mut header).await.is_err(){return;}
-                                    let size=u32::from_be_bytes(header[1..5].try_into().unwrap()) as usize;
-                                    assert!((4..=256*1024).contains(&size)); let mut body=vec![0;size-4];
-                                    if server_read.read_exact(&mut body).await.is_err(){return;}
-                                    if header[0]==b'C' && body==b"COMMIT\0" && fault.swap(false,std::sync::atomic::Ordering::SeqCst){return;}
-                                    if client_write.write_all(&header).await.is_err() || client_write.write_all(&body).await.is_err(){return;}
-                                }
-                            };
-                            tokio::select! { _=upstream=>{}, _=downstream=>{} }
-                        });
-                    }
-                    _=connections.join_next(), if !connections.is_empty()=>{}
-                }
-            }
-        });
-        let redirected = options
-            .as_ref()
-            .clone()
-            .host("127.0.0.1")
-            .port(proxy_port)
-            .ssl_mode(sqlx::postgres::PgSslMode::Disable);
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(redirected)
-            .await
-            .unwrap();
-        Self { pool, armed, task }
-    }
-    fn lose_next_commit(&self) {
-        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-impl Drop for LostCommitProxy {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
+#[path = "support/lost_commit.rs"]
+mod lost_commit;
+use lost_commit::LostCommitProxy;
 
 #[tokio::test]
 async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor()
@@ -262,7 +198,7 @@ async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_r
         .await
         .expect("required disposable PostgreSQL");
     let proxy = LostCommitProxy::start(&fixture.pool).await;
-    let fence = PgAssignmentFence::new(proxy.pool.clone(), AUDIENCE.into()).unwrap();
+    let fence = PgAssignmentFence::unfenced_test(proxy.pool.clone(), AUDIENCE.into()).unwrap();
     let mut selected = PeerClusterSnapshot {
         wallet: WALLET.into(),
         session: SESSION.into(),
@@ -356,7 +292,8 @@ impl Fixture {
     }
 
     async fn fence(&self) -> PgAssignmentFence {
-        PgAssignmentFence::new(self.pool.clone(), AUDIENCE.to_string()).expect("a valid audience")
+        PgAssignmentFence::unfenced_test(self.pool.clone(), AUDIENCE.to_string())
+            .expect("a valid audience")
     }
 }
 
@@ -394,10 +331,12 @@ async fn assignment(
     from_island_id: Option<&str>,
 ) -> AssignmentDocument {
     let safety =
-        catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new(pool.clone())
-            .snapshot(WALLET)
-            .await
-            .unwrap();
+        catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
+            pool.clone(),
+        )
+        .snapshot(WALLET)
+        .await
+        .unwrap();
     let mut stamp =
         catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(
             &catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {

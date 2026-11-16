@@ -441,12 +441,13 @@ async fn same_room_recovery_renews_expired_credentials_without_periodic_churn() 
         let Some(fixture) = Fixture::new().await else {
             return;
         };
-        let safety = catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new(
-            fixture.pool.clone(),
-        )
-        .snapshot(WALLET)
-        .await
-        .unwrap();
+        let safety =
+            catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
+                fixture.pool.clone(),
+            )
+            .snapshot(WALLET)
+            .await
+            .unwrap();
         assert!(safety.generation > 0);
         let mut document = serde_json::json!({
             "islandId": "island-current",

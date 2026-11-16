@@ -22,6 +22,7 @@ const SETTLED_RETENTION_SECONDS: i64 = FULL_MAX_ISSUER_WAIT_SECONDS as i64;
 #[derive(Clone)]
 pub struct SafetyStore {
     pub(crate) pool: PgPool,
+    generation_required: bool,
     quarantines:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, tokio::time::Instant>>>,
 }
@@ -155,12 +156,26 @@ impl SafetyStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
+            generation_required: true,
             quarantines: Default::default(),
         }
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfenced_test(pool: PgPool) -> Self {
+        let mut store = Self::new(pool);
+        store.generation_required = false;
+        store
     }
     /// INSERT before SELECT FOR UPDATE serializes an absent wallet with its
     /// first hazard; an EXISTS probe cannot provide that guarantee.
     pub(crate) async fn lock(&self, wallet: &str) -> Result<SafetyLease, GatewayError> {
+        self.lock_with_source(wallet, None).await
+    }
+    pub(crate) async fn lock_with_source(
+        &self,
+        wallet: &str,
+        source: Option<(&str, &str)>,
+    ) -> Result<SafetyLease, GatewayError> {
         if wallet.is_empty() || wallet != wallet.to_ascii_lowercase() {
             return Err(GatewayError::Unknown);
         }
@@ -172,6 +187,13 @@ impl SafetyStore {
         ] {
             sqlx::query(setting)
                 .execute(&mut *tx)
+                .await
+                .map_err(|_| GatewayError::Unknown)?;
+        }
+        if self.generation_required
+            && let Some((audience, source)) = source
+        {
+            super::generation::lock(&mut tx, audience, source)
                 .await
                 .map_err(|_| GatewayError::Unknown)?;
         }
@@ -210,7 +232,17 @@ impl SafetyStore {
         expected: Option<SafetySnapshot>,
         credential_not_before: u64,
     ) -> Result<SafetyLease, GatewayError> {
-        let mut lease = self.lock(wallet).await?;
+        self.authorize_source(wallet, expected, credential_not_before, None)
+            .await
+    }
+    pub(crate) async fn authorize_source(
+        &self,
+        wallet: &str,
+        expected: Option<SafetySnapshot>,
+        credential_not_before: u64,
+        source: Option<(&str, &str)>,
+    ) -> Result<SafetyLease, GatewayError> {
+        let mut lease = self.lock_with_source(wallet, source).await?;
         if expected.is_some_and(|e| e != lease.snapshot)
             || credential_not_before < lease.snapshot.token_floor
             || credential_not_before > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
@@ -522,7 +554,12 @@ impl SafetyStore {
         }
         let expected = stamp.safety_snapshot().ok_or(GatewayError::Unknown)?;
         let mut lease = self
-            .authorize(&stamp.wallet, Some(expected), stamp.credential_not_before)
+            .authorize_source(
+                &stamp.wallet,
+                Some(expected),
+                stamp.credential_not_before,
+                audience.map(|audience| (audience, stamp.source_incarnation.as_str())),
+            )
             .await?;
         // Read-only replicas and final queue consumers also observe source
         // identity. Retained local retirement forbids its old origin everywhere.
@@ -569,7 +606,7 @@ impl SafetyStore {
         // blocking owner-row acquisition so a lock wait cannot stale policy.
         // A SELECT projection can precede its FOR UPDATE wait. Re-evaluate
         // expiry after locking, on the database clock, alongside final bans.
-        let denied:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans b WHERE (b.banned_address=$1 OR b.banned_device_id=(SELECT NULLIF(device_id,'') FROM social.player_connections WHERE address=$1)) AND b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at>timezone('UTC',clock_timestamp()))) OR EXISTS(SELECT 1 FROM social.archipelago_v4_assignments WHERE deployment_audience=$2 AND owner_address=$1 AND lane_key='realm' AND updated_at<clock_timestamp()-interval '90 seconds')")
+        let denied:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.user_bans b WHERE (b.banned_address=$1 OR b.banned_device_id=(SELECT NULLIF(device_id,'') FROM social.player_connections WHERE address=$1)) AND b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at>timezone('UTC',clock_timestamp()))) OR EXISTS(SELECT 1 FROM social.archipelago_v4_assignments WHERE deployment_audience=$2 AND owner_address=$1 AND lane_key='realm' AND updated_at<timezone('UTC',clock_timestamp())-interval '90 seconds')")
             .bind(&stamp.wallet).bind(audience).fetch_one(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         if denied {
             return Err(GatewayError::Unknown);
@@ -720,6 +757,28 @@ impl SafetyStore {
 }
 
 impl crate::gatekeeper::CommsState {
+    pub(crate) async fn generation_grant(
+        &self,
+        stamp: &super::fence::PulseAdmissionStamp,
+    ) -> Result<Option<super::generation::GenerationGrant>, GatewayError> {
+        let Some(fence) = self
+            .assignments
+            .as_ref()
+            .filter(|fence| fence.generation_required())
+        else {
+            return Ok(None);
+        };
+        let audience = self
+            .cluster
+            .control_v4_audience
+            .as_deref()
+            .ok_or(GatewayError::Unknown)?;
+        let _ = fence;
+        super::generation::authorize(&self.pool, audience, stamp)
+            .await
+            .map(Some)
+            .map_err(|_| GatewayError::Unknown)
+    }
     pub(crate) async fn verify_island_stamp(
         self: &std::sync::Arc<Self>,
         stamp: &super::fence::PulseAdmissionStamp,
@@ -748,7 +807,30 @@ impl crate::gatekeeper::CommsState {
             wallet: stamp.wallet.clone(),
             session: stamp.session.clone(),
         };
-        let Ok(payload) = self.bus.request(&lookup.subject(), lookup.encode()).await else {
+        let (subject, payload) = if let Some(fence) = self
+            .assignments
+            .as_ref()
+            .filter(|fence| fence.generation_required())
+        {
+            let Ok(generation) = fence.current_generation().await else {
+                return false;
+            };
+            if generation.source_incarnation != stamp.source_incarnation {
+                return false;
+            }
+            let request = crate::protocol::bus::selection_view::FencedLookup {
+                generation,
+                wallet: lookup.wallet.clone(),
+                session: lookup.session.clone(),
+            };
+            let Some(payload) = request.encode() else {
+                return false;
+            };
+            (request.subject(), payload)
+        } else {
+            (lookup.subject(), lookup.encode())
+        };
+        let Ok(payload) = self.bus.request(&subject, payload).await else {
             return false;
         };
         let Ok(snapshot) = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot::decode(
@@ -980,7 +1062,10 @@ mod durable_tests {
         let pool = crate::db::scratch::pool(8)
             .await
             .expect("configured durable safety PostgreSQL fixture");
-        Some((SafetyStore::new(pool), uuid::Uuid::new_v4().to_string()))
+        Some((
+            SafetyStore::unfenced_test(pool),
+            uuid::Uuid::new_v4().to_string(),
+        ))
     }
 
     fn takeover(id: &str) -> crate::protocol::pulse::decentraland::pulse::PendingTakeover {
@@ -1014,7 +1099,7 @@ mod durable_tests {
                 .await
                 .is_err()
         );
-        let restarted = SafetyStore::new(store.pool.clone());
+        let restarted = SafetyStore::unfenced_test(store.pool.clone());
         let replay = restarted
             .begin_takeover(&wallet, "source-a", &op, 9000)
             .await
@@ -1076,7 +1161,7 @@ mod durable_tests {
             )
             .await
             .unwrap();
-        let worker = SafetyStore::new(worker_pool);
+        let worker = SafetyStore::unfenced_test(worker_pool);
         let w = wallet.clone();
         let entered = std::sync::Arc::new(tokio::sync::Notify::new());
         let signal = entered.clone();
@@ -1234,7 +1319,7 @@ mod durable_tests {
             .unwrap();
         sqlx::query("UPDATE social.island_cleanup_dispatches SET quarantine_until=timestamp '1970-01-01' WHERE dispatch_id=$1")
             .bind(initial.dispatch_id).execute(&store.pool).await.unwrap();
-        let restarted = SafetyStore::new(store.pool.clone());
+        let restarted = SafetyStore::unfenced_test(store.pool.clone());
         assert!(
             restarted
                 .begin_quarantine_final(initial.dispatch_id)
@@ -1321,7 +1406,7 @@ mod durable_tests {
             .connect_with(base.pool.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        Some((SafetyStore::new(pool), admin, name))
+        Some((SafetyStore::unfenced_test(pool), admin, name))
     }
 
     async fn teardown(store: SafetyStore, admin: sqlx::PgPool, name: String) {
@@ -1739,7 +1824,7 @@ mod durable_tests {
             )
             .await
             .unwrap();
-        let other = SafetyStore::new(other_pool.clone());
+        let other = SafetyStore::unfenced_test(other_pool.clone());
         let mut lease = store.lock(&wallet).await.unwrap();
         let target = wallet.clone();
         let work = tokio::spawn(async move { other.acknowledge(&target, "source-b", &[]).await });

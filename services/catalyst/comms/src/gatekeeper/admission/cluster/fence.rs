@@ -227,6 +227,39 @@ pub trait AssignmentFence: Send + Sync {
         &self,
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
     ) -> Result<Box<dyn RealmAssignmentLease>, FenceError>;
+    fn requires_generation(&self) -> bool {
+        false
+    }
+    async fn generation_binding(&self) -> Option<crate::interfaces::PulseGenerationBinding> {
+        None
+    }
+    async fn accept_selected_hint(
+        &self,
+        wallet: &str,
+        change: &crate::protocol::pulse::decentraland::pulse::PeerClusterChange,
+    ) -> bool {
+        self.observe_selected_hint(wallet, change);
+        true
+    }
+    async fn complete_generation_view(
+        &self,
+        _binding: &crate::interfaces::PulseGenerationBinding,
+    ) -> bool {
+        false
+    }
+    async fn retire_obsolete_generation(
+        &self,
+        _binding: &crate::interfaces::PulseGenerationBinding,
+        _limit: usize,
+    ) {
+    }
+    async fn recover_selected_target(
+        &self,
+        _binding: &crate::interfaces::PulseGenerationBinding,
+        _target: &crate::protocol::bus::selection_view::SelectionTarget,
+    ) -> bool {
+        false
+    }
     fn selected_reconciliation_targets(&self) -> Vec<(String, String)> {
         Vec::new()
     }
@@ -305,7 +338,15 @@ pub struct PgAssignmentFence {
     incarnation: String,
     selected_limit: usize,
     selected_cursor: tokio::sync::Mutex<[Option<String>; 2]>,
+    obsolete_cursor: tokio::sync::Mutex<Option<String>>,
     direct_credits: std::sync::Arc<tokio::sync::Semaphore>,
+    generation_required: bool,
+    completed_generation: parking_lot::Mutex<
+        Option<(
+            crate::interfaces::PulseGenerationBinding,
+            tokio::time::Instant,
+        )>,
+    >,
 }
 
 pub const FENCE_CALL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -322,6 +363,55 @@ impl PgAssignmentFence {
     pub fn new(pool: PgPool, audience: String) -> Result<Self, FenceError> {
         Self::with_limit(pool, audience, super::peer_state::DEFAULT_PEER_STATE_MAX)
     }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfenced_test(pool: PgPool, audience: String) -> Result<Self, FenceError> {
+        Self::unfenced_test_with_limit(pool, audience, super::peer_state::DEFAULT_PEER_STATE_MAX)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfenced_test_with_limit(
+        pool: PgPool,
+        audience: String,
+        limit: usize,
+    ) -> Result<Self, FenceError> {
+        let mut fence = Self::with_limit(pool, audience, limit)?;
+        fence.generation_required = false;
+        Ok(fence)
+    }
+    pub fn generation_required(&self) -> bool {
+        self.generation_required
+    }
+    pub async fn current_generation(
+        &self,
+    ) -> Result<crate::interfaces::PulseGenerationBinding, FenceError> {
+        if !self.generation_required {
+            return Err(FenceError::Unavailable);
+        }
+        super::generation::current(&self.pool, &self.audience).await
+    }
+    fn safety_store(&self) -> super::safety::SafetyStore {
+        #[cfg(any(test, feature = "test-support"))]
+        if !self.generation_required {
+            return super::safety::SafetyStore::unfenced_test(self.pool.clone());
+        }
+        super::safety::SafetyStore::new(self.pool.clone())
+    }
+    async fn register_source(&self, source: &str) -> Result<Option<u64>, FenceError> {
+        if !self.generation_required {
+            return Ok(None);
+        }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|_| FenceError::Unavailable)?;
+        sqlx::query("SET LOCAL lock_timeout='1500ms'")
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| FenceError::Unavailable)?;
+        let binding = super::generation::lock(&mut tx, &self.audience, source).await?;
+        tx.commit().await.map_err(|_| FenceError::Unavailable)?;
+        Ok(Some(binding.epoch))
+    }
     pub(crate) fn with_limit(
         pool: PgPool,
         audience: String,
@@ -335,6 +425,9 @@ impl PgAssignmentFence {
             incarnation: uuid::Uuid::new_v4().to_string(),
             selected_limit: limit.max(1),
             selected_cursor: Default::default(),
+            generation_required: true,
+            completed_generation: Default::default(),
+            obsolete_cursor: Default::default(),
             direct_credits: std::sync::Arc::new(tokio::sync::Semaphore::new(
                 super::subscriber::wallet_queue::MAX_TOTAL_WORK,
             )),
@@ -365,6 +458,23 @@ impl AssignmentFence for PgAssignmentFence {
             .await
             .unwrap_or(Err(FenceError::Unavailable))
     }
+    fn requires_generation(&self) -> bool {
+        self.generation_required
+    }
+    async fn generation_binding(&self) -> Option<crate::interfaces::PulseGenerationBinding> {
+        self.current_generation().await.ok()
+    }
+    async fn accept_selected_hint(
+        &self,
+        wallet: &str,
+        change: &crate::protocol::pulse::decentraland::pulse::PeerClusterChange,
+    ) -> bool {
+        let Ok(epoch) = self.register_source(&change.source_incarnation).await else {
+            return false;
+        };
+        self.observe_bound_hint(wallet, change, epoch);
+        true
+    }
     fn selected_reconciliation_targets(&self) -> Vec<(String, String)> {
         let mut targets = Vec::new();
         for (wallet, slot) in self.selected.lock().iter() {
@@ -381,6 +491,63 @@ impl AssignmentFence for PgAssignmentFence {
             }
         }
         targets
+    }
+    async fn complete_generation_view(
+        &self,
+        binding: &crate::interfaces::PulseGenerationBinding,
+    ) -> bool {
+        if self.current_generation().await.ok().as_ref() != Some(binding) {
+            return false;
+        }
+        let mut complete = self.completed_generation.lock();
+        if complete.as_ref().is_none_or(|(old, _)| old != binding) {
+            *complete = Some((binding.clone(), tokio::time::Instant::now()));
+        }
+        true
+    }
+    async fn retire_obsolete_generation(
+        &self,
+        binding: &crate::interfaces::PulseGenerationBinding,
+        limit: usize,
+    ) {
+        let _ = tokio::time::timeout(
+            FENCE_CALL_TIMEOUT,
+            self.retire_obsolete(binding, limit.min(128)),
+        )
+        .await;
+    }
+    async fn recover_selected_target(
+        &self,
+        binding: &crate::interfaces::PulseGenerationBinding,
+        target: &crate::protocol::bus::selection_view::SelectionTarget,
+    ) -> bool {
+        if !target.valid()
+            || self
+                .register_source(&binding.source_incarnation)
+                .await
+                .ok()
+                .flatten()
+                != Some(binding.epoch)
+        {
+            return false;
+        }
+        self.observe_bound_hint(
+            &target.wallet,
+            &crate::protocol::pulse::decentraland::pulse::PeerClusterChange {
+                session: target.session.clone(),
+                source_incarnation: binding.source_incarnation.clone(),
+                assignment_version: target.assignment_version,
+                ..Default::default()
+            },
+            Some(binding.epoch),
+        );
+        self.selected
+            .lock()
+            .get(&target.wallet)
+            .is_some_and(|slot| {
+                let desired = slot.desired.lock();
+                desired.epoch == Some(binding.epoch) && desired.source == binding.source_incarnation
+            })
     }
     async fn selected_reconciliation_batch(
         &self,
@@ -496,32 +663,8 @@ impl AssignmentFence for PgAssignmentFence {
         wallet: &str,
         change: &crate::protocol::pulse::decentraland::pulse::PeerClusterChange,
     ) {
-        if !super::subscriber::is_session_key(wallet)
-            || !super::subscriber::is_session_key(&change.session)
-            || change.assignment_version == 0
-            || change.source_incarnation.is_empty()
-            || change.source_incarnation.len() > 256
-        {
-            return;
-        }
-        if let Ok(slot) = self.selected_slot(wallet, &change.session) {
-            let mut desired = slot.desired.lock();
-            if desired.source != change.source_incarnation
-                || change.assignment_version >= desired.version
-            {
-                let generation = desired.generation;
-                desired.observe(
-                    &change.session,
-                    &change.source_incarnation,
-                    change.assignment_version,
-                    None,
-                );
-                let changed = generation != desired.generation;
-                drop(desired);
-                if changed {
-                    *slot.retry_at.lock() = tokio::time::Instant::now();
-                }
-            }
+        if !self.generation_required {
+            self.observe_bound_hint(wallet, change, None);
         }
     }
     fn selected_retirement_target(
@@ -545,8 +688,10 @@ impl AssignmentFence for PgAssignmentFence {
             return None;
         }
         let generation = desired.generation;
+        let epoch = desired.epoch;
         drop(desired);
         Some(SelectedRetirementTarget {
+            epoch,
             lookup,
             generation,
             slot,
@@ -672,6 +817,7 @@ struct RealmAttempt {
 }
 #[derive(Default)]
 struct SelectedDesire {
+    epoch: Option<u64>,
     session: String,
     source: String,
     version: u64,
@@ -685,8 +831,12 @@ impl SelectedDesire {
         source: &str,
         version: u64,
         selected: Option<crate::protocol::bus::cluster::SelectedIdentity>,
+        epoch: Option<u64>,
     ) {
-        let same = self.session == session && self.source == source && self.version == version;
+        let same = self.session == session
+            && self.source == source
+            && self.version == version
+            && self.epoch == epoch;
         let selected = selected.or_else(|| same.then(|| self.selected.clone()).flatten());
         if same && self.selected == selected {
             return;
@@ -695,6 +845,7 @@ impl SelectedDesire {
             return;
         };
         *self = Self {
+            epoch,
             session: session.into(),
             source: source.into(),
             version,
@@ -712,13 +863,15 @@ struct SelectedWallet {
 /// Captures the exact local obligation across the negative authority lookup.
 /// Private slot identity and generation cannot be constructed by a caller.
 pub struct SelectedRetirementTarget {
+    epoch: Option<u64>,
     pub lookup: crate::protocol::bus::cluster::SelectionRetirementLookup,
     generation: u64,
     slot: std::sync::Arc<SelectedWallet>,
 }
 impl SelectedRetirementTarget {
     fn matches(&self, desired: &SelectedDesire) -> bool {
-        self.generation == desired.generation
+        self.epoch == desired.epoch
+            && self.generation == desired.generation
             && self.lookup.session == desired.session
             && self.lookup.source_incarnation == desired.source
             && self.lookup.assignment_version == desired.version
@@ -769,6 +922,46 @@ fn realm_transition(
     }
 }
 impl PgAssignmentFence {
+    fn observe_bound_hint(
+        &self,
+        wallet: &str,
+        change: &crate::protocol::pulse::decentraland::pulse::PeerClusterChange,
+        epoch: Option<u64>,
+    ) {
+        if !super::subscriber::is_session_key(wallet)
+            || !super::subscriber::is_session_key(&change.session)
+            || change.assignment_version == 0
+            || change.source_incarnation.is_empty()
+            || change.source_incarnation.len() > 256
+        {
+            return;
+        }
+        if let Ok(slot) = self.selected_slot(wallet, &change.session) {
+            let mut desired = slot.desired.lock();
+            if desired.source.is_empty()
+                || desired
+                    .epoch
+                    .is_some_and(|old| epoch.is_some_and(|new| new > old))
+                || (desired.epoch == epoch
+                    && (desired.source != change.source_incarnation
+                        || change.assignment_version >= desired.version))
+            {
+                let generation = desired.generation;
+                desired.observe(
+                    &change.session,
+                    &change.source_incarnation,
+                    change.assignment_version,
+                    None,
+                    epoch,
+                );
+                let changed = generation != desired.generation;
+                drop(desired);
+                if changed {
+                    *slot.retry_at.lock() = tokio::time::Instant::now();
+                }
+            }
+        }
+    }
     /// Changes only fixture scheduling; the production runtime still performs every lookup,
     /// settlement and retirement using the actual authority and SQL paths.
     #[cfg(any(test, feature = "test-support"))]
@@ -890,12 +1083,18 @@ impl PgAssignmentFence {
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
     ) -> Result<Box<dyn RealmAssignmentLease>, FenceError> {
         let key = SelectedKey::from_snapshot(snapshot)?;
+        let epoch = self.register_source(&key.source).await?;
         let slot_ref = self.selected_slot(&snapshot.wallet, &snapshot.session)?;
         let mut slot = slot_ref.state.lock().await;
         {
             let mut desired = slot_ref.desired.lock();
             if desired.source.is_empty()
-                || (desired.source == key.source && desired.version <= key.version)
+                || desired
+                    .epoch
+                    .is_some_and(|old| epoch.is_some_and(|new| new > old))
+                || (desired.epoch == epoch
+                    && desired.source == key.source
+                    && desired.version <= key.version)
             {
                 desired.observe(
                     &snapshot.session,
@@ -905,14 +1104,18 @@ impl PgAssignmentFence {
                         origin: key.origin,
                         identity: key.identity,
                     }),
+                    epoch,
                 );
             }
         }
-        let lease = super::safety::SafetyStore::new(self.pool.clone())
-            .authorize(
+        let lease = self
+            .safety_store()
+            .authorize_source(
                 &snapshot.wallet,
                 None,
                 crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS,
+                self.generation_required
+                    .then_some((self.audience.as_str(), snapshot.source_incarnation.as_str())),
             )
             .await
             .map_err(|_| FenceError::Unavailable)?;
@@ -1058,7 +1261,8 @@ impl PgAssignmentFence {
             return Ok(());
         };
         let mut slot = slot_ref.state.lock().await;
-        let lease = super::safety::SafetyStore::new(self.pool.clone())
+        let lease = self
+            .safety_store()
             .lock(wallet)
             .await
             .map_err(|_| FenceError::Unavailable)?;
@@ -1077,6 +1281,83 @@ impl PgAssignmentFence {
             // settled SQL ownership facts, but keep the bounded desired retry.
             slot.owned = None;
             slot.key = None;
+        }
+        Ok(())
+    }
+
+    async fn retire_obsolete(
+        &self,
+        binding: &crate::interfaces::PulseGenerationBinding,
+        limit: usize,
+    ) -> Result<(), FenceError> {
+        if !self
+            .completed_generation
+            .lock()
+            .as_ref()
+            .is_some_and(|(complete, at)| {
+                complete == binding && at.elapsed() >= super::generation::OPERATION_VALIDITY
+            })
+        {
+            return Ok(());
+        }
+        let mut cursor = self.obsolete_cursor.lock().await;
+        let page: Vec<_> = {
+            use std::ops::Bound::{Excluded, Unbounded};
+            let slots = self.selected.lock();
+            slots
+                .range((
+                    cursor
+                        .as_ref()
+                        .map_or(Unbounded, |key| Excluded(key.clone())),
+                    Unbounded,
+                ))
+                .take(limit)
+                .map(|(wallet, slot)| (wallet.clone(), slot.clone()))
+                .collect()
+        };
+        if page.is_empty() {
+            *cursor = None;
+            return Ok(());
+        }
+        for (wallet, slot) in page {
+            *cursor = Some(wallet.clone());
+            let (old_epoch, source, generation) = {
+                let desired = slot.desired.lock();
+                (desired.epoch, desired.source.clone(), desired.generation)
+            };
+            // Unregistered historical UUIDs provide no supersession evidence.
+            if !old_epoch.is_some_and(|epoch| epoch < binding.epoch) {
+                continue;
+            }
+            let Ok(mut state) = slot.state.try_lock() else {
+                continue;
+            };
+            let lease = self
+                .safety_store()
+                .lock_with_source(&wallet, Some((&self.audience, &binding.source_incarnation)))
+                .await
+                .map_err(|_| FenceError::Unavailable)?;
+            let mut tx = lease.tx;
+            // Settle the exact uncertain SQL attempt; no assignment writes or foreign cleanup.
+            // Cleanup/takeover obligations remain in their existing independent durable owners.
+            let current = self.realm_row(&mut tx, &wallet).await?;
+            tx.commit().await.map_err(|_| FenceError::Unavailable)?;
+            Self::reconcile_attempt(&mut state, current.as_ref());
+            let mut slots = self.selected.lock();
+            let desired = slot.desired.lock();
+            if desired.epoch == old_epoch
+                && desired.source == source
+                && desired.generation == generation
+                && state.attempt.is_none()
+                && state.key.as_ref().is_none_or(|key| key.source == source)
+                && slots
+                    .get(&wallet)
+                    .is_some_and(|stored| std::sync::Arc::ptr_eq(stored, &slot))
+                && std::sync::Arc::strong_count(&slot) == 2
+            {
+                slots.remove(&wallet);
+                super::metrics::selected_slot_occupancy(slots.len());
+            }
         }
         Ok(())
     }
@@ -1103,8 +1384,15 @@ impl PgAssignmentFence {
         {
             return Ok(());
         }
-        let lease = super::safety::SafetyStore::new(self.pool.clone())
-            .lock(&target.lookup.wallet)
+        let lease = self
+            .safety_store()
+            .lock_with_source(
+                &target.lookup.wallet,
+                self.generation_required.then_some((
+                    self.audience.as_str(),
+                    target.lookup.source_incarnation.as_str(),
+                )),
+            )
             .await
             .map_err(|_| FenceError::Unavailable)?;
         let mut tx = lease.tx;
@@ -1137,6 +1425,7 @@ impl PgAssignmentFence {
 }
 
 struct PgRealmLease {
+    generation_required: bool,
     selected: Option<SelectedLease>,
     read_only: bool,
     previous_pulse_admission: Option<PulseAdmissionStamp>,
@@ -1156,7 +1445,7 @@ impl PgAssignmentFence {
         // Read an optimistic immutable owner snapshot in a short transaction.
         // The persistent wallet key always precedes the assignment row lock;
         // no ownership transaction survives into a broker or SFU await.
-        let safety = super::safety::SafetyStore::new(self.pool.clone());
+        let safety = self.safety_store();
         let lease = safety
             .lock(wallet)
             .await
@@ -1238,6 +1527,7 @@ impl PgAssignmentFence {
             .filter(PulseAdmissionStamp::valid);
         tx.commit().await.map_err(|_| FenceError::Unavailable)?;
         Ok(Box::new(PgRealmLease {
+            generation_required: self.generation_required,
             selected: None,
             read_only: false,
             previous_pulse_admission,
@@ -1425,7 +1715,18 @@ impl PgRealmLease {
         } else {
             None
         };
-        let safety = super::safety::SafetyStore::new(self.pool.clone());
+        let safety = {
+            #[cfg(any(test, feature = "test-support"))]
+            if !self.generation_required {
+                super::safety::SafetyStore::unfenced_test(self.pool.clone())
+            } else {
+                super::safety::SafetyStore::new(self.pool.clone())
+            }
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                super::safety::SafetyStore::new(self.pool.clone())
+            }
+        };
         let mut lease = safety
             .authorize_stamp(stamp, Some(&self.audience), None, false)
             .await
@@ -1557,7 +1858,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
             .unwrap();
-        let fence = PgAssignmentFence::with_limit(pool, "hint-test".into(), 1).unwrap();
+        let fence =
+            PgAssignmentFence::unfenced_test_with_limit(pool, "hint-test".into(), 1).unwrap();
         let wallet = "0x1111111111111111111111111111111111111111";
         let first = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let second = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -1590,7 +1892,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
             .unwrap();
-        let fence = PgAssignmentFence::with_limit(pool, "replay-test".into(), 1400).unwrap();
+        let fence =
+            PgAssignmentFence::unfenced_test_with_limit(pool, "replay-test".into(), 1400).unwrap();
         for index in 0..1400 {
             fence.observe_selected_hint(
                 &format!("0x{index:040x}"),
@@ -1659,7 +1962,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
             .unwrap();
-        let fence = PgAssignmentFence::with_limit(pool, "due-test".into(), 2).unwrap();
+        let fence =
+            PgAssignmentFence::unfenced_test_with_limit(pool, "due-test".into(), 2).unwrap();
         let wallet = "0x1111111111111111111111111111111111111111";
         let hint = PeerClusterChange {
             session: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),

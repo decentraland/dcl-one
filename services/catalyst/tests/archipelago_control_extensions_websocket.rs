@@ -127,14 +127,14 @@ impl Server {
         };
         let gatekeeper = Arc::new(
             gatekeeper
-                .with_cluster(config)
+                .with_cluster_for_test(config)
                 .unwrap()
                 .with_bus(bus.clone()),
         );
         let state = archipelago::build(settings, gatekeeper).await;
         assert_eq!(state.control_v4.is_available(), available);
         let fence = Arc::new(
-            catalyst::comms::gatekeeper::admission::cluster::fence::PgAssignmentFence::new(
+            catalyst::comms::gatekeeper::admission::cluster::fence::PgAssignmentFence::unfenced_test(
                 state.gatekeeper.pool.clone(),
                 "test-realm".into(),
             )
@@ -171,12 +171,13 @@ impl Server {
         owner: &catalyst::comms::archipelago::control_v4::V4Owner,
         room: &str,
     ) -> catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp {
-        let safety = catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new(
-            self.state.gatekeeper.pool.clone(),
-        )
-        .snapshot(&owner.address)
-        .await
-        .unwrap();
+        let safety =
+            catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
+                self.state.gatekeeper.pool.clone(),
+            )
+            .snapshot(&owner.address)
+            .await
+            .unwrap();
         let mut plans = self.plans.lock().unwrap();
         let version = plans
             .get(&owner.address)
@@ -598,7 +599,7 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
     gatekeeper.pool = fixture.pool.clone();
     let gatekeeper = Arc::new(
         gatekeeper
-            .with_cluster(
+            .with_cluster_for_test(
                 catalyst::comms::gatekeeper::admission::cluster::ClusterConfig {
                     control_v4_audience: Some("test-realm".into()),
                     nats_url: Some(broker.url()),
@@ -1707,7 +1708,7 @@ async fn pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_chan
                 .get(&owner.address)
                 .unwrap()
                 .clone();
-            let safety = catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new(
+            let safety = catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
                 fixture.pool.clone(),
             )
             .snapshot(&owner.address)

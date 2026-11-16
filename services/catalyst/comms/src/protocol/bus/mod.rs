@@ -41,6 +41,7 @@ use std::time::Duration;
 pub mod cluster;
 pub mod control_position;
 pub mod room_events;
+pub mod selection_view;
 pub mod statistics;
 pub mod topology;
 

@@ -570,7 +570,7 @@ async fn real_state(
     let state = Arc::try_unwrap(state)
         .ok()
         .unwrap()
-        .with_cluster(
+        .with_cluster_for_test(
             catalyst::comms::gatekeeper::admission::cluster::ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 self_hosted_token_quarantine: false,
@@ -1098,7 +1098,7 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         Arc::try_unwrap(replica)
             .ok()
             .unwrap()
-            .with_cluster(ClusterConfig {
+            .with_cluster_for_test(ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 control_v4_audience: Some("replica-test".into()),
                 island_token_ttl_seconds: 1,
@@ -1194,7 +1194,7 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         "restart/lift/new owner cannot repeat an unknown dispatch"
     );
     assert!(
-        SafetyStore::new(db.pool.clone())
+        SafetyStore::unfenced_test(db.pool.clone())
             .snapshot(&address)
             .await
             .is_err()

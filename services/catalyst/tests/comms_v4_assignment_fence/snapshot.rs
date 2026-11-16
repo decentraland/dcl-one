@@ -157,8 +157,9 @@ async fn snapshot_distinguishes_unowned_rows_from_session_conflicts() {
             .await,
         Err(FenceError::Unowned)
     );
-    let other_audience = PgAssignmentFence::new(fixture.pool.clone(), "other-audience".into())
-        .expect("a reader for another audience");
+    let other_audience =
+        PgAssignmentFence::unfenced_test(fixture.pool.clone(), "other-audience".into())
+            .expect("a reader for another audience");
     assert_eq!(
         other_audience
             .current_realm_assignment(WALLET, SESSION)

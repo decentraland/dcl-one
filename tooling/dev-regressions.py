@@ -28,6 +28,11 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "pulse::application_relay::http::tests::generation_loss_refuses_a_late_http_lease_and_further_cached_admission",
+        "gatekeeper::admission::cluster::generation::tests::exact_operation_permission_is_single_use_and_never_refreshes_its_deadline",
+        "protocol::bus::selection_view::tests::bounded_selection_view_transfers_more_than_one_reply_and_refuses_mixed_or_missing_pages",
+        "protocol::bus::selection_view::tests::two_interleaved_readers_share_one_immutable_multpage_view",
+        "protocol::bus::selection_view::tests::worst_case_selection_entry_and_page_encoding_fit_the_declared_bounds",
         "archipelago::ws::raw_transport::tests::production_partial_write_retirement_keeps_capacity_until_the_reader_drops",
         "archipelago::ws::raw_transport::tests::axum_reader_and_writer_cannot_drain_a_partial_frame_after_retirement",
         "archipelago::ws::io::tests::capacity_is_retained_until_both_shared_transport_directions_drop",
@@ -269,6 +274,15 @@ MANDATORY_ARCHIPELAGO = {
         "recovery::same_room_control_handoffs_refill_same_and_different_session_claims",
         "recovery::a_move_during_token_mint_rolls_back_then_recovers_the_current_room",
         "recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn",
+    ],
+    ("pulse_generation", "test"): [
+        "mint_and_delivery_use_fresh_exact_source_permissions_after_cutover",
+        "complete_view_recovery::started_strict_discovery_recovers_all_unchanged_targets_after_restart_without_hints",
+        "room_authority::source_cutover_rejects_old_requests_and_inflight_old_lease_issuance",
+        "generation_is_exclusive_monotonic_and_does_not_persist_assignments",
+        "held_generation_connection_loss_revokes_local_capability_before_reuse",
+        "lost_generation_commit_ack_never_publishes_a_capability_and_fresh_acquisition_rotates",
+        "unregistered_sources_allocate_no_slots_and_complete_new_generation_reclaims_only_known_old_slots",
     ],
     ("pulse_nats_live", "test"): [
         "cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
