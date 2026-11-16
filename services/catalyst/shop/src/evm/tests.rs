@@ -2726,6 +2726,112 @@ async fn the_broker_refuses_a_resale_before_any_broadcast_and_admits_a_mirrored_
     clear_items_pass(&pool).await;
 }
 
+/// `checkout::broker::resume` drives a claim from its row alone, with no
+/// request body: a sent trade buy whose payload is gone forwards the token
+/// the row recorded, a forwarding claim settles on its receipt without a new
+/// broadcast, and a key with no claim is not found.
+#[tokio::test]
+async fn a_claimed_broker_buy_resumes_from_its_row_alone() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let relayer_key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let state = state(pool.clone(), settings);
+    let claim = |key: String,
+                 mode: &'static str,
+                 status: &'static str,
+                 token: Option<&'static str>,
+                 forward: Option<String>| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.broker_purchases \
+                 (idempotency_key, tx_hash, forward_tx_hash, collection, token_id, buyer_address, \
+                  escrow_address, price_wei, chain_id, mode, status) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 137, $8, $9)",
+            )
+            .bind(&key)
+            .bind(format!("{:#x}", B256::repeat_byte(0xaa)))
+            .bind(forward)
+            .bind(COLLECTION)
+            .bind(token)
+            .bind(BUYER)
+            .bind(RULE_ESCROW)
+            .bind(mode)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+            key
+        }
+    };
+
+    let sent = claim(
+        format!("resume-sent-{}", Uuid::new_v4()),
+        "trade",
+        "sent",
+        Some("7"),
+        None,
+    )
+    .await;
+    let forward = crate::checkout::broker::resume(&state, &sent)
+        .await
+        .unwrap();
+    assert_eq!(
+        raws.lock().unwrap().len(),
+        1,
+        "only the escrow forward is broadcast"
+    );
+    let (status, token, recorded): (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status, minted_token_id, forward_tx_hash FROM shop.broker_purchases \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&sent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "confirmed");
+    assert_eq!(
+        token.as_deref(),
+        Some("7"),
+        "the recorded token is forwarded"
+    );
+    assert_eq!(recorded.as_deref(), Some(forward.as_str()));
+
+    let hash = format!("{:#x}", B256::repeat_byte(0xbb));
+    let forwarding = claim(
+        format!("resume-forwarding-{}", Uuid::new_v4()),
+        "primary",
+        "forwarding",
+        None,
+        Some(hash.clone()),
+    )
+    .await;
+    assert_eq!(
+        crate::checkout::broker::resume(&state, &forwarding)
+            .await
+            .unwrap(),
+        hash
+    );
+    assert_eq!(raws.lock().unwrap().len(), 1, "nothing new is broadcast");
+
+    let missing = crate::checkout::broker::resume(&state, "resume-never-claimed").await;
+    assert!(matches!(missing, Err(ApiError::NotFound(_))), "{missing:?}");
+
+    sqlx::query("DELETE FROM shop.broker_purchases WHERE idempotency_key = ANY($1)")
+        .bind(vec![sent, forwarding])
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 /// `POST /v1/broker/names/buy`: a registered NAME is a resale (MANA only),
 /// the registration of an available NAME a primary the ledger may fund.
 #[tokio::test]

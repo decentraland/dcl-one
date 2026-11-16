@@ -27,6 +27,7 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct Server {
+    source_incarnation: String,
     url: String,
     state: AppState,
     bus: Arc<InProcessBus>,
@@ -83,6 +84,16 @@ impl Server {
         deny_url: Option<String>,
         bans: Option<Arc<dyn catalyst::comms::gatekeeper::moderation::BanStatus>>,
     ) -> Self {
+        let source_incarnation = if available {
+            let candidate = uuid::Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO social.pulse_authority_generation(deployment_audience,epoch,source_incarnation) VALUES('test-realm',nextval('social.archipelago_v4_connection_epoch'),$1::uuid) ON CONFLICT(deployment_audience) DO NOTHING")
+                .bind(candidate).execute(&pool).await.unwrap();
+            // Same-database replica fixtures share the one authoritative source.
+            sqlx::query_scalar::<_, String>("SELECT source_incarnation::text FROM social.pulse_authority_generation WHERE deployment_audience='test-realm'")
+                .fetch_one(&pool).await.unwrap()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
         let mut settings = Settings::for_tests();
         settings.auth.deny_list_url = deny_url;
         if let Some(timeout) = handshake_timeout_ms {
@@ -156,6 +167,7 @@ impl Server {
         .stats;
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
+            source_incarnation,
             url,
             state,
             bus,
@@ -201,7 +213,7 @@ impl Server {
             session: owner.session.clone(),
             cluster_id: room.strip_prefix("island-").unwrap_or(room).into(),
             realm: "test-realm".into(),
-            source_incarnation: "legacy-stamp-fixture".into(),
+            source_incarnation: self.source_incarnation.clone(),
             assignment_version: version,
             token_not_before: Some(0),
             pass: 1,

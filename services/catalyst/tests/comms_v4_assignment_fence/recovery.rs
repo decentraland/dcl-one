@@ -36,9 +36,9 @@ impl ClusterGateway for RecordingGateway {
     fn safety_store(
         &self,
     ) -> Option<catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore> {
-        self.pool
-            .clone()
-            .map(catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new)
+        self.pool.clone().map(
+            catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test,
+        )
     }
     async fn is_denied(&self, _: &str) -> Result<bool, GatewayError> {
         Ok(false)
