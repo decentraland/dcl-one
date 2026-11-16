@@ -101,12 +101,14 @@ fold merges the threads' maps once a frame, so no exit waits on another thread),
 microseconds a frame on native. A span that lives across frames is one call, recorded when it
 ends.
 
-The cargo feature is off in `default` and in the web build, so release builds leave it out: the
-spans pass through every tracing layer on each enter and exit, and the counting allocator adds
-atomics to every allocation, even while the table records nothing. Turn it on with
-`--features performance-profiler` natively (`tracy` turns it on too), `python3
-apps/bevy-explorer/build-web.py --performance-profiler` or
-`WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web. `/profile_top` reports
+The cargo feature is in `default` and in the web build. Its spans pass through every tracing
+layer on each enter and exit, and the counting allocator adds atomics to every allocation, even
+while the table records nothing. On the web build, with the table recording, it measured CPU
+frame time +0.8 ms on average (within noise) and +2.9 ms on the 1% worst frames against a build
+without it (Apple M1 Pro, Chrome, `benchmark leg`, three runs each); a build that does not record
+pays less. `python3 apps/bevy-explorer/build-web.py --no-performance-profiler` or
+`WASM_FEATURES=livekit,social just wasm` builds the web engine without it; natively, leave it out
+of `--features` with `--no-default-features`. `/profile_top` reports
 `profilerBuild`; a build without the feature says so in its empty table, and its rows are the
 explorer's own spans and Bevy's unconditional ones (`present_frames`, `entity_sync`). On the web
 the engine's log reaches the browser console through the explorer's own layer, not Bevy's

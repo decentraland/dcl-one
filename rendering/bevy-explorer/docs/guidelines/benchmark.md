@@ -120,8 +120,7 @@ the worst 1% or 0.1% of a run's frames, the
 run*, and, where a run's log holds the engine's `perf_summary` lines ([Files](#files)),
 *Hiccups per run* (frames over the engine's hiccup threshold, shown with the threshold) and
 *Peak memory* (the engine's peak memory in MiB), with a collapsed *Top scopes* list of the
-profiler's scopes and their self time per run ([profiling](profiling.md); a release build, without
-the `performance-profiler` feature, lists only the explorer's own spans), the 15 highest by the
+profiler's scopes and their self time per run ([profiling](profiling.md)), the 15 highest by the
 larger of the two builds' values, so a scope that fell out of one build's top rows stays listed.
 A build's value is the scope's self time summed over its summaries, divided by their number: a
 run whose top 30 leave the scope out counts as 0.

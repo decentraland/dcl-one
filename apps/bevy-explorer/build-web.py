@@ -99,9 +99,7 @@ def prepare_engine(no_opt, engine_cache, shared_build, features, env):
     return engine
 
 
-def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False):
-    # the release engine leaves out `performance-profiler`: its spans and allocation counter cost
-    # every frame even while the profiler records nothing
+def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=True):
     features = ['livekit', 'social', *(['performance-profiler'] if performance_profiler else [])]
     env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
@@ -161,13 +159,13 @@ def main():
                         help='CI-only compiled WASM cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
-    parser.add_argument('--performance-profiler', action='store_true',
-                        help="Compile in the Profiler section's spans and allocation counter (off in release builds)")
+    parser.add_argument('--no-performance-profiler', action='store_true',
+                        help="Leave out the Profiler section's spans and allocation counter")
     args = parser.parse_args()
-    if args.performance_profiler and args.engine_cache:
-        parser.error('--performance-profiler builds a different engine than the cache holds')
+    if args.no_performance_profiler and args.engine_cache:
+        parser.error('--no-performance-profiler builds a different engine than the cache holds')
     web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build,
-        args.performance_profiler)
+        not args.no_performance_profiler)
 
 
 if __name__ == '__main__':
