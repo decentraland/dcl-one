@@ -1,12 +1,44 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
-import { isNativeHud } from '@hud-host'
+import { isNativeHud, serviceUrl, siteRevision } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
 import type { DebugSection } from './DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],
   actions: [['Open lobby', 'hud/lobby'], ['Sign out and open sign-in', 'hud/signout'], ['Report a bug', 'hud/report']]
+}
+
+const deploymentSection = (): DebugSection => ({
+  title: 'Deployment', query: 'hud/deployment', poll: false, actions: [],
+  fields: [
+    ...(siteRevision() === null ? [] : [['Sites', 'sites'] as [string, string]]),
+    [`Catalyst (${serviceUrl('catalyst').replace(/^https?:\/\//, '')})`, 'catalyst']
+  ]
+})
+
+async function catalystRevision(): Promise<{ revision: string } | { reason: string }> {
+  let response: Response
+  try {
+    response = await fetch(`${serviceUrl('catalyst')}/content/status`, { signal: AbortSignal.timeout(5000) })
+  } catch {
+    return { reason: 'no answer from the node' }
+  }
+  if (!response.ok) return { reason: `status ${response.status}` }
+  const body: unknown = await response.json().catch(() => null)
+  if (!body || typeof body !== 'object') return { reason: 'answered without a status' }
+  const revision = (body as { commitHash?: unknown }).commitHash
+  return typeof revision === 'string' && revision !== '' && revision.toLowerCase() !== 'unknown'
+    ? { revision } : { reason: 'not reported by the node' }
+}
+
+async function readDeployment(): Promise<string> {
+  const unavailable: Record<string, string> = {}
+  const revision = siteRevision()
+  if (revision === '') unavailable.sites = 'not reported by Sites'
+  const catalyst = await catalystRevision()
+  if ('reason' in catalyst) unavailable.catalyst = catalyst.reason
+  return JSON.stringify({ sites: revision || null, catalyst: 'revision' in catalyst ? catalyst.revision : null, unavailable })
 }
 
 const REQUEST = 'dcl-debug-panel'
@@ -79,9 +111,10 @@ export function useDebugPanel(session: EngineSession) {
     switch (line) {
       case '/debug_panel': {
         const sections: DebugSection[] = JSON.parse(await s.runDebugCommand(line))
-        return JSON.stringify([...sections, sessionSection])
+        return JSON.stringify([...sections, sessionSection, deploymentSection()])
       }
       case 'hud/session': return JSON.stringify({ phase: s.phase, ready: s.login.engineReady })
+      case 'hud/deployment': return readDeployment()
       case 'hud/lobby': closeDebugPanel(); s.lobbyPage.toggle(); return 'Opened lobby'
       case 'hud/signout': closeDebugPanel(); s.logout(); return 'Signed out'
       case 'hud/report':

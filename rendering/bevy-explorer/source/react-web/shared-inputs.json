@@ -4468,7 +4468,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "1f01c380663fb1d0dd65452aaa42ec2e4e3a7295e4c542e7910bbe3479879d37"
+      "sha256": "7390398d2350e293b39fb1a2cbcaf05edbf99a9e45f64ec9ece9a174271a0455"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
@@ -5060,7 +5060,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "246acfe7a9feff364242afee43cb8546e7c87112485a5865d46fb2d86fee64c0"
+      "sha256": "e6c335b5e03ded45acc1dede426e6e506f89858cdd0182d0c7e395d0b12007c5"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -6788,7 +6788,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "3e8e43438ae96e06e6c122ff1787693d2a7a281834e356a7536d26122750f212"
+      "sha256": "6d2d10beb71af6080807349dfe0866faee76d562bf45f5ebe35f37e5c61d30fd"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
@@ -6800,7 +6800,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "954c7a9c4795903a16a547a678598d25e2dcc0395cec3f69c029589839039c0d"
+      "sha256": "d31210d385903efff0f191c5a41a61864ecba1d41b7625cf0e223dc9b89ac6ad"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -7552,7 +7552,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "7168fe4c9c98d4562a83d0a1bb2a57bd52db8fd123afff53b73c4a044a045191"
+      "sha256": "771b2d61a99e43e0a6a8e9e26efce2b71691d8793743859606d5c6384779d7e5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -7664,7 +7664,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "083aac570174c4f37facebad291a038fe729a1a824aa5e572c0b93100332c753"
+      "sha256": "cc05a11b9849d7f0e1686c562f308e2fa820980c8a0547e138f41422dfa76cf7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/dm.render.test.tsx",
