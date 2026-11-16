@@ -10,6 +10,7 @@ use dcl_component::{
 use wallet::Wallet;
 
 use crate::{
+    anim_announce::{Announcement, ClipAnnouncer},
     broadcast, broadcast_to,
     global_crdt::GlobalCrdtState,
     movement_compressed::{Movement, Temporal},
@@ -38,9 +39,10 @@ const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
 #[derive(Default)]
 struct LastAnim {
     // The (scene_hash, content_hash) pair we last broadcast. Tracked as one unit so we
-    // can detect transitions between clips and drive keepalives.
+    // can detect transitions between clips.
     hashes: Option<(String, String)>,
-    sent_at: f64,
+    // Decides which sends carry the hash pair or the clear (change, repeats, keepalive).
+    announcer: ClipAnnouncer,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
     // 10Hz dynamic / 1Hz static broadcast intervals.
@@ -180,32 +182,28 @@ fn broadcast_position(
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
 
     // Scene-driven animation carrier. The hash pair is sent on transition (new clip, or
-    // an empty `scene_hash` to clear a prior active anim) and re-sent every
-    // ANIM_URN_KEEPALIVE seconds while active so late joiners pick it up. The other
+    // an empty `scene_hash` to clear a prior active anim), repeated on the next sends so one
+    // lost datagram doesn't leave a stale clip, and re-sent every ANIM_URN_KEEPALIVE seconds
+    // while active so late joiners pick it up (see `ClipAnnouncer`). The other
     // fields ride along whenever an animation is active. `playback_time` is only sent
     // when the scene explicitly requested a seek this frame. The nested message itself
     // is only attached to the packet when there's something anim-related to say —
     // that way a receiver that's not interested (or that never sees us transition out
     // of an inactive state) costs no bytes.
     let active_anim = scene_anim.and_then(|s| s.active.as_ref());
-    let keepalive_due = active_anim.is_some() && time - last_anim.sent_at >= ANIM_URN_KEEPALIVE;
-    let (scene_hash, content_hash) = if anim_changed {
-        match &current_hashes {
-            Some((s, c)) => (Some(s.clone()), Some(c.clone())),
+    let (scene_hash, content_hash) =
+        match last_anim
+            .announcer
+            .announce(time, current_hashes.as_ref(), ANIM_URN_KEEPALIVE)
+        {
+            Announcement::Clip => current_hashes
+                .as_ref()
+                .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
+                .unwrap_or_default(),
             // Transition active → none: signal clear with an empty scene_hash.
-            None => (Some(String::new()), None),
-        }
-    } else if keepalive_due {
-        current_hashes
-            .as_ref()
-            .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
-    if scene_hash.is_some() {
-        last_anim.sent_at = time;
-    }
+            Announcement::Clear => (Some(String::new()), None),
+            Announcement::Nothing => (None, None),
+        };
     last_anim.hashes = current_hashes;
 
     let speed = active_anim.map(|a| a.speed);

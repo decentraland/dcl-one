@@ -1666,6 +1666,59 @@ mod tests {
         assert!(!state.last_sequence.contains_key(&reused));
     }
 
+    fn anim_packet(
+        sender: Address,
+        hashes: Option<(&str, &str)>,
+        clear: bool,
+    ) -> rfc4::SceneDrivenAnimation {
+        rfc4::SceneDrivenAnimation {
+            scene_hash: clear
+                .then(String::new)
+                .or_else(|| hashes.map(|(s, _)| s.to_owned())),
+            content_hash: hashes.map(|(_, c)| c.to_owned()),
+            speed: Some(1.0),
+            origin_address: Some(format!("{sender:#x}")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_repeated_clip_announcement_resolves_to_the_clip_already_playing() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let sender = Address::repeat_byte(0x11);
+        let mut cache = HashMap::default();
+        let mut resolve = |packet| resolve_remote_anim(entity, sender, &mut cache, Some(packet));
+
+        let announced = resolve(anim_packet(sender, Some(("scene", "clip")), false));
+        let repeated = resolve(anim_packet(sender, Some(("scene", "clip")), false));
+        let ride_along = resolve(anim_packet(sender, None, false));
+
+        let announced = announced.expect("the announcement resolves");
+        // The same URN keeps the avatar's clip running (a different one restarts it), and a
+        // repeat carries no seek or sounds, so neither is applied twice.
+        assert_eq!(repeated.as_ref(), Some(&announced));
+        assert_eq!(ride_along.as_ref(), Some(&announced));
+        assert_eq!(announced.seek, None);
+        assert!(announced.sounds.is_empty());
+    }
+
+    #[test]
+    fn a_repeated_clear_leaves_the_avatar_without_a_clip() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let sender = Address::repeat_byte(0x11);
+        let mut cache = HashMap::default();
+        let mut resolve = |packet| resolve_remote_anim(entity, sender, &mut cache, Some(packet));
+
+        assert!(resolve(anim_packet(sender, Some(("scene", "clip")), false)).is_some());
+        assert!(resolve(anim_packet(sender, None, true)).is_none());
+        assert!(resolve(anim_packet(sender, None, true)).is_none());
+        // a ride-along that outlives the clear has no cached clip to revive
+        assert!(resolve(anim_packet(sender, None, false)).is_none());
+        assert!(cache.is_empty());
+    }
+
     /// The presence pipeline as the plugin wires it, on a bare world: one shared context, the
     /// update/despawn systems and the transport-removal observer.
     fn presence_app() -> (App, Entity) {

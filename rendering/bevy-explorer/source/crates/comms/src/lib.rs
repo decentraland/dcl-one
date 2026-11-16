@@ -1,5 +1,6 @@
 pub mod access_status;
 pub mod adapter;
+mod anim_announce;
 pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
