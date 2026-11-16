@@ -17,6 +17,7 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+AUTH_STRESS = "rpc_validator::tests::provisioned_rpc_workload_runs_3000_verifiers_at_nine_links"
 EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
     ("catalyst_comms", "lib", "pulse::cluster::nats::statistics_tests::statistics_live_broker_late_join_and_reconnect_recover_complete_state"),
@@ -323,6 +324,29 @@ def validate_runtime_script(script):
             "fixture integrity check and selftests must remain unconditional between regression and ENet selftests")
 
 
+def validate_auth_stress_workflow(workflow):
+    jobs = re.findall(r"^  rust:\n(.*?)(?=^  [\w-]+:|\Z)", workflow, re.M | re.S)
+    require(len(jobs) == 1, "auth stress requires the Rust job")
+    steps = re.findall(r"^      - name: Run provisioned auth stress\n(.*?)(?=^      - |\Z)", jobs[0], re.M | re.S)
+    require(jobs[0].count("        shard: [1, 2, 3]\n") == 1,
+            "auth stress requires exactly one provisioned shard in the Rust matrix")
+    expected = '''        if: matrix.shard == 2
+        run: |
+          source tooling/catalyst-test-resources.sh
+          if [ "$RUNNER_OS:$RUNNER_ENVIRONMENT" = macOS:github-hosted ]; then provision_hosted_macos_test_resources; fi
+          nix develop .#ci --command bash -euo pipefail -c '
+          source tooling/catalyst-test-resources.sh
+          prepare_catalyst_test_resources
+          python3 tooling/dev-regressions.py --auth-stress
+          '
+'''
+    require(steps == [expected], "auth stress must run once on shard 2 with adjacent descriptor provisioning and readback")
+    require(workflow.count("python3 tooling/dev-regressions.py --auth-stress") == 1,
+            "auth stress runtime must be selected exactly once")
+    require(jobs[0].index("bash tooling/dev-test.sh rust") < jobs[0].index("- name: Run provisioned auth stress"),
+            "auth stress must follow ordinary backend tests")
+
+
 def validate_test_script(script):
     # Pins the lines that keep the run complete: bash under set -e, the selection compiled
     # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
@@ -396,9 +420,11 @@ def external_inventory(executable, name):
             f"provisioned ignored test absent/renamed or annotation changed: {name}")
 
 
-def run_external(executable, name):
+def run_external(executable, name, *, show_output=False):
     external_inventory(executable, name)
     command = [executable, name, "--exact", "--ignored", "--test-threads=1", "--color", "never"]
+    if show_output:
+        command.append("--show-output")
     print("provisioned Archipelago test: " + " ".join(command), flush=True)
     result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=210)
@@ -493,12 +519,25 @@ def check_executable(required, executable, label, required_ignored=(), *, exact=
         require(inventory(normal)[name] == 1 and inventory(ignored)[name] == 1, f"{label}: provisioned external test must remain ignored by default: {name}")
 
 
+def check_auth_stress():
+    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst",
+                               selected={"dcl_auth"}, kind="lib")
+    require("dcl_auth" in targets, "auth stress library target missing")
+    run_external(targets["dcl_auth"], AUTH_STRESS, show_output=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bevy-artifacts", type=Path)
     parser.add_argument("--archipelago-external", action="store_true")
+    parser.add_argument("--auth-stress", action="store_true")
     args = parser.parse_args()
-    require(not (args.bevy_artifacts and args.archipelago_external), "select only one regression mode")
+    require(sum([bool(args.bevy_artifacts), args.archipelago_external, args.auth_stress]) <= 1,
+            "select only one regression mode")
+    validate_auth_stress_workflow((ROOT / ".github/workflows/development.yml").read_text())
+    if args.auth_stress:
+        check_auth_stress()
+        return
     if args.archipelago_external:
         check_external()
         return

@@ -1247,6 +1247,16 @@ mod tests {
 
     #[tokio::test]
     async fn controlled_rpc_workload_measures_latest_and_fallback_at_the_verification_envelope() {
+        controlled_rpc_workload((1..=9).map(|links| (links, 32))).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the provisioned auth stress tier"]
+    async fn provisioned_rpc_workload_runs_3000_verifiers_at_nine_links() {
+        controlled_rpc_workload(std::iter::once((9, 3000))).await;
+    }
+
+    async fn controlled_rpc_workload(cases: impl IntoIterator<Item = (usize, usize)>) {
         use crate::verify::verify_auth_chain_at_verification_time;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         println!(
@@ -1317,7 +1327,7 @@ mod tests {
             Client::new(),
         );
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        for (links, concurrency) in (1..=9).map(|k| (k, 32)).chain(std::iter::once((9, 3000))) {
+        for (links, concurrency) in cases {
             for historical in [false, true] {
                 fallback.store(historical, Ordering::SeqCst);
                 calls.store(0, Ordering::SeqCst);
