@@ -91,6 +91,10 @@ impl HeldPulseGeneration {
 }
 
 pub async fn run_from_env() -> anyhow::Result<()> {
+    crate::comms::pulse::env::validate_auth_requests(
+        std::env::var("PULSE_LEGACY_HANDSHAKE"),
+        std::env::var("PULSE_V4_ENABLED"),
+    )?;
     let audience = std::env::var("ARCHIPELAGO_CONTROL_V4_AUDIENCE")
         .ok()
         .filter(|value| !value.trim().is_empty())
