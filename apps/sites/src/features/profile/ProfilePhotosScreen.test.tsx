@@ -374,6 +374,24 @@ describe("profile photos, the viewer", () => {
     expect(net.fetchCommunityProfiles.mock.calls[0]?.[0]).toEqual([FRIEND, "0x2222222222222222222222222222222222222222"].sort());
   });
 
+  it("shows a person's initial when their face is missing or fails to load", async () => {
+    const user = userEvent.setup();
+    net.fetchCommunityProfiles.mockResolvedValue({ [FRIEND]: { name: "Alice", picture: "https://faces.example/alice.png" } });
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0, { people: people.slice(0, 2) })]));
+    show();
+    await user.click(await tile(0));
+    const dialog = screen.getByRole("dialog");
+    const face = await within(dialog).findByRole("img", { name: "Alice", hidden: true });
+    expect(within(dialog).getByText("0")).toBeTruthy();
+
+    act(() => {
+      face.dispatchEvent(new Event("error"));
+    });
+
+    expect(within(dialog).queryByRole("img", { name: "Alice", hidden: true })).toBeNull();
+    expect(within(dialog).getByText("A")).toBeTruthy();
+  });
+
   it("jumps in to the world a photo was taken in, never to an uploaded realm URL, and offers no Jump In without coordinates", async () => {
     const user = userEvent.setup();
     net.fetchUserPhotos.mockResolvedValue(

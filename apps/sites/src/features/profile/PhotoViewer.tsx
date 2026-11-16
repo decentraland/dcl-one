@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router";
 
 import { Button, JumpInCTA } from "@dcl/one-ui";
-import { ProfileAvatar } from "@dcl/one-ui/apps/sites/provisional/ProfileAvatar/ProfileAvatar";
 import {
   GeneralClose,
   GeneralInfoButton,
@@ -214,14 +213,7 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
                   <ul className={styles.people}>
                     {details.people.map((person, index) => (
                       <li key={`${person.href ?? person.name}-${index}`} className={styles.person}>
-                        <span aria-hidden="true">
-                          <ProfileAvatar
-                            imageUrl={person.faceUrl}
-                            name={person.name}
-                            color="var(--dcl-neutrals-pale-black)"
-                            size={40}
-                          />
-                        </span>
+                        <PersonFace name={person.name} faceUrl={person.faceUrl} />
                         {person.href ? (
                           <Link to={person.href} prefetch="intent" className={styles.personName}>
                             {person.name}
@@ -240,6 +232,22 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
         </div>
       </div>
     </div>
+  );
+}
+
+/** A person's face, or their initial when there is none or it fails to load. Decoration: the name follows it. */
+function PersonFace({ name, faceUrl }: { name: string; faceUrl?: string | undefined }) {
+  // The failed URL, so a new face for the same person is tried again.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  const showImage = Boolean(faceUrl) && brokenUrl !== faceUrl;
+  return (
+    <span className={styles.face} aria-hidden="true">
+      {showImage ? (
+        <img className={styles.faceImage} src={faceUrl} alt={name} onError={() => setBrokenUrl(faceUrl ?? null)} />
+      ) : (
+        <span>{(Array.from(name)[0] ?? "?").toUpperCase()}</span>
+      )}
+    </span>
   );
 }
 

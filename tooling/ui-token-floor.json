@@ -23,6 +23,26 @@
     "primitives": 14,
     "tokens": 0
   },
+  "apps/sites/src/features/profile/EmptyMessage.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/profile/PhotoViewer.module.css": {
+    "primitives": 0,
+    "tokens": 50
+  },
+  "apps/sites/src/features/profile/ProfilePhotosScreen.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "apps/sites/src/features/profile/ProfilePlacesScreen.module.css": {
+    "primitives": 0,
+    "tokens": 9
+  },
+  "apps/sites/src/features/profile/collectibles.module.css": {
+    "primitives": 0,
+    "tokens": 78
+  },
   "apps/sites/src/features/social/submit-hangout/FeaturedAssetPicker.module.css": {
     "primitives": 2,
     "tokens": 0
@@ -119,10 +139,6 @@
     "primitives": 12,
     "tokens": 0
   },
-  "apps/ui3/src/web/pages/stprofilephotostab.css": {
-    "primitives": 10,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
     "primitives": 16,
     "tokens": 0
@@ -165,7 +181,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 47
+    "tokens": 49
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,

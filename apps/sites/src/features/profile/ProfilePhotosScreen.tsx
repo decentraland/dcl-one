@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { Button, JumpInCTA, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
+import { Button, JumpInCTA } from "@dcl/one-ui";
 import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/index";
@@ -12,7 +12,18 @@ import { formatPhotoDate, isPhotoId, type ProfilePhoto } from "@/data/lib/cataly
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { canReadProfile, photosQuery, signsFor } from "@/data/lib/profile/queries";
 
-import { catalogueTotal, loadedRows, loadMore, useFocusNewRows } from "./collectibles";
+import {
+  catalogueTotal,
+  CollectiblesItem,
+  CollectiblesPanel,
+  loadedRows,
+  loadMore,
+  useCategoryTabs,
+  useFocusNewRows,
+  type CategoryOption,
+  type CollectiblesState,
+} from "./collectibles";
+import { EmptyMessage } from "./EmptyMessage";
 import { usePlaceOwners, useProfilePhoto, useProfilePhotos } from "./hooks";
 import { PhotoViewer, type PhotoViewerDetails } from "./PhotoViewer";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
@@ -24,21 +35,11 @@ const PHOTO_PARAM = "photo";
 
 type Visibility = "all" | "public" | "private";
 
-const VISIBILITIES: { id: Visibility; label: string; icon: ReactNode }[] = [
-  { id: "all", label: "All", icon: <GeneralGallery size={20} aria-hidden="true" /> },
-  { id: "public", label: "Public", icon: <GeneralPublic size={20} aria-hidden="true" /> },
-  { id: "private", label: "Private", icon: <GeneralLock size={20} aria-hidden="true" /> },
+const VISIBILITIES: readonly CategoryOption<Visibility>[] = [
+  { value: "all", label: "All", icon: <GeneralGallery size={20} aria-hidden="true" /> },
+  { value: "public", label: "Public", icon: <GeneralPublic size={20} aria-hidden="true" /> },
+  { value: "private", label: "Private", icon: <GeneralLock size={20} aria-hidden="true" /> },
 ];
-
-type PanelState =
-  | { kind: "loading" }
-  /** A read failed: say so, with the way to try again. Never shown as an empty list. */
-  | { kind: "error"; message: string; action: ReactNode }
-  /** Nothing to list: the empty message, announced by its title. */
-  | { kind: "empty"; title: string; children: ReactNode }
-  /** `more` keeps Load more under a note when a filter matched nothing on the pages loaded so far. */
-  | { kind: "empty-note"; message: string; more?: ReactNode }
-  | { kind: "list"; count: string; children: ReactNode; listRef: Ref<HTMLUListElement>; more?: ReactNode };
 
 export type ProfilePhotosScreenProps = {
   profile: ProfileVM;
@@ -131,49 +132,6 @@ function PhotoTile({ photo, label, isPrivate, onOpen }: { photo: ProfilePhoto; l
         </span>
       ) : null}
     </button>
-  );
-}
-
-/** The owner's empty gallery: the icon frame, title, text and the way in-world. */
-function OwnerEmpty() {
-  return (
-    <div className={styles.empty}>
-      <span className={styles.emptyIcon} aria-hidden="true">
-        <GeneralImage size={56} />
-      </span>
-      <div className={styles.emptyBody}>
-        <p className={styles.emptyTitle}>No photos yet</p>
-        <p className={styles.emptySubtitle}>
-          Jump in and start collecting memories! Press &apos;C&apos; to open the Camera and &apos;Space bar&apos; to snap a photo.
-        </p>
-        <div className={styles.emptyAction}>
-          <JumpInCTA href={playUrl()} size="md" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** One live region, always mounted, so a screen reader hears how loading ended. */
-function StatusLine({ state }: { state: PanelState }) {
-  return (
-    <p className={state.kind === "list" ? styles.count : styles.status} role="status">
-      {state.kind === "loading" ? (
-        <>
-          <Spinner variant="light" className={styles.spinner} aria-hidden="true" />
-          <span className={styles.visuallyHidden}>Loading photos</span>
-        </>
-      ) : state.kind === "error" ? (
-        state.message
-      ) : state.kind === "empty-note" ? (
-        <span className={styles.note}>{state.message}</span>
-      ) : state.kind === "list" ? (
-        state.count
-      ) : (
-        // The empty message below shows this title; the region only announces it.
-        <span className={styles.visuallyHidden}>{state.title}</span>
-      )}
-    </p>
   );
 }
 
@@ -279,29 +237,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stale]);
 
-  const ids = useId();
-  const tabId = (id: Visibility) => `${ids}-${id}`;
-  const panelId = `${ids}-panel`;
-  const filters = signed ? (
-    <TabsBar label="Photos shown" variant="pill" className={styles.filters}>
-      {VISIBILITIES.map(({ id, label, icon }) => (
-        <Tabs
-          key={id}
-          id={tabId(id)}
-          variant="pill"
-          selected={visibility === id}
-          aria-controls={panelId}
-          onClick={() => setVisibility(id)}
-          label={
-            <span className={styles.tabLabel}>
-              {icon}
-              {label}
-            </span>
-          }
-        />
-      ))}
-    </TabsBar>
-  ) : null;
+  const visibilityTabs = useCategoryTabs("Photos shown", VISIBILITIES, visibility, setVisibility);
 
   const signedFailed = fallback ? (
     <span role="status">
@@ -312,7 +248,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
     </span>
   ) : null;
 
-  let state: PanelState;
+  let state: CollectiblesState;
   if (query.isError && !data) {
     state = {
       kind: "error",
@@ -331,10 +267,21 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
       ),
     };
   } else if (!data || (rows.length === 0 && awaitingSigned)) {
-    state = { kind: "loading" };
+    state = { kind: "loading", label: "Loading photos" };
   } else if (rows.length === 0 && (fallback || !query.hasNextPage)) {
     state = own
-      ? { kind: "empty", title: "No photos yet", children: <OwnerEmpty /> }
+      ? {
+          kind: "empty",
+          label: "No photos yet",
+          children: (
+            <EmptyMessage
+              icon={<GeneralImage size={56} />}
+              title="No photos yet"
+              subtitle="Jump in and start collecting memories! Press 'C' to open the Camera and 'Space bar' to snap a photo."
+              action={<JumpInCTA href={playUrl()} size="md" />}
+            />
+          ),
+        }
       : { kind: "empty-note", message: "This member has not taken any photos yet." };
   } else if (shown.length === 0) {
     state = {
@@ -345,49 +292,34 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
   } else {
     state = {
       kind: "list",
+      layout: "photos",
       // A filter counts the photos loaded so far; the gallery's total counts every visibility.
       count: filtered ? photoCount(shown.length) : countLabel(shown.length, catalogueTotal(data)),
       children: shown.map((photo) => (
-        <li key={photo.id} className={styles.item}>
+        <CollectiblesItem key={photo.id}>
           <PhotoTile
             photo={photo}
             label={photoLabel(photo)}
             isPrivate={signed && !photo.isPublic}
             onOpen={() => setOpen(photo.id, { push: true })}
           />
-        </li>
+        </CollectiblesItem>
       )),
       listRef: focus.listRef,
       more: fallback ? undefined : loadMore(query, "photos", () => focus.expectRowsFrom(shown.length)),
     };
   }
 
-  const more = state.kind === "list" || state.kind === "empty-note" ? state.more : undefined;
-  const panel = signed
-    ? { role: "tabpanel", id: panelId, "aria-labelledby": tabId(visibility) }
-    : {};
-
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="photos" onTab={onTab}>
-      <div ref={focus.panelRef} className={styles.root} tabIndex={-1}>
-        {filters || signedFailed ? (
-          <div className={styles.header}>
-            {filters}
-            {signedFailed ? <div className={styles.aside}>{signedFailed}</div> : null}
-          </div>
-        ) : null}
-        <div {...panel}>
-          <StatusLine state={state} />
-          {state.kind === "error" ? <div className={styles.errorAction}>{state.action}</div> : null}
-          {state.kind === "empty" ? state.children : null}
-          {state.kind === "list" ? (
-            <ul ref={state.listRef} className={styles.grid}>
-              {state.children}
-            </ul>
-          ) : null}
-          {more ? <div className={styles.more}>{more}</div> : null}
-        </div>
-      </div>
+      <CollectiblesPanel
+        // Only the owner's signed list carries private photos, so only it gets the visibility tabs.
+        filters={signed ? visibilityTabs.filters : undefined}
+        panel={signed ? visibilityTabs.panel : undefined}
+        aside={signedFailed}
+        state={state}
+        panelRef={focus.panelRef}
+      />
       {openIndex >= 0 ? (
         <OpenPhoto photos={shown} index={openIndex} onOpen={(id) => setOpen(id)} onClose={() => setOpen(null)} />
       ) : linked ? (

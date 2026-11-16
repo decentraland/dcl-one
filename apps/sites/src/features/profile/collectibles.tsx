@@ -205,14 +205,15 @@ export type CollectiblesState =
   | { kind: "error"; message: string; action?: ReactNode }
   /** Nothing to list: an empty message, announced by its title, or a one-line note. */
   | { kind: "empty"; label: string; children: ReactNode }
-  | { kind: "empty-note"; message: string }
+  /** `more` keeps Load more under a note when a filter matched nothing on the pages loaded so far. */
+  | { kind: "empty-note"; message: string; more?: ReactNode }
   | {
       kind: "list";
       /** Announced when loading ends; shown above the list unless `showCount` is false. */
       count: string;
       showCount?: boolean;
-      /** Cards in a grid, or full-width rows (NAMEs). */
-      layout?: "grid" | "rows";
+      /** Cards in a grid, full-width rows (NAMEs), or the photo grid. */
+      layout?: "grid" | "rows" | "photos";
       children: ReactNode;
       /** The list element, so the page can move focus to a row it loaded. */
       listRef?: Ref<HTMLUListElement>;
@@ -237,15 +238,18 @@ export type CollectiblesPanelProps = {
  * otherwise the panel takes focus only from script, after a control it held went away.
  */
 function panelTabIndex(state: CollectiblesState, tabpanel: boolean, scripted: boolean): number | undefined {
-  const empty = state.kind === "loading" || state.kind === "empty-note" || (state.kind === "error" && !state.action);
+  const empty =
+    state.kind === "loading" ||
+    (state.kind === "empty-note" && !state.more) || (state.kind === "error" && !state.action);
   if (tabpanel && empty) return 0;
   return scripted ? -1 : undefined;
 }
 
-/** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
+/** A profile's Creations, Assets or Photos tab body: the filters, then loading, an error, an empty state or the list. */
 export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: CollectiblesPanelProps) {
   const list = state.kind === "list" ? state : null;
   const countShown = list !== null && list.showCount !== false;
+  const more = state.kind === "list" || state.kind === "empty-note" ? state.more : undefined;
 
   return (
     <div className={styles.root}>
@@ -286,13 +290,11 @@ export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: Co
         {state.kind === "error" && state.action ? <div className={styles.errorAction}>{state.action}</div> : null}
         {state.kind === "empty" ? state.children : null}
         {list ? (
-          <>
-            <ul ref={list.listRef} className={list.layout === "rows" ? styles.rows : styles.grid}>
-              {list.children}
-            </ul>
-            {list.more ? <div className={styles.more}>{list.more}</div> : null}
-          </>
+          <ul ref={list.listRef} className={styles[list.layout ?? "grid"]}>
+            {list.children}
+          </ul>
         ) : null}
+        {more ? <div className={styles.more}>{more}</div> : null}
       </div>
     </div>
   );
