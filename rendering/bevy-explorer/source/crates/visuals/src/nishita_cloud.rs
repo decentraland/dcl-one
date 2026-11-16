@@ -375,6 +375,11 @@ pub fn init_noise(size: usize) -> Image {
     )
     .unwrap();
     let seed = datetime.date_naive().day();
+    init_noise_seeded(size, seed)
+}
+
+/// Explicit seed for reproducible captures; normal skies retain the calendar seed.
+pub(crate) fn init_noise_seeded(size: usize, seed: u32) -> Image {
     let noise_pixels = PlaneMapBuilder::new(Perlin::new(seed))
         .set_size(size, size)
         .set_is_seamless(true)
