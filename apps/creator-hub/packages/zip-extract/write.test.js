@@ -171,6 +171,9 @@ describe('zip', () => {
       const extra = at + LOCAL_HEADER + bytes.readUInt16LE(at + LOCAL_NAME_SIZE);
       assert.equal(bytes.readUInt16LE(extra), ZIP64_EXTRA);
       assert.equal(bytes.readUInt16LE(at + LOCAL_EXTRA_SIZE), 20);
+      // With a descriptor too: a streaming reader then takes the 64-bit descriptor.
+      assert.equal(bytes.readUInt32LE(at + LOCAL_COMPRESSED_SIZE), 0xffffffff);
+      assert.equal(bytes.readUInt32LE(at + LOCAL_SIZE), 0xffffffff);
       const descriptor = bytes.readUInt16LE(at + LOCAL_FLAGS) & FLAG_DESCRIPTOR ? 24 : 0;
       at = extra + 20 + entry.compressedSize + descriptor;
     }
@@ -291,6 +294,8 @@ describe('zip', () => {
       assert.equal(header.readUInt16LE(LOCAL_VERSION), ZIP64_VERSION);
       assert.equal(header.readUInt16LE(LOCAL_FLAGS) & FLAG_DESCRIPTOR, FLAG_DESCRIPTOR);
       assert.equal(header.readUInt16LE(LOCAL_HEADER + 'large.bin'.length), ZIP64_EXTRA);
+      assert.equal(header.readUInt32LE(LOCAL_COMPRESSED_SIZE), 0xffffffff);
+      assert.equal(header.readUInt32LE(LOCAL_SIZE), 0xffffffff);
     },
   );
 });

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { scene } from '#preload';
@@ -20,7 +20,9 @@ describe('useMultiplayerStorage', () => {
     const off = renderHook(() => useMultiplayerStorage('/off'));
     vi.mocked(scene.getScene).mockResolvedValueOnce({} as never);
     const absent = renderHook(() => useMultiplayerStorage('/absent'));
-    await waitFor(() => expect(scene.getScene).toHaveBeenCalledTimes(2));
+    // Let both reads settle: false is also the first value, so checking before proves nothing.
+    await act(async () => {});
+    expect(scene.getScene).toHaveBeenCalledTimes(2);
     expect(off.result.current).toBe(false);
     expect(absent.result.current).toBe(false);
   });
@@ -28,7 +30,8 @@ describe('useMultiplayerStorage', () => {
   it('is false when scene.json cannot be read, and without a project', async () => {
     vi.mocked(scene.getScene).mockRejectedValue(new Error('ENOENT'));
     const { result } = renderHook(() => useMultiplayerStorage('/missing'));
-    await waitFor(() => expect(scene.getScene).toHaveBeenCalled());
+    await act(async () => {});
+    expect(scene.getScene).toHaveBeenCalledWith('/missing');
     expect(result.current).toBe(false);
     expect(renderHook(() => useMultiplayerStorage(undefined)).result.current).toBe(false);
   });

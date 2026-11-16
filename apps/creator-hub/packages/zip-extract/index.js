@@ -27,6 +27,12 @@ const ZIP64_END_SIZE = 56;
 const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
 const ZIP64_LOCATOR_SIZE = 20;
 const ZIP64_EXTRA = 0x0001;
+const UNICODE_PATH_EXTRA = 0x7075;
+const FLAG_UTF8 = 0x800;
+// The upper half of code page 437, the name encoding of a zip entry without the UTF-8 flag.
+const CP437_HIGH =
+  'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐' +
+  '└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0';
 const CENTRAL_SIGNATURE = 0x02014b50;
 const CENTRAL_SIZE = 46;
 const LOCAL_SIGNATURE = 0x04034b50;
@@ -143,6 +149,30 @@ function zip64Values(directory, from, to, fileName) {
   throw new Error(`Damaged zip archive: the zip64 field of "${fileName}" is missing`);
 }
 
+function decodeCp437(bytes) {
+  let name = '';
+  for (const byte of bytes)
+    name += byte < 0x80 ? String.fromCharCode(byte) : CP437_HIGH[byte - 0x80];
+  return name;
+}
+
+// As yauzl: UTF-8 when the flag says so; else the Info-ZIP Unicode Path field when its checksum
+// matches the stored name; else code page 437.
+function entryName(directory, nameStart, extraStart, extraEnd, flags) {
+  const raw = directory.subarray(nameStart, extraStart);
+  if (flags & FLAG_UTF8) return raw.toString('utf8');
+  for (let at = extraStart; at + 4 <= extraEnd; at += 4 + directory.readUInt16LE(at + 2)) {
+    const size = directory.readUInt16LE(at + 2);
+    if (directory.readUInt16LE(at) !== UNICODE_PATH_EXTRA || size < 5 || at + 4 + size > extraEnd) {
+      continue;
+    }
+    if (directory[at + 4] === 1 && directory.readUInt32LE(at + 5) === zlib.crc32(raw)) {
+      return directory.toString('utf8', at + 9, at + 4 + size);
+    }
+  }
+  return decodeCp437(raw);
+}
+
 async function readEntries(handle, fileSize) {
   const { count, size, start, limit } = await findDirectory(handle, fileSize);
   if (start + size > limit) throw new Error('Damaged zip archive: the directory is out of range');
@@ -160,9 +190,10 @@ async function readEntries(handle, fileSize) {
     const next = extraEnd + directory.readUInt16LE(at + 32);
     if (next > size) throw new Error('Damaged zip archive: a directory record is cut');
     const host = directory.readUInt16LE(at + 4) >> 8;
+    const flags = directory.readUInt16LE(at + 8);
     const entry = {
-      fileName: directory.toString('utf8', at + CENTRAL_SIZE, extraStart),
-      flags: directory.readUInt16LE(at + 8),
+      fileName: entryName(directory, at + CENTRAL_SIZE, extraStart, extraEnd, flags),
+      flags,
       method: directory.readUInt16LE(at + 10),
       crc32: directory.readUInt32LE(at + 16),
       compressedSize: directory.readUInt32LE(at + 20),
@@ -186,7 +217,8 @@ async function readEntries(handle, fileSize) {
   return entries;
 }
 
-function pathParts(fileName) {
+// A folder entry may name the target folder itself (`./`): it gives no parts.
+function pathParts(fileName, folder) {
   if (fileName === '' || fileName.includes('\\') || fileName.includes('\0')) {
     throw new Error(`Invalid entry name "${fileName}"`);
   }
@@ -195,7 +227,7 @@ function pathParts(fileName) {
   }
   const parts = fileName.split('/').filter(part => part !== '' && part !== '.');
   if (parts.includes('..')) throw new Error(`Entry name "${fileName}" leaves the target folder`);
-  if (parts.length === 0) throw new Error(`Invalid entry name "${fileName}"`);
+  if (parts.length === 0 && !folder) throw new Error(`Invalid entry name "${fileName}"`);
   return parts;
 }
 
@@ -236,7 +268,8 @@ async function writeContent(handle, fileSize, entry, target) {
     new Error(`Damaged zip archive: "${entry.fileName}" fails its size or checksum`);
 
   const stages = [readRange(handle, start, entry.compressedSize, entry.fileName)];
-  if (entry.method === METHOD_DEFLATED) {
+  // Some writers give an empty entry no deflate data at all; zlib refuses that as a cut stream.
+  if (entry.method === METHOD_DEFLATED && entry.compressedSize > 0) {
     stages.push(zlib.createInflateRaw({ chunkSize: INFLATE_SIZE }));
   }
   const output = await fs.promises.open(target, 'w', entry.mode & 0o777 || 0o644);
@@ -253,7 +286,8 @@ async function writeContent(handle, fileSize, entry, target) {
         }
       }
     });
-    if (size !== entry.uncompressedSize || crc32 !== entry.crc32) throw damaged();
+    // An empty entry has nothing to check its checksum against; some writers store a stray one.
+    if (size !== entry.uncompressedSize || (size > 0 && crc32 !== entry.crc32)) throw damaged();
   } catch (error) {
     await output.close();
     await fs.promises.rm(target, { force: true });
@@ -275,11 +309,13 @@ async function extract(zipPath, options) {
       if (entry.fileName.startsWith('__MACOSX/')) continue;
       if (options.onEntry) options.onEntry(entry);
 
-      const target = path.join(root, ...pathParts(entry.fileName));
       const type = entry.mode & TYPE_MASK;
-      if (type === TYPE_LINK) continue;
+      const folder = type === TYPE_FOLDER || entry.fileName.endsWith('/');
+      const parts = pathParts(entry.fileName, folder);
+      if (type === TYPE_LINK || parts.length === 0) continue;
+      const target = path.join(root, ...parts);
 
-      if (type === TYPE_FOLDER || entry.fileName.endsWith('/')) {
+      if (folder) {
         await makeFolder(root, target, entry.fileName);
         continue;
       }

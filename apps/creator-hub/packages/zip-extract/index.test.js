@@ -24,7 +24,8 @@ function zip(entries) {
   const centrals = [];
   let offset = 0;
   for (const entry of entries) {
-    const name = Buffer.from(entry.name);
+    const name = entry.rawName ?? Buffer.from(entry.name);
+    const extra = entry.extra ?? Buffer.alloc(0);
     const content = Buffer.from(entry.content ?? '');
     const method = entry.method ?? 8;
     const data = entry.data ?? (method === 8 ? zlib.deflateRawSync(content) : content);
@@ -52,9 +53,10 @@ function zip(entries) {
     central.writeUInt32LE(data.length, 20);
     central.writeUInt32LE(size, 24);
     central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(extra.length, 30);
     central.writeUInt32LE(((entry.mode ?? FILE) << 16) >>> 0, 38);
     central.writeUInt32LE(offset, 42);
-    centrals.push(central, name);
+    centrals.push(central, name, extra);
 
     offset += local.length + name.length + data.length;
   }
@@ -286,6 +288,73 @@ describe('extract', () => {
     fs.writeFileSync(archive, whole.subarray(0, whole.length - 30));
 
     await assert.rejects(extract(archive, { dir: target }));
+  });
+
+  // "caf\x82s.txt" in code page 437, the name a zip tool without UTF-8 writes for "cafés.txt".
+  const cp437 = Buffer.from([0x63, 0x61, 0x66, 0x82, 0x73, 0x2e, 0x74, 0x78, 0x74]);
+
+  function unicodePath(raw, name, crc32 = zlib.crc32(raw)) {
+    const value = Buffer.from(name);
+    const field = Buffer.alloc(9);
+    field.writeUInt16LE(0x7075, 0);
+    field.writeUInt16LE(5 + value.length, 2);
+    field.writeUInt8(1, 4);
+    field.writeUInt32LE(crc32, 5);
+    return Buffer.concat([field, value]);
+  }
+
+  it('should read a name as code page 437 without the UTF-8 flag, and as UTF-8 with it', async () => {
+    write([
+      { rawName: cp437, content: 'cp437' },
+      { name: 'año.txt', content: 'utf8', flags: 0x800 },
+    ]);
+
+    await extract(archive, { dir: target });
+
+    assert.deepEqual(fs.readdirSync(target).sort(), ['año.txt', 'cafés.txt']);
+    assert.equal(fs.readFileSync(path.join(target, 'cafés.txt'), 'utf8'), 'cp437');
+  });
+
+  it('should take the Unicode Path field only when its checksum matches the name', async () => {
+    write([
+      {
+        rawName: Buffer.from('a?.txt'),
+        extra: unicodePath(Buffer.from('a?.txt'), 'añ.txt'),
+        content: 'a',
+      },
+      {
+        rawName: Buffer.from('b?.txt'),
+        extra: unicodePath(Buffer.from('b?.txt'), 'bñ.txt', 1),
+        content: 'b',
+      },
+    ]);
+
+    await extract(archive, { dir: target });
+
+    assert.deepEqual(fs.readdirSync(target).sort(), ['añ.txt', 'b?.txt']);
+  });
+
+  it('should write an empty file for a deflated entry with no data', async () => {
+    write([
+      { name: 'empty.txt', method: 8, data: Buffer.alloc(0) },
+      { name: 'stray.txt', method: 8, data: Buffer.alloc(0), crc32: 0x1234 },
+    ]);
+
+    await extract(archive, { dir: target });
+
+    assert.equal(fs.readFileSync(path.join(target, 'empty.txt')).length, 0);
+    assert.equal(fs.readFileSync(path.join(target, 'stray.txt')).length, 0);
+  });
+
+  it('should skip a folder entry that names the target folder itself', async () => {
+    write([
+      { name: './', mode: FOLDER, method: 0 },
+      { name: 'a.txt', content: 'a' },
+    ]);
+
+    await extract(archive, { dir: target });
+
+    assert.deepEqual(fs.readdirSync(target), ['a.txt']);
   });
 
   it('should refuse a target folder that is not absolute', async () => {
