@@ -871,10 +871,15 @@ impl RetirementHarness {
             drain_timeout_ms: 0,
             ..Default::default()
         };
-        let fence =
-            catalyst::comms::gatekeeper::admission::cluster::fence_for(pool.clone(), &config)
-                .unwrap()
-                .unwrap();
+        // This harness serves legacy lookups and same-source retirement.
+        let fence = Arc::new(
+            super::PgAssignmentFence::unfenced_test_with_limit(
+                pool.clone(),
+                AUDIENCE.into(),
+                limit,
+            )
+            .unwrap(),
+        );
         let gateway = Arc::new(RecordingGateway {
             pool: Some(pool),
             multiple_wallets: true,
