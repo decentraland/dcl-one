@@ -21,8 +21,8 @@ WORKFLOWS = ('.github/workflows/', '.github/actions/')
 # The pnpm every project pins in packageManager and every workflow fetches.
 PNPM_VERSION = '11.28.12'
 PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
-# The service test's copies install with the pnpm its machine carries; library/ui's package.json is a component generation input.
-UNPINNED = ('infra/dev/service-test/fixture/', 'library/ui/')
+# Copies of projects the service test installs with the pnpm its machine carries.
+UNPINNED = ('infra/dev/service-test/fixture/',)
 # A job may fetch a newer npm to publish; that npm is checked like any other.
 NPX_NPM = re.compile(r'\bnpx\s+--yes\s+npm@\S+')
 # npm commands that install or run a project, after any global flags; publishing and registry queries stay on npm.

@@ -28,9 +28,8 @@ decisions; the rest of both stands.
   (`corepack enable`, or `corepack pnpm@11.28.12`, the `PNPM` default of the SDK and protocol
   Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
   Nix builds run the Nix package set's pnpm and ignore the pin.
-- `library/ui` keeps pnpm 10.19.0: its `package.json` is an input of the generated components, so
-  its pin moves with a component regeneration. 10.19.0 has advisories fixed in 10.34.5, which makes
-  that move the next one.
+- `library/ui`'s `package.json` is an input of its generated components, so changing its pin is a
+  component regeneration (`pnpm figma port prepare`, then `port verify`).
 - pnpm does not read `package-lock.json`. A project moves with `pnpm import`, which writes
   `pnpm-lock.yaml` from it, and then deletes `package-lock.json`. The import resolves again
   where npm had settled a dist-tag or a peer on its own, so the two version sets are compared
