@@ -13,6 +13,7 @@ use crate::{
     broadcast, broadcast_to,
     global_crdt::GlobalCrdtState,
     movement_compressed::{Movement, Temporal},
+    movement_pacing::{head_turned, Change, MovementPacer},
     BroadcastTarget,
 };
 
@@ -26,15 +27,8 @@ impl Plugin for BroadcastPositionPlugin {
     }
 }
 
-const STATIC_FREQ: f64 = 1.0;
-const DYNAMIC_FREQ: f64 = 0.1;
 // Re-send the anim hash pair at least this often so late joiners pick up the active clip.
 const ANIM_URN_KEEPALIVE: f64 = 1.0;
-// A head-yaw or head-pitch change beyond this threshold (in degrees) breaks the
-// STATIC_FREQ idle keepalive and gets the next packet sent at the DYNAMIC_FREQ tick.
-// Smaller deltas are coarsely sampled at 1Hz, which is fine for sub-threshold drift.
-const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
-
 #[derive(Default)]
 struct LastAnim {
     // The (scene_hash, content_hash) pair we last broadcast. Tracked as one unit so we
@@ -73,7 +67,9 @@ fn broadcast_position(
     mut last_position: Local<(Vec3, Quat, Vec3)>,
     mut last_head_sync: Local<HeadSync>,
     mut last_point_at: Local<PointAtSync>,
-    mut last_sent: Local<f64>,
+    mut pacer: Local<MovementPacer>,
+    // The grounded flag and the jump time of the last send, to spot a take-off, a landing or a jump.
+    mut last_edge_state: Local<(bool, f64)>,
     mut last_index: Local<u32>,
     mut last_anim: Local<LastAnim>,
     time: Res<Time>,
@@ -119,14 +115,6 @@ fn broadcast_position(
         last_anim.last_seen_sounds = current_sounds.to_vec();
     }
 
-    let elapsed = time - *last_sent;
-    // Pending seeks do NOT bypass the 10Hz gate — sending faster than that gets us
-    // shadowbanned. The latch above already holds the most recent seek; it rides out
-    // on the next scheduled broadcast.
-    if elapsed < DYNAMIC_FREQ {
-        return;
-    }
-
     let (_, rotation, translation) = player.to_scale_rotation_translation();
     // An anim change (e.g. jump → idle on landing) must go out promptly: when the
     // player comes to rest, velocity/position stop changing, and without this
@@ -138,25 +126,37 @@ fn broadcast_position(
     // Toggling either enabled flag, or a yaw/pitch delta past the threshold, also
     // breaks the keepalive — same shape as anim_changed. Sub-threshold drift just
     // rides the 1Hz keepalive.
+    let grounded = dynamics.ground_height < 0.2;
     let head_changed = head_sync.yaw_enabled != last_head_sync.yaw_enabled
         || head_sync.pitch_enabled != last_head_sync.pitch_enabled
-        || (head_sync.yaw_deg - last_head_sync.yaw_deg).abs() > HEAD_SYNC_EPSILON_DEG
-        || (head_sync.pitch_deg - last_head_sync.pitch_deg).abs() > HEAD_SYNC_EPSILON_DEG;
+        || head_turned(last_head_sync.yaw_deg, head_sync.yaw_deg)
+        || head_turned(last_head_sync.pitch_deg, head_sync.pitch_deg);
     // Point-at toggling or any non-trivial coord change breaks the keepalive.
     // No degree-style threshold: target coords can move continuously when the
     // user drags, and the receiver visually integrates whatever it gets.
     let point_at_changed = point_at.is_pointing != last_point_at.is_pointing
         || (point_at.is_pointing
             && (point_at.target_world - last_point_at.target_world).length_squared() > 0.01);
-    if elapsed < STATIC_FREQ
-        && (translation - last_position.0).length_squared() < 0.01
-        && rotation == last_position.1
-        && (dynamics.velocity - last_position.2).length_squared() < 0.01
-        && last_anim.pending_seek.is_none()
-        && !anim_changed
-        && !head_changed
-        && !point_at_changed
-    {
+    // A take-off, a landing, a new jump or a new clip goes out on the frame it happens.
+    let edge =
+        anim_changed || grounded != last_edge_state.0 || dynamics.jump_time != last_edge_state.1;
+    // Pending seeks are ordinary movement, not edges: sending faster than the budget in
+    // `MovementPacer` gets us disconnected. The latch above already holds the most recent
+    // seek; it rides out on the next scheduled broadcast.
+    let moving = (translation - last_position.0).length_squared() >= 0.01
+        || rotation != last_position.1
+        || (dynamics.velocity - last_position.2).length_squared() >= 0.01
+        || last_anim.pending_seek.is_some()
+        || head_changed
+        || point_at_changed;
+    let change = if edge {
+        Change::Edge
+    } else if moving {
+        Change::Moving
+    } else {
+        Change::Idle
+    };
+    if !pacer.should_send(time, change) {
         return;
     }
 
@@ -174,7 +174,7 @@ fn broadcast_position(
         rotation.to_euler(bevy::math::EulerRot::YXZ).0,
         movement.velocity_tier(),
         dynamics.move_kind,
-        dynamics.ground_height < 0.2,
+        grounded,
     );
 
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
@@ -392,5 +392,6 @@ fn broadcast_position(
     *last_position = (translation, rotation, dynamics.velocity);
     *last_head_sync = head_sync;
     *last_point_at = point_at;
-    *last_sent = time;
+    *last_edge_state = (grounded, dynamics.jump_time);
+    pacer.record_send(time);
 }
