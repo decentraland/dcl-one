@@ -5026,7 +5026,7 @@
     },
     {
       "path": "library/ui/package.json",
-      "sha256": "2188253ca647805db83725a1fc1c271061a76ba3ee109ef6b3afc0563780acc8"
+      "sha256": "78fe4a7f4b89da83e358db8697c80a0eacf0f90e3a232052385b7e5e338555c9"
     },
     {
       "path": "library/ui/tsconfig.json",

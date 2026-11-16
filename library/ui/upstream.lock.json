@@ -904,9 +904,12 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/review/scripts/browser-args.mjs": {
-          "sha256": "2cacbe2440374e77d00d8e7f23246fbed170ea0751ad0c8e4a50e7593bf8d6db",
+          "sha256": "f6099150a0faf2cfe1199d45ff5db093e129b9fda866f3d628bd92a651ddff3d",
           "fds": null,
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "headless-desktop-pointer"
+          ]
         },
         "library/ui/figma/review/scripts/capture-browser.d.mts": {
           "sha256": "b72ded8f482da4a137ddcf77c080c74a4d2da8627c6fc99be2e3d3e6e8790ed7",
@@ -2244,13 +2247,14 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "cd75de8981153e2a80b03f569774163948c3c32f5c5910e80dc0053ef9feafef",
+          "sha256": "e4618c8d40e35dcf2d207cdb531c6c08e7227a9204a2017285141e45cc5c96d7",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "bot-review-279-b",
             "startup-diagnostics",
-            "start-time-limit"
+            "start-time-limit",
+            "headless-desktop-pointer"
           ]
         },
         "library/ui/figma/review/test/capture-teardown.test.ts": {
@@ -4428,6 +4432,7 @@
         "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
         "hand-written-components": "Hand-written public components are plain tracked source in library/ui/components: a top-level directory the public component table does not name. The installer carries them into the published tree byte for byte and refuses a plan that writes into one; the common inspector checks them as tracked, materialized TypeScript and CSS with no Figma URL or key-shaped value, LFS pointer or known generator marker (a mapping header is not one), and the lock never pins them. lock-digests --write regenerates the public foundation and component tables from the staged manifests, keeps a table whose manifest does not validate and then exits 1.",
         "hand-written-public-components": "Public library components are written by hand from templates/component/ per docs/ui-standards.md; generation backs the Review previews only. The maintainer skill covers the Figma pipeline (port and Review) and sends a new public component to the template instead of components/promotion.json or promotion.include, the consumer skill attributes a difference to the capture the mappings follow, and MAINTENANCE.md describes components/ as hand-written components and previews as not public components.",
+        "headless-desktop-pointer": "Headless captures initialize a desktop pointer independently of physical input devices on the runner; explicit touch emulation overrides it. Browser tests assert the primary and restored input capabilities without changing component styles or hover assertions.",
         "install-file-ownership": "The component install owns files, not directories: it removes or overwrites only generation.json, promotion.json and an output the lock's public component table or the installed generation record pins, while its bytes match that pin. Every other file in a component directory, including a committed edit over a generated file, is carried over byte for byte; a plan that would write over such a file or into a component directory holding one is refused with the file's name, and so is an unowned top-level file. A dirty target is reported before an ownership refusal. The maintenance notes and the maintain-figma-library skill describe moving a generated component to hand-written in that order.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",
@@ -4797,7 +4802,7 @@
   "publicComponents": {
     "files": {
       "generation.json": {
-        "sha256": "3b4ecd1b0120b32b73e13b17f2340961a9d1e54b4d1d765573948d94996f577d",
+        "sha256": "d647a23de1f8590570af7b8e7d5f1f04c3e6d686c8eaff07ca12bc4b794635db",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

@@ -323,32 +323,6 @@ pub async fn verify_server_signed_fetch(
     .await
 }
 
-/// The bare signer of a request (the authoritative server's route): the five
-/// minute window, either payload shape, no metadata gate.
-pub async fn require_signer(
-    headers: &HeaderMap,
-    method: &str,
-    path: &SignedPath,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, SignedFetchError> {
-    let chain = signed_fetch::extract_auth_chain(headers).map_err(map_chain_error)?;
-    let ts = timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
-    let now = chrono::Utc::now().timestamp();
-    check_timestamp_window(ts, now, FIVE_MINUTES).map_err(map_chain_error)?;
-    let request = SignedRequest {
-        method,
-        paths: &candidate_paths(headers, path),
-        timestamp: ts,
-        metadata: header_str(headers, AUTH_METADATA_HEADER).unwrap_or("{}"),
-    };
-    let outcome = verify_signature(&chain, &request, now, LegacyPayload::Accepted, validator).await;
-    match verdict(outcome, &chain) {
-        Verdict::Signer(signer) => Ok(signer),
-        Verdict::InvalidSignature => Err(SignedFetchError::new(401, "Invalid signature")),
-        Verdict::Other(e) => Err(e),
-    }
-}
-
 /// The platform service token in front of the voice routes and the world
 /// ban-status route: unset is a misconfiguration (503), a missing or wrong
 /// bearer a 401.
@@ -640,10 +614,10 @@ mod tests {
             "the gatekeeper window is 60 s"
         );
         assert!(
-            require_signer(&headers, "post", &SignedPath::local(PATH), None)
+            verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
                 .await
                 .is_ok(),
-            "the bare signer route keeps the five minute window"
+            "the authoritative server route keeps the five minute window"
         );
     }
 
