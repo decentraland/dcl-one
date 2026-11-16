@@ -424,6 +424,22 @@ mod tests {
     /// How long a stream open or write may wait before the test treats it as held back.
     const HELD_BACK: Duration = Duration::from_millis(500);
 
+    #[test]
+    fn the_transport_config_carries_every_pulse_limit() {
+        // quinn exposes no getters, so read the values back from its field-by-field Debug.
+        let config = format!("{:?}", transport_config());
+        for field in [
+            "max_concurrent_bidi_streams: 4,",
+            "max_concurrent_uni_streams: 16,",
+            "max_idle_timeout: Some(30000),",
+            "stream_receive_window: 65536,",
+            "receive_window: 262144,",
+            "datagram_receive_buffer_size: Some(65536),",
+        ] {
+            assert!(config.contains(field), "missing `{field}` in {config}");
+        }
+    }
+
     fn listen() -> (Host, Vec<u8>) {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let hash = Sha256::digest(cert.cert.der()).to_vec();
