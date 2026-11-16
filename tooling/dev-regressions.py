@@ -31,6 +31,7 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::config::tests::ban_sweep_resolve_keeps_milliseconds_from_process_config",
         "archipelago::config::tests::ban_sweep_environment_parser_keeps_defaults_delays_and_errors",
         "archipelago::enforcement::tests::ban_sweep_waits_for_default_first_interval",
+        "archipelago::enforcement::tests::ban_sweep_first_pass_override_runs_immediately_without_resetting_cadence",
         "archipelago::enforcement::tests::ban_sweep_subsecond_ticks_skip_overlap_without_resetting_cadence",
         "archipelago::enforcement::tests::ban_sweep_missed_ticks_do_not_burst_or_accumulate_while_busy",
         "archipelago::enforcement::tests::ban_sweep_cancel_before_first_tick_starts_no_pass",

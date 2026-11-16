@@ -96,8 +96,9 @@ impl Enforcement {
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         let this = Arc::clone(self);
         let period = Duration::from_millis(self.cfg.ban_sweep_interval_ms.max(1));
+        let first_pass_now = jobs.first_pass_now();
         jobs.spawn("archipelago-ban-sweep", move |ctx| {
-            run_ban_sweeps(ctx, period, move || {
+            run_ban_sweeps(ctx, period, first_pass_now, move || {
                 let this = this.clone();
                 async move {
                     this.ban_sweep_once().await;
@@ -115,13 +116,20 @@ impl Enforcement {
 async fn run_ban_sweeps<F, Fut>(
     ctx: JobContext,
     period: Duration,
+    first_pass_now: bool,
     mut sweep: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = ()>,
 {
-    let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    let first = tokio::time::Instant::now()
+        + if first_pass_now {
+            Duration::ZERO
+        } else {
+            period
+        };
+    let mut ticks = tokio::time::interval_at(first, period);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
@@ -163,19 +171,32 @@ mod tests {
     use tokio::time::{Instant, advance};
 
     fn sweep_job(period_ms: u64) -> (Jobs, mpsc::UnboundedReceiver<Instant>, Arc<Semaphore>) {
-        let jobs = Jobs::new();
+        sweep_job_with_start(period_ms, false)
+    }
+
+    fn sweep_job_with_start(
+        period_ms: u64,
+        first_pass_now: bool,
+    ) -> (Jobs, mpsc::UnboundedReceiver<Instant>, Arc<Semaphore>) {
+        let jobs = Jobs::new().with_first_pass_now(first_pass_now);
         let (started, starts) = mpsc::unbounded_channel();
         let releases = Arc::new(Semaphore::new(0));
         let release = Arc::clone(&releases);
+        let first_pass_now = jobs.first_pass_now();
         jobs.spawn("archipelago-ban-sweep", move |ctx| {
-            run_ban_sweeps(ctx, Duration::from_millis(period_ms), move || {
-                let started = started.clone();
-                let release = Arc::clone(&release);
-                async move {
-                    started.send(Instant::now()).unwrap();
-                    release.acquire().await.unwrap().forget();
-                }
-            })
+            run_ban_sweeps(
+                ctx,
+                Duration::from_millis(period_ms),
+                first_pass_now,
+                move || {
+                    let started = started.clone();
+                    let release = Arc::clone(&release);
+                    async move {
+                        started.send(Instant::now()).unwrap();
+                        release.acquire().await.unwrap().forget();
+                    }
+                },
+            )
         });
         (jobs, starts, releases)
     }
@@ -184,6 +205,28 @@ mod tests {
         for _ in 0..4 {
             tokio::task::yield_now().await;
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ban_sweep_first_pass_override_runs_immediately_without_resetting_cadence() {
+        let before = Instant::now();
+        let (jobs, mut starts, releases) = sweep_job_with_start(100, true);
+        settle().await;
+        assert_eq!(starts.try_recv().unwrap(), before);
+        advance(Duration::from_millis(20)).await;
+        releases.add_permits(1);
+        settle().await;
+        advance(Duration::from_millis(79)).await;
+        settle().await;
+        assert!(starts.try_recv().is_err());
+        advance(Duration::from_millis(1)).await;
+        settle().await;
+        assert_eq!(
+            starts.try_recv().unwrap().duration_since(before),
+            Duration::from_millis(100)
+        );
+        releases.add_permits(1);
+        assert!(jobs.shutdown(Duration::from_secs(1)).await.is_empty());
     }
 
     #[tokio::test(start_paused = true)]
