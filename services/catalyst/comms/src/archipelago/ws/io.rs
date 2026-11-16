@@ -724,8 +724,9 @@ async fn writer<S: Sink<Message> + Unpin>(
             }
         };
         if let Some(clean) = peer_close {
-            // Every completed send has flushed both SplitSink's slot and the
-            // transport buffers. Only the parser's automatic reply remains.
+            // A clean writer has no started frame to drain. A cancelled
+            // readiness or authority wait can also leave this phase clean;
+            // flush the parser's automatic reply within the write deadline.
             if clean {
                 if tokio::time::timeout(WRITE_DEADLINE, sink.flush())
                     .await
@@ -921,6 +922,8 @@ async fn write_frame<S: Sink<Message> + Unpin>(
                 return FrameWrite::Retired;
             }
         }
+        // Remote authorization has its own bounded budget; its time is
+        // excluded from the remaining readiness-and-flush budget.
         let remaining = physical_deadline.saturating_duration_since(Instant::now());
         // Readiness may have waited for earlier transport bytes. Obtain fresh
         // remote evidence afterward, with no local lock held across that wait.
@@ -928,8 +931,8 @@ async fn write_frame<S: Sink<Message> + Unpin>(
             return FrameWrite::Dropped;
         }
         // Reading can queue an automatic control reply during authorization.
-        // If readiness was lost, discard this unstarted frame and let the
-        // existing reconciliation path retry; never loop remote authorization.
+        // If readiness was lost, discard this unstarted frame; only assignment
+        // frames have a reconciliation retry. Never loop remote authorization.
         match futures::future::poll_fn(|cx| Poll::Ready(Pin::new(&mut *sink).poll_ready(cx))).await
         {
             Poll::Ready(Ok(())) => {}
@@ -1229,6 +1232,7 @@ mod bounds_tests {
             let (owner, _events, _) = state
                 .registry
                 .on_peer_connected(&before.wallet, &before.session);
+            owner.assignment_sent();
             let queue = Arc::new(Queue::default());
             let mut credential = frame(Some(owner.clone()), true);
             credential.pulse_admission = PulseAdmissionStamp::from_snapshot(&before, 0);
@@ -1322,7 +1326,7 @@ mod bounds_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn peer_close_cancels_production_readiness_slot_and_partial_frame_without_drain() {
+    async fn peer_close_drains_only_clean_readiness_and_never_partial_frames() {
         for (split, ready) in [(false, false), (true, false), (false, true)] {
             let state = state().await;
             let queue = Arc::new(Queue::default());
@@ -1369,6 +1373,54 @@ mod bounds_tests {
             assert_eq!(state.feed.socket_write_timeout_count(), 0);
             assert_eq!(permits.available_permits(), 1);
             assert!(queue.closed.is_cancelled());
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_kick_sends_terminal_only_from_a_clean_frame_boundary() {
+        for held_flush in [false, true] {
+            let state = state().await;
+            let queue = Arc::new(Queue::default());
+            let (owner, _events, _) = state.registry.on_peer_connected("wallet", "session");
+            {
+                let mut pending = queue.pending.lock();
+                pending.owner = Some(owner.clone());
+                assert!(pending.push(frame(Some(owner.clone()), true)).is_ok());
+            }
+            let wire = Arc::new(Mutex::new(WireProbe {
+                ready: true,
+                flushed: !held_flush,
+                ..Default::default()
+            }));
+            let (sink, _incoming) = SharedTransport::pair(Probe(wire.clone()));
+            let permits = Arc::new(tokio::sync::Semaphore::new(1));
+            let mut job = Box::pin(writer(
+                sink,
+                queue.clone(),
+                state,
+                permits.clone().acquire_owned().await.unwrap(),
+            ));
+            assert!(futures::poll!(&mut job).is_pending());
+            assert_eq!(wire.lock().messages.len(), 1);
+            let flushes = wire.lock().flushes;
+            owner.send(SocketEvent::Kicked);
+            queue.changed.notify_waiters();
+            wire.lock().flushed = true;
+            job.await;
+            let wire = wire.lock();
+            if held_flush {
+                // A terminal packet would flush the retained credential first.
+                assert_eq!(wire.bytes, [0x82, 6]);
+                assert_eq!(wire.flushes, flushes);
+                assert_eq!(wire.messages.len(), 1);
+            } else {
+                assert_eq!(wire.messages.len(), 3);
+                assert_eq!(wire.messages[1], kick_message());
+                assert!(matches!(wire.messages[2], Message::Close(None)));
+            }
+            assert_eq!(wire.closes, 0);
+            assert!(queue.closed.is_cancelled());
+            assert_eq!(permits.available_permits(), 1);
         }
     }
 
@@ -1979,6 +2031,11 @@ mod bounds_tests {
         }
         {
             let mut pending = queue.pending.lock();
+            if !held_readiness {
+                for _ in 0..QUEUE_CAPACITY - 1 {
+                    assert!(pending.push(frame(None, false)).is_ok());
+                }
+            }
             assert!(pending.push(credential).is_ok());
         }
         let wire = Arc::new(Mutex::new(WireProbe {
