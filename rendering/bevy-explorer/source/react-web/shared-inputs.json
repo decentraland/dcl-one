@@ -4243,7 +4243,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "4725764b6afa53a81c6f5f9161a0cb5a5f3f5f0cc6a0be68bbcf46fc3ae39805"
+      "sha256": "b3a380505e7f687e39d7f3d4f0a0a738fbc04008c08b65ba28159e8d3cf5c139"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -4259,7 +4259,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "11803c812477585a9cffeffe25beb22e7afdb5ce43281bea547cc71737bb1ca5"
+      "sha256": "e26b491ecea624a7fc28d85c642d34e3503813a7ed24ce2e5b6489a706436993"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4287,7 +4287,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/nearbyMutes.ts",
-      "sha256": "2fe29d2a5b191e19faae5a07059dcd6c6e2f794593ce144cdf1abd8088be4bd4"
+      "sha256": "0c9428fa69132963f410abe4e9920d4a835ad241cdc9ef1991f82b9d8fddf3d3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/notifications.ts",
@@ -4311,7 +4311,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voice.ts",
-      "sha256": "6ac7807327fbe67537994ae9ef7dde647c4118c3e54e9eaf756d980533f45dee"
+      "sha256": "ca5bebe3c09aa2c4b152e8846000a2e6cb8dfda7c9397c75f9c76574c04bdac9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
@@ -4335,7 +4335,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/system-helpers.ts",
-      "sha256": "7c7db2b91fdf7f05597c8b64a6bb2c9c73a0f9a582d880906094782d12e867ad"
+      "sha256": "1b798876ca727661f0164e84110ecfe03b31231d478212e45f9a14eb3d43f14d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/tsconfig.json",
@@ -4479,7 +4479,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
-      "sha256": "5842da84ee0219899dadd96c5c8b663a1ea908d17d1daa0809adbf8b1eebe8c2"
+      "sha256": "a9ed65f189907d37250eb611c61332c8b3cdd92fcf452d9889a9862ffb8a88c4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
@@ -4503,7 +4503,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
-      "sha256": "3d2bde9a27de63fb7775fda5b6026a72d2096371ae0fc07dbd03cb428dd725c1"
+      "sha256": "2467a67c665005f3e5a4078908375235cee8c4f348cb4e32091bfaacad5c3a03"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
@@ -4756,7 +4756,7 @@
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
-      "sha256": "1382008f12ea5a57b6e7c0976e1c6044d1e9b007d1451805131106a57a572492"
+      "sha256": "8996b0ac88bff33488af2ac886dcc86443e16604765d4a81682f7da5a4448525"
     },
     {
       "path": "library/explorer-core/engine/outfitRandomizer.ts",
@@ -7584,7 +7584,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nametags.test.tsx",
-      "sha256": "3c63d8ba564b845ed31d6f2cf97099024a7f7016a8b663849bab402844e182ab"
+      "sha256": "c19749852b3d7cc2615840d2cc9f39027bcd9a153531a7f23f6e209671e6e69f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyMutes.test.tsx",
