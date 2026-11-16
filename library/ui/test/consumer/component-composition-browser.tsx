@@ -5,8 +5,8 @@ import '../../foundations/foundations.css'
 createRoot(document.getElementById('root')!).render(
   <main style={{ padding: 32, background: 'var(--dcl-bg-page)', color: 'var(--dcl-text-primary)' }}>
     <nav id="mixed-tabs">
-      <Tabs href="#selected" label="Overview" selected />
-      <Tabs href="#iap" label="IAP" />
+      <Tabs mode="navigation" href="#selected" label="Overview" selected />
+      <Tabs mode="navigation" href="#iap" label="IAP" />
     </nav>
     <InputExplorerNames id="explorer-invalid" label="Explorer error" error="Invalid name" />
     <InputField surface="web" id="web-invalid" label="Internal web error" error="Invalid name" />

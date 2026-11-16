@@ -37,9 +37,10 @@ function App() {
         Searchbar or Shop actions.
       </p>
       {page === 'create' ? (
-        <TabsBar {...common} page={page} />
+        <TabsBar mode="navigation" {...common} page={page} />
       ) : (
         <TabsBar
+          mode="navigation"
           {...common}
           page={page}
           search={
@@ -65,6 +66,7 @@ function App() {
                 <button
                   className={styles.icon}
                   aria-label={'Fixture cart, ' + count}
+                  data-expanded={count > 0 || undefined}
                   onClick={() => setCount(count + 1)}
                 >
                   <ShopCart size={24} aria-hidden="true" />

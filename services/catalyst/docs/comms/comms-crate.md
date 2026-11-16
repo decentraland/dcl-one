@@ -31,7 +31,8 @@ separate from the current runtime described here.
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
-| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` |
+| `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
+| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
@@ -40,7 +41,8 @@ separate from the current runtime described here.
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
 Pulse (a mirror advertises Decentraland's Pulse in `/about`),
-player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
+the player report routes under the gatekeeper's own mount (the intake is the
+`/report-user` area), `POST /auth/challenge`, `/auth/livekit-token` and
 `/heartbeat`. Room recovery uses `cluster_change`, `cluster_lookup` and
 `takeover_completed`; hints do not own unfinished work.
 
@@ -53,6 +55,7 @@ player report routes, `POST /auth/challenge`, `/auth/livekit-token` and
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
 | `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
+| `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
@@ -86,7 +89,23 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
-re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; positions coalesce
+re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter); when
+that share is full a new socket closes the oldest pending one instead of being refused, so
+handshakes held open cannot refuse new joins. An evicted handshake closes without a close frame,
+like one past its deadline; the Explorer (`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
+treats that, a 503 on the upgrade and any other handshake failure alike as transient and
+reconnects after 1, 2, 4, then 5 s, and does not read `Retry-After` on `/ws`.
+`comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
+share is too small for the join rate) and `comms_ws_pending_handshakes` the sockets in the
+handshake. Each client source, counted like the per-source socket cap, holds at most
+`WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0 unlimited), beyond that 429;
+a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
+within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
+`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
+attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
+list, or no `X-Real-IP`) is not counted, logs one warning and increments
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
 `island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
 with 1013; undecodable frames 1007; restart closes every socket with 1012.
@@ -97,6 +116,8 @@ with 1013; undecodable frames 1007; restart closes every socket with 1012.
 - Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
 - `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
+- `BAN_SWEEP_INTERVAL_MS` (CLI `--ban-sweep-interval-ms`, default 30,000 ms) schedules connected-wallet ban checks after the first interval and on subsequent timer ticks. A tick during an unfinished pass is skipped; passes never overlap and skipped ticks do not accumulate. Checks retain a maximum concurrency of 20. Numeric prefixes are accepted, fractional milliseconds are truncated, and values below 1 or above 2,147,483,647 become 1 ms; an empty or nonnumeric value fails startup. Shutdown stops new passes while the current pass remains owned by the existing job shutdown deadline.
+- `JOBS_FIRST_PASS_NOW=true` also bypasses the ban sweep's initial delay for development/test startup; subsequent ticks retain the configured cadence.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
 
 ## Statistics ownership and runtime
@@ -118,8 +139,9 @@ successful view, and an outage retains the last complete snapshot without public
 Social keeps its existing topology subscription and LiveKit keeps occupancy authority.
 Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
 content denylist, preserving selected local document order before projection,
-stable count sorting and top-100 selection. `CONTENT_URL` supplies thumbnail
-construction; local SQL determines the corpus and dependency failures. The
+stable count sorting and top-100 selection. Thumbnails name `CONTENT_URL`, or
+this node's own `/content` when it is unset; local SQL determines the corpus and
+dependency failures. The
 [local content source ADR](../../../../docs/adr/2026-11-12-stats-local-content-source.md)
 records the accepted source semantics and preserved rendering and snapshot obligations.
 The discovery subscription and original frame validation remain for transport compatibility;
@@ -412,7 +434,7 @@ as `authoritative-server`):
 - `multiplayer-hosting`, a comms service run as one instance, starts a server on the first joined event for a scene with `authoritativeMultiplayer`, stops it 60 s after the room empties, reconciles against `GET /scene-participants`, keys servers by canonical room and entity hash (a redeploy drains the old one), allows 6 starts per 60 s, and pushes room tokens and 60-minute storage delegations to the engine. Metadata comes from `/content/entities/active` and `/content/contents/{hash}` (5 s timeout, verdict cached per entity hash). `/debug/*` answers only signed fetches from configured admin wallets, otherwise 403; local preview is deferred (503).
 - The runtime is upstream bevy-explorer `headless --orchestrated`, unpatched and keyless, one engine per world. The one engine change left, as an upstream PR: report a room joined only once LiveKit confirms it.
 - Presence, world capacity and the room-empty rule exclude `authoritative-server`.
-- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Verify this requirement through the private acceptance review.
+- Pulse scene listeners must chain to the authoritative address, scoped to their parcels. Pulse admits a listener handshake only from `AUTHORITATIVE_SERVER_ADDRESS` and any `PULSE_SCENE_LISTENER_WALLETS` (`catalyst secrets init` copies the address into Pulse's file), and refuses every listener with neither; the parcel scope is not yet enforced. Verify this requirement through the private acceptance review.
 
 ## Acceptance evidence
 

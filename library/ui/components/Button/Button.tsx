@@ -1,4 +1,3 @@
-import { secureRel } from '../../link.helpers'
 import type {
   AnchorHTMLAttributes,
   ButtonHTMLAttributes,
@@ -8,6 +7,7 @@ import type {
   Ref
 } from 'react'
 import styles from './Button.module.css'
+import { secureRel } from '../../link.helpers'
 
 type AccessibleName = { 'aria-label': string } | { 'aria-labelledby': string }
 type NamedContent = Exclude<ReactNode, null | undefined | boolean>

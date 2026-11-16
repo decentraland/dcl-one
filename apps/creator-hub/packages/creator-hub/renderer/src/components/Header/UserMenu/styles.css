@@ -1,0 +1,59 @@
+.Header.Navbar > .user > .SignInButton {
+  background-color: transparent !important;
+  color: var(--text) !important;
+  border: 1.5px solid var(--palette-whiteTransparent-blurry);
+  border-radius: 12px;
+  box-shadow: none;
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 16px;
+  font-optical-sizing: none;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  box-sizing: border-box;
+  height: 40px;
+  padding: 10.5px 22.5px;
+}
+
+.Header.Navbar > .user > .SignInButton:hover {
+  background-color: var(--transparent-gray-dark) !important;
+  border-color: var(--text);
+}
+
+.Header.Navbar > .user > .AvatarButton {
+  min-width: 0;
+  padding: 0;
+}
+
+.Header.Navbar > .user > .AvatarButton:hover {
+  background-color: transparent;
+}
+
+.Header.Navbar > .user > .SignInButton:focus-visible,
+.Header.Navbar > .user > .AvatarButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.Header.Navbar > .user > .AvatarButton .MuiAvatar-root {
+  width: 40px;
+  height: 40px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 150ms ease;
+}
+
+.Header.Navbar > .user > .AvatarButton:hover .MuiAvatar-root {
+  outline-color: #ffffff;
+}
+
+.AccountTooltip {
+  background-color: #2d2a33 !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
+.MuiTooltip-popper[data-popper-placement*="bottom"] .AccountTooltip {
+  margin-top: 10px !important;
+}

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::Animator",
+      "data": {
+        "0": {
+          "json": {
+            "states": []
+          }
+        }
+      }
+    },
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/Futuristic_Siren.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Alarm.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"activateAnimation\":{\"type\":\"string\",\"optional\":true,\"value\":\"trigger\",\"tooltip\":\"Name of the animation clip in the alarm's model, looped while the alarm is triggered.\"},\"idleAnimation\":{\"type\":\"string\",\"optional\":true,\"value\":\"\",\"tooltip\":\"Name of an animation clip to play when the alarm is disarmed or the scene loads, to set the resting pose. Leave empty for none.\"},\"sound\":{\"type\":\"string\",\"optional\":true,\"value\":\"siren.mp3\",\"tooltip\":\"Name of an audio file inside this smart item's folder (e.g. siren.mp3), looped while the alarm is triggered. Leave empty for no sound.\"},\"hoverText\":{\"type\":\"string\",\"optional\":true,\"value\":\"Press\",\"tooltip\":\"Text shown when the player points at the alarm.\"},\"clickToTrigger\":{\"type\":\"boolean\",\"optional\":true,\"value\":false,\"tooltip\":\"If true, clicking the alarm triggers it. If false, clicking plays the animation and sound once without triggering the alarm.\"}},\"actions\":[{\"methodName\":\"trigger\",\"description\":\"Triggers the alarm, looping its animation and sound until disarmed\",\"params\":{}},{\"methodName\":\"disarm\",\"description\":\"Disarms the alarm, stopping its animation and sound\",\"params\":{}}]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Siren"
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Sync-Components",
+      "data": {
+        "0": {
+          "json": {
+            "componentIds": ["core::Animator", "core::AudioSource", "asset-packs::States"]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Trigger",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Alarm.ts\",\"methodName\":\"trigger\",\"params\":{}}",
+                "default": true
+              },
+              {
+                "type": "call_script_method",
+                "name": "Disarm",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Alarm.ts\",\"methodName\":\"disarm\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
