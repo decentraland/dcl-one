@@ -1,6 +1,3 @@
-/* The lobby's widget sections: their title rows, rails, skeletons and empty banners, and Go to. */
-
-/* ---- title rows ---- */
 .header {
   display: flex;
   align-items: center;
@@ -90,7 +87,6 @@
   text-overflow: ellipsis;
 }
 
-/* ---- rails: one page of cards wide, the cards' height plus the 42px pager band ---- */
 .friendsRail {
   --rail-gap: 9px;
   width: 439px;
@@ -129,7 +125,6 @@
   margin-bottom: 42px;
 }
 
-/* ---- skeletons: one bone per card of the first page ---- */
 .skeleton {
   display: flex;
   gap: 9px;
@@ -169,7 +164,6 @@
   }
 }
 
-/* ---- empty banners ---- */
 .banner {
   position: relative;
   display: flex;
@@ -317,7 +311,6 @@
   font-size: var(--type-12);
 }
 
-/* ---- Go to ---- */
 .gotoTitle {
   height: 20px;
   margin: 0 10px 10px 0;

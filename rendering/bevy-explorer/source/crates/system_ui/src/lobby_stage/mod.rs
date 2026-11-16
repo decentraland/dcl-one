@@ -1,7 +1,6 @@
-//! The lobby's 3D stage: the set the system scene's preview avatar stands in while the lobby is
-//! open. The system scene owns the avatar and its camera; it names a look and the camera layer,
-//! and the stage is built on that layer around the avatar's feet and refitted to the camera
-//! every frame: the backdrop covers the frame above the line where the floor dissolves into it.
+//! The system scene owns the preview avatar and its camera and names the look and camera layer;
+//! the stage is built on that layer around the avatar's feet and refitted to the camera every
+//! frame.
 
 mod diagnostics;
 mod dust;
@@ -38,7 +37,6 @@ use self::{
     presets::{mirrored_rotation, StagePreset},
 };
 
-/// The stage's origin sits this far above the avatar's feet.
 const ORIGIN_ABOVE_FEET: f32 = 1.0;
 /// Heights in the stage's frame.
 const FLOOR_Y: f32 = -1.116;
@@ -49,7 +47,7 @@ const FLOOR_SIZE: f32 = 60.0;
 const FLOOR_TILING: f32 = 12.0;
 const FLOOR_SPOT_RADIUS: f32 = -0.67;
 const FLOOR_SPOT_SOFTNESS: f32 = 0.26;
-/// The backdrop's resting place; its size and height are refitted to the camera.
+/// Its size and height are refitted to the camera every frame.
 const BACKDROP_POSITION: Vec3 = Vec3::new(0.0, 1.0, -15.0);
 const MIST_POSITION: Vec3 = Vec3::new(0.0, -1.87, -6.0);
 const MIST_SIZE: Vec2 = Vec2::new(21.2, 1.25);
@@ -113,11 +111,9 @@ fn add_materials(app: &mut App) {
     ));
 }
 
-/// What the system scene asked for last.
 #[derive(Resource, Default)]
 struct StageRequest(Option<LobbyStage>);
 
-/// The stage's root, with what it was built for.
 #[derive(Component)]
 struct Stage {
     preset: &'static StagePreset,
@@ -135,7 +131,6 @@ struct StageFloor;
 #[derive(Component)]
 struct Vignette;
 
-/// A rock prop; its materials turn mossy once its model is in.
 #[derive(Component)]
 struct Mossy {
     moss: LinearRgba,
@@ -150,7 +145,6 @@ fn take_requests(mut events: EventReader<SystemApi>, mut request: ResMut<StageRe
     }
 }
 
-/// The render layer the system scene's camera layer maps to, once the scene has one.
 fn render_layer(
     cache: &TextureLayersCache,
     roots: &Query<Entity, (With<SuperUserScene>, With<RendererSceneContext>)>,
@@ -164,7 +158,6 @@ fn render_layer(
     Some((base * 15 + (layer - 1).min(15)) as usize)
 }
 
-/// A camera the stage may face: what it renders, how it projects, and its exposure.
 type StageCamera = (
     Entity,
     &'static GlobalTransform,
@@ -230,7 +223,6 @@ fn sync_stage(
     {
         return;
     }
-    // wait for the camera that renders the layer: the stage faces it
     let layers = RenderLayers::layer(render_layer);
     let Some((camera, camera_transform, _, _, exposure)) = camera_for(render_layer) else {
         return;
@@ -321,7 +313,6 @@ impl StageAssets<'_> {
     ) {
         let unit_rect = meshes.add(Rectangle::new(1.0, 1.0));
 
-        // backdrop: refitted every frame by fit_stage
         let backdrop = asset_server.load(preset.backdrop);
         commands.spawn((
             Backdrop,
@@ -338,7 +329,6 @@ impl StageAssets<'_> {
             ChildOf(root),
         ));
 
-        // floor
         let ground = asset_server.load_with_settings(
             "embedded://lobby_stage/ground.jpg",
             |settings: &mut ImageLoaderSettings| {
@@ -381,14 +371,12 @@ impl StageAssets<'_> {
             ChildOf(root),
         ));
 
-        // podium
         commands.spawn((
             SceneRoot(asset_server.load("embedded://lobby_stage/podium.glb#Scene0")),
             Transform::from_xyz(0.0, PODIUM_Y, 0.0),
             ChildOf(root),
         ));
 
-        // blob shadow, lying on the podium
         let shape = asset_server.load_with_settings(
             "embedded://lobby_stage/blob_shadow.png",
             |settings: &mut ImageLoaderSettings| settings.is_srgb = false,
@@ -407,7 +395,6 @@ impl StageAssets<'_> {
             ChildOf(root),
         ));
 
-        // mist behind the avatar
         if let Some(color) = preset.mist {
             commands.spawn((
                 Mesh3d(unit_rect.clone()),
@@ -432,7 +419,6 @@ impl StageAssets<'_> {
             ));
         }
 
-        // dust motes
         if let Some(color) = preset.dust {
             commands.spawn((
                 Dust::new(color.to_linear()),
@@ -451,7 +437,6 @@ impl StageAssets<'_> {
             ));
         }
 
-        // props, standing on the floor
         for prop in preset.props {
             let mut entity = commands.spawn((
                 SceneRoot(
@@ -472,7 +457,7 @@ impl StageAssets<'_> {
             }
         }
 
-        // key light: the source light shines along its +z, this one along its -z
+        // the source light shines along its +z, this one along its -z
         commands.spawn((
             DirectionalLight {
                 color: preset.light_color,
@@ -486,7 +471,6 @@ impl StageAssets<'_> {
             ChildOf(root),
         ));
 
-        // vignette over the whole frame
         if preset.vignette.intensity > 0.0 {
             let v = preset.vignette;
             commands.spawn((
@@ -512,7 +496,6 @@ impl StageAssets<'_> {
     }
 }
 
-/// Swap a rock's standard materials for mossy ones once its model has spawned.
 fn moss_rocks(
     trigger: Trigger<SceneInstanceReady>,
     rocks: Query<&Mossy>,
@@ -576,7 +559,7 @@ fn animate_dust(
     }
 }
 
-/// A ray from the camera through a point of its frame, 0..1 from the bottom left.
+/// `x` and `y` are 0..1 from the frame's bottom left.
 fn frame_ray(camera: &GlobalTransform, half_height: f32, aspect: f32, x: f32, y: f32) -> Ray3d {
     let local = Vec3::new(
         (x * 2.0 - 1.0) * half_height * aspect,
@@ -589,7 +572,6 @@ fn frame_ray(camera: &GlobalTransform, half_height: f32, aspect: f32, x: f32, y:
     )
 }
 
-/// Where a ray meets a plane, if ahead of it.
 fn hit(ray: Ray3d, plane_point: Vec3, normal: Vec3) -> Option<Vec3> {
     let denominator = ray.direction.dot(normal);
     if denominator.abs() < 1e-6 {
@@ -611,7 +593,7 @@ pub fn cover_size(
     Vec2::new(height * texture_aspect, height)
 }
 
-/// What fitting the stage to its camera works out, in world space.
+/// In world space.
 #[derive(Debug, PartialEq)]
 pub struct Fit {
     /// The dissolve's axis (away from the camera) and its start and end along it.
@@ -623,8 +605,6 @@ pub struct Fit {
     pub backdrop_rotation: Quat,
 }
 
-/// Place the floor's dissolve at the preset's screen height and size the backdrop to cover the
-/// frame above it.
 pub fn fit(
     camera: &GlobalTransform,
     fov: f32,
@@ -750,10 +730,8 @@ mod tests {
 
     #[test]
     fn cover_size_keeps_the_aspect_and_covers_both_ways() {
-        // wide frame: the width decides
         let size = cover_size(20.0, 4.0, 2.0, 0.5);
         assert_eq!(size, Vec2::new(20.0, 10.0));
-        // tall need: the height above the blend decides
         let size = cover_size(4.0, 6.0, 2.0, 0.5);
         assert_eq!(size, Vec2::new(24.0, 12.0));
     }
@@ -761,7 +739,6 @@ mod tests {
     #[test]
     fn fit_ends_the_dissolve_under_the_blend_line_and_covers_the_frame() {
         let preset = presets::preset("halloween-2026");
-        // the lobby camera: 1.8 m over the feet, 6 m back, looking slightly down
         let feet = Vec3::ZERO;
         let camera = GlobalTransform::from(
             Transform::from_xyz(0.0, 1.8, 6.0).looking_at(Vec3::new(0.0, 0.8, 0.0), Vec3::Y),
@@ -783,14 +760,11 @@ mod tests {
 
         assert!((fit.blend_axis - Vec3::NEG_Z).length() < 1e-5);
         assert!((fit.blend_end - fit.blend_start - preset.blend_depth).abs() < 1e-4);
-        // the dissolve ends beyond the avatar (the axis points away from the camera)
         assert!(fit.blend_end > 0.0, "{fit:?}");
-        // the backdrop faces the camera and is wide enough for the frame at its distance
         assert!((fit.backdrop_rotation * Vec3::Z - Vec3::Z).length() < 1e-5);
         let distance = 6.0 - rest.z;
         let frame_width = 2.0 * distance * (fov * 0.5).tan() * aspect;
         assert!(fit.backdrop_size.x >= frame_width - 1e-3, "{fit:?}");
-        // its share below the blend line sits under it
         let bottom = fit.backdrop_centre.y - fit.backdrop_size.y * 0.5;
         assert!(bottom < floor_y + 1.0);
     }
@@ -911,8 +885,6 @@ mod tests {
         assert!(compiled >= 6, "only {compiled} pipelines compiled");
     }
 
-    /// Every model and texture the looks name is embedded and loads without a renderer, and each
-    /// model carries its material.
     #[test]
     fn stage_assets_load() {
         use bevy::{

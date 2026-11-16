@@ -1,5 +1,4 @@
-// Ground mist on a flat quad behind the avatar: two layers of drifting value noise thresholded
-// into wisps, with a soft elliptical mask so the quad's border never shows. Unlit.
+// A soft elliptical mask keeps the quad's border from showing.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},

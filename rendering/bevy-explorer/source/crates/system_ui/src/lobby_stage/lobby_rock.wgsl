@@ -1,6 +1,3 @@
-// Stage rocks: moss over their texture, the rock showing through more the less a surface faces
-// up past the moss mask.
-
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,

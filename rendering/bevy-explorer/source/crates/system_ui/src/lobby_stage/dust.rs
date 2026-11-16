@@ -1,6 +1,3 @@
-//! The floating dust motes: a small particle simulation in the stage's frame, drawn as one mesh
-//! of camera-facing quads rebuilt each frame.
-
 use bevy::{
     prelude::*,
     render::{
@@ -9,7 +6,7 @@ use bevy::{
     },
 };
 
-/// The motes' emitter, in the stage's frame.
+/// In the stage's frame.
 pub const EMITTER_CENTRE: Vec3 = Vec3::new(0.0, 1.9, -3.0);
 pub const EMITTER_SIZE: Vec3 = Vec3::new(26.0, 6.0, 16.0);
 const MAX_MOTES: usize = 300;
@@ -123,8 +120,7 @@ impl Dust {
         }
     }
 
-    /// The motes as camera-facing quads; `right` and `up` are the camera's axes in the stage's
-    /// frame.
+    /// `right` and `up` are the camera's axes in the stage's frame.
     pub fn build_mesh(&self, mesh: &mut Mesh, right: Vec3, up: Vec3) {
         let mut positions = Vec::with_capacity(self.motes.len() * 4);
         let mut colors = Vec::with_capacity(self.motes.len() * 4);
@@ -156,7 +152,7 @@ impl Dust {
     }
 }
 
-/// An empty mesh for `Dust::build_mesh` to fill, kept on the CPU to be rebuilt every frame.
+/// Kept on the CPU: `Dust::build_mesh` rebuilds it every frame.
 pub fn empty_mesh() -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -170,7 +166,6 @@ pub fn empty_mesh() -> Mesh {
     mesh
 }
 
-/// Opacity over a mote's life: in from nothing, fully there at the middle, out again.
 fn fade(life: f32) -> f32 {
     let life = life.clamp(0.0, 1.0);
     if life < 0.5 {
@@ -205,7 +200,6 @@ fn value_noise(p: Vec3) -> f32 {
     y0 + (y1 - y0) * f.z
 }
 
-/// A slow, smooth wander: each axis its own noise field, scrolling over time.
 fn noise_drift(position: Vec3, time: f32) -> Vec3 {
     let p = position * NOISE_FREQUENCY + Vec3::splat(time * NOISE_SCROLL);
     let axis = |offset: f32| value_noise(p + Vec3::splat(offset)) * 2.0 - 1.0;
@@ -229,7 +223,6 @@ mod tests {
         let mut dust = Dust::new(LinearRgba::WHITE);
         let before: Vec<f32> = dust.motes.iter().map(|m| m.lifetime - m.age).collect();
         let longest = before.iter().cloned().fold(0.0, f32::max);
-        // stop emitting and outlive every mote
         dust.rate = 0.0;
         dust.pending = 0.0;
         let mut time = 0.0;

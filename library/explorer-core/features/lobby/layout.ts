@@ -1,13 +1,10 @@
-// The lobby's widget layout: which widgets sit where on the four corner grids around the avatar.
 // At most one placement per widget, none overlapping and all inside their grid. Cells are counted
-// columns by rows from the grid's top-left corner. Pure data; the page draws it (LobbyHome) and
-// the layout editor changes it.
+// columns by rows from the grid's top-left corner.
 
 export const LOBBY_CORNERS = ['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'] as const
 export type LobbyCorner = (typeof LOBBY_CORNERS)[number]
 
-/** Every widget, named with its span in cells, columns by rows: a resized widget gets a new id, so
- *  stored layouts drop it. */
+/** Each id carries its span (columns by rows): a resized widget gets a new id, so stored layouts drop it. */
 export const LOBBY_WIDGETS = [
   'Landing4By3',
   'LiveEvents3By3',
@@ -25,7 +22,7 @@ export const LOBBY_WIDGETS = [
 ] as const
 export type LobbyWidgetId = (typeof LOBBY_WIDGETS)[number]
 
-/** A widget as the player names it, whatever its size. A family with several sizes places one at a time. */
+/** A family with several sizes places one at a time. */
 export const LOBBY_FAMILIES = ['Landing', 'LiveEvents', 'UpcomingEvents', 'FriendsOnline', 'JumpBackIn', 'RecommendedPlaces', 'Communities', 'Gallery', 'GoTo'] as const
 export type LobbyWidgetFamily = (typeof LOBBY_FAMILIES)[number]
 
@@ -41,10 +38,9 @@ export interface LobbyPlacement {
   cell: Cell
 }
 
-/** Grid sizes in cells, columns by rows. */
+/** Columns by rows. */
 export type GridSizes = Record<LobbyCorner, Cell>
 
-/** The lobby's grids at 1920×1080: four columns by six rows beside the avatar, seven by two below. */
 export const LOBBY_GRID_SIZES: GridSizes = {
   TopLeft: { x: 4, y: 6 },
   TopRight: { x: 4, y: 6 },
@@ -84,7 +80,7 @@ const CARD_COUNTS: Record<LobbyWidgetId, number> = {
   GoTo4By1: 1
 }
 
-/** A family's sizes, the first being the one it takes when none is picked. */
+/** The first size is the one a family takes when none is picked. */
 const VARIANTS: Record<LobbyWidgetFamily, readonly LobbyWidgetId[]> = {
   Landing: ['Landing4By3'],
   LiveEvents: ['LiveEvents3By3'],
@@ -110,7 +106,6 @@ const TITLES: Record<LobbyWidgetFamily, string> = {
 }
 
 export const widgetSpan = (widget: LobbyWidgetId): Cell => SPANS[widget]
-/** How many cards the widget shows at once. */
 export const widgetCardCount = (widget: LobbyWidgetId): number => CARD_COUNTS[widget]
 export const familyVariants = (family: LobbyWidgetFamily): readonly LobbyWidgetId[] => VARIANTS[family]
 export const familyTitle = (family: LobbyWidgetFamily): string => TITLES[family]
@@ -127,7 +122,7 @@ const DEFAULT_PLACEMENTS: readonly LobbyPlacement[] = [
   { widget: 'RecommendedPlaces7By2', corner: 'BottomRight', cell: { x: 0, y: 0 } }
 ]
 
-/** Down, right, up and left; the order breaks ties between equally cheap pushes. */
+/** The order breaks ties between equally cheap pushes. */
 const PUSH_DIRECTIONS: readonly Cell[] = [
   { x: 0, y: 1 },
   { x: 1, y: 0 },
@@ -140,7 +135,6 @@ const fits = (grid: Cell, cell: Cell, span: Cell): boolean => cell.x >= 0 && cel
 const overlap = (a: Cell, aSpan: Cell, b: Cell, bSpan: Cell): boolean =>
   a.x < b.x + bSpan.x && b.x < a.x + aSpan.x && a.y < b.y + bSpan.y && b.y < a.y + aSpan.y
 
-/** How many cells the widget must travel in the direction to clear the pusher it overlaps. */
 function displacement(direction: Cell, pusher: Cell, pusherSpan: Cell, other: Cell, otherSpan: Cell): number {
   if (direction.y > 0) return pusher.y + pusherSpan.y - other.y
   if (direction.y < 0) return other.y + otherSpan.y - pusher.y
@@ -179,8 +173,7 @@ export class LobbyLayout {
     })
   }
 
-  /** Places the widget, moving it if already placed; fails when the cell doesn't fit the grid or overlaps
-   *  another widget, leaving the layout as it was. */
+  /** Moves the widget if already placed; on failure (outside the grid or overlapping) the layout is unchanged. */
   tryPlace(widget: LobbyWidgetId, corner: LobbyCorner, cell: Cell): boolean {
     if (!this.isFree(corner, cell, widgetSpan(widget), widget)) return false
     this.remove(widget)
@@ -188,8 +181,7 @@ export class LobbyLayout {
     return true
   }
 
-  /** Places the widget like tryPlace, but the widgets in its way move aside as resolvePush works out. Fails
-   *  the same way, leaving the layout as it was. */
+  /** Like tryPlace, but the widgets in its way move as resolvePush decides. */
   tryPlacePushing(widget: LobbyWidgetId, corner: LobbyCorner, cell: Cell): boolean {
     const pushed = this.resolvePush(widget, corner, cell)
     if (pushed == null) return false
@@ -213,13 +205,11 @@ export class LobbyLayout {
     this.placements.length = 0
   }
 
-  /** The placements the lobby ships with. */
   resetToDefault(): void {
     this.clear()
     for (const p of DEFAULT_PLACEMENTS) this.tryPlace(p.widget, p.corner, p.cell)
   }
 
-  /** Whether a widget of the span fits the grid at the cell without overlapping any placed widget other than `ignoring`. */
   isFree(corner: LobbyCorner, cell: Cell, span: Cell, ignoring?: LobbyWidgetId): boolean {
     if (!fits(this.grids[corner], cell, span)) return false
     return !this.placements.some((o) => o.corner === corner && o.widget !== ignoring && overlap(cell, span, o.cell, widgetSpan(o.widget)))

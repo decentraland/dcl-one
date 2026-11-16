@@ -1,6 +1,3 @@
-/* The lobby's layout editor: the grids' backdrops and dots, the widget frames, the drop marker, the
-   dragged stand-in and the Customize Lobby modal. */
-
 .grid {
   position: absolute;
   pointer-events: none;
@@ -100,7 +97,6 @@
   background: var(--lobby-drop-invalid-fill);
 }
 
-/* ---- the dragged stand-in ---- */
 .preview {
   position: absolute;
   box-sizing: border-box;
@@ -226,7 +222,6 @@
   border-radius: 23px;
 }
 
-/* ---- the Customize Lobby modal ---- */
 .modal {
   position: absolute;
   left: 50%;

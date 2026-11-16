@@ -1,6 +1,5 @@
-// Full-frame vignette for the lobby stage, sparing an oval around the avatar. The vertex stage
-// writes clip-space positions straight from the unit quad, so the quad covers the frame of
-// whichever camera draws it, wherever the mesh is.
+// The vertex stage writes clip-space positions straight from the unit quad, so the quad covers
+// the frame of whichever camera draws it, wherever the mesh is.
 
 #import bevy_pbr::forward_io::FragmentOutput
 

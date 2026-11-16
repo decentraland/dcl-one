@@ -1177,10 +1177,9 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
-  /** The lobby's stage look (`lobbyStage.ts` LOBBY_STAGE_PRESETS id); lobby region only. */
+  /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
-  /** The lobby page's avatar greets, plays an idle emote now and then and cheers at a new look;
-   *  lobby region only (the pages that borrow the stage leave it still). */
+  /** Lobby region only: the pages that borrow the stage leave the avatar still. */
   idleEmotes?: boolean
 }
 
@@ -1732,7 +1731,7 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
-/** An event from the events service as the lobby reads it (signed, with its connected users). */
+/** Read signed, with its connected users. */
 export interface LobbyEvent {
   id: string
   name: string
@@ -1757,30 +1756,29 @@ export interface LobbyEvent {
   place_id?: string | null
 }
 
-/** Close the client (the native one: the web page has nothing to close to). */
+/** Native only: the web page has nothing to close. */
 export interface QuitRequest {
   kind: 'quit'
 }
 
-/** The lobby's events, read signed so each carries whether the player marked it interested. */
+/** Read signed so each event carries `attending`. */
 export interface GetLobbyEventsRequest {
   kind: 'getLobbyEvents'
 }
 
-/** The events service's list with its connected users, or null when the read failed. */
+/** null when the read failed. */
 export interface LobbyEventsMessage {
   kind: 'lobbyEvents'
   events: LobbyEvent[] | null
 }
 
-/** Mark an event interested (or not) for the signed-in player. */
 export interface SetEventInterestRequest {
   kind: 'setEventInterest'
   id: string
   interested: boolean
 }
 
-/** Whether the mark took; on failure `interested` is what the event still is. */
+/** On failure `interested` is the event's unchanged state. */
 export interface EventInterestMessage {
   kind: 'eventInterest'
   id: string

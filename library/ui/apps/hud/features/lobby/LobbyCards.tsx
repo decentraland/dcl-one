@@ -1,7 +1,3 @@
-// The lobby's cards: the landing (home) card, places, live and upcoming events, online friends,
-// communities and gallery photos, and the row of friend pictures a place or an event shows. Each
-// card is drawn from plain values; the widgets (LobbyWidgets) feed and wire them.
-
 import { useState } from 'react'
 import addToCalendar from '../../assets/lobby/add-to-calendar-icn.png'
 import defaultPlace from '../../assets/lobby/default-image-place.png'
@@ -25,7 +21,6 @@ import styles from './LobbyCards.module.css'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
-/** A card's picture: a shimmering bone until it has loaded, then fading in over the default picture. */
 function Thumb({ src, fallback, className }: { src: string | null | undefined; fallback: string; className: string }): React.JSX.Element {
   const [loaded, setLoaded] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -39,7 +34,7 @@ function Thumb({ src, fallback, className }: { src: string | null | undefined; f
   )
 }
 
-/** The online counter pill: a green dot, the players icon and the count. Hidden at 0. */
+/** Hidden at 0. */
 function OnlineBadge({ count, className }: { count: number | null | undefined; className?: string }): React.JSX.Element | null {
   if (count == null || count <= 0) return null
   return (
@@ -51,8 +46,6 @@ function OnlineBadge({ count, className }: { count: number | null | undefined; c
   )
 }
 
-/** A profile picture: the profile's colour under the picture (or the default one), framed by the
- *  same colour a fifth of the way to white. */
 export function profilePictureStyle(color: string, picture: string | null | undefined): React.CSSProperties {
   return { backgroundColor: color, borderColor: `color-mix(in srgb, ${color} 80%, white)`, backgroundImage: `url("${picture || defaultProfile}")` }
 }
@@ -66,7 +59,6 @@ export interface ConnectedFriend {
 
 const MAX_FRIEND_PICTURES = 3
 
-/** The friends at a place or an event: up to three overlapping pictures, then "+N". */
 export function ConnectedFriends({ friends, onHover }: { friends: ConnectedFriend[]; onHover?: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void }): React.JSX.Element | null {
   if (friends.length === 0) return null
   const shown = friends.slice(0, MAX_FRIEND_PICTURES)
@@ -105,7 +97,6 @@ function JumpInButton({ size, className, disabled, onClick, label }: { size: 'la
   )
 }
 
-/** The landing card: where Jump In goes, with its picture, the people there and the friends among them. */
 export function LandingCard({
   title,
   image,
@@ -149,7 +140,6 @@ export function LandingCard({
   )
 }
 
-/** A place: its picture, name and creator; hovering raises the Jump In button. */
 export function PlaceCard({
   title,
   creator,
@@ -192,7 +182,6 @@ export function PlaceCard({
   )
 }
 
-/** A live event: LIVE, the people there, the title and host; hovering raises Jump In. */
 export function LiveEventCard({
   title,
   host,
@@ -237,7 +226,6 @@ export function LiveEventCard({
   )
 }
 
-/** An upcoming event: when it starts and, on hover, interested / add to calendar / share. */
 export function UpcomingEventCard({
   title,
   host,
@@ -297,7 +285,6 @@ export function UpcomingEventCard({
 
 export type FriendPresence = 'online' | 'away' | 'offline'
 
-/** An online friend: picture with presence, name, where they are; a joinable friend shows JOIN on hover. */
 // The presence modifiers have their own names: the card shares this sheet with the online-count badge.
 const PRESENCE_CLASS: Record<FriendPresence, string | undefined> = { online: styles.presenceOnline, away: styles.presenceAway, offline: undefined }
 
@@ -349,7 +336,6 @@ export function FriendCard({
   )
 }
 
-/** A community the player belongs to; hovering offers VIEW. */
 export function CommunityCard({
   title,
   image,
@@ -386,7 +372,6 @@ export function CommunityCard({
   )
 }
 
-/** One of the player's photos. Square corners. */
 export function GalleryCard({ image, label, narrow, onOpen }: { image: string; label: string; narrow?: boolean; onOpen: () => void }): React.JSX.Element {
   return (
     <div className={cx(styles.photo, narrow && styles.narrow)}>

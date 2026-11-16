@@ -1,5 +1,4 @@
-// The lobby's signed reads and writes, and the client's quit (the profile menu's Exit): the events list (each event carries whether the player marked
-// it interested only when the read is signed) and the interested mark itself.
+// Events are read signed: only a signed read says whether the player marked each one interested.
 import type { LobbyEvent } from '@explorer-core/features/lobby/lobbyEvents'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'

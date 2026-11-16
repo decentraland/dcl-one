@@ -1,10 +1,7 @@
-// The lobby's analytics: a visit (opened, closed with its length), the place and event cards opened or
-// jumped into from each section, a jump to a friend, and the Places or Events page opened from it.
 import { track } from '../../lib/analytics'
 
 const SOURCE = 'lobby'
 
-/** The section a card was in. */
 export type CardOrigin = 'landing' | 'recent' | 'recommended' | 'live_events' | 'upcoming_events'
 
 let startup = false

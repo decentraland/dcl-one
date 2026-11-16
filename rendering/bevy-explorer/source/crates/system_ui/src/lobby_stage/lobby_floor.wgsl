@@ -1,6 +1,5 @@
-// The lobby stage's floor: the lit ground texture plus a soft coloured spot around the stage
-// centre. It stays solid near the avatar and dissolves along a band, perpendicular to the view,
-// that ends where the floor meets the backdrop on screen, so the backdrop shows through.
+// The floor dissolves along a band, perpendicular to the view, that ends where it meets the
+// backdrop on screen, so the backdrop shows through.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},

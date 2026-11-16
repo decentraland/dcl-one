@@ -59,8 +59,6 @@ const ROTATION_FACTOR = -0.5
 const FACING = Quaternion.fromEulerDegrees(0, 180, 0)
 const THUMBNAIL_SIZE = 480
 
-// The lobby stage: the avatar full-screen in the engine's 3D stage (setLobbyStage), camera 1 m
-// above a target 0.8 m over the feet, 6 m back, 26.2° vertical field of view.
 const LOBBY_TARGET_Y = 0.8
 const LOBBY_CAMERA_RISE = 1
 const LOBBY_CAMERA_DISTANCE = 6
@@ -87,8 +85,6 @@ const YAW_BACK = 0
 const LOADING_NOT_FOUND = 2
 const LOADING_FINISHED_WITH_ERROR = 3
 const LOADING_FINISHED = 4
-// The lobby avatar's idle life: a greeting once it is on show, a flavour emote every so often,
-// and a cheer when the player's look changes.
 const INTRO_EMOTE = 'wave'
 const FLAVOUR_EMOTES = ['wave', 'fistpump', 'dab']
 const FLAVOUR_SECONDS: [number, number] = [8, 20]
@@ -96,7 +92,6 @@ const LOOK_CHANGED_EMOTE = 'fistpump'
 
 type Stage = 'backpack' | 'lobby'
 let stage: Stage = 'backpack'
-// The lobby stage's look, as the page last named it, and whether the engine's stage is up.
 let stagePreset: string = LOBBY_STAGE_PRESETS[0].id
 let stageUp = false
 // The lobby avatar's idle emotes are the lobby page's alone (not its stand-ins' pages).
@@ -118,7 +113,6 @@ let shopStage: Rect | null = null
 // Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
 let emoteTrigger = 0
 let lastShapeKey = ''
-// A new look just took the stage: the avatar cheers once it faces the camera.
 let cheerPending = false
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
@@ -266,8 +260,7 @@ function createPreview(): void {
     Transform.create(standby, { position: Vector3.create(8, 0, 8), rotation: FACING, scale: Vector3.One() })
     standbyEntity = standby
   }
-  // Podium under the avatar (preview layer only), the parity backpack's platform; the lobby's
-  // podium is the engine stage's.
+  // the lobby's podium is the engine stage's
   const podium = lobby ? [] : PODIUM_LAYERS.map((layer) => {
     const e = engine.addEntity()
     MeshRenderer.setCylinder(e, 1, 1)
@@ -347,7 +340,6 @@ async function announceLobbyStage(ctx: Ctx): Promise<void> {
   if (current()) ctx.send({ kind: 'lobbyStageReady' })
 }
 
-// Ask the engine for the lobby's 3D stage around the avatar, in the look the page named.
 function showStage(): void {
   stageUp = true
   greeted = false
@@ -369,7 +361,7 @@ function nextFlavour(): number {
   return FLAVOUR_SECONDS[0] + Math.random() * (FLAVOUR_SECONDS[1] - FLAVOUR_SECONDS[0])
 }
 
-// Play an emote on the avatar on show (a new timestamp replays the same one).
+// A new timestamp replays the same emote.
 function playEmote(urn: string): void {
   if (avatarEntity == null) return
   const shape = AvatarShape.getMutableOrNull(avatarEntity)
@@ -378,7 +370,6 @@ function playEmote(urn: string): void {
   shape.expressionTriggerTimestamp = ++emoteTrigger
 }
 
-// The lobby avatar's idle life, while its look is on show and facing the camera.
 function pollEmotes(dt: number): void {
   if (!idleEmotes || !shownLoaded || turn != null) return
   if (!greeted) {
@@ -652,7 +643,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
         }
         return
       }
-      // the Backpack closing over the lobby hands the stage straight back, as it was
       if (msg.rect == null && (parkedLobby != null || lobbyUnder != null)) {
         const under = lobbyUnder
         lobbyUnder = null
@@ -673,7 +663,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
     if (msg.rect == null && nextStage !== stage) return
     if (nextStage !== stage) {
-      // the Backpack opening over the lobby sets the lobby's avatar and stage aside, as they are
       if (nextStage === 'backpack' && stage === 'lobby' && avatarEntity != null) parkLobby()
       else disposePreview()
       stage = nextStage

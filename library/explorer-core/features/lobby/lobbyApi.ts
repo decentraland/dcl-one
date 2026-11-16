@@ -1,6 +1,4 @@
-// The lobby's server reads: the landing place and the people there, the recommended and recently
-// visited places with their connected users, where online friends are, and the most crowded scene.
-// Signed reads (events, communities, the gallery) come through the bridge instead.
+// Signed reads (events, communities, the gallery) go through the bridge, not here.
 
 import { serviceUrl } from '@hud-host'
 import { placePlayers, type DiscoverPlace } from '../places/placesApi'
@@ -10,7 +8,6 @@ const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
 const CACHE_TTL = 60_000
 
-/** A place with the wallets connected to it now (with_connected_users). */
 export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
 // Reopening the lobby (or walking between scenes) shouldn't refetch what it just had.
@@ -34,12 +31,11 @@ async function placesData(url: string, init?: RequestInit): Promise<LobbyPlace[]
   return json.data
 }
 
-/** People at the place now: its connected wallets, else its user count. */
+/** Connected wallets when known, else the place's user count. */
 export function placeOnline(p: LobbyPlace): number {
   return p.connected_addresses?.length ?? placePlayers(p)
 }
 
-/** The curated destinations, with who is there. */
 export function fetchHighlighted(): Promise<LobbyPlace[]> {
   return cached('highlighted', () => placesData(`${PLACES_API}/destinations?with_realms_detail=true&with_connected_users=true&only_highlighted=true`))
 }
@@ -53,7 +49,7 @@ export function fetchWorld(name: string): Promise<LobbyPlace | null> {
   return cached(`world:${name}`, async () => (await placesData(`${PLACES_API}/worlds?names=${encodeURIComponent(name)}`))[0] ?? null)
 }
 
-/** Destinations by id with who is there now, in the order asked; unknown ids are left out. */
+/** In the order asked; unknown ids are left out. */
 export async function fetchDestinationsById(ids: string[]): Promise<LobbyPlace[]> {
   if (ids.length === 0) return []
   const data = await placesData(`${PLACES_API}/destinations?with_connected_users=true`, {
@@ -65,12 +61,11 @@ export async function fetchDestinationsById(ids: string[]): Promise<LobbyPlace[]
   return ids.flatMap((id) => byId.get(id) ?? [])
 }
 
-/** The landing place: a World by name, else the place at the parcel. */
 export function fetchLandingPlace(dest: { world: string | null; parcel: { x: number; y: number } }): Promise<LobbyPlace | null> {
   return dest.world != null ? fetchWorld(dest.world) : fetchPlaceAt(dest.parcel.x, dest.parcel.y)
 }
 
-/** Who is at a place now (fresh, never cached). */
+/** Never cached. */
 export async function fetchConnected(placeId: string): Promise<LobbyPlace | null> {
   return (await fetchDestinationsById([placeId]))[0] ?? null
 }
@@ -95,17 +90,16 @@ export async function recordVisit(visit: { realm: string; genesis: boolean; parc
   if (place != null) rememberPlace(place.id)
 }
 
-/** The recently visited places, in visit order, with who is there. */
+/** In visit order. */
 export function fetchRecents(): Promise<LobbyPlace[]> {
   return fetchDestinationsById(readRecents())
 }
 
-/** Where an online friend is: a Genesis parcel, a world, or nowhere the services know. */
 export type FriendWhere = { kind: 'genesis'; parcel: { x: number; y: number } } | { kind: 'world'; world: string; parcel: { x: number; y: number } | null } | { kind: 'unknown' }
 
 type Peer = { id?: string; address?: string; parcel?: [number, number] }
 
-/** Where each wallet is: the comms peers first, then each one missing asked for the world it is in. */
+/** Comms peers first; each wallet still missing is asked for the world it is in. */
 export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, FriendWhere>> {
   const found = new Map<string, FriendWhere>()
   if (wallets.length === 0) return found
@@ -131,14 +125,12 @@ export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, F
   return found
 }
 
-/** The name a friend's location shows: the place's title, else the world's name or the parcel. */
 export async function whereTitle(where: FriendWhere): Promise<string> {
   if (where.kind === 'unknown') return 'Lobby'
   if (where.kind === 'world') return (await fetchWorld(where.world).catch(() => null))?.title || where.world
   return (await fetchPlaceAt(where.parcel.x, where.parcel.y).catch(() => null))?.title || `${where.parcel.x},${where.parcel.y}`
 }
 
-/** The base parcel of the most crowded scene, where "crowd" goes. */
 export async function fetchCrowd(): Promise<{ x: number; y: number }> {
   const res = await fetch(`${serviceUrl('realmProvider')}/hot-scenes`)
   if (!res.ok) throw new Error(`hot-scenes: ${res.status}`)
@@ -148,7 +140,7 @@ export async function fetchCrowd(): Promise<{ x: number; y: number }> {
   return { x: top[0], y: top[1] }
 }
 
-/** Whether a world's realm answers, as a realm change probes it before going. */
+/** Probes the realm as a realm change does before going. */
 export async function worldReachable(world: string): Promise<boolean> {
   const r = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/about`, { method: 'HEAD' }).catch(() => null)
   return r != null && r.ok

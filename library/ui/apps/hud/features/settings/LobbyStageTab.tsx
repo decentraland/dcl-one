@@ -1,6 +1,3 @@
-// Settings → Lobby: the lobby stage's backdrop. A large preview of the hovered look (else the chosen
-// one) over a thumbnail per look; picking one changes the stage at once and is kept on this device.
-
 import { useState } from 'react'
 import checkmark from '../../assets/lobby/checkmark-green.png'
 import { LOBBY_STAGE_PRESETS, lobbyStagePreset } from '@explorer-core/engine/lobbyStage'

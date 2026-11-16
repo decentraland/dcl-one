@@ -1,5 +1,3 @@
-//! The lobby stage's debug section and `/lobby_stage` console command.
-
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};

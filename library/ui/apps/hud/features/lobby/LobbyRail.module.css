@@ -1,5 +1,3 @@
-/* The lobby rail: a strip of cards sliding inside its viewport, and under it the 42px pager band (the
-   pill 10px under the cards). */
 .rail {
   display: flex;
   flex-direction: column;

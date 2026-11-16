@@ -4343,7 +4343,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "7f3ad75864fd5ada5541ae5bfe232f4fdcc2e241a5cae1c1b1cb8b3ff2cff176"
+      "sha256": "77452bff1882ae4e61e9bf65d95b50d0470c0c6fb97f4499841890273442190f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -4827,7 +4827,7 @@
     },
     {
       "path": "library/explorer-core/engine/lobbyStage.ts",
-      "sha256": "f3274f289b56bcbbb308d1833e59f8855942d6a4716f9fa5d6b248d59923f4fa"
+      "sha256": "7ab8c2c67b9e4bf02307ee231c310bf22dbd7f51265bb1c2d2d314988144d2bc"
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
@@ -4859,7 +4859,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "ae8c937ba38eb6f322e3109a0be903f7f1f326c9e5ae95afacc49c9929499c36"
+      "sha256": "833112969016e1f00b2089262431bc8ddd4acac58e08e8fc4c8e7c10a2457d0a"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -4979,27 +4979,27 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "a8290877ab0af5626700826239e841cda1feb1e1277e271b2692682c24e81e76"
+      "sha256": "58d1cf9b40aa0073ec8b5be319f8b46e9d42bf688e69ca5af507adfc80422069"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
-      "sha256": "abcf7218b625ae518d95a02b2f3c7b4b440cf634cf8d83fda82499cf2b88d552"
+      "sha256": "316ef49dc83b77c1bf09fbc0f8426d0581f1cdc506711c3c9e089a3505812922"
     },
     {
       "path": "library/explorer-core/features/lobby/layoutStorage.ts",
-      "sha256": "990959a08ebbd5660c15fc870d0536f16ca6564f5bc3744a430a67a9eb2b2e2c"
+      "sha256": "d07d0e045eca65f04609fdc3c00f69b03d7b824d5a9a8c286b2922d571735247"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyAnalytics.ts",
-      "sha256": "24a48b428831265e1ffa02181d0bcd29912c4dbd6ad297999199798ffc0dbcfb"
+      "sha256": "abc91c7c1538b33aa66af3dde3ab8126019cbcc277a94320a403be65bc15689e"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "e07c9a4248ecd09aa195ceb91dc05b5fb51d781b74d1dbf45970bb3ca3393ef7"
+      "sha256": "b4c4cdc58864f57b0ac85149fb11ee63908f908b8f185a6e922617f73cdd8f3b"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyEvents.ts",
-      "sha256": "1d1358dd61bd81e1c7bd3336352d90a8afb54ac53f209cbb247f416a9955d9d2"
+      "sha256": "65998e0e5695f4df9644fe6c33ebad505204f0988206be516ee042282e16022b"
     },
     {
       "path": "library/explorer-core/features/login/storedProfile.ts",
@@ -5283,7 +5283,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "330fd287940cce7b4cefbb91b905ba78cbd99cce20210243aca09fd0ce9322d5"
+      "sha256": "16587e91a4cf2eb427660b38121780c1a28efbe43b051ca98d421e7938fc2327"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -7075,67 +7075,67 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
-      "sha256": "d9b6752cbed4d8518a7d925fd09dc09af4e5f7d5e8870da607c825b7aef32f2b"
+      "sha256": "95605f6f331357edfeba5b04936814f27a8cdd3a310a929f1553151607c1bf81"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "sha256": "bbbaeb3c1366e9fbe509f68e633ac7c0a8782a5640a5a148f32c060443475dd2"
+      "sha256": "b2f09f466df3d60d0fed46338ae8c8b6a1b71dfc1c1a3d4fa04896dc9b431429"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.module.css",
-      "sha256": "434d073fceca04bfd11e54e1223211ab98efa603c4ece40e9f2e04b551ec1091"
+      "sha256": "7d5eaa59e938746f668f53f25c7f58ad5175a2cc5fd883822d79c74bb08b1a67"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "sha256": "ee9345b60bc3d5584d6ae05001e5a5a2fa27712163d2218fdc3c540ae220d22b"
+      "sha256": "c2983e7f6df7594da5a2fcf9872adcb7c9a79bba1ecad914ebfc9d0038bf91b2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "43c1e2adc42c842a7237fe9992859c7d98374f79b109988878d5c1f6e5e1bfa6"
+      "sha256": "7f3966cc447bae62629158837430066515c9cc5b66f7bc4edbbf533734955340"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "2ddf96e7ccf9f333f825e2b2a2266d28cd2431ccda4d030234662262697077c5"
+      "sha256": "521537aa66f4d28da12fcb4a2615b181a01514bb2c581ae4cff068e48c051797"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
-      "sha256": "04bcd708f9b448d88f303b6d0a007a42061241d37c56a6e6d4e1c8ad627dc0e5"
+      "sha256": "566171955d578c6e07a6c33cf19732864e37f0fec7ef0bacfc5bdf25c1f132a5"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "sha256": "3512367cbd14045195315492cdb0f3d733694441415bf62f4322f5532d3763d3"
+      "sha256": "d0e0583351c41c225f1b1c8aee80c6a703f63570603b36d4f08c58529b5b11e2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.module.css",
-      "sha256": "9d8aac0f4f05e1f9cd1a644f354d3900f3811acf69f35b8d1ccb796e07cbf9e5"
+      "sha256": "ae958b5b852403128d0df36de5f79444a5c8ec1235804aab4ed973143e5c18db"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "sha256": "a510f9f21992f5f29017ef14f84779c7cc2ba1d689370c6407d2364c929a9a10"
+      "sha256": "1465728c4b1d0867951038f4c5b51d9e5ef156693312752f58ea802039b8b068"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.module.css",
-      "sha256": "030bc6531c34301546fe66ba81a1a43c8fbb11e38081e32ab223730427f4c918"
+      "sha256": "2d99cebd4e21b535338e83347d961de134223e50a619415332a9f087062e5380"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "sha256": "acc556cf30829e4919288551bf4492297cb2153c4b5f660a9812464888942a68"
+      "sha256": "f76d4150c62c788d0d86383d1fb0a11712ae45cfa7dcdf305c4962724b096894"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/grid.ts",
-      "sha256": "9f5e8148f3693fecfa764806920232daf2a13b84cee9d9149664840994f126f1"
+      "sha256": "c3c8cf211730234bb59ec012f82aaad750b42c558fe05ab69f5a1338a67f051e"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/railModel.ts",
-      "sha256": "75dac4ae8e8699956ab9ec5aaf72ea8baf48fd2316e7ab5a6e6c60db0e9fb9fb"
+      "sha256": "20f9d2cea1f519731364fbb55709faaa0ad05f48f6f06c9f554668c6a6d0b7e3"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/stageBackdrops.ts",
-      "sha256": "41691ad86877eafec63a7a5d1dec93cf1900dd8a19213aec4e286d2c2043a48d"
+      "sha256": "eb000c23be19dd9a24c7ef1ed682b517d00676539441612d2f8b2b85d27d284d"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
-      "sha256": "c16d195b34ffe02e75a9f0f0c0f641eb2462097a948a719911d4046108a57ef5"
+      "sha256": "44de5686f58ff050312726cd2d39886d8fecbdb928c4956ea9cee163dac07c6d"
     },
     {
       "path": "library/ui/apps/hud/features/login/GuestStartPage.module.css",
@@ -7391,7 +7391,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f49bf2e0d610532253eda5238d6c177d21523ac9bd26877b65313a6c53c04607"
+      "sha256": "6e0292318c1f561f60947b36838c9b6cea420fc03e1aa9bc08360d3069d44ef7"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7403,11 +7403,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/LobbyStageTab.module.css",
-      "sha256": "19c11ea91e060237a8f0f41a18a7f0f6d7ad162d68b887b21f8e398bb79fc286"
+      "sha256": "5a2842224e1ad99488a29fdd4ea506d24f4fca13c178210cfb87897cc1d38351"
     },
     {
       "path": "library/ui/apps/hud/features/settings/LobbyStageTab.tsx",
-      "sha256": "a9f60fe85c81372b2a8bc500568587937f340867b5de069fbecbd89eae06cabd"
+      "sha256": "b1431368d3c7210d1318d5c47236f47965bcdeba027236dd1617726ef047e850"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
@@ -7415,7 +7415,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "6e6fb90d00f4406cd0ecfc455850111ca26a4d43896031a082d4e0307be8bc30"
+      "sha256": "1bb98abccc082d0281a5acf35a63fe5a1a1cd5becc039378613678a43b6b5f42"
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.module.css",
@@ -7919,7 +7919,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/lobbyRail.test.ts",
-      "sha256": "632224cc8bb99ca9a81d1068b2e17c7865731b2c55980257b5d6dd7261857b29"
+      "sha256": "95676bb2cbbcdce0f87731044639254c9602aa13fe44a733fe238d9b7dbd5577"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",

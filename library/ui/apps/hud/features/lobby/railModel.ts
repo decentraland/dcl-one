@@ -1,6 +1,4 @@
-// The lobby rail's paging, apart from the DOM so it can be tested: a strip of cards that pages by the
-// wheel, the arrows or the dots and scrolls freely by dragging, a released drag settling on the nearest
-// card. The arrows wrap round past either end; the wheel stops there and each dot goes to its page.
+// Kept apart from the DOM so it can be tested.
 
 /** Seconds of its release speed a flung drag runs on for, capped at a page. */
 export const FLING_PROJECTION = 0.12
@@ -15,7 +13,6 @@ const END_TOLERANCE = 0.5
 /** How far pixel rounding can put the measured end of the strip off a card. */
 const PIXEL_ROUNDING = 4
 
-/** The laid-out strip: each card's left edge and right edge in the strip, and the viewport's width. */
 export interface RailGeometry {
   lefts: number[]
   rights: number[]
@@ -94,7 +91,6 @@ export class RailModel {
     return { card, page, offset: this.cardOffset(card) }
   }
 
-  /** The first card of `page`, clamped to the filled pages. */
   snapTo(page: number): RailState {
     const p = Math.min(Math.max(page, 0), Math.max(0, this.pageCount - 1))
     return this.toCard(p * this.perPage, p)

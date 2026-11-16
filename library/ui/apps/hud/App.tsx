@@ -68,7 +68,6 @@ import { useTipEmote } from './features/donate/useDonate'
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
 let EditorHost = /* @__PURE__ */ loadEditorHost()
 
-/** The menu pages the startup lobby opens: where a destination can be found, and the player's own. */
 const STARTUP_LOBBY_PAGES = ['backpack', 'settings', 'communities', 'map', 'places', 'events', 'gallery', 'profile']
 
 const params = new URLSearchParams(location.search)
@@ -390,7 +389,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     else if (page === 'profile') viewMyProfile()
   }
 
-  // The pages the startup lobby can open (shared with the in-world mounts below).
   const discoveryPages = (
     <>
       <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>

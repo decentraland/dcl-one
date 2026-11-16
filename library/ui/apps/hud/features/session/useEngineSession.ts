@@ -438,9 +438,8 @@ export interface PlacesState {
 export interface EventsState {
   open: boolean
   toggle: () => void
-  /** The tab the page opens on: 'live' unless a VIEW ALL asked for another. */
+  /** 'live' unless a VIEW ALL asked for another. */
   section: 'live' | 'upcoming'
-  /** Open the page on a tab (the lobby's VIEW ALL). */
   openAt: (section: 'live' | 'upcoming') => void
 }
 
@@ -477,18 +476,16 @@ export interface PhotoModeState {
 }
 
 export interface LobbyEventsState {
-  /** The last list the events service gave; null before it answered or after it failed. */
+  /** null before the first answer or after a failed read. */
   list: LobbyEvent[] | null
-  /** The last read failed. */
   failed: boolean
   load: () => void
-  /** Mark an event interested or not; the list follows once the service confirms. */
+  /** The list follows once the service confirms. */
   setInterest: (id: string, interested: boolean) => void
-  /** The id of the last mark the service refused, for the page to report. */
   interestError: { id: string; at: number } | null
-  /** Read what the lobby's widgets list: the events, the player's communities and photos. */
+  /** Prefetches the events, communities and photos the lobby's widgets list. */
   warm: () => void
-  /** The player's communities have answered at least once. */
+  /** Stays true after the first answer. */
   communitiesLoaded: boolean
 }
 
@@ -977,7 +974,7 @@ export interface EngineSession {
   lobbyStageReady: boolean
   /** The lobby reopened in-world from the menu. */
   lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
-  /** The lobby's events, read signed through the bridge (null until the first answer). */
+  /** Read signed through the bridge. */
   lobbyEvents: LobbyEventsState
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
@@ -1048,12 +1045,11 @@ export interface EngineSession {
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
-  /** Report (or clear) the screen rect where the scene should render an engine view. */
-  /** The lobby stage's look (a LOBBY_STAGE_PRESETS id) and its setter; `idleEmotes` is the lobby
-   *  page's alone (its avatar greets and plays idle emotes). */
+  /** `preset` is a LOBBY_STAGE_PRESETS id; `idleEmotes` applies to the lobby page alone. */
   lobbyStage: { preset: string; set: (options: { preset?: string; idleEmotes?: boolean }) => void }
-  /** Close the client (native only). */
+  /** Native only. */
   quit: () => void
+  /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: 'map' | 'avatarPreview' | 'lobby',
     rect: { x: number; y: number; width: number; height: number } | null,
@@ -3930,7 +3926,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
   const [avatarPreviewRect, setAvatarPreviewRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const [lobbyStagePresetState, setLobbyStagePresetState] = useState(() => lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string)
-  // The lobby stage's look and whether its avatar idles, sent with every report of the lobby's region.
+  // Sent with every report of the lobby's region.
   const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
   const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(

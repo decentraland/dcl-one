@@ -1,9 +1,9 @@
-//! The lobby stage's looks. Positions and rotations are in the stage's own frame: the origin one
-//! metre above the avatar's feet, +x to the camera's right, +y up, +z towards the camera.
+//! Positions and rotations are in the stage's own frame: the origin one metre above the avatar's
+//! feet, +x to the camera's right, +y up, +z towards the camera.
 
 use bevy::{math::EulerRot, prelude::*};
 
-/// A set piece on the stage. `position.y` is measured from the floor surface.
+/// `position.y` is measured from the floor surface.
 pub struct StageProp {
     pub model: &'static str,
     pub position: Vec3,

@@ -1,6 +1,5 @@
-// The lobby layout, persisted as one JSON value: widgets and corners by name, so a renamed or resized widget is
-// dropped on load instead of landing on a wrong one. The shape is versioned
-// ({"Version":1,"Entries":[{"Corner","Widget","X","Y"}]}) so a later layout can migrate it.
+// Widgets and corners are stored by name, so a renamed or resized widget is dropped on load instead of
+// landing on a wrong one. The shape is versioned so a later layout can migrate it.
 import { getPref, PREF, setPref } from '../../lib/prefs'
 import { LOBBY_CORNERS, LOBBY_WIDGETS, type LobbyCorner, type LobbyLayout, type LobbyWidgetId } from './layout'
 
@@ -20,8 +19,8 @@ export function serializeLayout(layout: LobbyLayout): string {
   })
 }
 
-/** Replaces the layout's placements with the stored ones. Unknown, out-of-grid or overlapping entries are
- *  skipped; a missing, malformed or other-version value gives the default layout. */
+/** Unknown, out-of-grid or overlapping entries are skipped; a missing, malformed or other-version value
+ *  gives the default layout. */
 export function deserializeLayout(layout: LobbyLayout, stored: string | null): void {
   layout.clear()
   if (stored == null) return layout.resetToDefault()

@@ -1,8 +1,3 @@
-// The lobby's card rail: the strip slides a page (or a card) at a time by the arrows, the wheel and the
-// dots, and freely by dragging, settling on the nearest card. The arrows and the dots sit in a pill
-// under the cards, shown only while the rail is hovered and only when there is more than one page.
-// The paging itself is railModel's.
-
 import { Children, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import arrowLeft from '../../assets/lobby/arrow-left.png'
 import arrowRight from '../../assets/lobby/arrow-right.png'
@@ -33,7 +28,6 @@ export function LobbyRail({
   /** A change jumps back to the first page; otherwise new cards keep the page (clamped). */
   rewindKey?: unknown
   className?: string
-  /** Names the rail for assistive technology. */
   label: string
   children: React.ReactNode
 }): React.JSX.Element {

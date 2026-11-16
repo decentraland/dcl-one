@@ -1,6 +1,3 @@
-//! The stage's own surfaces: the floor that dissolves into the backdrop, the ground mist, the dust
-//! motes, the blob shadow, the full-frame vignette and the mossy rocks.
-
 use bevy::{
     asset::embedded_path,
     pbr::{ExtendedMaterial, MaterialExtension, MaterialPipeline, MaterialPipelineKey},
@@ -30,8 +27,6 @@ pub mod order {
 
 pub type FloorMaterial = ExtendedMaterial<FloorExtension>;
 
-/// The floor's lit ground texture plus a soft spot around the stage centre, fading out along a
-/// band that ends where the floor meets the backdrop on screen.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
 pub struct FloorExtension {
     #[uniform(100)]
@@ -48,7 +43,6 @@ impl MaterialExtension for FloorExtension {
 
 pub type RockMaterial = ExtendedMaterial<RockExtension>;
 
-/// Rocks: moss over their texture, the rock showing through on the surfaces that face up least.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
 pub struct RockExtension {
     #[uniform(100)]
@@ -63,7 +57,6 @@ impl MaterialExtension for RockExtension {
     }
 }
 
-/// Two drifting layers of value noise, thresholded into wisps and faded at the quad's edges.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct MistMaterial {
     #[uniform(0)]
@@ -94,7 +87,6 @@ impl Material for MistMaterial {
     }
 }
 
-/// Soft round motes, each tinted by its vertex colour.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct DustMaterial {
     #[uniform(0)]
@@ -125,7 +117,6 @@ impl Material for DustMaterial {
     }
 }
 
-/// A soft contact shadow: the shape map's grey value is the coverage.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct BlobMaterial {
     #[uniform(0)]
@@ -159,8 +150,7 @@ impl Material for BlobMaterial {
     }
 }
 
-/// Darkens the frame towards its rim, sparing an oval around the avatar. Drawn over the whole
-/// frame whatever its mesh's position.
+/// Drawn over the whole frame whatever its mesh's position.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct VignetteMaterial {
     #[uniform(0)]

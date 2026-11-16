@@ -1,4 +1,4 @@
-// The soft contact shadow under the avatar: the shape map's grey value is its coverage. Unlit.
+// The shape map's grey value is the shadow's coverage.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},

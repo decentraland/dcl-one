@@ -1,7 +1,3 @@
-// What the lobby's widgets show, read while the page is up: the landing place and who is there, the
-// recent and recommended places, where each online friend is, and (from the session) the events,
-// communities and photos. A failed read keeps what the widget last had.
-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchConnected,
@@ -15,13 +11,12 @@ import {
 } from '@explorer-core/features/lobby/lobbyApi'
 import type { Friend } from '@explorer-core/engine/protocol'
 
-/** Where Jump In goes: the home destination, a world by name or a Genesis parcel. */
 export interface LandingDestination {
   world: string | null
   parcel: { x: number; y: number }
 }
 
-/** The landing destination from the engine's home scene (a realm with a dot is a world). */
+/** A realm with a dot is a world. */
 export function landingDestination(home: { realm: string | null; parcel: string } | null): LandingDestination | null {
   if (home == null) return null
   const [x, y] = home.parcel.split(',').map(Number)
@@ -29,7 +24,6 @@ export function landingDestination(home: { realm: string | null; parcel: string 
   return { world: home.realm != null && home.realm.includes('.') ? home.realm : null, parcel }
 }
 
-/** What the landing card says when its place can't be read: the world, Genesis Plaza at 0,0, or the parcel. */
 export function offlineTitle(dest: LandingDestination): string {
   if (dest.world != null) return dest.world
   return dest.parcel.x === 0 && dest.parcel.y === 0 ? 'Genesis Plaza' : `${dest.parcel.x},${dest.parcel.y}`
@@ -87,11 +81,10 @@ export function usePlaces(): { recent: LobbyPlace[] | null; recommended: LobbyPl
 
 export interface FriendLocation {
   where: FriendWhere
-  /** "Locating…" until known, then the place's title, or "Lobby" when nowhere. */
   title: string
 }
 
-/** Where each online friend is, read once per set of online friends; "Locating…" until then. */
+/** Read once per set of online friends. */
 export function useFriendLocations(online: Friend[]): Map<string, FriendLocation> {
   const ids = useMemo(() => online.map((f) => f.address.toLowerCase()).sort(), [online])
   const key = ids.join(',')
@@ -116,7 +109,7 @@ export function useFriendLocations(online: Friend[]): Map<string, FriendLocation
   return locations
 }
 
-/** Ask again where one friend is (JOIN re-checks before going). */
+/** JOIN re-checks before going. */
 export async function refreshWhere(address: string): Promise<FriendWhere> {
   return (await fetchWhereabouts([address])).get(address.toLowerCase()) ?? { kind: 'unknown' }
 }

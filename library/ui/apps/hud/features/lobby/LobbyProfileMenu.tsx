@@ -1,7 +1,3 @@
-// The lobby's profile menu, dropped from the profile in the top bar: who is signed in (picture, name,
-// wallet with copy), then Profile, Settings, Report a Bug, Sign Out and Exit, and the legal links.
-// A click outside or Escape closes it.
-
 import { useEffect, useRef, useState } from 'react'
 import bugIcon from '../../assets/lobby/bug-icon.png'
 import checkmark from '../../assets/lobby/checkmark-icn-thin.png'
@@ -18,7 +14,6 @@ import styles from './LobbyProfileMenu.module.css'
 
 const COPIED_MS = 1000
 
-/** The wallet as the menu shows it: its first five characters and its last five. */
 export const menuAddress = (a: string): string => (a.length > 12 ? `${a.slice(0, 5)}...${a.slice(-5)}` : a)
 
 export function LobbyProfileMenu({

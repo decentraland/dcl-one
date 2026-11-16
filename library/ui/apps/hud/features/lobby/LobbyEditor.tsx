@@ -1,8 +1,5 @@
-// The lobby's layout editor: a frame with a remove button over every placed widget, dragged to move it
-// (the widgets in its way make room), and the "Customize Lobby" modal listing the widgets off the
-// grids, dragged onto one to place them (or dropped back on the modal to take them off). Save stores
-// the layout; Cancel, Back and Escape drop the changes; Reset to Default puts the shipped layout up
-// without storing it.
+// Reset to Default shows the shipped layout without storing it; Cancel, Back and Escape drop the
+// changes.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import closeIcon from '../../assets/lobby/close-icn-thin.png'
@@ -47,7 +44,7 @@ const FAMILY_ICONS: Record<LobbyWidgetFamily, string> = {
   GoTo: goToIcon
 }
 
-/** A family's sizes as the modal offers them, fewest cards first (the first is the one it starts on). */
+/** Fewest cards first; the first is the one the modal starts on. */
 const sizesOf = (family: LobbyWidgetFamily): LobbyWidgetId[] => [...familyVariants(family)].sort((a, b) => widgetCardCount(a) - widgetCardCount(b))
 
 type Canvas = { width: number; height: number }
@@ -68,7 +65,6 @@ export interface DropTarget {
   valid: boolean
 }
 
-/** What a drag in progress would do. */
 export function dropTarget(layout: LobbyLayout, drag: Drag, canvas: Canvas): DropTarget | null {
   const span = widgetSpan(drag.widget)
   const centre = { x: drag.at.x + spanSize(span.x) / 2, y: drag.at.y + spanSize(span.y) / 2 }
@@ -82,13 +78,11 @@ export function dropTarget(layout: LobbyLayout, drag: Drag, canvas: Canvas): Dro
 export interface LayoutEditor {
   /** The layout the page draws while editing: the draft, or where a drag would leave it. */
   display: LobbyLayout
-  /** The widget being dragged and where; the page draws its stand-in there. */
   lifted: { widget: LobbyWidgetId; rect: Rect } | null
   changed: boolean
   draft: LobbyLayout
 }
 
-/** The editor's state: the draft layout, the drag in progress, and what each would draw. */
 export function useLayoutEditor(saved: LobbyLayout, canvas: Canvas, toCanvas: (clientX: number, clientY: number) => { x: number; y: number }) {
   const [draft, setDraft] = useState(() => saved.clone())
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -211,7 +205,6 @@ export function useLayoutEditor(saved: LobbyLayout, canvas: Canvas, toCanvas: (c
   }
 }
 
-/** The grids' backdrops with their anchor dots, the dot colour showing whether a drop there takes. */
 export function EditorGrids({ canvas, target, size }: { canvas: Canvas; target: DropTarget | null; size: LobbyWidgetId | null }): React.JSX.Element {
   return (
     <>
@@ -242,7 +235,6 @@ export function EditorGrids({ canvas, target, size }: { canvas: Canvas; target: 
   )
 }
 
-/** The frame over a placed widget: dragged to move it, with a button that takes it off its grid. */
 export function WidgetHandle({
   widget,
   rect,
@@ -271,13 +263,11 @@ export function WidgetHandle({
   )
 }
 
-/** A widget's drop marker under the cells it would take. */
 export function DropMarker({ target, widget, canvas }: { target: DropTarget; widget: LobbyWidgetId; canvas: Canvas }): React.JSX.Element {
   const r = cellRect(target.corner, target.cell, widgetSpan(widget), canvas)
   return <div className={`${styles.marker} ${target.valid ? styles.markerValid : styles.markerInvalid}`} style={{ left: r.x, top: r.y, width: r.width, height: r.height }} aria-hidden="true" />
 }
 
-/** The stand-in a dragged widget shows: its title over blank cards and a pager. */
 export function WidgetPreview({ widget, rect, welcome }: { widget: LobbyWidgetId; rect: Rect; welcome: string }): React.JSX.Element {
   const family = widgetFamily(widget)
   const narrow = widget.endsWith('4By2')
@@ -306,7 +296,6 @@ export function WidgetPreview({ widget, rect, welcome }: { widget: LobbyWidgetId
   )
 }
 
-/** The "Customize Lobby" modal: the widgets off the grids, and the layout's Save, Cancel and Reset. */
 export function CustomizeModal({
   layout,
   target,

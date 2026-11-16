@@ -1,5 +1,5 @@
-/* The lobby's cards, on the 1920×1080 canvas. A card's clickable surface is its full-size cover
-   button; its badges, Jump In and actions sit over it. */
+/* A card's clickable surface is its full-size cover button; its badges, Jump In and actions sit
+   over it. */
 
 .cover {
   position: absolute;
@@ -18,7 +18,6 @@
   outline-offset: 2px;
 }
 
-/* ---- pictures ---- */
 .zoomThumb,
 .landingThumb {
   position: absolute;
@@ -54,7 +53,6 @@
   }
 }
 
-/* The dark fade under a card's text: 52px in, then flat. */
 .gradient {
   position: absolute;
   left: 0;
@@ -76,7 +74,6 @@
   transition: height var(--lobby-dur-thumb) ease-out;
 }
 
-/* The gradient ring a hovered card wears 6px out: 2px thick, the accent at the top to violet below. */
 .outline {
   position: absolute;
   inset: -6px;
@@ -93,7 +90,6 @@
   transition: opacity var(--lobby-dur-outline) ease-out;
 }
 
-/* ---- badges ---- */
 .badges {
   position: absolute;
   display: flex;
@@ -159,7 +155,6 @@
   color: var(--lobby-snow);
 }
 
-/* ---- Jump In ---- */
 .jumpIn {
   position: absolute;
   display: flex;
@@ -201,7 +196,6 @@
   margin-right: 6px;
 }
 
-/* ---- landing ---- */
 .landing {
   position: relative;
   width: 442px;
@@ -275,7 +269,6 @@
   bottom: 22px;
 }
 
-/* ---- place ---- */
 .place,
 .community {
   position: relative;
@@ -361,7 +354,6 @@
   opacity: 1;
 }
 
-/* ---- live event ---- */
 .liveEvent {
   position: relative;
   width: 326px;
@@ -458,7 +450,6 @@
   opacity: 1;
 }
 
-/* ---- upcoming event ---- */
 .upcoming {
   position: relative;
   box-sizing: border-box;
@@ -581,7 +572,6 @@
   background: var(--lobby-white-20);
 }
 
-/* ---- friend ---- */
 .friend {
   position: relative;
   width: 103px;
@@ -713,7 +703,6 @@
   font-weight: var(--fw-semibold);
 }
 
-/* ---- community ---- */
 .communityGradient {
   height: 100px;
 }
@@ -805,7 +794,6 @@
   background: var(--lobby-white-2);
 }
 
-/* ---- gallery photo ---- */
 .photo {
   position: relative;
   width: 256px;

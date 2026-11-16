@@ -144,9 +144,8 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
-  /** Build the lobby's 3D stage around the preview avatar on its camera layer; null takes it down. */
+  /** null takes the lobby stage down. */
   setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
-  /** Close the client. */
   quit?: () => void
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>

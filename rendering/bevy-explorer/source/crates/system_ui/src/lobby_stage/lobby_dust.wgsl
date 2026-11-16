@@ -1,6 +1,3 @@
-// Dust motes: camera-facing quads drawn as soft discs, tinted by each mote's vertex colour, so
-// no texture is needed. Unlit.
-
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     view_transformations::position_world_to_view,

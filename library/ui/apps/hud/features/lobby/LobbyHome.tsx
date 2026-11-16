@@ -1,7 +1,4 @@
-// The lobby: shown after sign-in, before entering the world, and opened from the menu in-world. The
-// engine draws the stage and the avatar behind this transparent page; the page draws the header, the
-// top bar and the widgets on four corner grids around the avatar, laid out as the player arranged
-// them (the layout editor) and stored on this device.
+// The engine draws the stage and the avatar behind this transparent page.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import closeIcon from '../../assets/lobby/close-icn-thin.png'
@@ -53,7 +50,7 @@ const cx = (...names: Array<string | false | null | undefined>): string => names
 
 /** Pixels a press on the avatar travels before it turns the avatar instead of opening the Backpack. */
 const DRAG_THRESHOLD = 8
-/** The tooltips' distance from the pointer. */
+/** Pixels from the pointer. */
 const AVATAR_TOOLTIP_OFFSET = 100
 const FRIEND_TOOLTIP_OFFSET = 16
 const CROWD_ERROR = 'The most crowded place could not be found. Please try again.'
@@ -64,9 +61,7 @@ function clipToModal(rect: Rect | null): { x: number; y: number; width: number; 
   return rect == null || frame == null ? rect : clip({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }, frame)
 }
 
-/** Until the engine has drawn the stage, the page shows the chosen look's backdrop and the account's
- *  snapshot, so the lobby never shows an empty or half-loaded centre. `instant` shows or hides it
- *  without the fade. */
+/** Until the engine has drawn the stage, so the lobby never shows an empty or half-loaded centre. */
 export function StandInStage({ hidden, instant, body, preset }: { hidden: boolean; instant?: boolean; body?: string; preset?: string }): React.JSX.Element {
   const backdrop = STAGE_BACKDROPS[lobbyStagePreset(preset).id]
   return (
@@ -78,7 +73,6 @@ export function StandInStage({ hidden, instant, body, preset }: { hidden: boolea
   )
 }
 
-/** The page's canvas size and how it maps from the window (it is scaled to the 1920×1080 reference). */
 function useCanvas(root: React.RefObject<HTMLDivElement | null>): { canvas: { width: number; height: number }; toCanvas: (x: number, y: number) => { x: number; y: number } } {
   const [canvas, setCanvas] = useState({ width: 1920, height: 1080 })
   useLayoutEffect(() => {
@@ -104,7 +98,6 @@ function useCanvas(root: React.RefObject<HTMLDivElement | null>): { canvas: { wi
   return { canvas, toCanvas }
 }
 
-/** The placed widgets, each in the cells its placement spans. */
 function WidgetBoard({ layout, ctx, canvas, editing }: { layout: LobbyLayout; ctx: LobbyWidgetContext; canvas: { width: number; height: number }; editing: boolean }): React.JSX.Element {
   return (
     <>
@@ -127,7 +120,6 @@ function WidgetBoard({ layout, ctx, canvas, editing }: { layout: LobbyLayout; ct
   )
 }
 
-/** The page while its layout is edited: the draft's widgets under their frames, and the modal. */
 function EditSession({
   saved,
   ctx,
@@ -214,7 +206,6 @@ export function LobbyHome({
   const [friendTip, setFriendTip] = useState<{ name: string; x: number; y: number } | null>(null)
   const [rotating, setRotating] = useState<{ x: number; y: number } | null>(null)
 
-  // the visit: its analytics, the idle avatar, and the reads the widgets need
   const { warm } = session.lobbyEvents
   const setStage = session.lobbyStage.set
   useEffect(() => {
@@ -377,7 +368,6 @@ export function LobbyHome({
     }
   }
 
-  // An interested mark the service refused is reported, as the events page does.
   const interestError = session.lobbyEvents.interestError
   useEffect(() => {
     if (interestError != null) showToast('Something went wrong, please try again.')
@@ -402,7 +392,6 @@ export function LobbyHome({
   const scale = rootRef.current != null ? rootRef.current.getBoundingClientRect().width / (rootRef.current.offsetWidth || 1) || 1 : 1
   const backpackHole = hole == null ? undefined : holeClip({ x: hole.x / scale, y: hole.y / scale, width: hole.width / scale, height: hole.height / scale })
 
-  // The avatar: a click opens the Backpack, a drag turns it
   const press = useRef<{ id: number; x: number; lastX: number; dragging: boolean } | null>(null)
   // a press that turned the avatar ends in no click
   const dragged = useRef(false)

@@ -141,7 +141,6 @@ export function SettingsPanel({
   settings: SettingsState
   bindings: BindingsState
   profile: ProfileState
-  /** The lobby stage's look, which the Lobby tab picks. */
   lobbyStage: EngineSession['lobbyStage']
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {

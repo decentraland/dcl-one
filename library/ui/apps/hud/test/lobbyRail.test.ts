@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RAIL_START, RailModel } from '../features/lobby/railModel'
 
-// Cards 100 wide, 10 apart, in a viewport that shows `visible` of them.
 function rail(cards: number, perPage: number, visible = perPage, arrowsMoveOneCard = false): RailModel {
   const lefts = Array.from({ length: cards }, (_, i) => i * 110)
   return new RailModel({ lefts, rights: lefts.map((l) => l + 100), viewport: visible * 110 - 10 }, cards, perPage, arrowsMoveOneCard)
@@ -20,7 +19,6 @@ describe('lobby rail paging', () => {
     expect(s.page).toBe(1)
     s = r.next(s)
     expect(s.page).toBe(2)
-    // the last page is clamped to the end of the strip
     expect(s.offset).toBe(r.maxOffset())
     expect(r.next(s)).toEqual(RAIL_START)
   })

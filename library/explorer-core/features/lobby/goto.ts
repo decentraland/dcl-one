@@ -1,5 +1,4 @@
-// The lobby's Go to field: what a typed destination means, as the /goto chat command reads it, and
-// whether it names a real place. Grammar: "random" | "crowd" | "x,y" | "x,y/spawn" | "world" |
+// Grammar, shared with the /goto chat command: "random" | "crowd" | "x,y" | "x,y/spawn" | "world" |
 // "world/x,y" | "world/spawn" | "world/x,y/spawn"; a spawn point name holds neither ',' nor '/'.
 // Anything else is taken verbatim as a world name.
 
@@ -13,7 +12,7 @@ export interface GotoTarget {
 
 const target = (t: Partial<GotoTarget>): GotoTarget => ({ world: null, parcel: null, spawnPoint: null, random: false, crowd: false, ...t })
 
-// an integer with optional surrounding whitespace, as .NET's int.TryParse takes it
+// an optionally signed integer; surrounding whitespace is allowed
 const INTEGER = /^\s*[+-]?\d+\s*$/
 
 function position(text: string): { x: number; y: number } | null {
@@ -60,7 +59,6 @@ export function isGenesisParcel(x: number, y: number): boolean {
   return GENESIS_BOUNDS.some(([minX, minY, maxX, maxY]) => x >= minX && x < maxX && y >= minY && y < maxY)
 }
 
-/** Whether the text names a place the field accepts: random, crowd, a Genesis parcel or a world name. */
 export function isDestination(text: string): boolean {
   const t = parseGotoTarget(text)
   if (t.random || t.crowd) return true
@@ -69,12 +67,10 @@ export function isDestination(text: string): boolean {
   return t.world != null || t.parcel != null
 }
 
-/** A short name is a .dcl.eth world; a full ENS name stands as typed. */
 export function worldName(name: string): string {
   return name.toLowerCase().endsWith('.eth') ? name : name + WORLD_SUFFIX
 }
 
-/** A parcel of the square city at random, where "random" goes. */
 export function randomParcel(random: () => number = Math.random): { x: number; y: number } {
   const pick = (): number => -150 + Math.floor(random() * 300)
   return { x: pick(), y: pick() }

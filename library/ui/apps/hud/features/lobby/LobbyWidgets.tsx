@@ -1,7 +1,3 @@
-// The lobby's widget sections, one per widget of the layout: the landing card, live and upcoming
-// events, online friends, the recent and recommended places, the player's communities and photos,
-// and Go to. Each fills the cells its placement spans; LobbyHome places them.
-
 import { useEffect, useRef, useState } from 'react'
 import arrowRight from '../../assets/lobby/arrow-right.png'
 import communitiesBanner from '../../assets/lobby/communities-banner-img.png'
@@ -28,7 +24,6 @@ import styles from './LobbyWidgets.module.css'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
-/** Everything the widgets read and do; LobbyHome builds it once per render. */
 export interface LobbyWidgetContext {
   /** The layout is being edited: the sections show, but VIEW ALL steps aside for the frames. */
   editing?: boolean
@@ -48,7 +43,6 @@ export interface LobbyWidgetContext {
   photos: GalleryPhoto[] | null
   /** Picks wait while sign-in is finishing. */
   busy: boolean
-  /** The online friends at a set of wallets, for a card's pictures. */
   friendsAt: (addresses: string[] | null | undefined) => ConnectedFriend[]
   onFriendHover: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void
   openLanding: () => void
@@ -394,7 +388,6 @@ function GoTo({ ctx }: { ctx: LobbyWidgetContext }): React.JSX.Element {
   )
 }
 
-/** The section for a widget, filling its cells. */
 export function LobbyWidget({ widget, ctx }: { widget: LobbyWidgetId; ctx: LobbyWidgetContext }): React.JSX.Element | null {
   switch (widget) {
     case 'Landing4By3':
@@ -422,7 +415,7 @@ export function LobbyWidget({ widget, ctx }: { widget: LobbyWidgetId; ctx: Lobby
   }
 }
 
-/** Whether a widget shows anything right now: events and places hide while they have nothing to list. */
+/** Events and places hide while they have nothing to list. */
 export function widgetShown(widget: LobbyWidgetId, ctx: LobbyWidgetContext): boolean {
   if (widget === 'LiveEvents3By3') return ctx.live.length > 0
   if (widget === 'UpcomingEvents3By2') return ctx.upcoming.length > 0
