@@ -82,6 +82,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         # The shards cover every test executable: the matrix lists 1 to n and the script gets i/n.
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
+        # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -91,6 +94,24 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('cache-on-failure: true', cache)
         self.assertLess(rust.index('Put the Nix Rust toolchain on PATH'), rust.index('Swatinem/rust-cache@'))
         self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('bash tooling/dev-test.sh rust'))
+        # The compiler cache: optional, pinned, and on only when the dependency cache hit its exact key
+        # and the server started, so it holds what that entry does not and a failure of the cache does
+        # not fail the tests. The wrapper is set in the test script only, because the dependency cache
+        # key hashes the job environment.
+        self.assertIn('        id: deps\n        uses: Swatinem/rust-cache@', rust)
+        tool = re.search(r'(?ms)^      - name: Install the optional compiler cache\n(.*?)(?=^      - |\Z)', rust).group(1)
+        self.assertIn('continue-on-error: true', tool)
+        self.assertRegex(tool, r'uses: Mozilla-Actions/sccache-action@[0-9a-f]{40} # v')
+        self.assertNotRegex(rust, r'(?m)^ +RUSTC_WRAPPER: ')
+        tests = re.search(r'(?ms)^      - name: Run backend tests with PostgreSQL and isolated NATS\n(.*?)(?=^      - |\Z)', rust).group(1)
+        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps.outputs.cache-hit == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
+        self.assertIn('if [ "$USE_COMPILER_CACHE" = true ] && sccache --start-server; then\n            export RUSTC_WRAPPER=sccache\n', tests)
+        self.assertEqual(tests.count('RUSTC_WRAPPER=sccache'), 1)
+        self.assertLess(tests.index('export RUSTC_WRAPPER=sccache'), tests.index('bash tooling/dev-test.sh rust'))
+        self.assertIn('nix develop .#ci --command bash tooling/dev-test.sh rust || status=$?', tests)
+        self.assertIn('exit "$status"', tests)
+        self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('Mozilla-Actions/sccache-action@'))
+        self.assertLess(rust.index('Mozilla-Actions/sccache-action@'), rust.index('bash tooling/dev-test.sh rust'))
         keys = re.findall(r'^          key: (foundation-dev-v2-[^\n]+)', smoke, re.M)
         self.assertEqual(len(keys), 1)
         self.assertTrue(keys[0].startswith('foundation-dev-v2-smoke-'))
@@ -125,6 +146,25 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         unset.add(f'{path.name}:{name}')
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
+
+    def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
+        # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
+        # unchanged files get the times they had when the snapshot was built.
+        smoke = jobs()['smoke']
+        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
+        self.assertEqual(smoke.count(restore), 1)
+        self.assertEqual(smoke.count(record), 1)
+        self.assertLess(smoke.index('- name: Restore Rust build cache\n'), smoke.index(restore))
+        self.assertLess(smoke.index(restore), smoke.index('bash tooling/dev-smoke.sh'))
+        self.assertLess(smoke.index('bash tooling/dev-test.sh e2e'), smoke.index(record))
+        self.assertLess(smoke.index(record), smoke.index('- name: Save successful smoke build snapshot\n'))
+        # The manifest is written only into a snapshot that the next step saves.
+        steps = {step.split('\n', 1)[0]: step for step in re.split(r'(?m)^      - name: ', smoke)}
+        condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
+        self.assertEqual(condition('Record the source file times in the snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'

@@ -50,6 +50,23 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
+- **The content cache is capped.** Downloaded content lives in the Cache API cache
+  `ipfs-path-cache-v2` (`crates/ipfs/src/web_cache.rs`), at most 1 GiB or the configured
+  `cache_bytes` if lower, and at most half the origin's quota. The service worker trims it,
+  oldest-written entries first, down to 90% of the cap, when the engine asks through the
+  `__contentCacheTrim` page function (`deploy/web/engine/content_cache.js`): at start, after each
+  sixteenth of the cap written (at most 64 MiB), and before retrying a write that failed for quota
+  (then it frees the oldest content worth a quarter of the cap, sizing no more, at most once a
+  minute). It never opens another cache. The cap applies to the content cache's own bytes: Cache
+  Storage usage (`usageDetails.caches`, or the origin's whole usage where the browser does not
+  report it) only bounds them, so at or under the cap nothing is enumerated, and over it every
+  entry is sized and that total alone decides what goes. A page no service worker controls (after
+  a hard reload) is not trimmed: it logs that once, and asks again if a worker takes control
+  later (a worker update; a hard-reloaded page stays uncontrolled until the next load). The page
+  asks once for persistent storage. The **Web Content Cache** debug section shows the readings;
+  in preview mode it can override the cap for the session (at least 1 MiB). The scene server's
+  frame runs a second engine that asks for its own configured cap, so an override above that
+  lasts only until its next trim.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
   laptop the same web build ran much slower (measurements (evidence supplied for the task)).
@@ -93,7 +110,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `export CEF_PATH="$(cygpath -w ~/.local/share/cef)"` after `just setup-cef`.
 - **A PR runs the Windows and macOS tests only for platform inputs.** A Rust change under
   `rendering/bevy-explorer/source` runs clippy, the native test suite on Linux, the headless smoke
-  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). The suite adds
+  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). A draft does not
+  run the test suite and the headless smoke test: they start when the PR is marked ready for
+  review, or on the next push with the `ci:engine` label. The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
   toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
   `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine

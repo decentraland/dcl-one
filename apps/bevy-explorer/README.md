@@ -62,8 +62,11 @@ A download outage therefore falls back to direct compilation without skipping te
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or
 checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 36.2: Linux takes it from the
 flake's `bevy-tools` package (`install-tools.sh` checks the major), Windows and macOS install the
-release archive `install-protoc.py` pins. See the current measurement evidence in the task report
-before claiming time savings.
+release archive `install-protoc.py` pins. The Test Suite, the graphical scenes and the desktop
+packages take CEF from `install-cef.py`, which downloads the archive of the pinned build by name and
+checks its SHA-256; a new `cef` crate version needs the new build and digests there, and the same
+build in `infra/packages/bevy-explorer.nix`. See the current
+measurement evidence in the task report before claiming time savings.
 
 Analytics: every environment reports to one Segment source, keyed by `BEVY_SEGMENT_WRITE_KEY` (a
 repository variable; unset, the engine keeps the key it shared with the mobile client). Every event
@@ -89,6 +92,7 @@ of the compiled engine's cache key, so that build recompiles the WASM.
 | `bevy-explorer-desktop.yml` | Manual Linux/Windows AMD64 packaging | Desktop archives |
 | `bevy-explorer-headless-build.yml` | Reusable platform compilation; Windows and macOS run beside Linux smoke | Engine + sidecar archives; platform npm tarballs |
 | `bevy-explorer-headless.yml` | Publish the four validated platform packages after CI; explicit manual builds include Linux | Headless npm packages; manual prerelease |
+| `apis-sites-compile.yml` | Reusable compilation of the APIs and the Sites apps beside the web producer | Cache entries that the image builds restore |
 | `apis-sites-images.yml` | Reusable image builds after the web producer; publish after complete CI | Tested AMD64/ARM64 APIs and Sites images |
 | `bevy-explorer-images.yml` | Images from a successful main CI run | Web (Linux AMD64/ARM64), headless (Linux AMD64) |
 | `bevy-explorer-rollout-manual.yml` | Roll out a CDN version at `decentraland.zone/play` or `decentraland.org/play` by hand | Rollout records |
@@ -103,11 +107,13 @@ The build jobs (*Test Suite*, *Headless Smoke*, *Clippy*, the web build) start b
 format checks. When one of those checks fails on a pull request from this repository, the *Stop the build jobs*
 job cancels the run; a pull request from a fork runs to the end, because its token cannot cancel a run.
 
-Image builds use `needs` to start after the selected web producer completes. GitHub holds the
-job without allocating a runner; imports and publication receipts use `--wait 0`. This moves
-API compilation after the web producer too, so mixed backend/engine edits need elapsed-time
-measurement as well as runner-minute measurement. Backend-only edits have no web dependency
-work to wait for. Manual/tag image builds require an already available matching producer.
+The *APIs + Sites compile* job starts beside the web producer. It compiles the APIs and the Sites
+apps and saves them to the Actions cache; it reads nothing from the web build. Image builds use
+`needs` to start after that job and after the selected web producer completes. GitHub holds the
+job without allocating a runner; imports and publication receipts use `--wait 0`. The image build
+restores the compiled packages, so it imports the web build and assembles the images. When the
+compile job saved no entry (a rerun, or a `main` that moved before the save), the image build
+compiles the packages itself. Manual/tag image builds require an already available matching producer.
 
 ### Bevy Explorer CI status
 
@@ -127,8 +133,13 @@ base context with write permission, and checks out only the action. It resolves 
 commit) and whether the run's *Changes* job selected an explorer job (`explorer-run-selected.sh`:
 *Test Suite*, *Headless Smoke*, *Clippy* or the web build not skipped). A run that selected none,
 such as a backend-only change, leaves the pull request without a comment. When the run is
-requested, both sections go to pending; when it completes, they are
-composed from its jobs and artifacts (`explorer-ci-sections.sh`). A cancelled run of a commit the
+requested, both sections go to pending; when its test jobs end while the run goes on
+(`explorer-tests-ended.sh`, a wait with a limit in a job without write permission), the tests
+section is written from the jobs; when the run completes, both sections are
+composed from its jobs and artifacts (`explorer-ci-sections.sh`). A completed run that ran no test
+job reads the newer runs of this workflow for the head commit of an open pull request: while one
+has not ended, the tests section links it as pending; when one has ended, the run writes no tests
+section, so it does not replace the results of that run. A cancelled run of a commit the
 pull request moved past writes nothing. `automation` and `inworld` sections are allowed for suites
 to come; they appear the first time one writes.
 

@@ -79,7 +79,8 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 ```sh
 sh scripts/gen-ts-bindings.sh
 npm --prefix react-web ci
-npm --prefix react-web/bridge-scene ci
+corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
 npm --prefix react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
@@ -176,6 +177,10 @@ sections you want to watch. Collapsing a section stops its queries. Download tot
 connection rates include traffic from before you opened the panel. Current Scene charts
 show up to 256 completed ticks from the player's current parcel scene. Entering a different
 scene starts its own history.
+The panel stays open while you play in the world: you can walk, look around, click the world
+and use the HUD while its readings update. A menu page or the lobby covers it until the page
+closes. Leaving the world or opening a scene's full menu closes it. Close it with its close button, the bug button, `/debug`, the
+Sidebar entry or Cancel (Escape), which closes any popup, menu page or side panel first.
 Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
 to **Connect** when paused, and is disabled when there is no controllable connection.
 

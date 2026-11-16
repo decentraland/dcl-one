@@ -67,7 +67,7 @@ impl Bans {
 
 fn config(ban_sweep_interval_secs: u64) -> Settings {
     let mut settings = archipelago::settings();
-    settings.cluster.ban_sweep_interval_secs = ban_sweep_interval_secs;
+    settings.cluster.ban_sweep_interval_ms = ban_sweep_interval_secs * 1000;
     settings
 }
 

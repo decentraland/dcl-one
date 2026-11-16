@@ -53,15 +53,28 @@ class DevCiTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(self.macos('apps/ui3/src/a.ts', path))
 
-    def test_hosted_descriptor_provisioning_precedes_the_rust_environment(self):
+    def test_descriptor_provisioning_is_confined_to_the_auth_stress_step(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         for job in ('rust', 'smoke'):
             with self.subTest(job=job):
                 steps = workflow.split(f'\n  {job}:', 1)[1]
                 steps = re.split(r'\n  [a-z][a-z-]*:', steps, maxsplit=1)[0]
-                provision = steps.index('provision_hosted_macos_test_resources')
-                self.assertLess(provision, steps.index('nix develop'))
-                self.assertIn("if: runner.os == 'macOS' && runner.environment == 'github-hosted'", steps[:provision])
+                if job == 'rust':
+                    ordinary, stress = steps.split('      - name: Run provisioned auth stress\n', 1)
+                    stress, remaining = stress.split('      - name:', 1)
+                    self.assertIn('        if: matrix.shard == 2\n', stress)
+                    self.assertIn('macOS:github-hosted', stress)
+                    provision = stress.index('provision_hosted_macos_test_resources')
+                    environment = stress.index('nix develop')
+                    readback = stress.index('prepare_catalyst_test_resources')
+                    runtime = stress.index('python3 tooling/dev-regressions.py --auth-stress')
+                    self.assertLess(provision, environment)
+                    self.assertLess(environment, readback)
+                    self.assertLess(readback, runtime)
+                    steps = ordinary + remaining
+                for resource in ('catalyst-test-resources.sh', 'provision_hosted_macos_test_resources',
+                                 'prepare_catalyst_test_resources', '--auth-stress'):
+                    self.assertNotIn(resource, steps)
 
     def test_every_script_the_rust_suite_runs_is_a_macos_input(self):
         script = (dev.ROOT / 'tooling/dev-test.sh').read_text()
@@ -176,7 +189,16 @@ class DevCiTest(unittest.TestCase):
     def rust(self, *changed):
         return dev.needs_rust(changed, 'HEAD', self.dev)[0]
 
+    def scanned_once(self):
+        """Give every needs_rust call in the test the result of one real scan: a scan takes seconds on macOS."""
+        references = dev.rust_source_references('HEAD')
+        scan = patch.object(dev, 'rust_source_references', return_value=references)
+        scan.start()
+        self.addCleanup(scan.stop)
+        return references
+
     def test_files_outside_the_rust_inputs_skip_the_rust_tests(self):
+        self.scanned_once()
         for changed in (['apps/ui3/src/play/Hud.tsx'], ['apps/sites/src/app.ts', 'apps/ui3/package.json'],
                         ['library/ui/apps/hud/Hud.tsx', 'apps/sites/pnpm-lock.yaml', 'docs/development.md'],
                         ['rendering/bevy-explorer/source/src/main.rs', 'rendering/bevy-explorer/source/Cargo.lock'],
@@ -194,8 +216,7 @@ class DevCiTest(unittest.TestCase):
                      'services/catalyst/tests/fixtures/a.json', 'services/catalyst/rust-toolchain.toml',
                      'schemas/storage.sql', 'library/vendor/rusty_enet/src/lib.rs', 'library/dcl-http/src/lib.rs',
                      'library/catalyst-api/openapi/a.json', 'library/protocol/proto/a.proto',
-                     'apps/dcl-scene-cli/src/main.rs', 'apps/dcl-scene-cli/skills/a/SKILL.md',
-                     'docs/openapi.json', 'docs/ui/a.json', '.cargo/config.toml', 'flake.nix', 'flake.lock', 'Makefile',
+                     'apps/dcl-scene-cli/Cargo.toml', '.cargo/config.toml', 'flake.nix', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'infra/packages/tools.nix', 'tooling/dev.py', 'tooling/dev-test.sh',
                      'tooling/dev-regressions.json', 'tooling/catalyst-test.sh', 'tooling/ci_paths.py',
                      'tooling/tests/test_dev_regressions.py', '.github/workflows/development.yml'):
@@ -204,8 +225,20 @@ class DevCiTest(unittest.TestCase):
                 self.assertTrue(self.rust('apps/ui3/src/play/Hud.tsx', path))
         self.assertEqual(dev.needs_rust([], 'HEAD', self.dev), (True, 'No changed files to compare'))
 
+    def test_every_rust_input_is_a_path_the_workflow_watches(self):
+        # The Rust job needs both answers of the plan. An input outside the workflow's paths gives run=false,
+        # and the tests that read it do not run. Documentation is the workflow's own exclusion.
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=dev.ROOT, text=True).split('\0')
+        tracked = [path for path in tracked if path]
+        for pattern in dev.RUST_INPUTS:
+            inputs = self.dev.non_documentation(self.dev.matching_paths(tracked, (pattern,)))
+            with self.subTest(pattern=pattern):
+                # A pattern that names no tracked file cannot be checked, and selects nothing.
+                self.assertTrue(inputs)
+                self.assertEqual(sorted(set(inputs) - set(dev.watched_changes(inputs, self.dev))), [])
+
     def test_files_that_rust_sources_name_run_the_rust_tests(self):
-        references = dev.rust_source_references('HEAD')
+        references = self.scanned_once()
         # The event poster default that the backend embeds.
         self.assertIn('apps/ui3/public/assets/event-default.webp', references)
         for reference in references:

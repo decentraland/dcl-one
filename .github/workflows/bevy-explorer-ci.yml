@@ -18,6 +18,7 @@
       - tooling/tests/test_upstream_*.py
       - tooling/bevy-target-cache.py
       - tooling/play-artifact.py
+      - tooling/check-local-hashing.mjs
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
       - tooling/tests/hud_manifest_fixture.py
@@ -46,8 +47,10 @@
       - tooling/tests/test_ci_publication.py
       - tooling/tests/test_image_publish.py
       - .github/workflows/apis-sites-images.yml
+      - .github/workflows/apis-sites-compile.yml
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    # ready_for_review starts the jobs that a draft holds (tooling/bevy-ci.py).
+    types: [opened, synchronize, reopened, ready_for_review, closed]
     paths:
       - .cargo/**
       - rust-toolchain*
@@ -63,6 +66,7 @@
       - tooling/tests/test_upstream_*.py
       - tooling/bevy-target-cache.py
       - tooling/play-artifact.py
+      - tooling/check-local-hashing.mjs
       - tooling/hud_shared_inputs.py
       - tooling/tests/test_hud_shared_inputs.py
       - tooling/tests/hud_manifest_fixture.py
@@ -91,6 +95,7 @@
       - tooling/tests/test_ci_publication.py
       - tooling/tests/test_image_publish.py
       - .github/workflows/apis-sites-images.yml
+      - .github/workflows/apis-sites-compile.yml
   # Manual run of the full workflow on any ref. On a branch, setting `publish-tag`
   # also publishes the web package (as 0.1.0-<runId>.commit-<sha>, under that npm
   # dist-tag) and uploads it to the CDN, ready for a manual rollout. oddish ignores a
@@ -104,7 +109,9 @@
 concurrency:
   group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   # Main runs finish; runs started meanwhile wait as one pending run (the newest replaces it).
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+  # A run that ready_for_review starts waits too: the development smoke job of the same commit
+  # reads the web build of the run in progress, and that workflow does not run again.
+  cancel-in-progress: ${{ github.event.action != 'ready_for_review' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') }}
 name: Bevy Explorer / CI
 jobs:
   source:
@@ -205,7 +212,6 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
-      CEF_EXPORT_VERSION: 139.8.0+139.0.40
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -267,6 +273,10 @@ jobs:
             try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
             catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
           }
+          # The release tag can get a different file. Accept only the archive with this digest.
+          $ffSha256 = "a852648944cdf4ce3aeebf16d750a036fe67ab657b82eb43f9f7fdcc7bef3af7"
+          $ffActual = (Get-FileHash ffmpeg-6.0-full_build-shared.7z -Algorithm SHA256).Hash.ToLower()
+          if ($ffActual -ne $ffSha256) { throw "ffmpeg archive has SHA-256 $ffActual, expected $ffSha256" }
           7z x ffmpeg-6.0-full_build-shared.7z
           mkdir ffmpeg
           mv ffmpeg-*/* ffmpeg/
@@ -282,13 +292,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.local/share/cef
-          key: bevy-cef-${{ runner.os }}-${{ runner.arch }}-${{ env.CEF_EXPORT_VERSION }}
+          key: bevy-cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/bevy-explorer/install-cef.py') }}
       - name: Export CEF distribution
         shell: bash
         run: |
           if [ "${{ steps.cef.outputs.cache-hit }}" != true ]; then
-            cargo install export-cef-dir --version "$CEF_EXPORT_VERSION"
-            export-cef-dir --force "$HOME/.local/share/cef"
+            python3 "$GITHUB_WORKSPACE/apps/bevy-explorer/install-cef.py" "$HOME/.local/share/cef"
           fi
           # GITHUB_ENV/GITHUB_PATH reach native processes verbatim: on windows the git-bash
           # $HOME (/c/Users/...) would resolve as C:\c\Users\... — write windows paths there.
@@ -408,6 +417,8 @@ jobs:
         run: node --test crates/dcl_js/src/modules/CommsApi.test.cjs
       - name: Test LiveKit browser bindings
         run: node --test crates/comms/livekit_web_bindings.test.mjs
+      - name: Test scene request routing
+        run: node --test react-web/e2e/scene-routes.test.mjs
       - name: Build the benchmark runner
         # The benchmark runner, for each OS: the fleet's laptops (Windows and macOS) run the legs with
         # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:
@@ -798,7 +809,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             rendering/bevy-explorer/source/react-web/package-lock.json
-            rendering/bevy-explorer/source/react-web/bridge-scene/package-lock.json
+      - run: corepack enable
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         if: steps.engine-cache.outputs.cache-matched-key == ''
         with:
@@ -897,7 +908,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             rendering/bevy-explorer/source/react-web/package-lock.json
-            rendering/bevy-explorer/source/react-web/bridge-scene/package-lock.json
+      - run: corepack enable
       - name: Download the tested web app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -914,7 +925,8 @@ jobs:
       - name: Install the HUD and bridge scene dependencies
         run: |
           npm ci --prefix react-web
-          npm ci --prefix react-web/bridge-scene
+          corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
       # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
       # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
@@ -949,7 +961,7 @@ jobs:
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
-          npm run export-web
+          corepack pnpm@11.27.0 run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
       - name: Say how to get a preview
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.build-deploy-web.outputs.publish != 'true'
@@ -1081,14 +1093,26 @@ jobs:
           {"platform": "macos-amd64", "npm_platform": "darwin-x64", "runner": "macos-15", "target": "x86_64-apple-darwin"},
           {"platform": "windows-amd64", "npm_platform": "win32-x64", "runner": "windows-2025", "target": "x86_64-pc-windows-msvc"}
         ]}
-  images:
-    name: APIs + Sites
-    needs: [source, changes, build-deploy-web]
-    # A skipped web lane means inputs are unchanged: fetch-play imports a matching
-    # main producer once its upload passed. Failed/canceled producers never qualify.
+  images-compile:
+    name: APIs + Sites compile
+    needs: [source, changes]
+    # Beside the web build: the compiled packages read nothing from it. The image job below
+    # restores them from the cache.
     if: >-
       !cancelled() && needs.source.result == 'success' && needs.changes.result == 'success' &&
-      needs.changes.outputs.images == 'true' &&
+      needs.changes.outputs.images == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/apis-sites-compile.yml
+  images:
+    name: APIs + Sites
+    needs: [source, changes, build-deploy-web, images-compile]
+    # A skipped web lane means inputs are unchanged: fetch-play imports a matching
+    # main producer once its upload passed. Failed/canceled producers never qualify.
+    # After a failed compile job this job is skipped: it would fail on the same step.
+    if: >-
+      !cancelled() && needs.source.result == 'success' && needs.changes.result == 'success' &&
+      needs.changes.outputs.images == 'true' && needs.images-compile.result == 'success' &&
       (needs.build-deploy-web.result == 'success' || needs.build-deploy-web.result == 'skipped')
     permissions:
       contents: read

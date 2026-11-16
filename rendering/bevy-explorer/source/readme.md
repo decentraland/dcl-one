@@ -59,9 +59,9 @@ cargo install wasm-pack
 just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-web and opens a browser
 ```
 
-With Nix, `nix develop .#wasm` from the repository root replaces the two installs: the shell carries the pinned nightly with the wasm target, `just`, `wasm-pack`, `wasm-bindgen` at the `Cargo.lock` version, `wasm-opt`, node and protoc.
+With Nix, `nix develop .#wasm` from the repository root replaces the two installs: the shell carries the pinned nightly with the wasm target, `just`, `wasm-pack`, `wasm-bindgen` at the `Cargo.lock` version, `wasm-opt`, node, pnpm and protoc.
 
-`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
+`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web`, a frozen pnpm install in `react-web/bridge-scene`, then `npm run dev`.
 
 Useful URLs once the dev server is up:
 
@@ -111,7 +111,9 @@ Doing it by hand instead of via `just`:
 ```bash
 python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && npm ci && (cd bridge-scene && npm ci) && npm run bundle:native && cd ..
+cd react-web && npm ci
+(cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.27.0 --filter @dcl/hashing build)
+npm run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release

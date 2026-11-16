@@ -17,6 +17,8 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+AUTH_STRESS = "rpc_validator::tests::provisioned_rpc_workload_runs_3000_verifiers_at_nine_links"
+EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
     ("catalyst_comms", "lib", "pulse::cluster::nats::statistics_tests::statistics_live_broker_late_join_and_reconnect_recover_complete_state"),
     ("archipelago_socket_bounds", "test", "orderly_shutdown_drains_authenticated_disconnect_to_live_pulse"),
@@ -27,6 +29,26 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::config::tests::ban_sweep_resolve_keeps_milliseconds_from_process_config",
+        "archipelago::config::tests::ban_sweep_environment_parser_keeps_defaults_delays_and_errors",
+        "archipelago::enforcement::tests::ban_sweep_waits_for_default_first_interval",
+        "archipelago::enforcement::tests::ban_sweep_first_pass_override_runs_immediately_without_resetting_cadence",
+        "archipelago::enforcement::tests::ban_sweep_subsecond_ticks_skip_overlap_without_resetting_cadence",
+        "archipelago::enforcement::tests::ban_sweep_missed_ticks_do_not_burst_or_accumulate_while_busy",
+        "archipelago::enforcement::tests::ban_sweep_cancel_before_first_tick_starts_no_pass",
+        "archipelago::enforcement::tests::ban_sweep_cancel_keeps_running_pass_owned_until_completion",
+        "archipelago::enforcement::tests::ban_sweep_stuck_pass_uses_existing_shutdown_deadline",
+        "archipelago::ws::raw_transport::tests::production_partial_write_retirement_keeps_capacity_until_the_reader_drops",
+        "archipelago::ws::raw_transport::tests::axum_reader_and_writer_cannot_drain_a_partial_frame_after_retirement",
+        "archipelago::ws::io::tests::capacity_is_retained_until_both_shared_transport_directions_drop",
+        "archipelago::ws::raw_transport::tests::positive_raw_reads_observe_partial_headers_masks_and_payloads",
+        "archipelago::ws::raw_transport::tests::admission_consumes_http_read_ahead_once_and_terminal_input_cannot_rearm",
+        "archipelago::ws::raw_transport::tests::zero_and_error_reads_never_advance_activity_or_generation",
+        "archipelago::ws::raw_transport::tests::ordinary_output_and_clean_close_still_reach_the_lower_transport",
+        "archipelago::ws::raw_transport::tests::an_observed_read_wins_idle_retirement_and_terminal_state_is_permanent",
+        "archipelago::ws::raw_transport::tests::mounted_partial_header_mask_and_payload_reset_idle_before_parsing",
+        "archipelago::ws::raw_transport::tests::mounted_http_read_ahead_is_consumed_once_before_partial_frame_activity",
+        "archipelago::ws::raw_transport::tests::ordinary_http_preserves_peer_address_and_stays_unarmed",
         "archipelago::ws::legacy_decode::tests::locked_buffer_decoder_differential_corpus",
         "stats::tests::http_tests::source_handler_fixtures_match_pulse_state_and_all_http_aliases",
         "stats::tests::every_contiguous_change_is_visible_at_callback_completion_and_gaps_require_recovery",
@@ -64,15 +86,26 @@ MANDATORY_ARCHIPELAGO = {
         "stats::runtime::tests::scrape_reads_clocks_after_render_and_uses_fresh_reset_date",
         "stats::runtime::tests::scrape_clock_history_keeps_strict_boundary_and_feed_baseline_with_one_delayed_reset",
         "stats::runtime::tests::scrape_without_rotation_does_not_read_reset_clocks",
+        "stats::runtime::process::tests::registry_cpu_ordinary_missing_sample_retains_measured_origin_on_recovery",
+        "stats::runtime::process::tests::registry_missing_cpu_at_reset_starts_recovery_at_first_known_sample",
+        "stats::runtime::process::tests::registry_measured_cpu_reset_serializes_old_interval_before_starting_new_interval",
+        "stats::runtime::process::tests::registry_unavailable_initial_cpu_sample_waits_for_measured_origin",
+        "stats::runtime::process::tests::registry_memory_and_fd_failures_omit_only_unavailable_families_and_recover",
+        "stats::runtime::process::tests::registry_disabled_default_collection_never_samples_before_or_after_reset",
+        "stats::runtime::process::tests::registry_unavailable_initial_soft_limit_stays_omitted_in_its_isolated_cache",
         "stats::runtime::tests::rejected_scrape_keeps_reset_boundary_and_success_is_observed_after_old_body",
         "stats::tests::http_tests::selected_sql_metadata_order_reaches_hot_scenes_http",
         "stats::tests::content_tests::selected_sql_content_applies_shared_denylist_before_top_100",
         "archipelago::tests::mounted_hot_scenes_share_local_content_policy_for_get_and_head",
-        "archipelago::ws::io::bounds_tests::peer_close_cancels_production_readiness_slot_and_partial_frame_without_drain",
+        "archipelago::ws::io::bounds_tests::peer_close_drains_only_clean_readiness_and_never_partial_frames",
         "archipelago::ws::io::bounds_tests::clean_peer_close_discards_queue_and_preempts_kick_restart_without_start_send",
+        "archipelago::ws::io::bounds_tests::owner_kick_sends_terminal_only_from_a_clean_frame_boundary",
         "archipelago::ws::io::bounds_tests::stalled_clean_control_flush_releases_permit_once_at_existing_deadline",
         "archipelago::ws::io::bounds_tests::peer_close_wakes_idle_production_writer_without_a_lost_notification",
         "archipelago::ws::io::bounds_tests::peer_close_during_production_authority_wait_never_begins_the_held_credential",
+        "archipelago::ws::io::bounds_tests::physical_readiness_rechecks_selected_credentials_and_keeps_signaling_live",
+        "archipelago::ws::io::bounds_tests::physical_readiness_rechecks_durable_policy_and_exact_configured_fence",
+        "archipelago::ws::io::bounds_tests::same_session_replacement_during_fresh_authorization_never_starts_old_credential",
         "archipelago::ws::io::bounds_tests::a_completed_send_can_echo_but_failed_or_timed_out_sends_never_salvage",
         "archipelago::auth::tests::opaque_issuance_isolates_equal_nonces_and_stale_cleanup",
         "archipelago::auth::tests::same_wallet_challenges_survive_mismatch_and_invalid_signature",
@@ -97,6 +130,9 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::observations::tests::refused_observations_count_every_loss_without_logging_on_the_socket_path",
         "pulse::statistics::tests::draining_changes_releases_bytes_while_the_backlog_stays_nonempty",
         "stats::tests::indexed_changes_preserve_order_and_rebuild_after_removal_and_recovery",
+        "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+        "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+        "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
         "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
         "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
         "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
@@ -108,7 +144,12 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
         "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
         "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
-        "pulse::statistics::tests::producer_capacity_never_forgets_cursors_and_backlog_recovers_completely",
+        "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+        "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+        "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
+        "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+        "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+        "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
     ],
     ("catalyst_content", "lib"): [
         "entity::tests::deployment_metadata_retains_order_and_exact_scalars",
@@ -144,6 +185,8 @@ MANDATORY_ARCHIPELAGO = {
     ],
     ("catalyst", "lib"): [
         "presence::tests::module_sources::validated_historical_sync_order_reaches_hot_scenes_http",
+        "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+        "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
         "presence::tests::module_sources::archive_reads_selected_sql_metadata_and_omits_non_string_fields",
         "metrics_matcher::tests::canceled_queued_and_running_matchers_keep_single_submission",
         "metrics_matcher::tests::panicked_work_returns_error_and_releases_admission",
@@ -162,6 +205,7 @@ MANDATORY_ARCHIPELAGO = {
         "a_retried_deployment_keeps_its_record_until_its_write_commits",
     ],
     ("archipelago_socket_bounds", "test"): [
+        "initial_http_read_ahead_preserves_partial_frame_and_ordinary_challenge",
         "repeated_and_unknown_wire_fields_reach_the_socket_statistics_boundary",
         "unknown_auth_field_does_not_replace_a_valid_legacy_signature",
         "sustained_excess_heartbeats_close_the_real_socket_with_1008",
@@ -181,6 +225,9 @@ MANDATORY_ARCHIPELAGO = {
         "every_fallback_rpc_phase_cancels_without_admission_or_a_following_request",
     ],
     ("catalyst_config", "lib"): [
+        "worlds::tests::ban_sweep_interval_defaults_to_thirty_seconds",
+        "worlds::tests::ban_sweep_interval_uses_numeric_prefixes_and_timer_delay_bounds",
+        "worlds::tests::ban_sweep_interval_rejects_missing_numeric_prefix",
         "worlds::tests::island_dedup_uses_ecmascript_numeric_prefixes",
     ],
     ("dcl_auth", "lib"): [
@@ -226,13 +273,15 @@ MANDATORY_ARCHIPELAGO = {
 TEST_SCRIPT = [
     'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
-    'print(artifact["executable"])',
+    'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
     '\' > "$logs/binaries"',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
     '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
-    'sort "$logs/binaries" | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
+    'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
+    '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
+    'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
     'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
@@ -320,6 +369,29 @@ def validate_runtime_script(script):
             "fixture integrity check and selftests must remain unconditional between regression and ENet selftests")
 
 
+def validate_auth_stress_workflow(workflow):
+    jobs = re.findall(r"^  rust:\n(.*?)(?=^  [\w-]+:|\Z)", workflow, re.M | re.S)
+    require(len(jobs) == 1, "auth stress requires the Rust job")
+    steps = re.findall(r"^      - name: Run provisioned auth stress\n(.*?)(?=^      - |\Z)", jobs[0], re.M | re.S)
+    require(jobs[0].count("        shard: [1, 2, 3]\n") == 1,
+            "auth stress requires exactly one provisioned shard in the Rust matrix")
+    expected = '''        if: matrix.shard == 2
+        run: |
+          source tooling/catalyst-test-resources.sh
+          if [ "$RUNNER_OS:$RUNNER_ENVIRONMENT" = macOS:github-hosted ]; then provision_hosted_macos_test_resources; fi
+          nix develop .#ci --command bash -euo pipefail -c '
+          source tooling/catalyst-test-resources.sh
+          prepare_catalyst_test_resources
+          python3 tooling/dev-regressions.py --auth-stress
+          '
+'''
+    require(steps == [expected], "auth stress must run once on shard 2 with adjacent descriptor provisioning and readback")
+    require(workflow.count("python3 tooling/dev-regressions.py --auth-stress") == 1,
+            "auth stress runtime must be selected exactly once")
+    require(jobs[0].index("bash tooling/dev-test.sh rust") < jobs[0].index("- name: Run provisioned auth stress"),
+            "auth stress must follow ordinary backend tests")
+
+
 def validate_test_script(script):
     # Pins the lines that keep the run complete: bash under set -e, the selection compiled
     # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
@@ -386,15 +458,30 @@ def verify_external_result(name, output):
         f"provisioned test must execute exactly once with zero ignored/failed: {name}")
 
 
-def run_external(executable, name):
+def external_inventory(executable, name):
     normal = inventory(run([executable, "--list", "--format", "terse"]))
     ignored = inventory(run([executable, "--list", "--ignored", "--format", "terse"]))
     require(normal[name] == 1 and ignored[name] == 1,
             f"provisioned ignored test absent/renamed or annotation changed: {name}")
+
+
+def run_external(executable, name, *, show_output=False):
+    external_inventory(executable, name)
     command = [executable, name, "--exact", "--ignored", "--test-threads=1", "--color", "never"]
+    if show_output:
+        command.append("--show-output")
     print("provisioned Archipelago test: " + " ".join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=210)
+    try:
+        result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=210)
+    except subprocess.TimeoutExpired as error:
+        # Timeout output can be bytes even with text=True, including a partial
+        # multibyte character when the process is killed.
+        output = error.output
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        print(output or "", flush=True)
+        raise
     print(result.stdout, flush=True)
     require(result.returncode == 0, f"provisioned test failed ({result.returncode}): {name}")
     verify_external_result(name, result.stdout)
@@ -409,8 +496,26 @@ def external_prerequisites(environ):
     return binary
 
 
+def external_shard(environ):
+    # The provisioned tests take a fixed time and do not depend on the cut of the binaries, so one
+    # shard of a run executes them. An empty value reads as unset, as in tooling/catalyst-test.sh.
+    shard = environ.get("CATALYST_TEST_SHARD") or "1/1"
+    chosen = environ.get(EXTERNAL_SHARD) or "1"
+    # The same pattern and limit as the CATALYST_TEST_SHARD line of tooling/catalyst-test.sh, which
+    # this guard pins as text: change both together.
+    require(re.fullmatch(r"[1-9][0-9]*/[1-9][0-9]*", shard) is not None,
+            "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    index, total = map(int, shard.split("/"))
+    require(index <= total, "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    # A value outside 1 to n fails every shard, so no setting makes all shards skip the tests.
+    require(re.fullmatch(r"[1-9][0-9]*", chosen) is not None and int(chosen) <= total,
+            f"{EXTERNAL_SHARD} must name one shard from 1 to {total}")
+    return index == int(chosen), f"{int(chosen)}/{total}"
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
+    execute, owner = external_shard(os.environ)
     version = subprocess.run([binary, "--version"], text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
@@ -428,7 +533,12 @@ def check_external():
         check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions", **options)
     for target, kind, name in EXTERNAL:
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
-        run_external(targets[kind][target], name)
+        if execute:
+            run_external(targets[kind][target], name)
+        else:
+            # Every shard checks that the test is present and ignored by default.
+            external_inventory(targets[kind][target], name)
+            print(f"provisioned Archipelago test runs in shard {owner}: {name}", flush=True)
 
 
 def verify_resolution(root=ROOT):
@@ -463,12 +573,25 @@ def check_executable(required, executable, label, required_ignored=(), *, exact=
         require(inventory(normal)[name] == 1 and inventory(ignored)[name] == 1, f"{label}: provisioned external test must remain ignored by default: {name}")
 
 
+def check_auth_stress():
+    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst",
+                               selected={"dcl_auth"}, kind="lib")
+    require("dcl_auth" in targets, "auth stress library target missing")
+    run_external(targets["dcl_auth"], AUTH_STRESS, show_output=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bevy-artifacts", type=Path)
     parser.add_argument("--archipelago-external", action="store_true")
+    parser.add_argument("--auth-stress", action="store_true")
     args = parser.parse_args()
-    require(not (args.bevy_artifacts and args.archipelago_external), "select only one regression mode")
+    require(sum([bool(args.bevy_artifacts), args.archipelago_external, args.auth_stress]) <= 1,
+            "select only one regression mode")
+    validate_auth_stress_workflow((ROOT / ".github/workflows/development.yml").read_text())
+    if args.auth_stress:
+        check_auth_stress()
+        return
     if args.archipelago_external:
         check_external()
         return

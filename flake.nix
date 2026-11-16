@@ -84,6 +84,8 @@
           # The web explorer's loop, `just wasm` in rendering/bevy-explorer/source: the nightly its
           # justfile pins, and wasm-bindgen at that workspace's Cargo.lock version, so wasm-pack
           # downloads neither it nor wasm-opt. No services: the shell hook is the default shell's.
+          # Node 26 has no corepack, so the shell carries pnpm and the justfile reads PNPM. This
+          # pnpm must not fetch the version a package.json pins: that binary cannot start on NixOS.
           wasm = pkgs.mkShell {
             packages = with pkgs; [
               (rust-bin.nightly."2026-04-15".default.override {
@@ -91,9 +93,12 @@
                 extensions = [ "rust-src" ];
               })
               just wasm-pack wasm-bindgen-cli_0_2_114 binaryen nodejs_26 python3 gitMinimal
+              (pnpm.override { nodejs-slim = nodejs-slim_26; })
               pkg-config cmake clang protobuf
             ] ++ lib.optionals stdenv.hostPlatform.isLinux [ udev ];
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            PNPM = "pnpm";
+            pnpm_config_manage_package_manager_versions = "false";
           };
         in {
           inherit default ci wasm;
