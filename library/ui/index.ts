@@ -32,3 +32,6 @@ export * from './components/Spinner/Spinner'
 export * from './components/Tabs/Tabs'
 export * from './components/TabsBar/TabsBar'
 export { textClasses } from './text-styles'
+
+export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
+export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'

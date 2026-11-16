@@ -1,0 +1,254 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    position: relative;
+    display: grid;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+    color: var(--dcl-text-primary);
+  }
+  .label {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+  }
+  .description,
+  .error {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+  }
+  .description {
+    color: var(--dcl-text-secondary);
+  }
+  .field {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-height: 48px;
+    padding-inline: var(--dcl-space-16);
+    border: 1px solid var(--dcl-transparencies-white-20);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-white-10);
+  }
+  .field:focus-within {
+    outline: 2px solid var(--dcl-primary-primary);
+    outline-offset: 2px;
+  }
+  .field[data-invalid] {
+    border-color: var(--dcl-primary-primary);
+  }
+  .input {
+    composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+  }
+  .input::placeholder {
+    color: var(--dcl-neutrals-silver);
+  }
+  .input:disabled {
+    opacity: 0.5;
+  }
+  .reveal {
+    min-height: 44px;
+    border: 0;
+    padding: var(--dcl-space-8);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .reveal:focus-visible {
+    outline: 2px solid currentColor;
+  }
+  .root[data-surface='explorer'] .field {
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+  }
+}
+
+@layer dcl.components {
+  .root[data-surface='explorer'] {
+    position: relative;
+  }
+  .label[data-hidden] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .root[data-surface='explorer']::after {
+    content: '';
+    height: 17px;
+  }
+  .root[data-surface='explorer']:has(.status)::after {
+    display: none;
+  }
+  .root[data-surface='explorer'] .field {
+    box-sizing: border-box;
+    min-height: 51px;
+    border: 3px solid transparent;
+    padding-block: 0;
+    border-radius: 14px;
+    background-clip: padding-box;
+  }
+  .root[data-surface='explorer'] .field:focus-within {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+  }
+  .root[data-surface='explorer'] .field[data-invalid] {
+    box-shadow: 0 0 0 3px var(--dcl-feedback-error);
+  }
+  .root[data-surface='explorer'] .input {
+    box-sizing: border-box;
+    min-height: 45px;
+    padding: 0;
+    line-height: 19.36px;
+  }
+  .root[data-surface='explorer'] .error {
+    min-height: 17px;
+    color: var(--dcl-feedback-error);
+    line-height: 16.94px;
+  }
+}
+
+@layer dcl.components {
+  .status {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    min-height: 17px;
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+    line-height: 16.94px;
+  }
+  .status:has(.error) {
+    color: var(--dcl-feedback-error);
+  }
+  .suffix {
+    flex: none;
+    color: var(--dcl-neutrals-silver);
+  }
+  .reveal {
+    color: var(--dcl-neutrals-silver);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+  }
+}
+
+@layer dcl.components {
+  .root[data-surface='web'] .description {
+    color: var(--dcl-neutrals-snow);
+  }
+  .root[data-surface='web'] .field {
+    box-sizing: border-box;
+    min-height: 48px;
+    border: 0;
+    box-shadow: inset 0 0 0 1px var(--dcl-transparencies-white-40);
+  }
+  .root[data-surface='web'] .input {
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0;
+    line-height: 24px;
+    text-overflow: ellipsis;
+  }
+  .root[data-surface='web'] .field:focus-within {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--dcl-neutrals-snow);
+  }
+  .root[data-surface='web'] .field[data-invalid] {
+    box-shadow: inset 0 0 0 2px var(--dcl-feedback-error);
+  }
+  .root[data-surface='web'] .status {
+    min-height: 18px;
+    color: var(--dcl-neutrals-silver);
+    font-size: var(--dcl-font-size-body-xs);
+    line-height: 18px;
+  }
+  .root[data-surface='web'] .status:has(.error) {
+    color: var(--dcl-feedback-error);
+  }
+  .root[data-surface='web']:has(input:disabled) {
+    opacity: 0.4;
+  }
+  .root[data-surface='web'] .input:disabled {
+    opacity: 1;
+  }
+  @media (hover: hover) {
+    .root[data-surface='web']:not(:has(input:disabled))
+      .field:hover:not(:focus-within):not([data-invalid]) {
+      background: var(--dcl-transparencies-white-20);
+      box-shadow: inset 0 0 0 1px var(--dcl-transparencies-white-60);
+    }
+  }
+}
+
+@layer dcl.components {
+  .errorRow {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    min-width: 0;
+    color: var(--dcl-feedback-error);
+  }
+  .root[data-surface='web'] .status {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--dcl-space-4);
+  }
+  .root[data-surface='web'] .error {
+    line-height: 21px;
+  }
+  .root[data-surface='web'] .input::selection {
+    background: var(--dcl-system-blue-dark-2);
+  }
+}
+
+@layer dcl.components {
+  .fieldRow {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+  .field {
+    flex: 1;
+    min-width: 0;
+  }
+  .action {
+    flex: none;
+    max-width: 100%;
+  }
+  .hint {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    min-width: 0;
+    color: var(--dcl-neutrals-snow);
+    line-height: 21px;
+  }
+}
+
+@layer dcl.components {
+  .icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+  }
+  .icon svg {
+    width: 100%;
+    height: 100%;
+  }
+}

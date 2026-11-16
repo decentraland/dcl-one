@@ -286,14 +286,19 @@ async fn camera_auth_accepts_raw_metadata_and_refuses_the_scene_signer_on_writes
 }
 
 #[tokio::test]
-async fn camera_auth_requires_metadata_and_uses_a_one_minute_one_sided_expiry() {
+async fn camera_auth_requires_metadata_and_caps_both_sides_at_one_minute() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(Duration::from_millis(20))
         .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
         .unwrap();
     let (state, dir) = state(pool).await;
     let path = crate::SignedPath::local("/api/images");
-    for (offset_ms, accepted) in [(-120_000, false), (30_000, true), (86_400_000, true)] {
+    for (offset_ms, accepted) in [
+        (-120_000, false),
+        (30_000, true),
+        (120_000, false),
+        (86_400_000, false),
+    ] {
         let timestamp = (chrono::Utc::now().timestamp_millis() + offset_ms).to_string();
         let (headers, _) = headers("{}", &timestamp, false, "post", "/api/images").await;
         assert_eq!(
