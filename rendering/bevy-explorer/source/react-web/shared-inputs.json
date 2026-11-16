@@ -8594,7 +8594,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
-      "sha256": "fda6fbc71ec01925dd4bbedd9e27db1d8f23397978dc024f7b66a0a5a3e0b9b9"
+      "sha256": "048b15039ab453534ec2c019239faebccc9fcb0c93f1b04a94761f2a812dcfe1"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
@@ -8606,11 +8606,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
-      "sha256": "126a58c49b63ce1f86dffa4b043fc829b1f1156625608334fa99b0833d20a4d4"
+      "sha256": "25ed283fb0ed24ac6c8f1868c4b3653c4f48b29744287c946e3f9dec7e48cc22"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "b50127e5098179c882ad32a86ccb17b6f18865156803a78449053548c7a322b7"
+      "sha256": "aa45a06fdfd5e851ab8a63dac736478a0e6f58cb871766214ddcfe062099d297"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
@@ -8750,7 +8750,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
-      "sha256": "9a8d0021f57dc22accbc96c9267dd0f2ac11c4fd44da5e7e1f354766ea3cf70f"
+      "sha256": "98125f83bff964edc8e1a442b5ac583c1c8330542b39e56c27d3204469282e58"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
@@ -8814,7 +8814,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
-      "sha256": "e8e2e943a4114c413689381642521a10d41c456283796c71db8e451a050d5e7b"
+      "sha256": "14888f01c31c6675d0a878baa442d884dc8b7f599d97c5c662f7acce83a64633"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
@@ -8990,7 +8990,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "ea467a93015874ffbcb9eebbd37bafc6e1a50ae52f8395e665cd08f53290d13f"
+      "sha256": "a81a9ae39469be8cb47fad7eeb4cb9468e020207dc62207b176b74ccd4797d22"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -9014,7 +9014,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "d76603d75a919857b393dd94544382b0f85cc94fd5f30736e4bd7514dbc5841d"
+      "sha256": "938ba5989b6b3e669134f738670b02d014bbe3005e5e708ba3e2a70768ef5082"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -9638,7 +9638,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
-      "sha256": "ef5858810f2a2600374ef74d73b2edefead535f7c9b80ba72033f46002b56bf5"
+      "sha256": "f231731a5b7dd6644ed0509d22037821b227d0a5f12bcde69cceb94110993190"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
@@ -9790,7 +9790,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "c34eab3ed1376d176f4e319aabf82560e0244dff3ed7ca280059ef23213169ac"
+      "sha256": "3fe228a2cc336ac976bf8549869410534917dcbb6c0b2d3ba55e329378352352"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -36956,6 +36956,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
       "kind": "test:runtime"
     },
     {

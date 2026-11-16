@@ -125,8 +125,10 @@ export function Passport({
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
         onTeleport: (x, y) => {
+          // A refused Jump In leaves the passport and its photo open.
+          if (session.map.teleport(x, y) === 'refused') return false
           onClose()
-          session.map.teleport(x, y)
+          return true
         },
         onViewPerson: (u) => openPassport(u.address)
       }}

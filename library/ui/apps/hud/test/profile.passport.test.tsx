@@ -286,7 +286,7 @@ describe('passport photos', () => {
     remove: vi.fn(async () => ({ ok: true })),
     metas: {},
     loadPhoto: vi.fn(),
-    onTeleport: vi.fn()
+    onTeleport: vi.fn(() => true)
   })
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
@@ -308,6 +308,23 @@ describe('passport photos', () => {
     await openPhotos(false)
     expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(3)
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
+  })
+
+  it('the photo viewer covers the passport panel', async () => {
+    await openPhotos(false)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
+    expect(screen.getByRole('dialog', { name: 'Photo' }).parentElement).toHaveAttribute('data-tab', 'photos')
+  })
+
+  it.each([
+    ['your own', true],
+    ["another player's", false]
+  ])('an empty reel on %s passport: the public-photos line shows only to the owner', async (_whose, isSelf) => {
+    setPublicReelFetcher(async () => ({ ok: true, photos: [], total: 0, max: 500 }))
+    render(<ProfilePassport profile={profile} isSelf={isSelf} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
+    expect(await screen.findByText('No photos here yet!')).toBeInTheDocument()
+    expect(screen.queryAllByText(/Set your photos as public/)).toHaveLength(isSelf ? 1 : 0)
   })
 
   it('your own photos have every option, Delete included', async () => {

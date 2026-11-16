@@ -76,15 +76,19 @@
   text-decoration: underline;
 }
 
-/* --- PhotoDetail lightbox (covers the whole scaled menu canvas) -------------- */
+/* --- PhotoDetail lightbox (covers its host: the menu canvas, or a passport panel) --- */
 .viewer {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* over the startup lobby the menu card has its close button in the corner of the viewer's own: the
+     viewer covers it */
+  z-index: var(--menu-cover-z, 2);
   display: flex;
   /* Heavy black scrim (like --scrim, more opaque) so the lightbox fully covers the grid. */
   background: rgba(0, 0, 0, 0.92);
   animation: viewerIn var(--dur-fast) ease;
+  /* In the Gallery it is beside the page in the menu's pass-through body, so it takes pointer input itself. */
+  pointer-events: auto;
 }
 @keyframes viewerIn {
   from {
