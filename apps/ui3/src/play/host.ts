@@ -26,9 +26,10 @@ const engineExited = (): boolean => false
 /** /play acts on no params of its own beyond the shared ones. */
 const hostEntryParams = (): string[] => []
 
-/** The commit Sites built /play from (apps/sites/vite.config.ts `define`), null without one. */
+/** The commit Sites built /play from (apps/sites/vite.config.ts `define`), else the image's `COMMIT_HASH`, null without either. */
 declare const __PLAY_BUILD__: string | undefined
-const BUILD_VERSION: string | null = (typeof __PLAY_BUILD__ !== 'undefined' && __PLAY_BUILD__) || null
+const BUILD_VERSION: string | null = (typeof __PLAY_BUILD__ !== 'undefined' && __PLAY_BUILD__)
+  || window.__DCL_PUBLIC__?.commitHash?.replace(/^([0-9a-f]{9})[0-9a-f]{31}/, '$1') || null
 
 /** The gate's Exit leaves for the Sites page this HUD is served from, whatever `?baseDomain=` the link
  *  carries. */
