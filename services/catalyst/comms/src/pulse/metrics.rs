@@ -75,6 +75,12 @@ pub fn statistics_observation_rejected() {
     counter!("pulse_statistics_observations_rejected_total").increment(1);
 }
 
+/// Expose both statistics capacity series before any handover or refusal.
+pub fn register_statistics_capacity_series() {
+    statistics_retained_connector_generations(0);
+    let _ = counter!("pulse_statistics_registration_capacity_refused_total");
+}
+
 /// Retained outgoing connector generations, independent of the peer population.
 /// Initialized at Pulse startup so the capacity gauge is visible before handovers.
 pub fn statistics_retained_connector_generations(retained: usize) {

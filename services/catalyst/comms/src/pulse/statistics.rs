@@ -31,7 +31,7 @@ pub struct Statistics {
 }
 impl Statistics {
     pub fn with_incarnation(incarnation: uuid::Uuid) -> Self {
-        crate::pulse::metrics::statistics_retained_connector_generations(0);
+        crate::pulse::metrics::register_statistics_capacity_series();
         Self {
             incarnation,
             ..Self::default()
@@ -357,6 +357,11 @@ mod tests {
                 .lines()
                 .any(|line| line == "pulse_statistics_retained_connector_generations 0")
         );
+        assert!(
+            initial
+                .lines()
+                .any(|line| line == "pulse_statistics_registration_capacity_refused_total 0")
+        );
         let rendered = crate::pulse::metrics::render_recorded(|| {
             let mut stats = Statistics::with_incarnation(uuid::Uuid::new_v4());
             let mut active = None;
@@ -412,6 +417,10 @@ mod tests {
         assert!(lines.contains(&"pulse_statistics_registration_capacity_refused_total 3"));
         assert_eq!(lines.len(), 2, "no per-producer labels or extra series");
         let restarted = crate::pulse::metrics::render_recorded(|| {
+            let mut previous = Statistics::with_incarnation(uuid::Uuid::new_v4());
+            register(&mut previous, uuid::Uuid::from_u128(1));
+            register(&mut previous, uuid::Uuid::from_u128(2));
+            // The same recorder must replace a nonzero gauge with zero.
             Statistics::with_incarnation(uuid::Uuid::new_v4());
         });
         assert!(
