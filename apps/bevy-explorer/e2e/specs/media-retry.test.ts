@@ -7,14 +7,16 @@
 // | a video whose source fails twice plays after two reopens        | guest, on the loopback realm | the scene built; web       |
 // | a video whose source always fails gives up after five reopens   | guest, on the loopback realm | the scene built; web       |
 //
-// The loopback realm (`driver/realm.ts`) serves `scenes/video` at its own parcel and answers 503
-// to the first GETs of its media files: `recover.webm` twice, `broken.webm` every time. The scene
-// logs `video <name> state=<VideoState>` on every reported change, read through `/scene_logs`
-// after `/set_scene` points the scene commands at it, and `/media_state` gives each player's
-// reopen count, last state and last error. The count restarts after 5 s of playback. `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for
-// every source failing from then on; a failure before the first scenario issues it waits its
-// 2 s. The last scenario restores the 2 s default. Only the web backend reopens (native FFmpeg ends at its first error), so on the standalone
-// both are todos. Build the scene first: `npm run build-scenes -- video`.
+// The loopback realm (`driver/realm.ts`) serves `scenes/video` at its own parcel and answers 503 to
+// the first GETs of its media files: `recover.webm` twice, `broken.webm` every time. The scene logs
+// `video <name> state=<VideoState>` on every reported change, read through `/scene_logs` after
+// `/set_scene` points the scene commands at it, and `/media_state` gives each player's reopen
+// count, last state and last error. The count restarts after 5 s of playback.
+// `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for every source failing from then
+// on; a failure before a scenario issues it waits its 2 s. Each scenario closes its client, so the
+// short delay and the looping video end with it. Only the web backend reopens (native FFmpeg ends
+// at its first error), so on the standalone both are todos. Build the scene first:
+// `npm run build-scenes -- video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -89,7 +91,6 @@ async function player(explorer: Explorer, source: string): Promise<MediaPlayerRo
 scenario(
   'a video whose source fails twice plays after two reopens',
   async ({ explorer, restore }) => {
-    // the delay stays short for the next scenario, whose source is still failing; it restores it
     restore(() => explorer.setScene())
     await prepare(explorer)
     const logs = await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
@@ -105,16 +106,13 @@ scenario(
     assert.equal(row.retryGaveUp, false)
     assert.notEqual(row.lastError, null, 'the failures left no last error')
   },
-  { ...webOnly, session: SESSION, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
 )
 
 scenario(
   'a video whose source always fails gives up after five reopens',
   async ({ explorer, restore }) => {
-    restore(async () => {
-      await explorer.setScene()
-      await explorer.mediaRetryDelay(2000)
-    })
+    restore(() => explorer.setScene())
     await prepare(explorer)
     const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true, {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
@@ -126,5 +124,5 @@ scenario(
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')
   },
-  { ...webOnly, session: SESSION, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
 )

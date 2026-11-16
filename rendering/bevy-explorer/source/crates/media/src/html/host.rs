@@ -277,6 +277,8 @@ impl Source {
         if !self.wants_play.get() {
             debug!("media {}: {error} while paused; reopen on play", self.id);
             self.reopen_on_play.set(true);
+            retry.cancel();
+            self.retry.set(retry);
             self.send_state(VideoState::VsError);
             self.send_retry(None);
             return;
@@ -292,6 +294,9 @@ impl Source {
             }
             RetryStep::GiveUp => {
                 warn!("media {}: {error}; giving up", self.id);
+                // buffered media would otherwise go on playing and drawing over the cleared screen
+                self.media.pause().report();
+                self.detach();
                 self.send_state(VideoState::VsError);
                 self.send_retry(None);
                 self.clear_screen();
@@ -458,8 +463,11 @@ impl HostMedia {
         let state = |new_state: VideoState| -> Box<dyn FnMut()> {
             let source = source.clone();
             Box::new(move || {
-                // a reopen's own states stay hidden until it can play
-                if source.failed.get() && new_state != VideoState::VsReady {
+                // a reopen's own states stay hidden until it can play; the failed source's are
+                // ignored while its reopen is scheduled
+                if source.failed.get()
+                    && (new_state != VideoState::VsReady || source.timeout.get().is_some())
+                {
                     return;
                 }
                 // the end's own handler reports it
