@@ -292,14 +292,20 @@ impl PendingCacheHeals {
     }
 }
 
-/// After the asset plugins exist: an app without them has no load failures.
-pub(crate) fn finish(app: &mut App) {
-    if app
-        .world()
-        .contains_resource::<Events<UntypedAssetLoadFailedEvent>>()
-    {
-        app.init_resource::<PendingCacheHeals>()
-            .add_systems(Update, drop_failed_cached_entries);
+pub(crate) struct CacheHealPlugin;
+
+impl Plugin for CacheHealPlugin {
+    fn build(&self, _app: &mut App) {}
+
+    /// After the asset plugins exist: an app without them has no load failures.
+    fn finish(&self, app: &mut App) {
+        if app
+            .world()
+            .contains_resource::<Events<UntypedAssetLoadFailedEvent>>()
+        {
+            app.init_resource::<PendingCacheHeals>()
+                .add_systems(Update, drop_failed_cached_entries);
+        }
     }
 }
 

@@ -18,6 +18,466 @@ use std::{sync::Arc, time::Duration};
 
 const CAP: usize = 8;
 
+async fn publish_control(
+    client: &async_nats::Client,
+    input: &catalyst::comms::protocol::bus::control_position::ControlPosition,
+    origin: i32,
+) {
+    use catalyst::comms::protocol::bus::control_position::{LegacyRoomIntent, SUBJECT};
+    let (subject, bytes) = if origin == 2 {
+        (SUBJECT, input.encode().unwrap())
+    } else {
+        (
+            LegacyRoomIntent::SUBJECT,
+            LegacyRoomIntent {
+                audience: input.audience.clone(),
+                wallet: input.wallet.clone(),
+                session: input.session.clone(),
+                candidate_epoch: input.epoch,
+                sequence: input.sequence,
+                realm: input.realm.clone(),
+                position: input.position,
+            }
+            .encode()
+            .unwrap(),
+        )
+    };
+    client.publish(subject, bytes.into()).await.unwrap();
+}
+
+#[tokio::test]
+async fn real_versioned_control_ordering_expiry_and_reconnect_keep_exact_authority() {
+    use catalyst::comms::protocol::bus::control_position::ControlPosition;
+    use catalyst::comms::pulse::cluster::feed::ClusterFeedPublisher;
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = Broker::start(&binary, None);
+    let port = broker.port;
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let mut world = World::new(broker.url());
+    world
+        .feed
+        .enable_control_positions("ordered-readers")
+        .unwrap();
+    let mut inputs: Vec<_> = [(2, u64::MAX), (3, i64::MAX as u64)]
+        .into_iter()
+        .map(|(origin, epoch)| {
+            (
+                origin,
+                ControlPosition {
+                    audience: "ordered-readers".into(),
+                    wallet: address(origin as usize),
+                    session: address(origin as usize + 100),
+                    epoch,
+                    sequence: 1,
+                    realm: "first".into(),
+                    position: Some([1.0, 0.0, 1.0]),
+                },
+            )
+        })
+        .collect();
+    for (origin, input) in &mut inputs {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                publish_control(&client, input, *origin).await;
+                if world
+                    .feed
+                    .control_snapshot()
+                    .members
+                    .iter()
+                    .any(|member| member.wallet == input.wallet)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("real version subscription receives initial sample");
+        input.sequence = 2;
+        input.realm = "ordered".into();
+        publish_control(&client, input, *origin).await;
+        let mut old = input.clone();
+        old.sequence = 1;
+        old.realm = "stale".into();
+        publish_control(&client, &old, *origin).await;
+        let mut wrong_session = input.clone();
+        wrong_session.sequence = 3;
+        wrong_session.session = address(999);
+        publish_control(&client, &wrong_session, *origin).await;
+        let mut marker = input.clone();
+        marker.wallet = address(700 + *origin as usize);
+        marker.epoch = 1;
+        marker.sequence = 1;
+        publish_control(&client, &marker, *origin).await;
+        assert!(
+            catalyst::shared::test_wait::until(async || world
+                .feed
+                .control_snapshot()
+                .members
+                .iter()
+                .any(|member| member.wallet == marker.wallet))
+            .await
+        );
+        let control = world.feed.control_snapshot();
+        let observed = control
+            .members
+            .iter()
+            .find(|member| member.wallet == input.wallet)
+            .unwrap();
+        assert_eq!(
+            observed.realm, input.realm,
+            "older samples cannot roll back a live head"
+        );
+        assert_eq!(
+            observed.session, input.session,
+            "a session stays fixed throughout its epoch"
+        );
+        let selected = current(&client, &mut world, &input.wallet, &input.session).await;
+        assert_eq!(selected.realm, "ordered");
+        assert_eq!(selected.selected_origin, *origin);
+        assert_eq!(selected.selected_identity, Some(input.epoch));
+    }
+    // Duplicates arrive just before expiry, but may not renew the original live head.
+    tokio::time::sleep(Duration::from_secs(9)).await;
+    for (origin, input) in &inputs {
+        publish_control(&client, input, *origin).await;
+    }
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        world.feed.control_snapshot().members.is_empty(),
+        "duplicates cannot extend either reader TTL"
+    );
+    world.pass();
+    for (origin, input) in &mut inputs {
+        assert!(
+            lookup(&client, &input.wallet, &input.session)
+                .await
+                .is_none()
+        );
+        input.sequence = 3;
+        publish_control(&client, input, *origin).await;
+        assert_eq!(
+            current(&client, &mut world, &input.wallet, &input.session)
+                .await
+                .selected_identity,
+            Some(input.epoch),
+            "live expiry permits a greater sequence in the same epoch"
+        );
+    }
+    drop(broker);
+    let broker = Broker::start(&binary, Some(port));
+    let reader = async_nats::connect(broker.url()).await.unwrap();
+    for (origin, input) in &mut inputs {
+        input.sequence = 4;
+        input.realm = "reconnected".into();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                publish_control(&reader, input, *origin).await;
+                if world
+                    .feed
+                    .control_snapshot()
+                    .members
+                    .iter()
+                    .any(|member| member.wallet == input.wallet && member.realm == input.realm)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both subscriptions recover after actual broker restart");
+        let selected = current(&reader, &mut world, &input.wallet, &input.session).await;
+        assert_eq!(selected.realm, "reconnected");
+        assert_eq!(selected.selected_origin, *origin);
+        let mut withdrawal = input.clone();
+        withdrawal.sequence = 5;
+        withdrawal.realm.clear();
+        withdrawal.position = None;
+        publish_control(&reader, &withdrawal, *origin).await;
+        input.sequence = 6;
+        publish_control(&reader, input, *origin).await;
+        let mut marker = input.clone();
+        marker.wallet = address(900 + *origin as usize);
+        marker.epoch = 1;
+        marker.sequence = 1;
+        publish_control(&reader, &marker, *origin).await;
+        assert!(
+            catalyst::shared::test_wait::until(async || world
+                .feed
+                .control_snapshot()
+                .members
+                .iter()
+                .any(|member| member.wallet == marker.wallet))
+            .await
+        );
+        let control = world.feed.control_snapshot();
+        assert!(
+            control.owners[&input.wallet].closed,
+            "terminal epoch rejects a later live sample"
+        );
+        assert!(
+            !control
+                .members
+                .iter()
+                .any(|member| member.wallet == input.wallet)
+        );
+        world.pass();
+        assert!(
+            lookup(&reader, &input.wallet, &input.session)
+                .await
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn real_versioned_control_heads_share_one_wallet_capacity() {
+    use catalyst::comms::protocol::bus::control_position::ControlPosition;
+    use catalyst::comms::pulse::cluster::feed::ClusterFeedPublisher;
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = Broker::start(&binary, None);
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let world = World::new(broker.url());
+    world
+        .feed
+        .enable_control_positions("capacity-readers")
+        .unwrap();
+    let capacity = catalyst::comms::pulse::cluster::control::DEFAULT_CONTROL_POSITION_CAPACITY;
+    let input = |wallet| ControlPosition {
+        audience: "capacity-readers".into(),
+        wallet: address(wallet),
+        session: address(wallet + capacity + 1),
+        epoch: 1,
+        sequence: 1,
+        realm: "r".into(),
+        position: Some([1.0, 0.0, 1.0]),
+    };
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            publish_control(&client, &input(1), 2).await;
+            if !world.feed.control_snapshot().members.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("v1 subscription is installed before capacity fill");
+    for wallet in 2..=capacity {
+        publish_control(&client, &input(wallet), 2).await;
+    }
+    client.flush().await.unwrap();
+    assert!(
+        catalyst::shared::test_wait::until(
+            async || world.feed.control_snapshot().members.len() == capacity
+        )
+        .await
+    );
+    // A second head fits an existing wallet even when no new wallet can fit.
+    publish_control(&client, &input(1), 3).await;
+    publish_control(&client, &input(capacity + 1), 3).await;
+    publish_control(&client, &input(2), 3).await;
+    assert!(
+        catalyst::shared::test_wait::until(
+            async || world.feed.control_snapshot().members.len() == capacity - 2
+        )
+        .await
+    );
+    let selected = world.feed.control_snapshot();
+    assert!(
+        !selected
+            .members
+            .iter()
+            .any(|member| member.wallet == address(capacity + 1)),
+        "v2 cannot allocate a separate wallet budget"
+    );
+    assert!(
+        !selected
+            .members
+            .iter()
+            .any(|member| member.wallet == address(1) || member.wallet == address(2)),
+        "both retained heads make unproved mixed authority unavailable"
+    );
+}
+
+#[tokio::test]
+async fn real_versioned_control_readers_preserve_single_class_service_and_refuse_unproved_mixture()
+{
+    use catalyst::comms::protocol::bus::control_position::{
+        ControlPosition, LegacyRoomIntent, SUBJECT,
+    };
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = Broker::start(&binary, None);
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let mut world = World::new(broker.url());
+    world.feed.enable_control_positions("reader-test").unwrap();
+    let v1 = ControlPosition {
+        audience: "reader-test".into(),
+        wallet: address(1),
+        session: address(101),
+        epoch: u64::MAX,
+        sequence: 1,
+        realm: "r".into(),
+        position: Some([1.0, 0.0, 1.0]),
+    };
+    let v2 = LegacyRoomIntent {
+        audience: "reader-test".into(),
+        wallet: address(2),
+        session: address(102),
+        candidate_epoch: i64::MAX as u64,
+        sequence: 1,
+        realm: "r".into(),
+        position: Some([1.0, 0.0, 1.0]),
+    };
+    for (subject, bytes, wallet, session, origin, identity) in [
+        (
+            SUBJECT,
+            v1.encode().unwrap(),
+            &v1.wallet,
+            &v1.session,
+            2,
+            u64::MAX,
+        ),
+        (
+            LegacyRoomIntent::SUBJECT,
+            v2.encode().unwrap(),
+            &v2.wallet,
+            &v2.session,
+            3,
+            i64::MAX as u64,
+        ),
+    ] {
+        let selected = tokio::time::timeout(Duration::from_secs(12), async {
+            loop {
+                client.publish(subject, bytes.clone().into()).await.unwrap();
+                client.flush().await.unwrap();
+                world.pass();
+                if let Some(snapshot) = lookup(&client, wallet, session).await {
+                    break snapshot;
+                }
+            }
+        })
+        .await
+        .expect("actual version subscription and pass must become ready");
+        assert_eq!(selected.selected_origin, origin);
+        assert_eq!(selected.selected_identity, Some(identity));
+        assert_eq!(selected.assignment_state, 1);
+    }
+    let mixed = LegacyRoomIntent {
+        wallet: v1.wallet.clone(),
+        session: v1.session.clone(),
+        candidate_epoch: 9,
+        ..v2.clone()
+    };
+    client
+        .publish(LegacyRoomIntent::SUBJECT, mixed.encode().unwrap().into())
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
+    assert!(
+        catalyst::shared::test_wait::until(async || {
+            world.pass();
+            lookup(&client, &v1.wallet, &v1.session).await.is_none()
+        })
+        .await
+    );
+    world
+        .identity
+        .set_with_session(0, v2.wallet.clone(), address(202));
+    assert!(
+        lookup(&client, &v2.wallet, &v2.session).await.is_none(),
+        "unreadable native reservation blocks legacy before pass"
+    );
+    world.identity.remove(0);
+    assert!(
+        lookup(&client, &v2.wallet, &v2.session).await.is_none(),
+        "departure cannot revive old legacy version"
+    );
+    let restored = current(&client, &mut world, &v2.wallet, &v2.session).await;
+    assert_eq!(restored.selected_origin, 3);
+}
+
+#[tokio::test]
+async fn complete_lookup_cap_keeps_pending_recovery_and_refuses_one_byte_over() {
+    use catalyst::comms::protocol::bus::cluster::{ClusterLookup, valid_reply};
+    use catalyst::comms::pulse::cluster::feed::{ClusterFeedPublisher, CurrentAssignment};
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = Broker::start(&binary, None);
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    for extra in [0, 1] {
+        let mut world = World::new(broker.url());
+        let wallet = address(1);
+        let old = address(3);
+        let session = address(2);
+        world
+            .identity
+            .set_with_session(0, wallet.clone(), old.clone());
+        // The frozen canonical cap vector uses a 13-byte source and one-byte
+        // takeover id. Production UUIDs add 23 and 35 bytes respectively.
+        let previous = CurrentAssignment {
+            wallet: wallet.clone(),
+            session: old,
+            cluster_id: "x".repeat(65_356 - 23 - 35 + extra),
+            realm: "r".into(),
+            owner_epoch: world.identity.registration_by_peer(0),
+            selected_origin: 1,
+            owner_peer: 0,
+            registration: Some(world.identity.registration_guard(0)),
+        };
+        world
+            .feed
+            .replace_assignments(7, Duration::from_secs(30), vec![previous]);
+        let previous = lookup(&client, &wallet, &address(3)).await;
+        if previous.is_none() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        world
+            .identity
+            .set_with_session(0, wallet.clone(), session.clone());
+        world.feed.replace_assignments(
+            8,
+            Duration::from_secs(30),
+            vec![CurrentAssignment {
+                wallet: wallet.clone(),
+                session: session.clone(),
+                cluster_id: "c1".into(),
+                realm: "r".into(),
+                owner_epoch: world.identity.registration_by_peer(0),
+                selected_origin: 1,
+                owner_peer: 0,
+                registration: Some(world.identity.registration_guard(0)),
+            }],
+        );
+        world
+            .feed
+            .replace_assignments(9, Duration::from_secs(30), vec![]);
+        if extra == 0 {
+            let snapshot = lookup(&client, &wallet, &session)
+                .await
+                .expect("exact cap reply");
+            assert_eq!(snapshot.encode_to_vec().len(), 65_536);
+            assert_eq!(snapshot.pending_takeovers.len(), 1);
+            assert_eq!(snapshot.assignment_state, 2);
+            assert!(valid_reply(
+                &ClusterLookup {
+                    wallet: wallet.clone(),
+                    session: session.clone()
+                },
+                &snapshot
+            ));
+            assert!(catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(&snapshot, 0).is_none());
+        } else {
+            assert!(
+                lookup(&client, &wallet, &session).await.is_none(),
+                "complete over-cap recovery is withheld"
+            );
+        }
+        drop(world);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn address(number: usize) -> String {
     format!("0x{number:040x}")
 }
@@ -38,13 +498,15 @@ impl World {
             discovery_interval_ms: 0,
             ..Default::default()
         }));
-        Self {
+        let mut world = Self {
             grids: RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, CAP),
             board: SnapshotBoard::new(CAP, 4),
             identity: IdentityBoard::new(CAP),
             tracker: ClusterTracker::new(ClusterOptions::default(), CAP, feed.clone()),
             feed,
-        }
+        };
+        world.tracker.bind_identity(&mut world.identity);
+        world
     }
 
     fn place(&mut self, peer: u32, wallet: &str, session: &str) {

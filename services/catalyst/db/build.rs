@@ -51,7 +51,10 @@ fn main() {
         let name = path
             .strip_prefix(&repository)
             .expect("schema within repository")
-            .display();
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
         out.push_str(&format!("-- ════ {name} ════\n\n"));

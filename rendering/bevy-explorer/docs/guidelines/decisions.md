@@ -14,9 +14,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
+- **Scene environment components.** Skybox cloud speed accepts finite negative values for
+  reverse rotation, as the public protocol specifies. Unity's environment profile at
+  `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides
+  retain this renderer's time-of-day atmosphere, lighting and quality settings; component
+  compatibility does not imply identical default pixels across renderers. A sky image changes
+  the visible sky while the authored color bands continue to drive procedural ambient lighting.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
+  UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
+  the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
+  at full resolution; `/screenshot` captures the window. The primary camera always keeps the
+  depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
+  while the avatar outline is on or the camera has SSAO (native only).
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
@@ -393,6 +405,43 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
+  while the player travels. Here a jump reconnects the realm under the loading screen, and every
+  other page closes on a jump, so Events does too.
+- **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
+  `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
+  other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
+- **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
+  leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
+- **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
+  copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
+  wired, and its banner is drawn before the friends list arrives. Here the calendar, the day
+  view, the banner and the detail read one event, every card's buttons act, and friends show
+  when they arrive.
+- **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
+  only and nothing for an open from the sidebar; here a day view's cards report it too, and the
+  sidebar reports `events_section_opened` with `source: sidebar`.
+- **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
+  the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
+  report; cards show friends and community marks once the lists are there.
+- **Events page: shapes are CSS, icons are unity-explorer's.** Its rounded containers, outlines
+  and gradients are nine-slice sprites there; drawn as masks at the HUD's fractional scale they
+  show seams between the slices, so here they are radii, borders and gradients with the sprites'
+  colours. The canvas scales by the smaller of width and height, as every menu page does, where
+  unity-explorer's scales by width.
 
 ## Deliberate choices that look like mistakes
 
@@ -406,6 +455,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   decode is downloaded again in every session, and a file the asset processor turned into bytes
   that fail to load is processed again in a later session. Checking every cached read would hash
   every file on every load, and processed copies never match their hash.
+- **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
+  `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
+  client), so the worker passes the request to the network untouched; a lookup there could only
+  repeat that miss. The worker still answers requests that carry the header from that cache, and
+  only the engine writes it. A hit missed in between (the same hash finishing under another url,
+  another tab), or one that appears before a retry (the engine reads the cache only before the
+  first attempt), costs one more download of the same bytes.
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
@@ -434,6 +490,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
+- **A missing content file stays missing until restart.** When a server answers 400, 404, 405,
+  410, 414 or 451 to a read of a content hash, later reads of that url by content hash are
+  answered from memory for the rest of the session. Any other read of the same url (by url, or
+  from a loopback content server, which is never keyed by hash) is answered from memory for 10 s
+  after the failure and then asked for again; other failures are answered from memory for 10 s;
+  preview mode asks again on every read. A later failure of another kind does not shorten a
+  session entry, and a successful download of the url clears its entry. At most 4096 urls are
+  held.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):

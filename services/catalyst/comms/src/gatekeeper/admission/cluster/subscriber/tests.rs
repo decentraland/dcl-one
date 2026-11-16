@@ -502,6 +502,8 @@ impl AssignmentFence for FakeAssignmentFence {
 impl crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease for FakeRealmLease {
     fn previous_pulse_admission(&self) -> Option<PulseAdmissionStamp> {
         Some(PulseAdmissionStamp {
+            selected_origin: super::super::fence::SelectedRoomOrigin::Native,
+            selected_identity: 1,
             wallet: WALLET.into(),
             session: self.fence.owner_session.clone(),
             cluster_id: self.previous.as_ref()?.strip_prefix("island-")?.into(),
@@ -977,6 +979,9 @@ impl Harness {
         self.source.lock().unwrap().insert(
             wallet.to_lowercase(),
             PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: wallet.to_lowercase(),
                 session: session.to_lowercase(),
                 cluster_id: cluster.into(),
@@ -3256,6 +3261,9 @@ async fn durable_nats_subscriber(
     let broker = liveness_broker();
     let client = async_nats::connect(&broker.url).await.unwrap();
     let source = Arc::new(Mutex::new(Some(PeerClusterSnapshot {
+        selected_origin: 1,
+        selected_identity: Some(1),
+        assignment_state: 1,
         wallet: wallet.into(),
         session: SESSION_B.into(),
         cluster_id: "current".into(),

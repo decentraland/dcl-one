@@ -528,7 +528,7 @@ fn a_failed_load_drops_a_bad_cached_copy_and_a_reader_error_does_not() {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .insert_resource(IpfsResource { inner: io.clone() });
-    super::finish(&mut app);
+    super::CacheHealPlugin.finish(&mut app);
 
     let event = |error| UntypedAssetLoadFailedEvent {
         id: AssetId::<crate::EntityDefinition>::default().untyped(),

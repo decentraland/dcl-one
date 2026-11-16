@@ -16,6 +16,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::auth::is_eth_address;
 use crate::comms::world_identity::{Parcel, ParcelError, ParcelSet, WorldName};
 use crate::content::validation;
 use crate::policy::Permission;
@@ -76,9 +77,7 @@ fn parse_address(raw: &str) -> Result<Address, ApiError> {
 /// A path `:address`, as upstream's `EthAddress.validate`: exactly
 /// `^0x[a-fA-F0-9]{40}$` (no padding, no `0X`).
 fn parse_path_address(raw: &str) -> Result<Address, ApiError> {
-    let strict =
-        raw.len() == 42 && raw.starts_with("0x") && raw[2..].bytes().all(|b| b.is_ascii_hexdigit());
-    if !strict {
+    if !is_eth_address(raw) {
         return Err(ApiError::bad_request(format!("Invalid address: {raw}.")));
     }
     parse_address(raw)
@@ -505,12 +504,18 @@ pub async fn put_permissions_address(
         if let Some(signer) = ensure_owner {
             store::ensure_world(&state.pool, &world, signer).await?;
         }
-        apply_allow_list_edit(&state, &world, AllowListEdit::AddWallet(&address), |caps| {
-            ApiError::bad_request(format!(
-                "Cannot add wallet: allow-list would exceed the maximum of {} wallets.",
-                caps.wallets
-            ))
-        })
+        apply_allow_list_edit(
+            &state,
+            &world,
+            &owner.signer,
+            AllowListEdit::AddWallet(&address),
+            |caps| {
+                ApiError::bad_request(format!(
+                    "Cannot add wallet: allow-list would exceed the maximum of {} wallets.",
+                    caps.wallets
+                ))
+            },
+        )
         .await?;
     }
     Ok(StatusCode::NO_CONTENT)
@@ -554,6 +559,7 @@ pub async fn delete_permissions_address(
         apply_allow_list_edit(
             &state,
             &world,
+            &signer,
             AllowListEdit::RemoveWallet(&address),
             |_| ApiError::internal("unreachable: removals have no cap"),
         )
@@ -862,6 +868,7 @@ pub async fn put_permissions_access_community(
     apply_allow_list_edit(
         &state,
         &world,
+        &owner.signer,
         AllowListEdit::AddCommunity(community),
         |caps| {
             ApiError::bad_request(format!(
@@ -885,10 +892,11 @@ pub async fn delete_permissions_access_community(
     let signer = verify_signer(&state, &headers, &original, &uri, "delete").await?;
     let community = parse_community(&community_id)?;
     let world = parse_world(&world_name)?;
-    verify_owner(&state, &world, signer).await?;
+    let owner = verify_owner(&state, &world, signer).await?;
     apply_allow_list_edit(
         &state,
         &world,
+        &owner.signer,
         AllowListEdit::RemoveCommunity(community),
         |_| ApiError::internal("unreachable: removals have no cap"),
     )
@@ -904,11 +912,12 @@ pub async fn delete_permissions_access_community(
 async fn apply_allow_list_edit(
     state: &SharedState,
     world: &WorldName,
+    owner: &Address,
     edit: AllowListEdit<'_>,
     cap_error: impl FnOnce(AccessCaps) -> ApiError,
 ) -> Result<(), ApiError> {
     let caps = state.settings.access_caps;
-    match store::modify_allow_list_access(&state.pool, world, caps, edit).await? {
+    match store::modify_allow_list_access(&state.pool, world, owner, caps, edit).await? {
         AllowListEditOutcome::Applied => Ok(()),
         AllowListEditOutcome::NotAllowList => Err(ApiError::bad_request(format!(
             "World \"{}\" does not have allow-list access type. Cannot add or remove wallets.",

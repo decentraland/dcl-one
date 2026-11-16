@@ -1,0 +1,92 @@
+import { useCallback } from 'react';
+import cx from 'classnames';
+
+import { withSdk } from '../../../hoc/withSdk';
+import { useAllEntitiesHaveComponent } from '../../../hooks/sdk/useHasComponent';
+import { useMultiComponentInput } from '../../../hooks/sdk/useComponentInput';
+import { getComponentValue } from '../../../hooks/sdk/useComponentValue';
+import { analytics, Event } from '../../../lib/logic/analytics';
+import { getAssetByModel } from '../../../lib/logic/catalog';
+import { CoreComponents } from '../../../lib/sdk/components';
+import { Block } from '../../Block';
+import { Container } from '../../Container';
+import { TextField, CheckboxField, RangeField, InfoTooltip } from '../../ui';
+import { fromAudioStream, toAudioStream, isValidInput, isValidVolume } from './utils';
+import type { Props } from './types';
+
+export default withSdk<Props>(({ sdk, entities, initialOpen = true }) => {
+  const { AudioStream, GltfContainer } = sdk.components;
+
+  const allEntitiesHaveAudioStream = useAllEntitiesHaveComponent(entities, AudioStream);
+  const handleInputValidation = useCallback(({ url }: { url: string }) => isValidInput(url), []);
+  const { getInputProps, isValid } = useMultiComponentInput(
+    entities,
+    AudioStream,
+    fromAudioStream,
+    toAudioStream,
+    { validateInput: handleInputValidation },
+  );
+
+  const handleRemove = useCallback(async () => {
+    for (const entity of entities) {
+      sdk.operations.removeComponent(entity, AudioStream);
+    }
+    await sdk.operations.dispatch();
+    const gltfContainer = getComponentValue(entities[0], GltfContainer);
+    const asset = getAssetByModel(gltfContainer.src);
+    analytics.track(Event.REMOVE_COMPONENT, {
+      componentName: CoreComponents.AUDIO_STREAM,
+      itemId: asset?.id,
+      itemPath: gltfContainer.src,
+    });
+  }, [sdk, entities, AudioStream, GltfContainer]);
+
+  if (!allEntitiesHaveAudioStream) return null;
+
+  const url = getInputProps('url');
+  const playing = getInputProps('playing', e => e.target.checked);
+  const volume = getInputProps('volume', e => e.target.value);
+
+  return (
+    <Container
+      label="AudioStream"
+      className={cx('AudioStream')}
+      initialOpen={initialOpen}
+      rightContent={
+        <InfoTooltip
+          text="The audio in the source must be in one of the following formats: .mp3, ogg, or aac. The source must also be an https URL (http URLs aren't supported), and the source should have CORS policies (Cross Origin Resource Sharing) that permit externally accessing it."
+          link="https://docs.decentraland.org/creator/scenes-sdk7/media/audio-streaming"
+          type="help"
+        />
+      }
+      component={AudioStream}
+      entity={entities}
+      onRemoveContainer={handleRemove}
+    >
+      <Block label="Url">
+        <TextField
+          autoSelect
+          type="text"
+          {...url}
+          error={!isValid}
+        />
+      </Block>
+      <Block label="Playback">
+        <CheckboxField
+          label="Start playing"
+          checked={!!playing.value}
+          {...playing}
+        />
+      </Block>
+      <Block
+        className="volume"
+        label="Volume"
+      >
+        <RangeField
+          {...volume}
+          isValidValue={isValidVolume}
+        />
+      </Block>
+    </Container>
+  );
+});
