@@ -178,6 +178,8 @@ struct Source {
     render_worker: Worker,
     /// The engine's last word was play (cleared when the media ends).
     wants_play: Cell<bool>,
+    /// The engine's last word was pause; before its first word the source is not paused.
+    paused: Cell<bool>,
     /// The last `play()` was refused.
     play_refused: Rc<Cell<bool>>,
     attached: RefCell<Option<AttachedSource>>,
@@ -277,7 +279,7 @@ impl Source {
         let step = retry.fail(first_reopen_delay());
         self.retry.set(retry);
         match step {
-            RetryStep::Reopen { attempt, .. } if !self.wants_play.get() => {
+            RetryStep::Reopen { attempt, .. } if self.paused.get() => {
                 debug!(
                     "media {}: {error} while paused; reopen {attempt} on play",
                     self.id
@@ -441,6 +443,7 @@ impl HostMedia {
             events: events.clone(),
             render_worker: render_worker.clone(),
             wants_play: Cell::new(false),
+            paused: Cell::new(false),
             play_refused: Rc::new(Cell::new(false)),
             attached: RefCell::new(None),
             on_fatal: RefCell::new(None),
@@ -548,7 +551,10 @@ impl HostMedia {
         match command {
             AVCommand::Play => {
                 self.source.wants_play.set(true);
+                self.source.paused.set(false);
                 if self.source.reopen_on_play.get() {
+                    // the scene last saw VsError; the reopen's own states stay hidden
+                    self.source.send_state(VideoState::VsLoading);
                     self.source.reopen();
                 } else {
                     try_play(&self.media, &self.source.play_refused);
@@ -556,6 +562,7 @@ impl HostMedia {
             }
             AVCommand::Pause => {
                 self.source.wants_play.set(false);
+                self.source.paused.set(true);
                 self.media.pause().report();
                 // a pause cancels a scheduled or loading reopen, keeping the count; the next play
                 // reopens at once

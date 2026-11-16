@@ -97,8 +97,15 @@ scenario(
     restore(() => explorer.setScene())
     const before = server.contentGets.get(recoverHash) ?? 0
     await prepare(explorer)
-    // a first failure before the Play reaches the source reports VS_ERROR (failed while paused), so
-    // only the outcome is checked: playing, not given up, the count restarted
+    // the count holds from the second failure until 5 s of playback, so polling sees its peak
+    let peakAttempt = 0
+    await until(() => player(explorer, 'assets/recover.webm'), (row) => {
+      peakAttempt = Math.max(peakAttempt, row.retryAttempt ?? 0)
+      return row.lastPlaybackState === 'VS_PLAYING'
+    }, { timeoutMs: GIVE_UP_TIMEOUT_MS, intervalMs: 200, what: 'the recover screen to play' })
+    assert.equal(peakAttempt, RECOVER_FAILURES, `the recover screen reopened ${peakAttempt} times`)
+    // a new player is paused until it is chosen to play, so a failure in that window reports
+    // VS_ERROR before the reopen's VS_LOADING: only the outcome is checked
     await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the recover screen to log VS_PLAYING'
