@@ -530,6 +530,67 @@ fn an_outfit_change_swaps_the_registered_hashes() {
     );
 }
 
+#[test]
+fn an_avatars_emotes_register_beside_its_wearables_and_release_when_playback_ends() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["body".to_owned()]),
+            PartitionedEmoteDownloads(vec!["dance".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("dance"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+
+    // the emote ended: its hash goes, the outfit's stay
+    world
+        .entity_mut(avatar)
+        .remove::<PartitionedEmoteDownloads>();
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(ipfs.scene_priority("dance"), None);
+    assert_eq!(
+        ipfs.scene_priority("body"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+}
+
+#[test]
+fn publishes_an_emote_at_the_partition_of_the_avatar_playing_it() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    // an avatar with no outfit filed still gets a partition from its position
+    world.spawn((
+        PartitionedEmoteDownloads(vec!["dance".to_owned()]),
+        GlobalTransform::from_translation(Vec3::new(40.0, 0.0, -8.0)),
+    ));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(update_scene_partitions).unwrap();
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("dance"),
+        Some(LoadPriority {
+            tier: Tier::Avatar,
+            parcel_distance: 2,
+            is_behind: false,
+            sqr_distance: FloatOrd(1024.0),
+        })
+    );
+}
+
 /// The publisher's per-frame work at a busy plaza: 20 scenes in range, 50 avatars with 10
 /// wearables each (353 distinct, neighbours sharing a few), with a download waiting and with
 /// none. Run with `--ignored --nocapture`.

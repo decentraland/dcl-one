@@ -23,7 +23,8 @@ just native-debug --realm <about-url> --position x,y
 a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
 then `cargo build`. This loop is verified on macOS, the only platform where the client falls back
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
-`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
+`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
+`CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
 ### Gateway routing
 
@@ -77,9 +78,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-npm --prefix react-web ci
-npm --prefix react-web/bridge-scene ci
-npm --prefix react-web run bundle:native
+corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@11.27.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -144,7 +146,8 @@ guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it d
 arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
 holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
 slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
-spawner and glTF processing take.
+spawner and glTF processing take, what primitives and materials charged the last frame and how
+many of them wait.
 
 ## Headless
 
@@ -174,6 +177,10 @@ sections you want to watch. Collapsing a section stops its queries. Download tot
 connection rates include traffic from before you opened the panel. Current Scene charts
 show up to 256 completed ticks from the player's current parcel scene. Entering a different
 scene starts its own history.
+The panel stays open while you play in the world: you can walk, look around, click the world
+and use the HUD while its readings update. A menu page or the lobby covers it until the page
+closes. Leaving the world or opening a scene's full menu closes it. Close it with its close button, the bug button, `/debug`, the
+Sidebar entry or Cancel (Escape), which closes any popup, menu page or side panel first.
 Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
 to **Connect** when paused, and is disabled when there is no controllable connection.
 
@@ -416,7 +423,7 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
-  source change run `npm run export-native` (native) or `npm run bundle` (web) from
+  source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.
 - **Local SDK builds install through overrides, never `file:` paths** in a scene's
   `package.json`. The `@dcl/sdk` tarball carries internal `file:` references that break once
@@ -432,7 +439,7 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
-- `react-web`: `npm test` runs the checked-in Vitest suite. The Playwright visual/engine
+- `react-web`: `pnpm test` runs the checked-in Vitest suite. The Playwright visual/engine
   gate specs and configs are absent from this public checkout; the corresponding package
   scripts do not establish suite availability. See `react-web/review.md` for the optional
   tiers and report them as not run unless the authorized test workspace supplies them.

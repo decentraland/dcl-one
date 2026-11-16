@@ -5,9 +5,8 @@
 // migrated to React.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
-import { useDebugPanel } from '../debug/useDebugPanel'
+import { toggleDebugPanel, useDebugPanelState, useDevelopmentBuild } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '@explorer-core/engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
@@ -60,7 +59,7 @@ type Item =
   | { kind: 'backpack'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'communities'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'places'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'events'; icon: IconName; label: string }
+  | { kind: 'events'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'portables'; icon: IconName; label: string }
@@ -101,7 +100,7 @@ const TOP: Item[] = [
   { kind: 'profile', icon: 'profile', label: 'Profile' },
   { kind: 'notifications', icon: 'notifications', label: 'Notifications' },
   { kind: 'divider' },
-  { kind: 'events', icon: 'events', label: 'Events' },
+  { kind: 'events', icon: 'events', label: 'Events', hotkey: 'Events' },
   { kind: 'places', icon: 'places', label: 'Places', hotkey: 'Places' },
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
@@ -320,10 +319,11 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         key="events"
         icon={item.icon}
         label={item.label}
+        shortcut={shortcut}
         badge={liveEvents}
         badgeTone="lavender"
         active={session.events.open}
-        onClick={session.events.toggle}
+        onClick={() => session.events.toggle('sidebar')}
       />
     )
   if (item.kind === 'link')
@@ -368,7 +368,8 @@ export function Sidebar({
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
-  const debugPanel = useDebugPanel(session)
+  const debugPanelOpen = useDebugPanelState() != null
+  const developmentBuild = useDevelopmentBuild(session.runDebugCommand)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
@@ -411,16 +412,15 @@ export function Sidebar({
       off()
     }
   }, [configOpen])
-  const launcher = debugPanel.developmentBuild && (
+  const launcher = developmentBuild && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
-      title="Toggle debug panel" active={debugPanel.launcherLayer != null} onClick={() => debugPanel.toggle()}>
+      title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />
     </ControlButton>
   )
   return (
     <>
-      {/* Keep the toggle clickable and inside the popup's focus trap while the panel is open. */}
-      {debugPanel.launcherLayer ? createPortal(launcher, debugPanel.launcherLayer) : launcher}
+      {launcher}
       {autoHide.hidden && <div className={styles.reveal} data-testid="sidebar-reveal" onPointerEnter={autoHide.onPointerEnter} />}
       <nav
         ref={hudInsetRef}
@@ -494,7 +494,7 @@ export function Sidebar({
           <Toggle checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Auto-hide sidebar" />
           <Button size="sm" variant="secondary" onClick={() => {
             setConfigOpen(false)
-            debugPanel.toggle()
+            toggleDebugPanel()
           }}>Debug panel</Button>
         </Panel>
       )}
