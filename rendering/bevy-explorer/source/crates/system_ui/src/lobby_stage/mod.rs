@@ -13,11 +13,15 @@ use std::f32::consts::PI;
 use bevy::{
     app::Propagate,
     asset::embedded_asset,
+    core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     math::Affine2,
     pbr::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
-    render::{camera::Exposure, view::NoFrustumCulling, view::RenderLayers},
+    render::{
+        camera::Exposure,
+        view::{ColorGrading, NoFrustumCulling, RenderLayers},
+    },
     scene::SceneInstanceReady,
 };
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
@@ -210,6 +214,9 @@ fn sync_stage(
         let camera = camera_for(stage.render_layer).map(|(c, ..)| c);
         if stage.camera != camera {
             stage.camera = camera;
+            if let Some(camera) = camera {
+                unprocessed(&mut commands, camera);
+            }
         }
     }
 
@@ -250,6 +257,7 @@ fn sync_stage(
         Quat::IDENTITY
     };
     let exposure = exposure.copied().unwrap_or_default().exposure();
+    unprocessed(&mut commands, camera);
 
     let root = commands
         .spawn((
@@ -273,6 +281,15 @@ fn sync_stage(
         &asset_server,
         &mut meshes,
     );
+}
+
+/// The stage is lit to come out as its source draws it, with no post-processing: no tonemapping,
+/// grading or bloom on the camera that shows it (the engine's defaults crush its darkened rim).
+fn unprocessed(commands: &mut Commands, camera: Entity) {
+    commands
+        .entity(camera)
+        .try_insert((Tonemapping::None, ColorGrading::default()))
+        .remove::<Bloom>();
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
