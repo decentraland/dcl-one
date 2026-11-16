@@ -54,6 +54,21 @@ export interface EngineLaunch {
   pageSwitches?(): void
 }
 
+/** A place to tip: a Genesis City parcel (any of the place's), or a World by its name. */
+export type DonatePlace = { parcel: { x: number; y: number } } | { world: string }
+
+/** Tipping a place's creator in MANA, where the host's page holds a wallet that can sign (Sites /play). */
+export interface HostDonations {
+  /** Whether this session may tip here at all (the feature on, a web3 wallet sign-in); false on any failure. */
+  available(): Promise<boolean>
+  /** Whether `place` has a creator to tip; false on any failure. */
+  tippable(place: DonatePlace): Promise<boolean>
+  /** Opens the host's Donate panel for `place`; the host resolves the creator and takes the amount itself. */
+  open(place: DonatePlace, input?: 'pointer' | 'keyboard'): Promise<void>
+  /** Calls `fn` each time a tip is sent; returns the unsubscribe. */
+  onSent(fn: () => void): () => void
+}
+
 export interface HudHost {
   /** The URL this host loads a profile image from: the native HUD routes profile images through its
    *  own proxy, the web hosts load them as given. */
@@ -92,6 +107,8 @@ export interface HudHost {
   ownShopItemUrl(contract: string, item: string): string | null
   /** Whether this host runs the in-world Shop page (otherwise the Shop opens the web Shop). */
   IN_WORLD_SHOP: boolean
+  /** Donate, where this host can sign a tip; null where it can't (the Explorer's own HUD). */
+  donations: HostDonations | null
   /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went
    *  with it, so its silence is no fault. */
   engineExited(): boolean

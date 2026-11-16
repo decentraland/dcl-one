@@ -1,0 +1,141 @@
+.EndOfLineLabelText {
+  fill: var(--palette-neutral-softWhite);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.EndOfLineLabelText.Haloed {
+  stroke: var(--black);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+.ChartTooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border-radius: var(--shape-borderRadiusLarge);
+  background: var(--menu-bg);
+  box-shadow: var(--menu-shadow);
+}
+
+.ChartTooltip .ChartTooltipDate {
+  color: var(--dcl-silver);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.ChartTooltip .ChartTooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  color: var(--palette-neutral-softWhite);
+}
+
+.ChartTooltip .ChartTooltipValue {
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+}
+
+.ChartTooltip .ChartTooltipSeries {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+}
+
+.ChartTooltip .ChartTooltipNote {
+  max-width: 260px;
+  color: var(--dcl-silver);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.ChartSwatch {
+  flex-shrink: 0;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.ChartSwatch.Gradient {
+  background: linear-gradient(90deg, var(--primary), var(--lavender));
+}
+
+.ChartSwatch.Dotted {
+  background: linear-gradient(90deg, var(--primary), var(--lavender));
+  border-radius: 0;
+  mask: radial-gradient(circle, black 1.5px, transparent 1.5px) 0 50% / 6px 3px repeat-x;
+}
+
+.ChartCaption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ChartCaption .MuiTypography-root {
+  color: var(--dcl-silver);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.ChartEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 351px;
+  color: var(--dcl-silver);
+}
+
+.ChartEmpty .MuiTypography-root {
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.ChartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.ChartLegend .LegendEntry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary-text);
+}
+
+.ChartLegend .LegendKey {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.ChartLegend svg {
+  font-size: 16px;
+  cursor: help;
+}
+
+/*
+ * The 2px surface-colored separation between stacked segments. x-charts has no
+ * gap of its own, and the stroke sits in the surface color so it reads as the
+ * card showing through rather than as an outline on the mark.
+ */
+.StackedBars .MuiBarElement-root {
+  stroke: var(--card);
+  stroke-width: 2;
+}

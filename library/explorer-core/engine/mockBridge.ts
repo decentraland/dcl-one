@@ -18,6 +18,7 @@ import {
   type DmHistoryEntry,
   type Emote,
   type Envelope,
+  type GalleryPhoto,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
@@ -34,7 +35,8 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
-import type { Color3 } from './generated/index'
+import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
+import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '@hud-host'
 
@@ -95,7 +97,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
     ],
     mutuals: 30,
     badges: mockBadges(),
-    photos: Array.from({ length: 6 }, (_, i) => `https://picsum.photos/seed/photo${i}/300/300`),
     equippedWearables: equippedNow(),
     equippedEmotes: mockEquippedEmotes(),
     info: {
@@ -355,6 +356,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PointerRight' }, ['GamepadRight Right']],
   ...Array.from({ length: 10 }, (_, slot): BindingEntry => [{ System: `QuickEmote${slot}` }, [`Numpad${slot}`]]),
   [{ System: 'Places' }, ['KeyZ']],
+  [{ System: 'Events' }, ['KeyX']],
   [{ System: 'Communities' }, ['KeyO']],
   [{ System: 'Backpack' }, ['KeyI']],
   [{ System: 'Gallery' }, ['KeyG']],
@@ -396,10 +398,23 @@ const DEFAULTS: MockOptions = {
 
 let running: (() => void) | null = null
 
+let mockPublicReels: ((address: string) => GalleryPhoto[]) | null = null
+
+export async function mockPublicReelPage(
+  address: string,
+  offset: number,
+  limit: number
+): Promise<{ ok: boolean; photos: GalleryPhoto[]; total: number; max: number }> {
+  const all = mockPublicReels?.(address) ?? []
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  return { ok: true, photos: all.slice(offset, offset + limit), total: all.length, max: 500 }
+}
+
 // Idempotent: StrictMode runs the HUD's useMemo twice, and a second bridge would answer every message again.
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
@@ -415,16 +430,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     { id: 'n10', type: 'community_voice_chat_started', read: false, timestamp: new Date(mockNow - 600_000).toISOString(), metadata: { communityId: 'c1', communityName: 'Decentraland Foundation', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
     { id: 'n6', type: 'credits_reminder_claim_credits', read: false, timestamp: new Date(mockNow - 5400_000).toISOString(), metadata: {} }
   ]
-  // Mock camera-reel gallery — ~3-day spacing spans two months (exercises month grouping).
-  // dateTime is a unix-seconds string, like the real compact endpoint. Mutable (delete splices).
+  // 230 photos a day apart, so the grid pages across several month headers. dateTime is a
+  // unix-seconds string, like the real compact endpoint.
   const DAY = 86_400_000
-  const mockGallery = Array.from({ length: 14 }, (_, i) => ({
+  const mockGallery = Array.from({ length: 230 }, (_, i) => ({
     id: `g${i}`,
     url: `https://picsum.photos/seed/reel${i}/1200/800`,
     thumbnailUrl: `https://picsum.photos/seed/reel${i}/400/300`,
-    isPublic: i % 2 === 0,
-    dateTime: String(Math.floor((mockNow - i * 3 * DAY) / 1000))
+    isPublic: i % 3 !== 0,
+    dateTime: String(Math.floor((mockNow - i * DAY) / 1000))
   }))
+  mockPublicReels = (address) =>
+    address.toLowerCase() === o.userId.toLowerCase()
+      ? mockGallery.filter((p) => p.isPublic)
+      : Array.from({ length: 40 }, (_, i) => ({
+          id: `${address.slice(2, 8)}-${i}`,
+          url: `https://picsum.photos/seed/${address}${i}/1200/800`,
+          thumbnailUrl: `https://picsum.photos/seed/${address}${i}/400/300`,
+          isPublic: true,
+          dateTime: String(Math.floor((mockNow - i * 2 * DAY) / 1000))
+        }))
   let mockPhotoMode: PhotoModeSnapshot = {
     active: false,
     hudHidden: false,
@@ -508,6 +533,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
   const reply = (msg: SceneToPage): void => {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
+  }
+
+  // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
+  // (then it can be restarted); the pet is paused by the scene; the scene's portable failed to load.
+  const portables: PortableInfo[] = [
+    { hash: 'bafkmockjetpack-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:0', name: 'Jetpack', kind: 'smartWearable', state: 'running', reason: null, source: 'equipped' },
+    { hash: 'bafkmockpet-sw-male', pid: 'urn:decentraland:matic:collections-v2:0xmock:1', name: 'Pocket Pet', kind: 'smartWearable', state: 'blocked', reason: null, source: 'equipped' },
+    { hash: 'bafkmockminigame', pid: 'minigame.dcl.eth', name: 'Minigame', kind: 'scene', state: 'failed', reason: 'scene.json could not be loaded', source: null }
+  ]
+  const sendPortables = (): void => reply({ kind: 'portables', portables: portables.map((p) => ({ ...p })) })
+  // A stopped smart wearable is not loaded, so it has no scene hash until it runs again.
+  const loadedHash = new Map(portables.map((p) => [p.pid, p.hash]))
+  const setPortableState = (find: (p: PortableInfo) => boolean, state: PortableState): boolean => {
+    const p = portables.find(find)
+    if (p == null) return false
+    p.state = state
+    p.hash = state === 'stopped' ? null : (loadedHash.get(p.pid) ?? null)
+    sendPortables()
+    return true
   }
 
   // An in-flight loginNew approval (so loginCancel/logout can abort it).
@@ -620,6 +664,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+    // One nearby player is already hushed, so both Hush and Hear show in ?mock=1.
+    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] }), 1500)
 
     // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
@@ -813,6 +859,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
     }
+    // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
+    if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
     // a few used permissions so the rail's permissions list has something to review.
     if (new URLSearchParams(location.search).get('perm') === '1') {
@@ -851,13 +899,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
     await wait(o.latency)
 
+    if (msg.kind === 'getConnectivity' || msg.kind === 'retryConnectivity') {
+      reply({ kind: 'connectivity', state: { connectionLost: false, probing: false, everConnected: playerSpawned, suppressed: !playerSpawned, rooms: [] } })
+      if (msg.kind === 'retryConnectivity') reply({ kind: 'connectivityRetry', requestId: msg.requestId })
+      return
+    }
+
     if (msg.kind === 'getHomeScene') {
       reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
       return
     }
 
     if (msg.kind === 'getWelcome') {
-      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome })
+      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome, ask: msg.ask })
       return
     }
     if (msg.kind === 'acceptWelcome') {
@@ -870,6 +924,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'expectLook' || msg.kind === 'preloadLook' || msg.kind === 'openLegal') return
+    if (msg.kind === 'openExternalUrl') {
+      reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
+      return
+    }
 
     if (msg.kind === 'sendChat') {
       // Echo the local player's message back (the engine would broadcast it); a DM is stored first.
@@ -1061,6 +1119,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
       return
     }
+    if (msg.kind === 'setNearbyMute') {
+      if (msg.muted) mockNearbyMuted.add(msg.address)
+      else mockNearbyMuted.delete(msg.address)
+      reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] })
+      return
+    }
     if (msg.kind === 'setMic') {
       reply({ kind: 'mic', enabled: msg.enabled, available: true })
       return
@@ -1117,6 +1181,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         realm: 'https://realm-provider.decentraland.org/main',
         rules: { scene: [{ ty: 'MovePlayer', allow: 'Allow' }], realm: [], global: [{ ty: 'OpenUrl', allow: 'Deny' }] }
       })
+      return
+    }
+    if (msg.kind === 'getEvents') {
+      // `?mockEvents=error` fails every read, to show the error state and its Retry
+      const failed = new URLSearchParams(location.search).get('mockEvents') === 'error'
+      setTimeout(() => {
+        if (failed) reply({ kind: 'events', request: msg.request, events: [], failed: true })
+        else reply({ kind: 'events', request: msg.request, events: mockEventList(msg) })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'setEventAttending') {
+      setMockReminder(msg.eventId, msg.attending)
+      setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getEventPlaces') {
+      reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return
     }
     if (msg.kind === 'getCommunities') {
@@ -1457,7 +1539,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGallery') {
-      reply({ kind: 'gallery', photos: mockGallery, current: mockGallery.length, max: 500 })
+      const page = mockGallery.slice(msg.offset, msg.offset + msg.limit)
+      setTimeout(() => reply({ kind: 'gallery', requestId: msg.requestId, ok: true, photos: page, received: page.length, current: mockGallery.length, max: 500 }), o.latency)
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
@@ -1479,7 +1562,13 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)
-      reply({ kind: 'gallery', photos: mockGallery, current: mockGallery.length, max: 500 })
+      reply({ kind: 'galleryWrite', requestId: msg.requestId, ok: i >= 0, current: mockGallery.length, max: 500 })
+      return
+    }
+    if (msg.kind === 'setGalleryPhotoPublic') {
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      if (photo != null) photo.isPublic = msg.isPublic
+      reply({ kind: 'galleryWrite', requestId: msg.requestId, ok: photo != null })
       return
     }
     if (msg.kind === 'getProfile') {
@@ -1527,6 +1616,28 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'consoleCommand') {
       const args = msg.args ?? []
+      // A stopped smart wearable stays listed (still equipped); any other portable leaves the list.
+      if (msg.command === 'stop_portable' && args[0] != null) {
+        const hash = args[0]
+        const p = portables.find((e) => e.hash === hash)
+        if (p == null) {
+          reply({ kind: 'consoleReply', command: msg.command, args, ok: false, output: `not a listed portable: ${hash}` })
+          return
+        }
+        if (p.kind === 'smartWearable') setPortableState((e) => e === p, 'stopped')
+        else {
+          portables.splice(portables.indexOf(p), 1)
+          sendPortables()
+        }
+        reply({ kind: 'consoleReply', command: msg.command, args, ok: true, output: `stopped ${hash}` })
+        return
+      }
+      if (msg.command === 'smart_wearable' && args[0] === 'restart' && args[1] != null) {
+        const urn = args[1]
+        const ok = setPortableState((e) => e.kind === 'smartWearable' && e.pid === urn && e.state === 'stopped', 'running')
+        reply({ kind: 'consoleReply', command: msg.command, args, ok, output: ok ? `restarted ${urn}` : `unknown smart wearable: ${urn}` })
+        return
+      }
       const output =
         msg.command === 'help' && args.length === 0
           ? 'Available commands:\n  /help     - List available commands\n  /teleport - set location\n  /crdt_snapshot - (hidden by the HUD)'

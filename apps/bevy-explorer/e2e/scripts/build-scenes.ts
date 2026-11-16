@@ -1,6 +1,6 @@
 // Builds the visual scenes with dcl-scene-cli (apps/dcl-scene-cli): the vendored SDK toolchain
 // into each scene once, then the bundle with the CLI's built-in build (`--built-in`, as each
-// scene's own `package.json` build script asks for too; the script is for a hand-run `npm run
+// scene's own `package.json` build script asks for too; the script is for a hand-run `pnpm run
 // build`, and the CLI refuses a script that would run the CLI again). `DCL_SCENE_CLI` names the binary, else it is on the PATH;
 // a binary named by path has its folder put on the PATH of what it runs, since a scene's own
 // `package.json` scripts call `dcl-scene-cli` by name.

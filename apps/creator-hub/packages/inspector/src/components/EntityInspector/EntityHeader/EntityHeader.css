@@ -1,0 +1,233 @@
+.EntityHeader {
+  font-size: 18px;
+  padding-bottom: 12px;
+  font-weight: 600;
+  text-align: left;
+
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.EntityHeader .Title {
+  flex: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* Keep consecutive spaces of the entity name visible (#376). */
+  white-space: pre-wrap;
+}
+
+.EntityHeader .Title .EditTitleWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.EntityHeader .Title .EditTitleWrapper .Input {
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--gray-0);
+}
+
+.EntityHeader .Title .EditTitleWrapper .Input:focus {
+  border-color: var(--base-01);
+  outline: none;
+}
+
+.EntityHeader .Title .EditTitleWrapper .EditHint {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--base-08);
+}
+
+.EntityHeader .TitleWrapper {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+}
+
+.EntityHeader .Title > svg {
+  cursor: pointer;
+}
+
+.EntityHeader .RightContent {
+  display: flex;
+  flex-grow: 1;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 14px;
+}
+
+.OptionList.AddComponent {
+  min-width: 155px;
+  white-space: nowrap;
+  max-height: max-content;
+}
+
+.EntityHeader .RightContent > .Dropdown.Trigger > .DropdownContainer.AddComponent {
+  background-color: var(--primary-main);
+  border-color: var(--primary-main);
+  border-radius: 4px;
+  padding: 4px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: auto;
+}
+
+.EntityHeader .RightContent > .Dropdown.Trigger > .DropdownContainer.AddComponent .AddComponentTrigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--white);
+}
+
+.EntityHeader .RightContent > .Dropdown.Trigger > .DropdownContainer.AddComponent .AddComponentTrigger svg {
+  width: 16px;
+  height: 16px;
+  color: var(--white);
+}
+
+.EntityHeader .RightContent > .Dropdown.Trigger > .DropdownContainer.AddComponent:hover {
+  background-color: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
+.MoreOptionsContent.EntityHeaderMenu {
+  min-width: 190px;
+}
+
+.InfoTooltip > .VisibilityComponentTooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.InfoTooltip > .VisibilityComponentTooltip > .ErrorMessage {
+  color: var(--warning-main);
+}
+
+.EntityHeader.ModalOverlay {
+  z-index: 1;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal {
+  display: flex;
+  flex-direction: row;
+  width: 536px;
+  padding: 24px;
+  gap: 24px;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: fit-content;
+  gap: 32px;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .CloseIcon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  cursor: pointer;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .ModalContent h2 {
+  color: var(--base-06, #ccc);
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: normal;
+  letter-spacing: -0.36px;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .ModalContent p {
+  color: var(--base-06, #ccc);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: normal;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .ModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .ModalActions .Button {
+  padding: 6px 11px;
+  background-color: var(--base-15);
+  color: var(--base-01);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: normal;
+  border-radius: 0;
+}
+
+.EntityHeader.ModalOverlay .ToggleBasicViewModal .ModalBody .ModalActions .Button.primary {
+  background-color: var(--accent-blue-07);
+}
+
+.EntityHeader .subtitle {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.EntityHeader .componentInfo {
+  width: 100%;
+  font-size: 11px;
+  font-weight: 400;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.EntityHeader .componentInfo .content {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.EntityHeader .componentInfo .Chip {
+  font-weight: 500;
+  background-color: var(--base-14);
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+.EntityHeader .componentInfo .customItemContainer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.EntityHeader .componentInfo .tagsContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.EntityHeader .componentInfo .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

@@ -17,21 +17,21 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
-npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
+pnpm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
+pnpm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
-npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
-(cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
+pnpm run test:visual        # tier 1.5 — visual regression (headless, no engine)
+(cd bridge-scene && pnpm run build && pnpm run lint)   # the SDK's type check + eslint (must be 0 errors)
 ```
 
 The bridge scene is type-checked by `sdk-commands build`, not bare `tsc` — its tsconfig trips
 TypeScript's deprecation errors under the installed compiler.
 
-`test:visual` reuses whatever is already serving `:5173` (and `npm run dev` reuses `:8100`), so in a
+`test:visual` reuses whatever is already serving `:5173` (and `pnpm run dev` reuses `:8100`), so in a
 worktree make sure those aren't another checkout's servers, or run your own on other ports
 (`E2E_URL=http://localhost:5174`).
 
-If `test:visual` reports diffs, open the Playwright HTML report (`npx playwright show-report`) and
+If `test:visual` reports diffs, open the Playwright HTML report (`pnpm exec playwright show-report`) and
 look at the **expected vs actual vs diff** images. Either it's a real regression (fix it) or an
 intended change (refresh the baseline — see §2).
 
@@ -42,11 +42,22 @@ deterministically — they have their own tiers (§3, §4).
 
 ## 1. The testing tiers (why three)
 
+Connectivity feedback is engine-owned. `library/ui/apps/hud/test/hosted/connectivity.test.tsx` checks the shared
+SystemApi stream/retry bridge, subscription cleanup, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls through bridge acknowledgement, reply timeout and session cleanup,
+failed-retry recovery controls, automatic dismissal,
+and scoped access messages. Runtime verification reads `/connectivity_state`, uses
+`/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
+`Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
+same safe snapshot and Retry action. Preview, held-world and terminal access failures must
+never become an offline alert. A reachable network with a failed or disconnected room shows its
+room status. An initial `connecting` room stays quiet during ordinary scene crossings.
+
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
-| **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
-| **1.5 — visual** | `npm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
-| **2 — engine** | `npm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
+| **1 — contract** | `pnpm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
+| **1.5 — visual** | `pnpm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
+| **2 — engine** | `pnpm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
 
 Tier 1 is the contract net (every call, including ones a guest can't reach). Tier 1.5 is the
 *appearance* net (the thing humans notice). Tier 2 is the *it-actually-talks-to-the-engine* net.
@@ -78,13 +89,21 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the Events page (`library/ui/apps/hud/features/events`: the calendar, a day's
+grid, the event detail). Mock mode serves it a week of events around now
+(`library/explorer-core/engine/mockEvents.ts`; `?mock=1&mockEvents=error` fails every read), so a
+baseline needs the frozen clock. Its contract is tier-1, in `library/ui/apps/hud/test/hosted`:
+`events.test.tsx` (the reads sent, the loading, error, empty and loaded states, the day
+navigation, the reminder, the detail, share and jump), `eventsStore.test.ts` and
+`eventFormat.test.ts`; the bridge's requests are in `src/test/bridgeEvents.test.ts`.
+
 Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
 lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
 it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.tsx`, `library/explorer-core/lib/integratedGpu.test.ts`.
 
 **Updating baselines** (only when the change is intentional):
 ```bash
-npm run test:visual:update      # regenerates the PNGs
+pnpm run test:visual:update      # regenerates the PNGs
 git add e2e/visual.spec.ts-snapshots && git diff --cached --stat   # then EYEBALL the new PNGs
 ```
 Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
@@ -165,6 +184,11 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       community chat by a player standing nearby shows as their bubble with the community's name on
       a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
       your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
+- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
+      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
+      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
+      The same player talking in a private call or community stream with you, which the mute leaves
+      audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
@@ -188,8 +212,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       throttled, not doing work every frame for free.
 - [ ] **Tests** — tier 1 still green; **a new/changed domain has a tier-1.5 baseline**; world-space
       changes ran the §4 checklist.
-- [ ] **Both projects typecheck** (`npm run typecheck` + `cd bridge-scene && npm run build`), and the
-      bridge scene lints clean (`npm run lint` there).
+- [ ] **Both projects typecheck** (`pnpm run typecheck` + `cd bridge-scene && pnpm run build`), and the
+      bridge scene lints clean (`pnpm run lint` there).
 - [ ] **No secrets / `.env` or working reports** staged; review the staged paths under the
       repository-root `AGENTS.md` rules. Use an imperative commit subject without AI attribution.
 
@@ -209,7 +233,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 3. Add a tier-1 test for its API contract + clicks beside the shared code: `library/explorer-core/test/`
    for core code, `library/ui/apps/hud/test/hosted/` for UI and session code (`src/test/` only for this
    host's own files).
-4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
+4. Add a screenshot to `e2e/visual.spec.ts` and run `pnpm run test:visual:update`.
 5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
 6. List its expectations here.
 
@@ -243,6 +267,27 @@ from HUD-side key matching. The rules:
   engine-side reservation and gamepad scrolling all key off that.
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
+
+## Portables
+
+A portable experience runs beside the scene the player stands in: a smart wearable's scene
+while it is worn, or a portable another scene spawned. The engine decides and lists them; the HUD
+shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`). Expectations:
+
+- **List**: the engine's `portables` message (`getPortablesStream`), sent on subscribe and on every
+  change, never the HUD's own scene or a startup portable. No polling and no prompt of its own: a
+  portable's permissions are asked on use through the scene permission dialog.
+- **Rail**: the `Portable experiences` button shows while the list is non-empty; its tooltip reads
+  `N running`, plus `, M paused in this scene` while the scene the player stands in disables
+  portable experiences. Its popover lists one row per portable: name, kind (`Smart wearable` /
+  `Portable experience`) and state (`Loading`, `Running`, `Failed: <reason>`, `Paused in this
+  scene`, `Stopped`). `Stop <name>` on every row with a scene hash runs the console's
+  `/stop_portable <hash>`; a stopped smart wearable (still worn) shows `Restart <name>` instead,
+  `/smart_wearable restart <urn>`. The HUD's own command replies stay out of chat; a failed one is
+  toasted.
+- **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
+  arrived with (no burst at login).
+- Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
 
 ## Analytics
 
@@ -286,6 +331,8 @@ back as `analyticsSession`). Expectations:
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
 - **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
+- **Nearby voice**: `nearby_voice_user_mute` {wallet_id, is_muted} on the profile menu's Hush or
+  Hear; not for the mutes read from the saved list, nor for a Hush or Hear the list already has.
 - **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
   relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
   flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,
@@ -329,3 +376,53 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Gallery (camera reel)
+
+The Gallery page and the passport's Photos tab (`library/ui/apps/hud/features/gallery`, bridge `domains/gallery.ts`).
+Expectations:
+
+- **Paging**: a reel is read 100 photos a page, the next page when fewer than 12 loaded photos remain
+  past the last one on screen, and paging stops once the reel's total is loaded or the service sends
+  a short page (counted before url-less images are dropped) (`useReelList`). Every Gallery open reads
+  again from the top. Your own reel goes through the bridge, signed (private photos included), its
+  replies matched by `requestId` (`bridgeCall`). The passport reads the PUBLIC reel from the HUD
+  itself, unsigned (`publicReels.ts`), since every bridge request is signed; `?mock=1` swaps in the
+  mock bridge's reels.
+- **Failures**: a failed first page shows an error with RETRY, never the empty reel; a failed later
+  page ends the grid with a RETRY row, and paging waits for it instead of asking on every scroll.
+- **The grid** (`ReelGrid`) mounts only the rows near the viewport; it reports what is on screen only
+  once it has measured it. Gallery: 6 x 306x230 with month headers; passport: 4 columns at 272:201,
+  no headers. A thumbnail is disabled until its image has loaded.
+- **The options menu** (`design/AnchoredMenu` around `ContextMenu`): Set as Public, Share on X, Copy
+  Link, Download, Delete, in that order (`reelActions.ts`, `useOwnReelActions.ts`). The passport offers
+  it only on your own passport, and making a photo private there drops it at once (back in place if
+  the write fails). It is portaled with `--ui-scale`, opens below-right of the ⋮ and flips or clamps
+  at the screen edges: check it visually near the edges. On native, Download needs the engine's CEF
+  download handler (`crates/cef_offscreen`): it saves to `Downloads` under the home folder and
+  reports how each save ended, and the toast waits for that report. That toast shows the folder,
+  which opens in the file manager on a click (once per toast); web has no such link. Share on X on native asks the
+  bridge scene to open the post in the user's browser (`openExternalUrl`, `https:` only); on web
+  it opens a tab.
+- Tests: in `library/ui/apps/hud/test/`, `hosted/gallery.test.tsx` (the session calls),
+  `hosted/gallery.page.test.tsx` (paging, failures, the menu and its actions),
+  `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu
+  placement); here, `src/test/bridgeGallery.test.ts` (the bridge's requests and replies).
+
+## Donate
+
+Tipping a place's creator in MANA, where the host can sign a tip (`@hud-host`'s `donations`: the Sites `/play`
+web shell; null here, so this HUD shows no Donate). The shared HUD names a place and nothing else
+(`features/donate/useDonate.ts`); the shell resolves the creator, draws the panel and signs (`apps/ui3/src/play/shell/donate`,
+[ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md)). Expectations:
+
+- **Where it shows:** the minimap's header for the scene the player stands in (the session's
+  `minimap.donatePlace`: a Genesis City parcel or a World, none in a preview or a local realm), and the
+  map's place panel. Only when the host says the session may tip and the place has a creator; hidden while
+  the first answer is pending. Whether the session may tip is asked once per sign-in. The minimap's place
+  changes with the scene, not with each parcel crossed (none on a parcel with no scene), and its last answer
+  stays while the next scene is asked about; on the map a newly picked place hides it until answered.
+- **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
+  tipper's passport (`notifications/summary.ts` `tipTarget`).
+- Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
+  `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
+  and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.

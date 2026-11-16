@@ -1,7 +1,8 @@
 import { encodeFunctionData, isAddress, parseUnits, toHex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { CatalystError, getJSON, sendSignedJSON, type SendOpts } from "../../data/catalyst/client";
+import { getJSON, sendSignedJSON, type SendOpts } from "../../data/catalyst/client";
+import { forwardUntil, TRANSFER_ABI } from "@explorer-core/features/donate/tip";
 import type { PaymentsConfig } from "@catalyst-api/economy/PaymentsConfig";
 
 const MANA_DECIMALS = 18;
@@ -11,23 +12,8 @@ const TIP_FORWARD_TIMEOUT_MS = 10_000;
 // How long a tip keeps waiting to be mined and forwarded while the page is open.
 export const TIP_DELIVERY_WINDOW_MS = 15 * 60_000;
 const RECEIPT_POLL_MS = 4_000;
-const FORWARD_FIRST_RETRY_MS = 5_000;
-const FORWARD_MAX_RETRY_MS = 120_000;
 const POLYGON_CHAIN_IDS = new Set([137, 80002]);
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
-
-const TRANSFER_ABI = [
-  {
-    type: "function",
-    name: "transfer",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
 
 const AMOUNT_RE = /^\d+(\.\d+)?$/;
 
@@ -133,12 +119,6 @@ export type TipDeliveryOpts = {
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-// 429, 5xx and network failures (status 0) may succeed later.
-function retryable(e: unknown): boolean {
-  const status = e instanceof CatalystError ? e.status : 0;
-  return status === 0 || status === 429 || status >= 500;
-}
-
 /**
  * Waits for the tip's receipt through the wallet, then forwards it, retrying
  * retryable failures with backoff until the window closes. Never throws.
@@ -161,20 +141,5 @@ export async function deliverTip(provider: Eip1193Provider, hash: string, opts: 
     if (now() + RECEIPT_POLL_MS > deadline) return "gave-up";
     await sleep(RECEIPT_POLL_MS);
   }
-  let delay = FORWARD_FIRST_RETRY_MS;
-  for (;;) {
-    let hint = 0;
-    try {
-      await forward(hash);
-      return "notified";
-    } catch (e) {
-      if (!retryable(e)) return "refused";
-      hint = e instanceof CatalystError ? (e.retryAfterSecs ?? 0) * 1000 : 0;
-    }
-    // Never sooner than the server's Retry-After, never longer than the max.
-    const wait = Math.min(Math.max(delay, hint), FORWARD_MAX_RETRY_MS);
-    if (now() + wait > deadline) return "gave-up";
-    await sleep(wait);
-    delay = Math.min(delay * 2, FORWARD_MAX_RETRY_MS);
-  }
+  return forwardUntil(hash, forward, { sleep, now, deadline });
 }
