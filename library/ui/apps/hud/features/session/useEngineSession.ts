@@ -4132,8 +4132,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setSubmitted(true)
       // at once, not on the next render: a /hud_login in the same task is refused as signed in
       submittedRef.current = true
-      // A ?position/?realm link launches straight there (pickDestination, from the url effect).
-      if (urlDestination.current != null) return true
+      // A ?position/?realm link launches straight there (pickDestination, from the url effect); the
+      // sign-in still shows Verifying, and a new account its look and name, before the world. On
+      // desktop that is every sign-in: the engine puts its own realm in the address.
+      if (urlDestination.current != null) {
+        setWelcomePending(welcomeShown())
+        return true
+      }
       // Otherwise the lobby: launch now holding the world back, so signing in, the avatar and
       // friends work but no scene loads until a destination is picked (which releases it).
       setLobby(true)
@@ -4450,7 +4455,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   const phase: SessionPhase = !submitted
     ? 'login'
-    : welcome != null || (welcomePending && lobby)
+    : welcome != null || welcomePending
       ? 'welcome'
       : !destinationPicked
       ? urlDestination.current != null
