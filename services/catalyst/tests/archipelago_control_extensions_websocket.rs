@@ -1037,6 +1037,7 @@ async fn legacy_heartbeat_authority_deadline_preserves_signaling_without_publish
 #[tokio::test]
 async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
     use catalyst::comms::archipelago::control_v4::{AssignmentPayload, LaneKey};
+    use catalyst::comms::gatekeeper::admission::cluster::fence::RealmAssignmentReader;
     let Some(fixture) = Fixture::new().await else {
         return;
     };
@@ -1158,6 +1159,14 @@ async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
                 .is_some(),
             "configured signaling uses the same exact-session registry"
         );
+        server.state.control_v4.renew(&next).await.unwrap();
+        let utc_renewal: bool = sqlx::query_scalar("SELECT abs(extract(epoch FROM updated_at-timezone('UTC',clock_timestamp())))<5 FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(&server.state.gatekeeper.cluster.control_v4_audience).bind(&next.address)
+            .fetch_one(&non_utc).await.unwrap();
+        assert!(
+            utc_renewal,
+            "non-UTC control renewal stores a UTC-naive timestamp"
+        );
         let mut replacement = server.connect().await;
         admit_legacy(&mut replacement, &wallet).await;
         let replacement_owner = current_owner(&server, &fixture, &wallet).await;
@@ -1171,6 +1180,26 @@ async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
                 .await
                 .is_ok(),
             "old legacy close must not release the newer owner"
+        );
+        sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=timezone('UTC',clock_timestamp())-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+            .bind(&server.state.gatekeeper.cluster.control_v4_audience).bind(&next.address)
+            .execute(&non_utc).await.unwrap();
+        assert!(
+            server
+                .state
+                .control_v4
+                .snapshot(&next, &realm)
+                .await
+                .is_err(),
+            "non-UTC control reader refuses the normally lapsed binding"
+        );
+        assert!(
+            server
+                .fence
+                .current_realm_assignment(&next.address, &next.session)
+                .await
+                .is_err(),
+            "non-UTC selected reader agrees on lapse"
         );
         drop((old_socket, replacement));
     }
