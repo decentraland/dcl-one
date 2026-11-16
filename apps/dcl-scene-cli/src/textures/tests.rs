@@ -707,40 +707,149 @@ impl Encoder for Refusing {
 
 static REFUSING: Refusing = Refusing(std::sync::atomic::AtomicUsize::new(0));
 
-fn refusing() -> anyhow::Result<&'static dyn Encoder> {
-    Ok(&REFUSING)
-}
-
-/// A texture kept as its source is recorded in the cache: later runs don't
-/// retry it, and a save that changes only code sends nothing, so the HUD
-/// offers no Reload for it.
+/// A texture the preparation refuses (too small to gain) is recorded in the
+/// cache: later runs don't retry it, and a save that changes only code sends
+/// nothing, so the HUD offers no Reload for it.
 #[test]
-fn a_texture_kept_as_its_source_is_not_retried() {
+fn a_texture_too_small_to_gain_is_not_retried() {
     let (_t, root, _) = scene("textures-kept");
+    write(&root, "images/wall.png", &noise_png(8, 8, 21));
+    write(&root, "images/ui.png", &noise_png(8, 8, 22));
     enable_in_settings(&root);
+    let encodes = std::sync::atomic::AtomicUsize::new(0);
+    let count = || {
+        encodes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    };
+    let probe = Probe(&count);
+    let encoder = || Ok::<&dyn Encoder, anyhow::Error>(&probe);
     let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
     let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
-    let before = REFUSING.0.load(std::sync::atomic::Ordering::Relaxed);
-    import::import_once(&root, &refusing, 2, &send, false);
-    let asked = REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before;
-    assert_eq!(asked, 3, "each distinct texture is tried once");
+    import::import_once(&root, &encoder, 2, &send, false);
+    // the embedded texture only: the two tiny images never reach the encoder
+    assert_eq!(encodes.load(std::sync::atomic::Ordering::Relaxed), 1);
     let last = *sent.lock().unwrap().last().unwrap();
-    assert_eq!((last.state, last.failed), (import::ImportState::Ready, 3));
+    assert_eq!((last.state, last.failed), (import::ImportState::Ready, 2));
 
     // a code-only save: nothing retried, nothing sent
     sent.lock().unwrap().clear();
     std::fs::write(root.join("bin/index.js"), "'images/ui.png'; // edited").unwrap();
-    assert!(!import::import_once(&root, &refusing, 2, &send, false));
-    assert_eq!(
-        REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before,
-        3
-    );
+    assert!(!import::import_once(&root, &encoder, 2, &send, false));
+    assert_eq!(encodes.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert!(
         sent.lock().unwrap().is_empty(),
         "{:?}",
         sent.lock().unwrap()
     );
     registry().remove(&root);
+}
+
+/// An encoder failure may pass (a full disk, memory pressure): it is not
+/// recorded, and the next run tries again.
+#[test]
+fn encoder_failures_are_retried() {
+    let (_t, root, _) = scene("textures-retried");
+    let before = REFUSING.0.load(std::sync::atomic::Ordering::Relaxed);
+    let first = run(&root, Settings::default(), &REFUSING);
+    assert_eq!(first.summary.failed, 3);
+    assert_eq!(
+        REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before,
+        3
+    );
+    run(&root, Settings::default(), &REFUSING);
+    assert_eq!(
+        REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before,
+        6
+    );
+}
+
+/// A deploy with the setting off takes no lock and creates no stage; one left
+/// from earlier is swept.
+#[tokio::test]
+async fn a_deploy_with_the_setting_off_needs_no_stage() {
+    let (_t, root, _) = scene("textures-deploy-off");
+    let rels = crate::deploy::collect_publishable_files(&root).unwrap();
+    {
+        let _held = stage_for_deploy(&root, Overrides::default(), true)
+            .await
+            .unwrap();
+        assert!(!root.join(STAGE).exists(), "no stage, no lock file");
+        assert_eq!(payload_publishable(&root, rels.clone()), rels);
+    }
+    // a stage from an earlier run, the setting now off
+    run(&root, Settings::default(), &FAKE);
+    let count = |dir: &str| std::fs::read_dir(root.join(STAGE).join(dir)).map_or(0, |d| d.count());
+    assert_eq!((count("ktx2"), count("cache")), (3, 3));
+    let held = lock_stage(&root).unwrap();
+    // another process holds it: the deploy doesn't wait, and sweeps nothing
+    drop(
+        stage_for_deploy(&root, Overrides::default(), true)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(count("ktx2"), 3);
+    drop(held);
+    drop(
+        stage_for_deploy(&root, Overrides::default(), true)
+            .await
+            .unwrap(),
+    );
+    assert_eq!((count("ktx2"), count("cache"), count("models")), (0, 0, 0));
+}
+
+/// Embedded jobs of one model go to one worker together, so the model is read
+/// and parsed once; each file's job stands alone.
+#[test]
+fn embedded_jobs_are_grouped_by_model() {
+    let job = |source: JobSource| Job {
+        sha: String::new(),
+        mode: ColorMode::Srgb,
+        source,
+    };
+    let embedded = |path: &str, index| {
+        job(JobSource::Embedded {
+            path: PathBuf::from(path),
+            rel: path.to_string(),
+            index,
+        })
+    };
+    let jobs = vec![
+        embedded("a.glb", 0),
+        job(JobSource::File(PathBuf::from("t.png"))),
+        embedded("a.glb", 1),
+        embedded("b.glb", 0),
+    ];
+    assert_eq!(
+        work_units(&jobs, &[0, 1, 2, 3]),
+        vec![vec![0, 2], vec![1], vec![3]]
+    );
+    assert_eq!(work_units(&jobs, &[2, 3]), vec![vec![2], vec![3]]);
+}
+
+/// A copy that keeps the size and modification time still moves the key.
+#[cfg(unix)]
+#[test]
+fn a_copy_with_the_same_size_and_time_moves_the_key() {
+    let (_t, root, _) = scene("textures-key");
+    let path = root.join("images/wall.png");
+    let before = file_key(&path).unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let len = std::fs::metadata(&path).unwrap().len() as usize;
+    // the same size, other bytes, renamed over it with the old time
+    let other = noise_png(64, 64, 31);
+    let mut bytes = other.clone();
+    bytes.resize(len, 0);
+    let copy = root.join("images/copy.png");
+    std::fs::write(&copy, &bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&copy)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    std::fs::rename(&copy, &path).unwrap();
+    let after = file_key(&path).unwrap();
+    assert_eq!(after.len, before.len);
+    assert_ne!(after, before);
 }
 
 /// A deploy in progress reads its own overlay; the preview keeps serving its own.

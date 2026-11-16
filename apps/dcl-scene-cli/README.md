@@ -648,10 +648,11 @@ unchanged does nothing, and with the setting off a run encodes nothing; a deploy
 queues the next run. Your files are never changed: rewritten models and KTX2 files are staged in
 `.dcl-one/optimized-textures/` with a `manifest.json` and a cache keyed by source bytes, encoder and
 settings. A texture that can't gain (too small, undecodable) is recorded there too, so it isn't
-retried. A save that changes no image or model re-reads, re-hashes and re-encodes nothing, and
-KTX2 files and cache entries the current import no longer uses are deleted after it. One
-dcl-scene-cli at a time writes a project's stage: a `deploy` in another terminal waits for the
-preview's import, and the other way round.
+retried; an encoder failure is retried by the next run. A save that changes no image or model
+re-reads, re-hashes and re-encodes nothing. Staged files the current import or deploy no longer uses
+are deleted after it, and with the setting off the stage is emptied. One dcl-scene-cli at a time
+writes a project's stage: a `deploy` in another terminal waits for the preview's import, and the
+other way round. With the setting off nothing is locked or created.
 
 Serving and publishing them is a per-project setting in `.dcl-one/settings.json`
 (`{"optimizeTextures": true, "keepSourceTextures": false}`), off by default. `--optimize-textures`

@@ -14,7 +14,7 @@
 
 use super::{
     Encoder, Entry, PREVIEW_MANIFEST, Progress, RUN_LOCK, Run, STAGE, Settings, lock_stage,
-    optimize, prune_models, registry, settings, stamps_of, swap, sweep_stage, write_manifest,
+    optimize, registry, settings, stamps_of, swap, sweep_stage, sweep_when_off, write_manifest,
 };
 use crate::ux;
 use std::collections::HashMap;
@@ -295,6 +295,8 @@ pub(crate) fn import_once<'e>(
                 ..Entry::default()
             },
         );
+        // nothing is served from the stage now: it stops growing
+        sweep_when_off(root);
         if was_enabled {
             send(ImportStatus {
                 state: ImportState::Ready,
@@ -365,6 +367,7 @@ pub(crate) fn import_once<'e>(
         Ok(outcome) => outcome,
         Err(e) => return failed(e),
     };
+    let keep = outcome.keep();
     let overlay = Arc::new(outcome.overlay);
     let changed = swap(
         root,
@@ -374,10 +377,10 @@ pub(crate) fn import_once<'e>(
             overlay: Some(overlay.clone()),
             stamps: Some(stamps),
             model_inputs: Arc::new(outcome.model_inputs),
+            keep: Arc::new(keep.clone()),
         },
     );
-    prune_models(&root.join(STAGE), &overlay);
-    sweep_stage(&root.join(STAGE), &outcome.stage_files);
+    sweep_stage(&root.join(STAGE), &keep);
     if let Err(e) = write_manifest(root, PREVIEW_MANIFEST, &outcome.manifest) {
         tracing::warn!("{e:#}");
     }
