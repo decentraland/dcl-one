@@ -20,7 +20,9 @@ provision_hosted_macos_test_resources() {
     esac
   done
   echo "catalyst-test: hosted descriptors before kern.maxfilesperproc=$per_process kern.maxfiles=$system"
-  # Sixteen concurrent binaries can each inherit the 65536-descriptor budget.
+  # The single auth stress binary needs both loopback socket ends and background
+  # connections. Retain the conservative system floor of 1048576; it is an
+  # operational prerequisite, not a measured bound for this workload.
   # Preserve a higher per-process ceiling and keep the system ceiling above it.
   [ "$per_process" -le "$system_required" ] || system_required="$per_process"
   if [ "$system" -lt "$system_required" ]; then
