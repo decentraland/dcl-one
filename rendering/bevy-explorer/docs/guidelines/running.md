@@ -225,10 +225,13 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
-  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
-  is built. A wearable's own bones (hair, tails, capes) form the chains, each hanging off a body
-  bone. The Spring bones debug section reads it.
+- `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
+  capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
+  `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
+  built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
+  each `null` with a reason in `unavailable` until the avatar is built. The player and preview
+  avatars are simulated first, then the avatars nearest the camera and in front of it. The Spring
+  bones debug section reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

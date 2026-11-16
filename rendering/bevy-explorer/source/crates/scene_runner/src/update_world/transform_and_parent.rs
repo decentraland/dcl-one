@@ -42,6 +42,7 @@ impl Plugin for TransformAndParentPlugin {
                 PostUpdateSets::PlayerUpdate,
                 PostUpdateSets::CameraUpdate,
                 PostUpdateSets::InverseKinematics,
+                PostUpdateSets::SpringBones,
                 PostUpdateSets::Nametag,
                 PostUpdateSets::AttachSync,
                 PostUpdateSets::Billboard,

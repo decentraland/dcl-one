@@ -24,6 +24,7 @@
 - [Explorer HUD UI in `library/ui/apps/hud`](adr/2026-11-10-shared-explorer-hud-ui.md)
 - [Explorer vendored Bevy (superseded)](adr/2026-11-05-explorer-vendored-bevy.md)
 - [Explorer sources as upstream commits and patches](adr/2026-11-14-explorer-sources-as-patches.md)
+- [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)
