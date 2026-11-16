@@ -97,32 +97,37 @@ pub struct NametagPlugin;
 
 impl Plugin for NametagPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<NametagMaterial>::default())
-            .init_resource::<OfficialWallets>()
-            .add_event::<ChatBubbleRequest>()
-            .add_event::<ChatBubbleRetext>()
-            .add_systems(Startup, load_assets)
-            .add_systems(
-                Update,
-                (
-                    resolve_content,
-                    resolve_voice,
-                    acquire_and_release_tags,
-                    show_chat_bubbles,
-                    follow_glyph_atlas,
-                    build_tags,
-                )
-                    .chain()
-                    .in_set(SceneSets::PostLoop),
+        // blended and never a shadow caster: the prepass and the shadow passes draw none of it
+        app.add_plugins(MaterialPlugin::<NametagMaterial> {
+            prepass_enabled: false,
+            shadows_enabled: false,
+            ..default()
+        })
+        .init_resource::<OfficialWallets>()
+        .add_event::<ChatBubbleRequest>()
+        .add_event::<ChatBubbleRetext>()
+        .add_systems(Startup, load_assets)
+        .add_systems(
+            Update,
+            (
+                resolve_content,
+                resolve_voice,
+                acquire_and_release_tags,
+                show_chat_bubbles,
+                follow_glyph_atlas,
+                build_tags,
             )
-            .add_systems(
-                PostUpdate,
-                place_tags
-                    .in_set(PostUpdateSets::Nametag)
-                    .after(crate::dynamic_nametag::dynamic_nametag_position),
-            )
-            .add_observer(forget_content)
-            .add_observer(release_tag);
+                .chain()
+                .in_set(SceneSets::PostLoop),
+        )
+        .add_systems(
+            PostUpdate,
+            place_tags
+                .in_set(PostUpdateSets::Nametag)
+                .after(crate::dynamic_nametag::dynamic_nametag_position),
+        )
+        .add_observer(forget_content)
+        .add_observer(release_tag);
         app.add_console_command::<diagnostics::NametagStateCommand, _>(diagnostics::nametag_state)
             .add_console_command::<diagnostics::NametagBubbleCommand, _>(
                 diagnostics::nametag_bubble,
