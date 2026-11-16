@@ -12383,6 +12383,7 @@ dependencies = [
  "input_manager",
  "ipfs",
  "naga_oil",
+ "pipeline_test",
  "platform",
  "reqwest",
  "scene_material",
