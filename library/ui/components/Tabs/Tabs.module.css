@@ -1,3 +1,5 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
 /* Figma: Tabs bar / Tabs. The pill variant follows decentraland.org's events tabs (ExperiencesTabs);
    where the reference and Figma differ, the reference wins and the comment names both values. */
 @layer dcl.components {
@@ -75,7 +77,6 @@
   }
 }
 
-@layer dcl.reset, dcl.foundations, dcl.components;
 @layer dcl.components {
   .routeRoot {
     composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
