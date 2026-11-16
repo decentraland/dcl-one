@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router";
 
 import { Button, JumpInCTA } from "@dcl/one-ui";
-import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
 import {
   GeneralClose,
   GeneralInfoButton,
@@ -14,6 +13,7 @@ import {
 } from "@dcl/one-ui/foundations/icons";
 
 import styles from "./PhotoViewer.module.css";
+import { useBrokenImage } from "./useBrokenImage";
 
 export type PhotoViewerPerson = {
   name: string;

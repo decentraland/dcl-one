@@ -159,8 +159,9 @@ describe("profile photos, the grid", () => {
     show();
 
     await tile(0);
-    expect(screen.queryByRole("tablist")).toBeNull();
-    expect(screen.queryByRole("tabpanel")).toBeNull();
+    // Only the profile frame's own tabs and tabpanel: no visibility switch inside it.
+    expect(screen.queryByRole("tablist", { name: "Photos shown" })).toBeNull();
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
   });
 
   it("tells a visitor the member has taken no photos", async () => {
@@ -271,8 +272,11 @@ describe("profile photos, the owner's visibility filter", () => {
     show({ own: true });
     await tile(0);
     const publicTab = screen.getByRole("tab", { name: "Public" });
+    // The visibility panel, inside the profile frame's own tabpanel.
     expect(screen.getByRole("tabpanel", { name: "Public" })).toBeTruthy();
-    expect(publicTab.getAttribute("aria-controls")).toBe(screen.getByRole("tabpanel").id);
+    const panel = document.getElementById(publicTab.getAttribute("aria-controls") ?? "");
+    expect(panel?.getAttribute("role")).toBe("tabpanel");
+    expect(panel?.getAttribute("aria-labelledby")).toBe(publicTab.id);
 
     publicTab.focus();
     await user.keyboard("{ArrowRight}");

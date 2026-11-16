@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { Button, JumpInCTA } from "@dcl/one-ui";
-import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
 import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/index";
@@ -30,6 +29,7 @@ import { PhotoViewer, type PhotoViewerDetails } from "./PhotoViewer";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 import styles from "./ProfilePhotosScreen.module.css";
 import { profileHref } from "./tabs";
+import { useBrokenImage } from "./useBrokenImage";
 
 /** The search parameter that holds the open photo, so the viewer can be linked to. */
 const PHOTO_PARAM = "photo";
