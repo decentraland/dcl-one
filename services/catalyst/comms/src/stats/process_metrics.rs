@@ -465,6 +465,7 @@ mod tests {
             "gauge",
         );
         assert_values(&recovered, &FD_FAMILIES, &["9", "1024"], "gauge");
+        assert_values(&recovered, &CPU_FAMILIES, &["0", "0", "0"], "counter");
         assert!(!recovered.contains("http_requests_total{"), "{recovered}");
         record_request(&metrics);
         let missing_again = scrape(&metrics, instant() + Duration::seconds(2), unavailable);
@@ -500,6 +501,7 @@ mod tests {
 
     #[test]
     fn registry_unavailable_initial_soft_limit_stays_omitted_in_its_isolated_cache() {
+        // Local caches verify first-read policy; this does not exercise the production static.
         let cache = std::sync::OnceLock::new();
         let metrics = Metrics::configured_with_sampler(true, false, || Sample {
             max_fds: cached_max_fds(&cache, || None),
