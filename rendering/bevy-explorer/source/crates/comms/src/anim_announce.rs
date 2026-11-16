@@ -4,8 +4,8 @@
 //! told about. A clip change is announced by the hash pair (or, for the end of an animation, an
 //! empty scene hash). If the one packet that carries it is lost, the receiver keeps showing the old
 //! clip, and after a clear nothing more is sent to correct it. So a change is announced on the send
-//! that sees it and on the next [`ANNOUNCE_REPEATS`] sends, which bounds a single loss to about
-//! two send intervals. A clip that then stays active is re-announced every keepalive so late
+//! that sees it and on the next [`ANNOUNCE_REPEATS`] sends, which tolerates up to
+//! two consecutive losses, so a single loss costs about one send interval. A clip that then stays active is re-announced every keepalive so late
 //! joiners learn it. Repeating the pair is safe for the receiver: it rebuilds the same clip URN, and
 //! seeks and sounds travel only on the send that latches them. The repeats carry the clip identity
 //! only: a seek or a sound trigger on a lost first packet is not repeated, so the clip then starts
