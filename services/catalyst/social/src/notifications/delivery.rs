@@ -811,17 +811,24 @@ mod pg_tests {
     }
 
     async fn deploy_profile(pool: &PgPool, address: &str, name: &str) {
+        let entity = format!("bafy-{}", Uuid::new_v4().simple());
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
              VALUES ($1, 'v3', 'profile', $2, $3::json, $4, ARRAY[$1::text], $4, '[]'::json)",
         )
         .bind(address)
-        .bind(format!("bafy-{}", Uuid::new_v4().simple()))
+        .bind(&entity)
         .bind(serde_json::json!({"v": {"avatars": [{"name": name}]}}))
         .bind(now_utc())
         .execute(pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile') ON CONFLICT (pointer) DO UPDATE SET entity_id = EXCLUDED.entity_id")
+            .bind(address)
+            .bind(&entity)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

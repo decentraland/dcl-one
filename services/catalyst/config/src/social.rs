@@ -673,6 +673,14 @@ pub struct SocialConfig {
     #[arg(long, env = "FIRST_WEAR_IMAGE_BASE")]
     pub first_wear_image_base: Option<String>,
 
+    /// Base of the notification icons (upstream `CDN_URL`), e.g. `<base>/credits/notification-icon.png`.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_CDN_URL",
+        default_value = "https://assets-cdn.decentraland.org"
+    )]
+    pub notifications_cdn_url: String,
+
     /// Tick of the notification outbox worker.
     #[arg(
         long,
