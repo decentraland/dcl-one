@@ -128,6 +128,14 @@ function NavigationTabsBar({
     let manualScroll = false
     let expectedScroll = list.scrollLeft
     let viewportWidth = list.ownerDocument.defaultView?.innerWidth
+    /* Mark the edges with more routes beyond them; CSS fades those edges. */
+    const updateFades = () => {
+      const scrolled = Math.abs(list.scrollLeft)
+      const hidden = list.scrollWidth - list.clientWidth
+      list.toggleAttribute('data-fade-start', scrolled > 1)
+      list.toggleAttribute('data-fade-end', hidden - scrolled > 1)
+    }
+    /* Keep the current route clear of the fades: the scroll padding is the fade width. */
     const revealCurrent = () => {
       if (!list.isConnected) return
       const current = list.querySelector<HTMLElement>('[aria-current="page"]')
@@ -135,24 +143,34 @@ function NavigationTabsBar({
       const frame = list.getBoundingClientRect()
       const route = current.getBoundingClientRect()
       if (frame.width <= 0) return
+      const inset = Math.min(
+        parseFloat(getComputedStyle(list).scrollPaddingInlineStart) || 0,
+        Math.max(0, (frame.width - route.width) / 2)
+      )
+      const left = frame.left + inset
+      const right = frame.right - inset
       const offset =
-        route.width > frame.width
+        route.width > right - left
           ? getComputedStyle(list).direction === 'rtl'
             ? route.right - frame.right
             : route.left - frame.left
-          : route.left < frame.left
-            ? route.left - frame.left
-            : route.right > frame.right
-              ? route.right - frame.right
+          : route.left < left
+            ? route.left - left
+            : route.right > right
+              ? route.right - right
               : 0
       if (Math.abs(offset) > 1) list.scrollLeft += offset
       expectedScroll = list.scrollLeft
     }
     revealCurrent()
-    if (typeof ResizeObserver === 'undefined') return
+    updateFades()
     const onScroll = () => {
       if (Math.abs(list.scrollLeft - expectedScroll) > 1) manualScroll = true
+      updateFades()
     }
+    list.addEventListener('scroll', onScroll, { passive: true })
+    if (typeof ResizeObserver === 'undefined')
+      return () => list.removeEventListener('scroll', onScroll)
     const observer = new ResizeObserver(() => {
       const width = list.ownerDocument.defaultView?.innerWidth
       if (width !== viewportWidth) {
@@ -160,8 +178,8 @@ function NavigationTabsBar({
         manualScroll = false
       }
       if (!manualScroll) revealCurrent()
+      updateFades()
     })
-    list.addEventListener('scroll', onScroll, { passive: true })
     observer.observe(list)
     for (const item of list.children) observer.observe(item)
     return () => {
