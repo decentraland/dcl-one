@@ -241,6 +241,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "shop.broker_purchases.released_tx_hashes",
         "transaction hashes",
     ),
+    (
+        "shop.broker_purchases.released_forward_tx_hashes",
+        "transaction hashes",
+    ),
     ("shop.escrow_actions.tx_hash", "a transaction hash"),
     ("shop.name_transfers.tx_hash", "a transaction hash"),
     ("shop.rental_event.tx_hash", "a transaction hash"),

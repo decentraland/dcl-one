@@ -134,8 +134,9 @@ pub trait Broker: Send + Sync {
     /// item or trade; `Ok` is the forward transaction hash.
     async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError>;
 
-    /// Whether a buy released as dead under `idempotency_key` has a receipt
-    /// after all, so the line spent MANA and must not be refunded.
+    /// Whether a buy released as dead under `idempotency_key` mined
+    /// successfully after all, so the line spent MANA and must not be
+    /// refunded. A reverted one spent nothing.
     async fn released_buy_mined(&self, idempotency_key: &str) -> Result<bool, ApiError>;
 
     async fn reclaim(
@@ -287,7 +288,13 @@ impl Broker for EconomyBroker {
         };
         crate::checkout::broker::mined_released_tx(&self.state, signer, idempotency_key)
             .await
-            .map(|mined| mined.is_some())
+            // A released buy that reverted spent nothing: the line stays refundable.
+            .map(|mined| {
+                matches!(
+                    mined,
+                    Some((_, crate::evm::signer::ReceiptOutcome::Confirmed))
+                )
+            })
             .map_err(|e| ApiError::BadGateway(format!("released broker buy look failed: {e}")))
     }
 
