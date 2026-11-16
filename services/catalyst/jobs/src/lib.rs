@@ -1424,11 +1424,14 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        // The keepalive outlasts the test: a check or lease statement stalled
-        // past a short bound under load would lose a's lease and hand it to b,
-        // which is the keeper's behavior, not the standby this test pins.
+        // The keeper waits one keepalive before its first check, so with a
+        // keepalive far beyond the 10 s `wait_until` bound it never checks
+        // during this test, and no lease statement or connect can time out
+        // under CI load. The lease-loss path is covered by the keeper tests
+        // below.
+        const KEEPALIVE_BEYOND_THE_WAITS: Duration = Duration::from_secs(300);
         let settings = LeaseSettings {
-            keepalive: Duration::from_secs(300),
+            keepalive: KEEPALIVE_BEYOND_THE_WAITS,
             ..settings("failover")
         };
         let a = Jobs::with_leases(pool.clone(), settings.clone());
