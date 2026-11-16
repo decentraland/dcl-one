@@ -31,3 +31,5 @@ pub use catalyst_storage as storage;
 pub use catalyst_worlds as worlds;
 /// The EVM relay layer the shop drives (SHOP.md): the old `src/economy`.
 pub use shop::evm as economy;
+
+pub mod pulse_generation;

@@ -97,7 +97,14 @@ impl ClusterGateway for StateGateway {
         {
             return Err(GatewayError::Unknown);
         }
+        let grant = self.state.generation_grant(_admission).await?;
         let lease = self.checked_lease(_admission, None, true).await?;
+        if grant
+            .as_ref()
+            .is_some_and(|grant| !grant.consume(_admission))
+        {
+            return Err(GatewayError::Unknown);
+        }
         let result = mint_island_connection_string(
             self.credentials(),
             wallet,
@@ -129,7 +136,14 @@ impl ClusterGateway for StateGateway {
         {
             return Err(GatewayError::Unknown);
         }
+        let grant = self.state.generation_grant(_admission).await?;
         let lease = self.checked_lease(_admission, Some(fence), false).await?;
+        if grant
+            .as_ref()
+            .is_some_and(|grant| !grant.consume(_admission))
+        {
+            return Err(GatewayError::Unknown);
+        }
         let result = island::mint_fenced_island_connection_string(
             self.credentials(),
             wallet,
