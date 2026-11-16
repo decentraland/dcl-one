@@ -340,6 +340,69 @@ merely change a row. Preserve host identity and publish/subscribe grant
 distinctions. Test shared-room joins, denied joins, revocation and reconnect
 against the real transport.
 
+Selected room ownership uses the existing `social.archipelago_v4_assignments`
+realm primary key and global connection-epoch sequence on the shared pool. Signaling
+registration writes no owner row. Expected work is one candidate allocation per
+changed eligible legacy transport, indexed single-wallet ownership reads, and
+conditional claim, renewal and assignment publication for the positively selected
+Pulse identity. Steady owned renewal is due after 30 seconds; the lease lapses after
+90 seconds. Native selection requires no signaling socket. Maintenance retries unknown,
+borrowed, conflicting or unfinished targets after five seconds; healthy exact owned
+targets become due 30 seconds after a confirmed local renewal. Each attempt can perform
+Pulse positive and retirement requests plus wallet-before-realm SQL settlement, even
+when an old source no longer responds. Due targets rotate in bounded batches refilled
+on capacity notifications, independently of the one-second fallback wake. Maintenance
+has at most 128 queued/running items, 128 lifetime mutation credits and 16 running
+items within the shared 1,024-credit, 32-running queue. Cold hint-only work may hold
+at most 112 maintenance items and lifetime credits and run eight tasks; known-owned
+or unfinished targets use the remaining maintenance reserve and run before cold
+ready lanes. Each class has its own rotating due cursor. Event and durable takeover
+lanes run first without overtaking earlier work in the same wallet. Uncertain SQL
+keeps its credit after its waiter ends. These are workload and memory bounds, not
+measured throughput or a guarantee of renewal capacity under slow dependencies.
+
+The wallet safety lock precedes the realm row lock; no broker, policy or media await
+runs inside that SQL transaction. A fresh foreign row cannot be replaced from an
+epoch comparison alone. Known exact predecessors and lapsed rows can transition;
+fresh external same-session bindings are read-only. Uncertain mutations retain their
+before/after row identities, assignment digest and admission work credit until a
+locked conditional read settles them. No reset, predecessor restoration, broad
+wallet release, assignment index or per-service pool is required.
+An explicit Pulse no-selected-owner proof can retire a local retry slot only after
+the same wallet-before-realm read has settled any uncertain mutation and its work
+credit. The exact desired generation, selected identity and outstanding operations
+must still match. Retirement performs no realm mutation or release; known settled
+ownership ceases renewal under the existing lease, and foreign rows remain intact.
+
+`social.pulse_authority_generation` holds one deployment-audience primary-key row:
+positive sequence epoch, UUID source incarnation and naive UTC update timestamp.
+The root Pulse process alone writes it on fresh acquisition of the existing session
+lease; assignments and takeovers remain in Pulse memory. Gatekeeper reads the row
+through its existing pool and takes `FOR SHARE` before wallet/realm mutations and
+credential authorization. A successor commit is the authority cutover. The row does
+not expire or need renewal updates, avoiding contention with selected transactions.
+Separate exact-stamp, single-use mint and final-delivery permissions have an original
+two-second deadline including pool acquisition; neither can be renewed from a stale
+source after cutover. Already issued credentials retain their existing validity.
+
+One bounded immutable source-specific view discovers unchanged native targets after
+restart or dropped hints. At most 49,146 targets use a canonical JSON array below
+8 MiB, with 256 entries per reply below 64 KiB; these are encoding limits, not measured
+heap or throughput. Two readers share the same live view. A complete current view is
+required before retirement of known older epochs, followed by operation-grant expiry,
+exact uncertain-SQL settlement and outstanding-handle checks. Unregistered historical
+sources cannot be forgotten from UUID inequality. Retirement does not write foreign
+assignment rows or discard independently retained cleanup/takeover obligations.
+Wallets present in the sorted complete current view retain their exact previous slots
+until reseeding; absent old wallets can still retire to free bounded capacity.
+
+This metadata is local authority, not mirrored catalogue state. Restore with writers
+stopped and admissions closed, then acquire a fresh UUID/epoch before reopening.
+Restoring the row is not permission to reuse a pre-restore capability. The dev trades
+snapshot contains only its explicit shop tables, and content snapshots contain only
+content projections. The audience primary key serves all control reads/writes; no
+secondary index or assignment checkpoint is added.
+
 World allow-lists admit explicit access wallets and members of listed active,
 unsuspended communities who are not banned. Admission probes
 `worlds.world_access_communities` with `social.community_members` and
