@@ -325,7 +325,34 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
     Ok(())
 }
 
+/// The Cast publishers the cleaned-up credential admitted leave its room
+/// (`cast::evict_revoked_publishers`); a credential that replaced it in the
+/// same place keeps the publishers that joined after it was created.
+async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
+    let room: Option<String> =
+        sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
+            .bind(row.access_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
+    let Some(room) = room.filter(|r| !r.is_empty()) else {
+        return Ok(());
+    };
+    let successor: Option<NaiveDateTime> = sqlx::query_scalar(
+        "SELECT created_at FROM social.scene_stream_access \
+         WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&row.place_id)
+    .bind(row.access_id)
+    .bind(&room)
+    .fetch_optional(&state.pool)
+    .await?;
+    let cutoff = successor.map(|t| t.and_utc().timestamp());
+    super::cast::evict_revoked_publishers(state, &row.place_id, &room, cutoff).await
+}
+
 async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
+    evict_publishers(state, row).await?;
     if !row.ingress_deleted {
         if let Some(id) = row.ingress_id.as_deref().filter(|id| !id.is_empty()) {
             tokio::time::timeout(Duration::from_secs(5), state.ingress().delete_ingress(id))

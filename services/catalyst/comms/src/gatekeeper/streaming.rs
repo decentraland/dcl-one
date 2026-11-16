@@ -214,11 +214,17 @@ async fn issue_access(
             Renewal::Reuse => return Ok(existing.response()),
             Renewal::Conflict => return Err(renewal_conflict()),
             Renewal::Replace => {
+                // The replacement's ingress first: a LiveKit failure keeps the old credential.
+                let info = mint_ingress(ingress, room).await?;
                 if !jobs::enqueue(state, existing.id, jobs::CleanupCommand::IdleReplacement).await?
                 {
-                    return Err(renewal_conflict());
+                    discard_ingress(ingress, &info, place_id).await;
+                    return Err(concurrent_change());
                 }
+                let response =
+                    store_access(&state.pool, ingress, place_id, room, signer, info).await?;
                 jobs::cleanup_access(state, existing.id).await?;
+                return Ok(response);
             }
         }
     }
@@ -302,11 +308,50 @@ async fn create_access(
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
+    let info = mint_ingress(ingress, room).await?;
+    store_access(pool, ingress, place_id, room, signer, info).await
+}
+
+/// The new credential's RTMP ingress. Minted before an old credential is
+/// revoked (as upstream does), so a LiveKit failure leaves the old one in place.
+async fn mint_ingress(
+    ingress: &IngressClient<'_>,
+    room: &str,
+) -> Result<crate::shared::livekit::IngressInfo, ApiError> {
     let participant_identity = format!("{}-streamer", Uuid::new_v4());
     let info = ingress
         .create_ingress(room, &participant_identity)
         .await
         .map_err(|e| ApiError::internal(format!("livekit ingress create: {e}")))?;
+    if info.url.is_none() || info.stream_key.is_none() {
+        return Err(ApiError::internal(
+            "livekit ingress response missing url or stream key",
+        ));
+    }
+    Ok(info)
+}
+
+/// Deletes an ingress minted for a credential that was not stored.
+async fn discard_ingress(
+    ingress: &IngressClient<'_>,
+    info: &crate::shared::livekit::IngressInfo,
+    place_id: &str,
+) {
+    if !info.ingress_id.is_empty()
+        && let Err(e) = ingress.delete_ingress(&info.ingress_id).await
+    {
+        tracing::warn!(error = %e, place_id, "failed to delete an unused ingress");
+    }
+}
+
+async fn store_access(
+    pool: &PgPool,
+    ingress: &IngressClient<'_>,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+    info: crate::shared::livekit::IngressInfo,
+) -> Result<SceneStreamAccessResponse, ApiError> {
     let (Some(url), Some(stream_key)) = (info.url.as_deref(), info.stream_key.as_deref()) else {
         return Err(ApiError::internal(
             "livekit ingress response missing url or stream key",
@@ -376,6 +421,15 @@ fn renewal_conflict() -> ApiError {
     ApiError::http(409, RENEWAL_CONFLICT_MSG)
 }
 
+/// The credential was replaced, revoked or touched by a webhook while this
+/// request worked on it: nothing need be streaming, and a retry decides anew.
+pub const CONCURRENT_CHANGE_MSG: &str =
+    "The stream access changed while this request was handling it. Please try again.";
+
+fn concurrent_change() -> ApiError {
+    ApiError::http(409, CONCURRENT_CHANGE_MSG)
+}
+
 async fn reset_access(
     state: &CommsState,
     ingress: &IngressClient<'_>,
@@ -387,12 +441,15 @@ async fn reset_access(
         let row = active_access(&state.pool, place_id)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
+        // The replacement's ingress first: a LiveKit failure keeps the old credential.
+        let info = mint_ingress(ingress, room).await?;
         if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Reset).await? {
-            return Err(renewal_conflict());
+            discard_ingress(ingress, &info, place_id).await;
+            return Err(concurrent_change());
         }
         // The durable intent owns the old ingress's deletion and the reset notification,
         // delivered only once the replacement credential exists; it also covers a crash here.
-        let response = create_access(&state.pool, ingress, place_id, room, signer).await?;
+        let response = store_access(&state.pool, ingress, place_id, room, signer, info).await?;
         jobs::cleanup_access(state, row.id).await?;
         Ok(response)
     }
@@ -412,7 +469,7 @@ async fn remove_access(
         .await?
         .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
-        return Err(renewal_conflict());
+        return Err(concurrent_change());
     }
     jobs::cleanup_access(state, row.id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())

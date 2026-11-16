@@ -20,6 +20,12 @@ const SCENE_SIGNER: &str = crate::gatekeeper::auth::SCENE_SIGNER;
 #[derive(Default)]
 struct LiveKitFixture {
     rooms: Mutex<HashMap<String, String>>,
+    /// Connected participants per room: identity and join time (unix seconds).
+    participants: Mutex<HashMap<String, Vec<(String, i64)>>>,
+    removed: Mutex<Vec<String>>,
+    /// CreateIngress and CreateRoom answer 500 while set.
+    fail_ingress: std::sync::atomic::AtomicBool,
+    fail_rooms: std::sync::atomic::AtomicBool,
     ingresses: AtomicUsize,
     deleted_ingresses: AtomicUsize,
 }
@@ -40,8 +46,28 @@ impl LiveKitFixture {
             .insert(room.to_owned(), metadata.to_string());
     }
 
+    fn join(&self, room: &str, identity: &str, joined_at: i64) {
+        self.participants
+            .lock()
+            .unwrap()
+            .entry(room.to_owned())
+            .or_default()
+            .push((identity.to_owned(), joined_at));
+    }
+
+    fn connected(&self, room: &str) -> Vec<String> {
+        self.participants
+            .lock()
+            .unwrap()
+            .get(room)
+            .map(|p| p.iter().map(|(id, _)| id.clone()).collect())
+            .unwrap_or_default()
+    }
+
     async fn serve(self: &Arc<Self>) -> (String, tokio::task::JoinHandle<()>) {
-        let (a, b, c, d, e) = (
+        let (a, b, c, d, e, f, g) = (
+            self.clone(),
+            self.clone(),
             self.clone(),
             self.clone(),
             self.clone(),
@@ -52,13 +78,17 @@ impl LiveKitFixture {
             .route(
                 "/twirp/livekit.Ingress/CreateIngress",
                 axum::routing::post(move || {
-                    let n = a.ingresses.fetch_add(1, Ordering::SeqCst);
+                    let failing = a.fail_ingress.load(Ordering::SeqCst);
+                    let n = if failing { 0 } else { a.ingresses.fetch_add(1, Ordering::SeqCst) };
                     async move {
-                        Json(json!({
+                        if failing {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                        Ok(Json(json!({
                             "ingressId": format!("IN_cast_{n}_{}", tag()),
                             "url": "rtmp://ingress.example/live",
                             "streamKey": format!("cast-key-{}", Uuid::new_v4()),
-                        }))
+                        })))
                     }
                 }),
             )
@@ -91,8 +121,16 @@ impl LiveKitFixture {
                 "/twirp/livekit.RoomService/CreateRoom",
                 axum::routing::post(move |Json(body): Json<Value>| {
                     let name = body["name"].as_str().unwrap().to_owned();
-                    d.rooms.lock().unwrap().entry(name.clone()).or_default();
-                    async move { Json(json!({"name": name, "sid": "RM_cast"})) }
+                    let failing = d.fail_rooms.load(Ordering::SeqCst);
+                    if !failing {
+                        d.rooms.lock().unwrap().entry(name.clone()).or_default();
+                    }
+                    async move {
+                        if failing {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                        Ok(Json(json!({"name": name, "sid": "RM_cast"})))
+                    }
                 }),
             )
             .route(
@@ -105,6 +143,37 @@ impl LiveKitFixture {
                         .unwrap()
                         .insert(name.clone(), metadata.clone());
                     async move { Json(json!({"name": name, "sid": "RM_cast", "metadata": metadata})) }
+                }),
+            );
+        let app = app
+            .route(
+                "/twirp/livekit.RoomService/ListParticipants",
+                axum::routing::post(move |Json(body): Json<Value>| {
+                    let room = body["room"].as_str().unwrap().to_owned();
+                    let listed: Vec<Value> = f
+                        .participants
+                        .lock()
+                        .unwrap()
+                        .get(&room)
+                        .map(|p| {
+                            p.iter()
+                                .map(|(id, at)| json!({"sid": format!("PA_{id}"), "identity": id, "metadata": "", "joinedAt": at.to_string()}))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    async move { Json(json!({ "participants": listed })) }
+                }),
+            )
+            .route(
+                "/twirp/livekit.RoomService/RemoveParticipant",
+                axum::routing::post(move |Json(body): Json<Value>| {
+                    let room = body["room"].as_str().unwrap().to_owned();
+                    let identity = body["identity"].as_str().unwrap().to_owned();
+                    if let Some(p) = g.participants.lock().unwrap().get_mut(&room) {
+                        p.retain(|(id, _)| *id != identity);
+                    }
+                    g.removed.lock().unwrap().push(identity);
+                    async { Json(json!({})) }
                 }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -183,6 +252,29 @@ async fn harness(
     admin: PermissionDecision,
     bans: Option<StubBanStatus>,
 ) -> Harness {
+    let policy = StubPolicy {
+        admin,
+        ..Default::default()
+    };
+    harness_with(pool, room, policy, bans).await
+}
+
+async fn harness_with(
+    pool: PgPool,
+    room: Option<ResolvedRoom>,
+    policy: StubPolicy,
+    bans: Option<StubBanStatus>,
+) -> Harness {
+    harness_tuned(pool, room, policy, bans, |_| {}).await
+}
+
+async fn harness_tuned(
+    pool: PgPool,
+    room: Option<ResolvedRoom>,
+    policy: StubPolicy,
+    bans: Option<StubBanStatus>,
+    tune: impl FnOnce(&mut CommsState),
+) -> Harness {
     let livekit = Arc::new(LiveKitFixture::default());
     let (url, server) = livekit.serve().await;
     let mut settings = Settings::for_tests();
@@ -197,11 +289,9 @@ async fn harness(
             scene: Ok(None),
         });
     }
-    state.policy = Arc::new(StubPolicy {
-        admin,
-        ..Default::default()
-    });
+    state.policy = Arc::new(policy);
     state.livekit.api_url = url;
+    tune(&mut state);
     let state = Arc::new(state);
     Harness {
         app: crate::gatekeeper::router(state.clone()),
@@ -1357,4 +1447,292 @@ async fn scene_admins_list_promote_and_demote_presenters() {
         body,
         json!({"error": format!("No place found with id {}", scene.place_id)})
     );
+}
+
+/// A world's access policy holds for watchers as for every other join of its
+/// scene room: a wallet the world does not admit gets no watcher token.
+#[tokio::test]
+async fn a_private_worlds_cast_refuses_watchers_the_world_does_not_admit() {
+    let Some(pool) = scratch().await else { return };
+    let world = WorldName::parse(&format!("castprivate{}.dcl.eth", tag())).unwrap();
+    let scene_id = format!("bafkreiprivate{}", tag());
+    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "1,1");
+    let place_id = format!("cast-private-{}", tag());
+    seed_place(
+        &pool,
+        &place_id,
+        json!({"world": true, "world_name": world.display(), "positions": ["1,1"]}),
+        "1,1",
+    )
+    .await;
+    seed_access(
+        &pool,
+        &place_id,
+        Some(&room.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let body = json!({"location": world.display(), "identity": "viewer"});
+
+    let closed = harness_with(
+        pool.clone(),
+        Some(room.clone()),
+        StubPolicy {
+            access: Ok(crate::access::Access::NotAllowed),
+            ..Default::default()
+        },
+        None,
+    )
+    .await;
+    let (status, refused) = closed
+        .signed(
+            &random_key(),
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(body.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused}");
+    assert_eq!(
+        refused,
+        json!({"error": crate::gatekeeper::streaming::cast::WORLD_ACCESS_DENIED_MSG})
+    );
+
+    let open = harness_with(
+        pool.clone(),
+        Some(room.clone()),
+        StubPolicy::default(),
+        None,
+    )
+    .await;
+    let (status, admitted) = open
+        .signed(
+            &random_key(),
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(body),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{admitted}");
+    assert_eq!(admitted["roomId"], room.room);
+}
+
+/// A revoked or replaced streaming key stops the WebRTC publishers it admitted,
+/// not just its RTMP ingress, and their ids leave `presenters`; a replacement's
+/// own publishers (joined after it was created) and everyone else stay.
+#[tokio::test]
+async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    // The LAND owner, whom the revocation notifies.
+    let owner: crate::access::LandOperators =
+        serde_json::from_value(json!({"owner": address_of(KEY)})).unwrap();
+    let h = harness_with(
+        pool.clone(),
+        Some(room),
+        StubPolicy {
+            admin: PermissionDecision::Allowed,
+            land: Ok(Some(Arc::new(Some(owner)))),
+            ..Default::default()
+        },
+        None,
+    )
+    .await;
+    let metadata = scene_metadata(&scene);
+    let (status, body) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let key = body["streamingKey"].as_str().unwrap().to_owned();
+    let (status, streamer) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{streamer}");
+    let streamer_id = streamer["identity"].as_str().unwrap().to_owned();
+    let stale = format!("stream:{}:{}", scene.place_id, Uuid::new_v4());
+    let bot = format!("presentation-bot:{}:{}", scene.room, Uuid::new_v4());
+    let visitor = address_of(OUTSIDER_KEY);
+    let early = chrono::Utc::now().timestamp() - 3600;
+    for id in [streamer_id.as_str(), bot.as_str(), visitor.as_str()] {
+        h.livekit.join(&scene.room, id, early);
+    }
+    let mut meta = h.livekit.metadata(&scene.room);
+    meta["presenters"] = json!([streamer_id, stale, visitor]);
+    h.livekit.set_metadata(&scene.room, meta);
+
+    // A replacement credential created now: its publishers join after it.
+    let now = chrono::Utc::now().timestamp();
+    let fresh = format!("stream:{}:{}", scene.place_id, Uuid::new_v4());
+    h.livekit.join(&scene.room, &fresh, now + 60);
+    crate::gatekeeper::streaming::cast::evict_revoked_publishers(
+        &h.state,
+        &scene.place_id,
+        &scene.room,
+        Some(now),
+    )
+    .await
+    .unwrap();
+    let mut connected = h.livekit.connected(&scene.room);
+    connected.sort();
+    let mut expected = vec![fresh.clone(), visitor.clone()];
+    expected.sort();
+    assert_eq!(connected, expected);
+    assert_eq!(
+        h.livekit.metadata(&scene.room)["presenters"],
+        json!([visitor])
+    );
+
+    // Revoked through the route, with no successor: the durable cleanup
+    // removes every publisher it admitted, and the key admits no one.
+    let (status, body) = h
+        .signed(KEY, "DELETE", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(h.livekit.connected(&scene.room), vec![visitor]);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    let (status, _) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Upstream mints the replacement's ingress before revoking the old one: a
+/// LiveKit failure while replacing an expired key leaves that key in place.
+#[tokio::test]
+async fn a_failed_replacement_keeps_the_old_credential() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let path = "/cast/generate-stream-link";
+    let (status, first) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = timezone('UTC', now()) - interval '1 minute' WHERE place_id = $1 AND active")
+        .bind(&scene.place_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    h.livekit.fail_ingress.store(true, Ordering::SeqCst);
+    let (status, _) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let kept: String = sqlx::query_scalar(
+        "SELECT streaming_key FROM social.scene_stream_access WHERE place_id = $1 AND active",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, first["streamingKey"].as_str().unwrap());
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 0);
+
+    // LiveKit back: the replacement goes through and the old key is refused.
+    h.livekit.fail_ingress.store(false, Ordering::SeqCst);
+    let (status, renewed) = h
+        .signed(KEY, "GET", path, &scene_metadata(&scene), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renewed}");
+    assert_ne!(renewed["streamingKey"], first["streamingKey"]);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    for (path, body) in [
+        (
+            "/cast/streamer-token",
+            json!({"token": first["streamingKey"], "identity": "Ada"}),
+        ),
+        (
+            "/cast/presentation-bot-token",
+            json!({"streamingKey": first["streamingKey"]}),
+        ),
+    ] {
+        let (status, _) = h.post(path, body).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    let (status, _) = h
+        .send(
+            "GET",
+            &format!(
+                "/cast/stream-info/{}",
+                first["streamingKey"].as_str().unwrap()
+            ),
+            HeaderMap::new(),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// The room API failing answers upstream's bare 500; LiveKit unconfigured
+/// answers 503 on the routes that need it.
+#[tokio::test]
+async fn livekit_failures_and_absence_on_the_cast_routes() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(
+        pool.clone(),
+        Some(room.clone()),
+        PermissionDecision::Allowed,
+        None,
+    )
+    .await;
+    let key = seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    h.livekit.fail_rooms.store(true, Ordering::SeqCst);
+    let (status, body) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body, json!({"error": "Internal Server Error"}));
+
+    let off = harness_tuned(
+        pool.clone(),
+        Some(room),
+        StubPolicy {
+            admin: PermissionDecision::Allowed,
+            ..Default::default()
+        },
+        None,
+        |state| state.livekit.configured = false,
+    )
+    .await;
+    let (status, body) = off
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let (status, body) = off
+        .signed(
+            KEY,
+            "GET",
+            "/cast/generate-stream-link",
+            &scene_metadata(&scene),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 }

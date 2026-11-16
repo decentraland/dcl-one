@@ -49,7 +49,7 @@ use super::{
     refuse_if_platform_banned, resolve_place_id,
 };
 use crate::access::SceneBanKey;
-use crate::rooms::{ParsedRoom, ResolveError, RoomRequest};
+use crate::rooms::{ParsedRoom, ResolveError, ResolvedRoom, RoomRequest};
 use crate::shared::signed_fetch::SignedPath;
 use crate::world_identity::{Parcel, WorldName};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -69,6 +69,9 @@ pub const EXPIRED_STREAMING_KEY_MSG: &str = "Streaming token has expired";
 pub const EXPIRED_STREAM_ACCESS_MSG: &str =
     "Stream access has expired. Please generate a new stream link.";
 pub const NOT_STREAM_LINK_ADMIN_MSG: &str = "Only scene administrators can generate stream links";
+/// The refusal of the scene adapter for the same world (`admission::handlers`).
+pub const WORLD_ACCESS_DENIED_MSG: &str =
+    "Access denied, you are not authorized to access this world";
 pub const NOT_PRESENTER_ADMIN_MSG: &str = "Only scene administrators can manage presenters";
 pub const SCENE_BANNED_WATCHER_MSG: &str = "You are banned from this scene";
 pub const NO_REALM_MSG: &str = "Access denied, invalid signed-fetch request, no realm";
@@ -202,19 +205,20 @@ async fn watch_place(pool: &PgPool, location: &str) -> Result<(String, CastPlace
     Ok((id, place))
 }
 
-/// The key a scene ban of `room`'s scene is stored under: a Genesis room's
-/// scene id, a world room's deployment base. `None` when the room names no
+/// The scene `room` belongs to, with its realm (a world or the shared
+/// realm) and the key its scene bans are stored under (a Genesis room's
+/// scene id, a world room's deployment base). `None` when the room names no
 /// scene this node can resolve.
-async fn room_ban_key(state: &CommsState, room: &str) -> Result<Option<SceneBanKey>, ApiError> {
+async fn room_scene(state: &CommsState, room: &str) -> Result<Option<ResolvedRoom>, ApiError> {
     match crate::rooms::parse_room(room) {
-        Some(ParsedRoom::Local(resolved)) => Ok(resolved.ban_key()),
+        Some(ParsedRoom::Local(resolved)) => Ok(Some(resolved)),
         Some(ParsedRoom::WorldScene(room)) => {
             match state
                 .scenes
                 .resolve(RoomRequest::NamedWorldScene { room })
                 .await
             {
-                Ok(resolved) => Ok(resolved.ban_key()),
+                Ok(resolved) => Ok(Some(resolved)),
                 Err(ResolveError::Db(error)) => Err(AuthorityNotEstablished::store_unavailable(
                     "worlds.world_scenes",
                     &error,
@@ -733,13 +737,41 @@ pub async fn watcher_token(
         return Err(unauthorized(EXPIRED_STREAM_ACCESS_MSG));
     }
     let room = access.room_id.ok_or_else(|| no_active_stream(location))?;
-    // Watchers join the scene's own room: its scene bans hold for them too.
-    let ban_key = room_ban_key(&state, &room)
+    // Watchers join the scene's own room: its scene bans hold for them too,
+    // and so does a world's access policy (allow-list, password, NFT gate,
+    // world bans), which every other join of that room passes.
+    let scene_room = room_scene(&state, &room)
         .await?
+        .ok_or_else(|| no_active_stream(location))?;
+    let ban_key = scene_room
+        .ban_key()
         .ok_or_else(|| no_active_stream(location))?;
     if is_scene_banned(&state, &ban_key, watcher).await? {
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
         return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
+    }
+    if let Some(world) = scene_room.realm.world() {
+        let caller_ip = crate::shared::client_ip::client_ip(&headers);
+        let caller = if caller_ip.is_empty() {
+            watcher.as_str()
+        } else {
+            &caller_ip
+        };
+        let secret = scene::meta_str(&sf.metadata, "secret");
+        let allowed = scene::has_world_access_permission(
+            &state,
+            watcher,
+            world.key(),
+            scene_room.scene_id.as_ref().map(|s| s.as_str()),
+            secret.as_deref(),
+            device_id.as_deref(),
+            caller,
+        )
+        .await?;
+        if !allowed {
+            tracing::warn!(%watcher, place_id, "cast watcher token refused: world access");
+            return Err(unauthorized(WORLD_ACCESS_DENIED_MSG));
+        }
     }
     let identity = format!("watch:{room}:{}", Uuid::new_v4());
     let token = mint(
@@ -829,6 +861,81 @@ pub async fn presentation_bot_token(
         room_id: room,
     })
     .into_response())
+}
+
+// ── revoking a credential ──
+
+/// The Cast publishers a revoked or replaced credential admitted, removed
+/// from the room and from its `presenters`. The streaming key mints WebRTC
+/// publishers (`stream:<place>:<uuid>`, `presentation-bot:<room>:<uuid>`),
+/// which deleting the RTMP ingress does not stop. A replacement keeps the
+/// publishers that joined after the new credential was created (`cutoff`,
+/// unix seconds): those hold the new key. `presenters` also drops this
+/// place's streamer ids that are no longer connected, so reconnects do not
+/// grow it without bound. Idempotent; the durable cleanup retries it.
+pub(crate) async fn evict_revoked_publishers(
+    state: &CommsState,
+    place_id: &str,
+    room: &str,
+    cutoff: Option<i64>,
+) -> Result<(), ApiError> {
+    if !state.livekit.configured {
+        return Ok(());
+    }
+    let rooms = state.room_service();
+    let streamer = format!("stream:{place_id}:");
+    let bot = format!("presentation-bot:{room}:");
+    let participants = match rooms.list_participants(room).await {
+        Ok(participants) => participants,
+        Err(crate::shared::livekit::RoomServiceError::NotFound) => Vec::new(),
+        Err(e) => return Err(ApiError::internal(format!("cast eviction: {e}"))),
+    };
+    let mut connected = std::collections::BTreeSet::new();
+    for p in participants {
+        if !(p.identity.starts_with(&streamer) || p.identity.starts_with(&bot)) {
+            continue;
+        }
+        let revoked = match (cutoff, p.joined_at) {
+            (Some(cutoff), Some(joined)) => joined < cutoff,
+            _ => true,
+        };
+        if revoked {
+            rooms
+                .remove_participant(room, &p.identity)
+                .await
+                .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
+            tracing::info!(room, identity = %p.identity, "cast publisher of a revoked credential removed");
+        } else {
+            connected.insert(p.identity);
+        }
+    }
+    let presenters = match rooms.get_room_info(room).await {
+        Ok(Some(info)) => {
+            let metadata = crate::shared::livekit::parse_room_metadata(
+                info.get("metadata").and_then(|m| m.as_str()),
+            );
+            metadata
+                .get(PRESENTERS_FIELD)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        Ok(None) | Err(crate::shared::livekit::RoomServiceError::NotFound) => Vec::new(),
+        Err(e) => return Err(ApiError::internal(format!("cast eviction: {e}"))),
+    };
+    for id in presenters {
+        if (id.starts_with(&streamer) || id.starts_with(&bot)) && !connected.contains(&id) {
+            rooms
+                .remove_from_room_metadata_array(room, PRESENTERS_FIELD, &id)
+                .await
+                .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
+        }
+    }
+    Ok(())
 }
 
 // ── /cast/presenters ──
