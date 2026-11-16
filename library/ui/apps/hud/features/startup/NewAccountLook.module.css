@@ -105,10 +105,12 @@
 .continue:hover:not(:disabled) {
   transform: scale(1.04);
 }
-/* from the canvas bottom-right: the button's right edge 447px in, its bottom 58px up */
+/* centred under the avatar, whatever the screen's shape: the avatar's column (StartupFlow's .stage)
+   is centred 427px right of the canvas centre, and the 168px button sits 84px either side of that;
+   its bottom 58px up */
 .body {
   position: absolute;
-  right: 447px;
+  left: calc(50% + 343px);
   bottom: 58px;
 }
 .bodyButton {

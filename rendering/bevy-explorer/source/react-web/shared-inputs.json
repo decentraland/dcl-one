@@ -7990,7 +7990,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
-      "sha256": "4317bde0cbfa5bf61556a2f7299cea7ae43a851b99cd3d431abcb7e3e3872746"
+      "sha256": "bd27b31bc9e919d3f9ef4833d3a01c3c33d00aea7aafe255d70daa63118b620c"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.tsx",
