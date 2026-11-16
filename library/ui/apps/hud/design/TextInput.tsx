@@ -12,7 +12,7 @@ export interface TextInputProps extends Omit<React.InputHTMLAttributes<HTMLInput
   onChange?: (value: string) => void
   /** Light = the white field used on solid panels (Settings, the passport's edit mode). */
   variant?: 'dark' | 'light'
-  /** lg: display-sized text, for a field that is the page's point (the guest start page's name). */
+  /** lg: display-sized text, for a field that is the page's point (a name the player picks). */
   size?: 'md' | 'lg'
   /** Red border + `aria-invalid`, for a value the user still has to fix. */
   invalid?: boolean

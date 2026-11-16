@@ -178,8 +178,8 @@ describe("when mapping a fetched profile", () => {
       expect(vm.name).toBe("ExampleUser#1111");
     });
 
-    it("should use the default name color", () => {
-      expect(vm.nameColor).toBe("#FF8362");
+    it("should derive the name color from the display name", () => {
+      expect(vm.nameColor).toBe("#40ddff");
     });
 
     it("should show no info rows", () => {
@@ -219,8 +219,8 @@ describe("when mapping a fetched profile", () => {
       vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
     });
 
-    it("should convert the name color to hex", () => {
-      expect(vm.nameColor).toBe("#ff0000");
+    it("should derive the name color instead of using the stored color", () => {
+      expect(vm.nameColor).toBe("#40ddff");
     });
 
     it("should show the country info row", () => {
@@ -228,7 +228,7 @@ describe("when mapping a fetched profile", () => {
     });
 
     it("should show the links", () => {
-      expect(vm.links).toEqual([{ title: "Site", url: "https://example.com" }]);
+      expect(vm.links).toEqual([{ title: "Site", url: "https://example.com/" }]);
     });
   });
 });

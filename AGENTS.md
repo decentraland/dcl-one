@@ -5,12 +5,17 @@
 ## Agent work and commits
 
 - Keep accepted architecture in `docs/adr/` and reusable instructions in this tree.
+- Keep agent instructions and skills usable across LLM providers and models; omit provider-specific metadata files.
 - Keep plans, briefs, handoffs, task reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting. `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
 - For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
+
+For formal verification of LiveKit or networking decisions, or maintenance of
+their proof evidence, use
+[verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
 ## Agentic roles documentation
 
@@ -26,7 +31,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: Creator Hub, web and `apps/creator-hub`;
+5. `/create`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
@@ -63,17 +68,23 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - `social` owns badges; its badge processor reads, never writes, other areas' tables by shared SQL: `content.deployments` and `content.active_pointers` (deployments by `id`, scene titles, wearable rarity), and on Polygon `shop.items`, `shop.collections`, `shop.sale_event`, `shop.trade_event`, `shop.nft_event`, `shop.chain_cursor` (an index's published block) and `shop.mirror_state` (a mirror's first complete pass). Changing a column it reads updates this paragraph and `DATABASE.md` "Badge processor" in the same change.
 - `worlds`: world catalogues, deployments, permissions, world/player storage, encrypted env values, SDK7 scene hosting with per-scene isolation, limits and cancellation.
 - Guest code reaches storage through a scoped host API, never the shared pool.
-- `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events) and presence; all but Pulse run in `catalyst serve`.
+- `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, player reports, voice, streaming, LiveKit webhook, room events) and presence; all but Pulse run in `catalyst serve`.
   - Worlds supplies access and scene identity via `comms::interfaces`; social supplies membership, privacy and notification persistence via `SocialDirectory` and keeps MLS.
   - Comms owns streaming lifecycle and cleanup intent; social owns notification delivery records.
   - Comms enforces access through local calls and its own SQL: owner/player/host scopes, one room resolver, one LiveKit/WebSocket transport; LiveKit media stays external.
+  - The gatekeeper's player report intake (`gatekeeper::reports`, nested at `/report-user`) writes `social.player_reports` and `social.player_report_evidence` by shared SQL (each slot keeps `source_key`, the client address bucket of its presign, for that address's share of the node's bound) and keeps the evidence bytes in `storage`, one body for each slot; the `social` writes switch gates the whole area, and `STORAGE_WRITERS` in `shared::writes` names that plane. Changing a column of either table updates this paragraph and `DATABASE.md` "Player report intake workload" in the same change.
   - Pulse keeps assignments and unfinished takeovers in process memory, persists nothing, admits only from its room-authority response and imports nothing from the gatekeeper.
+  - The root owns the Pulse deployment session lease and writes only `social.pulse_authority_generation` (`deployment_audience`, `epoch`, `source_incarnation`, `updated_at`) through its control connection. Pulse receives the immutable `interfaces::PulseGeneration` binding and loss signal; Gatekeeper checks it through its existing pool before selected SQL authority, credential minting and final delivery. Changing this metadata or its private discovery/HTTP contracts updates this paragraph, `DATABASE.md` and [comms ownership](services/catalyst/docs/comms/comms-crate.md#deployment-generation-ownership). Preserve the [generation fencing decision](docs/adr/2026-11-16-pulse-generation-fencing.md), including finite issued permissions, coordinated upgrade and closed-admission restore.
   - Only the gatekeeper holds the LiveKit key, mints/verifies the relay admission proof and applies live room policy; it owns cleanup receipts and acknowledges retained takeovers.
   - Pulse runs in its own process unless a load measurement shows the loop is unaffected in-process.
   - The connector is part of the gatekeeper (local calls); Pulse and `serve` share the NATS subjects in `comms::protocol::bus`.
+  - Pulse alone owns the legacy Archipelago statistics population, independently of native ownership and without peer expiry. The connector forwards authenticated heartbeat/disconnect observations; its retained room assignments serve enforcement only. `comms::stats` supplies read-only complete snapshots to HTTP, content/about/realms and the presence archive; one archive pass retains one snapshot across content I/O. Hot scenes use serve's existing content pool and shared content denylist before projection and top-100 selection; thumbnails name `CONTENT_URL`, or this node's `/content` when it is unset. Preserve the accepted [local source semantics](docs/adr/2026-11-12-stats-local-content-source.md) when changing enrichment.
+  - The root owns Stats configured route compilation on the pinned embedded V8; comms owns the fallible async matcher interface. Preserve the pre-worker initialization and lifetime-wide unsafe preparation contract, and retain one owned admission permit inside submitted blocking work through native teardown ([ADR](docs/adr/2026-11-12-stats-configured-matcher.md)).
+  - Ordinary `/ws` registration commits the verified session independently of SQL room work. The connector publishes completion-ranked legacy v2 intents; active native Pulse registration retains priority. Gatekeeper owns selected realm acquisition and renewal, retains exact uncertain mutations with their work credits, and conditionally reconciles them. Selected retries retire from an explicit current-source complete-view absence proof or a registered older epoch after a complete current-generation discovery pass and the operation-grant barrier. Both paths require exact SQL settlement and local identity/handle guards; complete-current-view wallets keep exact predecessors until reseeding, while absent wallets can free capacity. Unidentified sources and unfinished obligations remain retained. Sockets borrow committed bindings for delivery and never renew or release them. Fresh unknown foreign rows remain conflicts; ownership loss stops renewal and uses the existing finite lease. Preserve the coordinated maintenance cutover in the selected-room ADR.
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
   - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
 - `storage`: the shared hash-addressed blob store.
+- `shop::credits::goals` owns seasonal MANA rewards, separately from the paid USD ledger. Its photo worker reads `camera_reel.photo_events` (`id`, `kind`, `photo_id`, `user_address`, `payload`, `created_at`) and `social.subscriptions` (`address`, `email`) through shared SQL; its policy reads `explore_api.feature_flags_local` (`app`, `name`, `value`). It never changes those rows. It commits its receipt, progress, signed grant and notification through Social's transaction-aware notification helper in one transaction. Changing a shared column updates this paragraph and `DATABASE.md` in the same change.
 - Domain ownership is not a separate deployable; keep the shared SQL and process contracts.
 
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.

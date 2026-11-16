@@ -12,6 +12,16 @@ path = "src/lib.rs"
 name = "catalyst"
 path = "src/main.rs"
 
+[[test]]
+name = "stats_metrics_engine"
+path = "tests/stats_metrics_engine.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "pulse_generation"
+path = "tests/pulse_generation.rs"
+required-features = ["test-support"]
+
 # The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,
 # fed, db (with schema_migrate) and jobs depend on nothing else in the application, so
 # an edit elsewhere never recompiles them (AGENTS.md, METRICS.md "Dev loop").
@@ -81,6 +91,7 @@ ipnet = "2"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 tokio-util = { version = "0.7", features = ["io"] }
 dashmap = "6"
+moka = { version = "=0.12.10", features = ["future"] }
 hashlink = "0.11"
 dragonbox_ecma = "0.1.12"
 parking_lot = "0.12"
@@ -111,6 +122,8 @@ hmac = "0.13.0"
 handlebars = { version = "6.4.4", default-features = false }
 bcrypt = "0.19.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
+# Camera preserves the pinned service's format detection, codecs and thumbnails.
+image-camera = { package = "image", version = "=0.24.9", default-features = false, features = ["gif", "jpeg", "ico", "png", "pnm", "tga", "tiff", "webp", "bmp", "hdr", "dds", "farbfeld", "openexr", "qoi"] }
 alloy-sol-types = "1.7.3"
 getrandom = "0.4.3"
 v8 = "=152.2.0"
@@ -142,6 +155,7 @@ tokio-tungstenite = "0.30.0"
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 
 [dependencies]
+v8.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "fed" }
@@ -161,7 +175,6 @@ catalyst-price = { path = "price" }
 catalyst-storage = { path = "storage" }
 catalyst-config = { path = "config" }
 catalyst-shared = { path = "shared" }
-catalyst-testing = { path = "testing" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true
@@ -197,6 +210,7 @@ metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
+test-support = ["catalyst-comms/test-support"]
 # The library/catalyst-api TypeScript exports (scripts/gen-ts.sh).
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts", "catalyst-worlds/ts", "catalyst-social/ts", "catalyst-builder/ts", "catalyst-camera-reel/ts", "catalyst-shop/ts"]
 
@@ -239,3 +253,8 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 opt-level = 1
+
+# The scene CLI is one binary people download: its symbol table is 13 MB of a
+# 106 MB file and nothing reads it at run time. The node keeps its symbols.
+[profile.release.package.dcl-scene-cli]
+strip = "symbols"

@@ -3,7 +3,9 @@ pub mod bevy_variants;
 pub mod content_hash;
 mod debug_panel;
 mod download;
+mod failed_remotes;
 use download::{InFlightDownloads, RequestMetrics};
+use failed_remotes::{FailedRemotes, Repeat};
 mod priority_gate;
 pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
@@ -12,6 +14,8 @@ pub mod ipfs_path;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
+#[cfg(target_arch = "wasm32")]
+mod web_cache_plugin;
 
 use std::{
     borrow::Cow,
@@ -289,12 +293,44 @@ impl ContentMap {
         self.0.insert(Self::key(&file), hash);
         self
     }
+
+    /// The map as a scene packed under `prefix` sees it: every `{prefix}{file}` entry becomes
+    /// `{file}` and wins over an unprefixed entry of the same name; unprefixed entries are kept;
+    /// entries under another prefix (the other body shape of a smart wearable) are dropped.
+    pub fn strip_prefix(&self, prefix: &str, other_prefixes: &[&str]) -> Self {
+        let prefix = prefix.to_lowercase();
+        let mut map = HashMap::<String, String>::default();
+        for (file, hash) in self.0.iter() {
+            if file.starts_with(&prefix) {
+                continue;
+            }
+            if other_prefixes
+                .iter()
+                .any(|other| file.starts_with(&other.to_lowercase()))
+            {
+                continue;
+            }
+            map.insert(file.clone(), hash.clone());
+        }
+        for (file, hash) in self.0.iter() {
+            if let Some(stripped) = file.strip_prefix(&prefix) {
+                map.insert(stripped.to_owned(), hash.clone());
+            }
+        }
+        Self(map)
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum SceneIpfsLocation {
     Hash(String),
     Urn(String),
+    /// A content file of a registered collection whose loader produces the definition (a smart
+    /// wearable's scene, `{shape}.smart_wearable` in the wearable's collection).
+    ContentFile {
+        hash: String,
+        file: String,
+    },
 }
 
 #[derive(Resource, Clone)]
@@ -633,8 +669,12 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
-        debug_panel::register(app, self.preview);
-        bevy_variants::build(app);
+        app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
+        app.add_plugins(bevy_variants::BevyVariantsPlugin);
+        #[cfg(target_arch = "wasm32")]
+        app.add_plugins(web_cache_plugin::WebCachePlugin {
+            preview: self.preview,
+        });
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -654,7 +694,6 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
-        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();
@@ -939,7 +978,6 @@ pub struct IpfsContext {
     entities: HashMap<String, IpfsEntity>,
     about: Option<ServerAbout>,
     modifiers: HashMap<String, IpfsModifier>,
-    failed_remotes: HashMap<String, Instant>,
     num_slots: usize,
 }
 
@@ -1036,6 +1074,8 @@ pub struct IpfsIo {
     client: reqwest::Client,
     // downloads under way, by url (`share_download`)
     in_flight: InFlightDownloads,
+    // urls that failed, answered from memory on a repeat request (`failed_remotes`)
+    failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
@@ -1079,6 +1119,7 @@ impl IpfsIo {
                 .build()
                 .unwrap(),
             in_flight: Default::default(),
+            failed_remotes: Default::default(),
             bevy_variants: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
@@ -1366,18 +1407,49 @@ impl IpfsIo {
         modifier: Option<IpfsModifier>,
         metadata: Option<String>,
     ) {
-        let mut write = self.context.blocking_write();
+        Self::insert_collection(
+            &mut self.context.blocking_write(),
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
 
+    /// [`Self::add_collection`] for async code (an asset loader), which must not block.
+    pub async fn add_collection_async(
+        &self,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
+        Self::insert_collection(
+            &mut *self.context.write().await,
+            hash,
+            collection,
+            modifier,
+            metadata,
+        );
+    }
+
+    fn insert_collection(
+        context: &mut IpfsContext,
+        hash: String,
+        collection: ContentMap,
+        modifier: Option<IpfsModifier>,
+        metadata: Option<String>,
+    ) {
         let entity = IpfsEntity {
             collection,
             metadata,
         };
 
         if let Some(modifier) = modifier {
-            write.modifiers.insert(hash.clone(), modifier);
+            context.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        context.entities.insert(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),
@@ -2038,16 +2110,15 @@ impl IpfsIo {
                 return Ok(Box::new(VecReader::new(data)));
             }
 
-            let fail_time = context.failed_remotes.get(&remote).cloned();
             drop(context);
 
             // loopback content is local already, and a preview server's is mutable: never cached
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // in wasm we add a custom header to allow the service worker to cache ipfs requests
-            // across content servers: anything with a cache key (content by hash, and urls by
-            // their digest), whatever path it was asked for under
+            // on web the service worker's cache (`web_cache`) is the content cache: anything with
+            // a cache key (content by hash, and urls by their digest) is looked up there once,
+            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 
@@ -2061,20 +2132,34 @@ impl IpfsIo {
                 }
             }
 
-            if let Some(fail_time) = fail_time {
-                // wait 10 secs before retrying failed assets
-                if self.is_preview
-                    || Instant::now()
-                        .checked_duration_since(fail_time)
-                        .unwrap_or_default()
-                        > Duration::from_secs(10)
-                {
-                    self.context.write().await.failed_remotes.remove(&remote);
+            // a failure is answered from memory for the retry window, or for the session when the
+            // server said a content hash's url is wrong; preview always asks again
+            let repeat = {
+                let mut failed = self
+                    .failed_remotes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if self.is_preview {
+                    failed.forget(&remote);
+                    None
                 } else {
-                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
-                        std::io::Error::other(format!("(repeat request for failed `{remote}`)")),
-                    ))));
+                    failed.repeat(
+                        &remote,
+                        Instant::now(),
+                        matches!(cache_key, Some(CacheKey::Content(_))),
+                    )
                 }
+            };
+            if let Some(repeat) = repeat {
+                let message = match repeat {
+                    Repeat::Recent => format!("(repeat request for failed `{remote}`)"),
+                    Repeat::Session(status) => format!(
+                        "(repeat request for `{remote}`, which answered {status} earlier this session)"
+                    ),
+                };
+                return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                    std::io::Error::other(message),
+                ))));
             }
 
             // the scene the file belongs to decides its place in the request slot queue

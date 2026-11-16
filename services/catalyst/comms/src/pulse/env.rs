@@ -18,8 +18,8 @@ use super::cluster::{
 use super::handshake::MAX_TIMESTAMP_SKEW_MS;
 use super::hardening::{
     DEFAULT_DISCRETE_BURST, DEFAULT_DISCRETE_RATE_PER_SEC, DEFAULT_INPUT_BURST,
-    DEFAULT_INPUT_MAX_HZ, DisconnectReason, GameplayRateLimiter, HandshakeReplayPolicy,
-    IpWhitelist,
+    DEFAULT_INPUT_MAX_HZ, DEFAULT_REPLAY_ENTRIES_PER_SOURCE, DisconnectReason, GameplayRateLimiter,
+    HandshakeReplayPolicy, IpWhitelist,
 };
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use super::server::{ENET_CAPACITY, WT_CAPACITY};
@@ -51,6 +51,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     (
         "COMMS_MODERATOR_TOKEN",
         "required moderator bearer for the Pulse ban poll",
+    ),
+    (
+        "AUTHORITATIVE_SERVER_ADDRESS",
+        "the authoritative scene host's wallet, admitted as a scene listener (written by catalyst secrets init); a malformed value fails startup",
     ),
     (
         "PULSE_BANS_URL",
@@ -86,6 +90,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "scene-listener AoI budget in parcels: sum of rect areas over every announced realm plus 4 per realm (default 4096)",
     ),
     (
+        "PULSE_SCENE_LISTENER_WALLETS",
+        "comma-separated wallets allowed to open a scene listener, in addition to AUTHORITATIVE_SERVER_ADDRESS; with neither set every listener handshake is refused",
+    ),
+    (
         "PULSE_IP_LIMITER_ENABLED",
         "enforce concurrent source-IP connection caps; still counts when disabled (default false)",
     ),
@@ -103,7 +111,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_IP_LIMITER_WHITELIST",
-        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
+        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps, PULSE_REPLAY_ENTRIES_PER_SOURCE and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
     ),
     (
         "PULSE_AOI_TIER0_RADIUS",
@@ -195,6 +203,10 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "durable consumed-handshake journal; startup fails closed if it cannot be opened or parsed (default data/pulse-replay.tsv)",
     ),
     (
+        "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+        "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48, so every subscriber of an IPv6 provider that shares one /48 shares one quota, as clients behind one IPv4 NAT address do; raise it before binding IPv6 for such networks; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
+    ),
+    (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
         "shared audience for configured legacy ownership and its NATS control-position bridge; must match PULSE_V4_AUDIENCE when both are set (default unset)",
     ),
@@ -240,7 +252,7 @@ fn refuse_outside_hosts(env: &catalyst_config::posture::Lookup) -> anyhow::Resul
 
 /// Reject historical requests for an authentication mode this process cannot serve.
 /// These values validate the shipped posture; they never configure server capabilities.
-fn validate_auth_requests(
+pub fn validate_auth_requests(
     legacy: Result<String, VarError>,
     v4: Result<String, VarError>,
 ) -> anyhow::Result<()> {
@@ -268,6 +280,12 @@ fn validate_auth_requests(
 /// `catalyst pulse`: tracing, the Prometheus exporter, and the server assembled from the
 /// environment; returns when the loop ends.
 pub async fn run_from_env() -> anyhow::Result<()> {
+    run_from_env_with_generation(None).await
+}
+
+pub async fn run_from_env_with_generation(
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<()> {
     validate_auth_requests(
         std::env::var("PULSE_LEGACY_HANDSHAKE"),
         std::env::var("PULSE_V4_ENABLED"),
@@ -309,6 +327,10 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         chrono::Utc::now().timestamp_millis(),
     )
     .map_err(|_| anyhow::anyhow!("cannot open the Pulse replay journal"))?;
+    server.replay_policy.set_max_entries_per_source(env_or(
+        "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+        DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+    )?);
     tracing::info!("durable Pulse handshake replay protection enabled");
     server.gameplay_limiter = GameplayRateLimiter::new(
         env_or("PULSE_INPUT_MAX_HZ", DEFAULT_INPUT_MAX_HZ)?,
@@ -317,6 +339,7 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         env_or("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST)?,
     );
     server.aoi = SpatialAreaOfInterest::new(aoi);
+    apply_scene_listener_env(&mut server, &|key| std::env::var(key).ok())?;
     let fallback = limiter_options_from_lookup(&|key| std::env::var(key).ok())?;
     server.apply_ip_limiter_options(fallback.clone());
     if let Some(url) = env_value("PULSE_FLAGS_URL", std::env::var("PULSE_FLAGS_URL"))? {
@@ -333,8 +356,40 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         )?,
         env_value("PULSE_V4_AUDIENCE", std::env::var("PULSE_V4_AUDIENCE"))?,
     )?;
-    server.clusters = clusters_from_env(control_audience.as_deref())?;
-    server.run_with_webtransport(bind, 50, wt).await
+    if let Some(audience) = control_audience.as_deref() {
+        anyhow::ensure!(
+            generation
+                .as_ref()
+                .is_some_and(|authority| authority.binding().valid()
+                    && authority.binding().audience == audience
+                    && !authority.lost().is_cancelled()),
+            "configured Pulse requires the root's current deployment generation"
+        );
+    }
+    server.clusters =
+        clusters_from_env_with_generation(control_audience.as_deref(), generation.clone())?;
+    if let Some(clusters) = &server.clusters {
+        clusters.bind_identity(&mut server.identity);
+    }
+    let publisher = server
+        .clusters
+        .as_ref()
+        .map(|clusters| clusters.publisher());
+    let result = if let Some(authority) = &generation {
+        tokio::select! {
+            result = server.run_with_webtransport(bind, 50, wt) => result,
+            _ = authority.lost().cancelled() => Err(anyhow::anyhow!("Pulse deployment generation was revoked")),
+        }
+    } else {
+        server.run_with_webtransport(bind, 50, wt).await
+    };
+    if let Some(authority) = &generation {
+        authority.lost().cancel();
+    }
+    if let Some(publisher) = publisher {
+        publisher.shutdown().await;
+    }
+    result
 }
 
 fn limiter_options_from_lookup(
@@ -361,6 +416,52 @@ fn limiter_options_from_lookup(
         scene_listener_max_concurrency: cap("PULSE_IP_LIMITER_SCENE_LISTENER_MAX_CONCURRENCY", 2)?,
         whitelist: ip_whitelist_from(env("PULSE_IP_LIMITER_WHITELIST"))?,
     })
+}
+
+/// The scene-listener wallets: `PULSE_SCENE_LISTENER_WALLETS` plus the
+/// authoritative server's address; empty refuses every listener.
+fn scene_listener_wallets_from(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let mut wallets = std::collections::HashSet::new();
+    for key in [
+        "PULSE_SCENE_LISTENER_WALLETS",
+        "AUTHORITATIVE_SERVER_ADDRESS",
+    ] {
+        for wallet in env(key)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|wallet| !wallet.is_empty())
+        {
+            let address = crate::Address::parse(wallet)
+                .map_err(|e| anyhow::anyhow!("{key} must list wallet addresses: {e}"))?;
+            wallets.insert(address.as_str().to_owned());
+        }
+    }
+    Ok(wallets)
+}
+
+/// The listener allow-list Pulse starts with; warns when it refuses every listener.
+fn scene_listener_allow_list(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let listeners = scene_listener_wallets_from(env)?;
+    if listeners.is_empty() {
+        tracing::warn!(
+            "PULSE_SCENE_LISTENER_WALLETS and AUTHORITATIVE_SERVER_ADDRESS are unset; scene listeners are refused"
+        );
+    }
+    Ok(listeners)
+}
+
+/// The scene-listener allow-list `run_from_env` gives the server.
+pub(crate) fn apply_scene_listener_env(
+    server: &mut PulseServer,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> anyhow::Result<()> {
+    server.scene_listener_wallets = Some(scene_listener_allow_list(env)?);
+    Ok(())
 }
 
 fn ip_whitelist_from(raw: Option<String>) -> anyhow::Result<IpWhitelist> {
@@ -435,7 +536,14 @@ fn webtransport_config_from_env() -> anyhow::Result<Option<WtConfig>> {
 /// The cluster tracker, or `None` when clustering is off entirely -- which leaves every cluster
 /// path out of the server loop rather than running a tracker that publishes nothing. Publishing
 /// nothing is the separate, and far more common, stats-only mode: clustering on with no broker URL.
+#[cfg(test)]
 fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<ClusterTracker>> {
+    clusters_from_env_with_generation(control_audience, None)
+}
+fn clusters_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<Option<ClusterTracker>> {
     if !env_bool_or("PULSE_CLUSTERS_ENABLED", DEFAULT_CLUSTERS_ENABLED)? {
         tracing::info!("peer clustering disabled");
         return Ok(None);
@@ -464,7 +572,7 @@ fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<Cl
     Ok(Some(ClusterTracker::new(
         options,
         ENET_CAPACITY + WT_CAPACITY,
-        cluster_feed_from_env(control_audience)?,
+        cluster_feed_from_env_with_generation(control_audience, generation)?,
     )))
 }
 
@@ -491,8 +599,15 @@ fn nats_url_from_env() -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
+#[cfg(test)]
 fn cluster_feed_from_env(
     control_audience: Option<&str>,
+) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
+    cluster_feed_from_env_with_generation(control_audience, None)
+}
+fn cluster_feed_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
 ) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
     let Some(url) = nats_url_from_env()? else {
         tracing::info!("cluster feed in stats-only mode: no broker URL set");
@@ -521,7 +636,7 @@ fn cluster_feed_from_env(
         );
     }
     tracing::info!(server_name = %options.server_name, "cluster feed publishing");
-    let feed = NatsClusterFeed::spawn(options);
+    let feed = NatsClusterFeed::spawn_with_generation(options, generation);
     if let Some(audience) = control_audience {
         feed.enable_control_positions(audience)
             .map_err(anyhow::Error::msg)?;
@@ -885,6 +1000,10 @@ mod tests {
             ),
             ("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST.to_string()),
             (
+                "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+                DEFAULT_REPLAY_ENTRIES_PER_SOURCE.to_string(),
+            ),
+            (
                 "PULSE_SCENE_LISTENER_MAX_PARCELS",
                 DEFAULT_SCENE_LISTENER_MAX_PARCELS.to_string(),
             ),
@@ -969,6 +1088,44 @@ mod tests {
             wt.contains(&BOOL_TRUE.join("/")) && wt.contains(&BOOL_FALSE.join("/")),
             "the accepted boolean spellings are documented: `{wt}`"
         );
+    }
+
+    #[test]
+    fn scene_listener_wallets_join_the_authoritative_server_and_fail_closed() {
+        let host = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
+        let extra = "0x1111111111111111111111111111111111111111";
+        let lookup = |pairs: Vec<(&'static str, &'static str)>| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        let none = scene_listener_allow_list(&lookup(vec![])).unwrap();
+        assert!(
+            none.is_empty(),
+            "no configured wallet refuses every listener"
+        );
+        let host_only =
+            scene_listener_wallets_from(&lookup(vec![("AUTHORITATIVE_SERVER_ADDRESS", host)]))
+                .unwrap();
+        assert_eq!(host_only.len(), 1);
+        assert!(host_only.contains(&host.to_ascii_lowercase()));
+        let both = scene_listener_wallets_from(&lookup(vec![
+            ("PULSE_SCENE_LISTENER_WALLETS", extra),
+            ("AUTHORITATIVE_SERVER_ADDRESS", host),
+        ]))
+        .unwrap();
+        assert_eq!(both.len(), 2, "an extra listener never drops the host");
+        assert!(both.contains(extra) && both.contains(&host.to_ascii_lowercase()));
+        for bad in ["nope", "0x123"] {
+            assert!(
+                scene_listener_wallets_from(&lookup(vec![("PULSE_SCENE_LISTENER_WALLETS", bad)]))
+                    .is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

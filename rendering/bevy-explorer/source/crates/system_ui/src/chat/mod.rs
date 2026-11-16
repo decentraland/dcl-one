@@ -364,6 +364,7 @@ fn append_chat_messages(
     mut chatbox: Query<&mut ChatBox>,
     users: Query<&UserProfile>,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] primary_player: Res<PrimaryPlayerRes>,
 ) {
     let Ok(mut chatbox) = chatbox.single_mut() else {
         return;
@@ -385,7 +386,12 @@ fn append_chat_messages(
         };
 
         #[cfg(feature = "livekit")]
-        if sender.is_some_and(|address| ban_block.is_blocked_either_way(address)) {
+        if sender.is_some_and(|address| {
+            ban_block.is_blocked_either_way(address)
+                || (ev.channel == "Nearby"
+                    && ev.sender != primary_player.0
+                    && ban_block.is_addr_banned_in_scene(address))
+        }) {
             continue;
         }
 
@@ -782,6 +788,14 @@ fn pipe_chats_to_scene(
                 continue;
             }
 
+            #[cfg(feature = "livekit")]
+            if chat_event.channel == "Nearby"
+                && chat_event.sender != primary_player.0
+                && ban_block.is_addr_banned_in_scene(player_address)
+            {
+                continue;
+            }
+
             let message_id = chat_message_id(player_address, chat_event.timestamp);
             debug!("chat {message_id}: {}", chat_event.message);
             (format!("{player_address:#x}"), message_id)
@@ -911,10 +925,12 @@ fn broadcast_nearby_reactions(
     }
 }
 
-/// Every reaction, the local user's included, except from blocked users.
+/// Every reaction, the local user's included, except from blocked users and, in Nearby, from
+/// other players the scene room bans.
 fn pipe_chat_reactions_to_scene(
     mut reactions: EventReader<ChatReactionEvent>,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] wallet: Res<Wallet>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatReactionData>>>,
 ) {
@@ -929,7 +945,11 @@ fn pipe_chat_reactions_to_scene(
 
     for ev in reactions.read() {
         #[cfg(feature = "livekit")]
-        if ban_block.is_blocked_either_way(ev.from) {
+        if ban_block.is_blocked_either_way(ev.from)
+            || (ev.channel == "Nearby"
+                && Some(ev.from) != wallet.address()
+                && ban_block.is_addr_banned_in_scene(ev.from))
+        {
             continue;
         }
         debug!("reaction {ev:?}");

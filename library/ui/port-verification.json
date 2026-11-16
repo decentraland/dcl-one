@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "portInputHash": "13da8d393344046ec9c3f4f3b9d7f7bcebcbd2aeab2511976128689635aac4bc",
+  "portInputHash": "99696ecc004a4ca0bb5209bd16fd5cfc9fcee63506fcbb3da6169b764a0ff68e",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "checks": {
@@ -10,7 +10,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "469 tooling pins, 39 foundation origins and 2 component outputs pass the common guard"
+      "detail": "466 tooling pins, 39 foundation origins and 2 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
@@ -18,7 +18,7 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "Fresh check passes with 2 public mappings and no errors"
+      "detail": "Fresh check passes with 15 public mappings and no errors"
     },
     "review-manifest": {
       "result": "pass",
@@ -26,7 +26,7 @@
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "Fresh public NavBar build passes 76 bounds checks"
+      "detail": "Fresh gallery build passes 19 bounds checks"
     },
     "install": {
       "result": "pass",

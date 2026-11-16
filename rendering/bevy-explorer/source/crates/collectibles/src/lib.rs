@@ -1,6 +1,7 @@
 pub mod base_wearables;
 pub mod emotes;
 pub mod ext;
+pub mod smart_wearables;
 pub mod urn;
 pub mod wearables;
 
@@ -17,7 +18,7 @@ use common::util::TaskExt;
 pub use emotes::*;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    ActiveEntityTask, IpfsAssetServer, IpfsModifier,
+    ActiveEntityTask, ContentMap, IpfsAssetServer, IpfsModifier,
 };
 use serde::Deserialize;
 use urn::CollectibleUrn;
@@ -58,6 +59,10 @@ pub trait CollectibleType: std::fmt::Debug + TypePath + Send + Sync + 'static {
     fn source_collections() -> &'static [&'static str];
     fn extension() -> &'static str;
     fn data_extension() -> &'static str;
+    /// Extra content-path aliases a collectible's collection carries, beside `collectible.{ext}`.
+    fn with_content_aliases(content: ContentMap) -> ContentMap {
+        content
+    }
 }
 
 pub enum PointerResult<T: CollectibleType> {
@@ -321,8 +326,7 @@ pub fn request_collectibles<T: CollectibleType>(
                 debug!("got results: {:?}", entities.len());
 
                 for entity in entities {
-                    let collection = entity
-                        .content
+                    let collection = T::with_content_aliases(entity.content)
                         .with(format!("collectible.{}", T::extension()), entity.id.clone())
                         .with(
                             format!("collectible.{}", T::data_extension()),

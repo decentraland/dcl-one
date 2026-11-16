@@ -150,6 +150,27 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "dclLists",
+    "value": "http",
+    "scheme": "https",
+    "sub": "dcl-lists",
+    "path": ""
+  },
+  {
+    "name": "archipelagoStats",
+    "value": "http",
+    "scheme": "https",
+    "sub": "archipelago-ea-stats",
+    "path": ""
+  },
+  {
+    "name": "builderApi",
+    "value": "http",
+    "scheme": "https",
+    "sub": "builder-api",
+    "path": ""
+  },
+  {
     "name": "pulseServer",
     "value": "authority",
     "scheme": "",

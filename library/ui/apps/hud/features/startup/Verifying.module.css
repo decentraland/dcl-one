@@ -1,0 +1,42 @@
+/* The screen's 1080 rows, centred vertically on the canvas; everything centred on x = 960. */
+.frame {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 540px);
+  height: 1080px;
+}
+.spinner {
+  position: absolute;
+  left: calc(50% - 35px);
+  top: 445px;
+}
+.text {
+  position: absolute;
+  left: calc(50% - 250px);
+  top: 532px;
+  width: 500px;
+  height: 36px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--type-36);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.cancel {
+  position: absolute;
+  left: calc(50% - 64px);
+  top: 599px;
+  width: 128px;
+  height: 42px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-regular);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.cancel:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}

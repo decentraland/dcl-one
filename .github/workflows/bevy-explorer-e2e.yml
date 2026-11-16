@@ -41,6 +41,8 @@ name: Bevy Explorer / E2E
     paths:
       - 'apps/bevy-explorer/**'
       - 'rendering/bevy-explorer/**'
+      - 'tooling/patched-sources.py'
+      - '.github/actions/bevy-explorer-sources/**'
       - 'library/protocol/**'
       - '.cargo/**'
       - 'rust-toolchain*'
@@ -83,7 +85,7 @@ jobs:
   checks:
     name: Suite checks
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -108,27 +110,27 @@ jobs:
         if: steps.gate.outputs.changed == 'true'
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Install the suite
         if: steps.gate.outputs.changed == 'true'
-        run: npm ci
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: Typecheck
         if: steps.gate.outputs.changed == 'true'
-        run: npm run typecheck
+        run: pnpm run typecheck
       # The driver's tests, with the web transport against a stub page in the runner's Chrome.
       - name: Test the driver
         if: steps.gate.outputs.changed == 'true'
         env:
           DCL_E2E_REQUIRE_CHROME: '1'
-        run: npm test
+        run: pnpm test
       - name: Test the tooling
         if: steps.gate.outputs.changed == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
   inputs:
     name: Inputs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # A pull request's job waits for the commit's Bevy Explorer / CI run, which builds the web app.
     timeout-minutes: 100
     permissions:
@@ -163,13 +165,14 @@ jobs:
           echo 'The scenarios are skipped: the BEVY_E2E_WINDOWS_RUNNER repository variable names no runner.'
           >> "$GITHUB_STEP_SUMMARY"
   # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
-  # Windows runner. The GPU image gets the executable. A pull request's run restores the cache
-  # and saves none: only a first attempt that built main's head writes it.
+  # Windows runner. The GPU image gets the executable, for the smart wearable fixture of the
+  # InWorld group and the visual scenes of the Visual group. A pull request's run restores the
+  # cache and saves none: only a first attempt that built main's head writes it.
   scene-cli:
     name: dcl-scene-cli (Windows)
     needs: inputs
-    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' && (github.event.inputs.group || 'both') != 'inworld'
-    runs-on: windows-2025
+    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != ''
+    runs-on: ${{ vars.RUNNER_WINDOWS || 'windows-2025' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -259,8 +262,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Download the web app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -269,7 +270,9 @@ jobs:
           run-id: ${{ needs.inputs.outputs.web_run_id }}
           github-token: ${{ github.token }}
       - name: Install the suite
-        run: npm ci
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       # The web driver looks for Chrome under Google's install paths; an image without one gets
       # the pinned Chrome for Testing build, checked against the sum recorded here (Google
       # publishes none), which CHROME_PATH points the driver at. The image's Edge is not used: it
@@ -295,11 +298,18 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$exe"
       # What the scenarios will find, said in seconds rather than after a boot's timeout: the
       # GPU and its driver, whether the job's session is interactive, and the GPU the browser
-      # gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`, chrome://gpu
+      # gives a page, bare and then with the scenarios' flags (`pnpm run gpu-probe`, chrome://gpu
       # into the report). On the VM the browser starts on the paravirtual display adapter and
       # WebGPU finds no hardware there; the probe names the NVIDIA adapter's LUID, and the
       # scenarios start their browser on it. CHROME_EXTRA_ARGS is set here, first thing, so a
       # probe that fails still leaves the scenarios their flags.
+      #
+      # The probe runs under node itself, not `pnpm run`: pnpm writes the script line to stderr,
+      # and Windows PowerShell turns a stderr line captured with `2>&1` into an error that, under
+      # the runner's `$ErrorActionPreference = 'stop'`, ends the step before the LUID is read; the
+      # scenarios then start on the paravirtual adapter (WARP), where no scene starts. The step
+      # keeps going past the probe's own stderr lines for the same reason, and says so when it
+      # finds no LUID.
       - name: GPU probe
         continue-on-error: true
         run: |
@@ -308,19 +318,38 @@ jobs:
           Write-Output "session: interactive=$([Environment]::UserInteractive) id=$((Get-Process -Id $PID).SessionId)"
           $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
           if ($smi) { & $smi.Source } else { Write-Output 'nvidia-smi: not on PATH' }
+          $ErrorActionPreference = 'Continue'
           $env:CHROME_EXTRA_ARGS = ''
-          npm run gpu-probe
+          node scripts/gpu-probe.ts
           $env:CHROME_EXTRA_ARGS = $env:WEBGPU_FLAGS
-          $lines = npm run gpu-probe -- --adapter nvidia 2>&1 | ForEach-Object { "$_" }
+          $lines = node scripts/gpu-probe.ts --adapter nvidia 2>&1 | ForEach-Object { "$_" }
           $lines
           $luid = ($lines | Select-String -Pattern '^adapter-luid: (\S+)' | Select-Object -First 1)
           if ($luid) {
             $value = $luid.Matches[0].Groups[1].Value
             Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS --use-adapter-luid=$value"
             Write-Output "the scenarios' browser starts on adapter LUID $value"
+          } else {
+            Write-Output "::warning title=GPU probe::no NVIDIA adapter LUID; the scenarios' browser starts on its default adapter"
           }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
+      # The scenes are built with the dcl-scene-cli the scene-cli job built, and served from the
+      # runner: the smart wearable fixture for the InWorld group, the visual scenes for the
+      # Visual group. Without the CLI the InWorld group still runs; its smart wearable scenarios
+      # then fail on the missing fixture, and the Visual group is skipped.
+      - name: Download dcl-scene-cli
+        if: needs.scene-cli.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
+          path: scene-cli
+      - name: Build the smart wearable fixture
+        if: env.GROUP != 'visual' && needs.scene-cli.result == 'success'
+        env:
+          # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
+          DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
+        run: pnpm run build-scenes smart-wearable
       - name: InWorld scenarios
         id: inworld
         if: env.GROUP != 'visual'
@@ -328,21 +357,13 @@ jobs:
         timeout-minutes: 60
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
-        run: npm run e2e -- --inworld
-      # The visual scenes are built with the dcl-scene-cli the scene-cli job built, and served
-      # from the runner.
-      - name: Download dcl-scene-cli
-        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
-          path: scene-cli
+        run: pnpm run e2e --inworld
       - name: Build the visual scenes
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
           # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
           DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
-        run: npm run build-scenes
+        run: pnpm run build-scenes
       - name: Visual scenarios
         id: visual
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
@@ -351,7 +372,7 @@ jobs:
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
           DCL_E2E_RECORD: ${{ github.event.inputs.record == 'true' && '1' || '' }}
-        run: npm run e2e -- --visual
+        run: pnpm run e2e --visual
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -369,7 +390,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || (env.GROUP != 'inworld' && needs.scene-cli.result != 'success')
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || needs.scene-cli.result != 'success'
         run: |
           Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}"
           exit 1
@@ -379,7 +400,7 @@ jobs:
     name: Status comment
     needs: [inputs, scenarios]
     if: always() && needs.inputs.outputs.run == 'true' && needs.inputs.outputs.pr != '' && needs.scenarios.result != 'skipped'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
