@@ -691,6 +691,7 @@ async fn periodic_native_retry_case(case: &str) {
             .bind(AUDIENCE).bind(WALLET).execute(&fixture.pool).await.unwrap();
         let lapsed = periodic_native_owner_row(&fixture).await;
         let asked = harness.bus.requested().len();
+        harness.fence.reconcile_selected_now_for_test(WALLET).await;
         tokio::time::timeout(std::time::Duration::from_secs(8), async {
             while harness.bus.requested().len() <= asked {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -950,13 +951,17 @@ impl RetirementHarness {
         };
         self.bus.publish(&change.subject(), change.encode()).await;
     }
-    fn depart(&mut self, native: bool) {
+    async fn depart(&mut self, native: bool) {
         if native {
             self.identity.remove(0);
         }
         self.pass += 1;
         self.source
             .replace(self.pass, std::time::Duration::from_secs(120), vec![]);
+        use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
+        for (wallet, _) in self.fence.selected_reconciliation_targets() {
+            self.fence.reconcile_selected_now_for_test(&wallet).await;
+        }
     }
     async fn wait_retired(&self) {
         use catalyst::comms::gatekeeper::admission::cluster::fence::AssignmentFence;
@@ -1011,7 +1016,7 @@ async fn started_selected_periodic_retirement_reclaims_capacity_across_native_an
                 .lookup_available
                 .store(false, std::sync::atomic::Ordering::SeqCst);
         }
-        harness.depart(native);
+        harness.depart(native).await;
         if n == 4 {
             tokio::time::timeout(std::time::Duration::from_secs(8), async {
                 while harness.bus.inner.requested().len() <= outage_requests {
@@ -1073,7 +1078,7 @@ async fn started_selected_retirement_rejects_a_delayed_negative_after_native_rec
         .unwrap();
         assert_eq!(harness.gateway.fences.lock().unwrap().len(), 1);
         harness.bus.pause_negative.store(true, Ordering::SeqCst);
-        harness.depart(true);
+        harness.depart(true).await;
         tokio::time::timeout(
             std::time::Duration::from_secs(8),
             harness.bus.negative_entered.notified(),
@@ -1158,7 +1163,7 @@ async fn started_selected_retirement_retains_uncertain_attempt_credit_until_exac
     harness.runtime.start(&harness.jobs);
     let before = periodic_native_owner_row(&fixture).await;
     let asked = harness.bus.inner.requested().len();
-    harness.depart(true);
+    harness.depart(true).await;
     harness
         .lookup_available
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1224,7 +1229,7 @@ async fn started_selected_retirement_waits_for_a_lease_and_preserves_a_real_fore
     .unwrap();
     let outstanding = harness.fence.lock_selected(&selected).await.unwrap();
     let asked = harness.bus.inner.requested().len();
-    harness.depart(true);
+    harness.depart(true).await;
     tokio::time::timeout(std::time::Duration::from_secs(8), async {
         while !harness
             .bus

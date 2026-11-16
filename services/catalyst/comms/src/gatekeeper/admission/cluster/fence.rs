@@ -769,6 +769,17 @@ fn realm_transition(
     }
 }
 impl PgAssignmentFence {
+    /// Changes only fixture scheduling; the production runtime still performs every lookup,
+    /// settlement and retirement using the actual authority and SQL paths.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn reconcile_selected_now_for_test(&self, wallet: &str) {
+        let slot = self.selected.lock().get(wallet).cloned();
+        if let Some(slot) = slot {
+            slot.state.lock().await.renewed_at = None;
+            *slot.retry_at.lock() = tokio::time::Instant::now();
+        }
+    }
+
     fn mutation_credit(
         &self,
     ) -> Result<std::sync::Arc<super::subscriber::wallet_queue::WorkCredit>, FenceError> {
@@ -1171,7 +1182,7 @@ impl PgAssignmentFence {
                    AND lane_key = $3
                  FOR UPDATE
              )
-             SELECT *, updated_at < clock_timestamp() - $4 * interval '1 second' AS owner_lapsed
+             SELECT *, updated_at < timezone('UTC',clock_timestamp()) - $4 * interval '1 second' AS owner_lapsed
              FROM locked",
         )
         .bind(&self.audience)
@@ -1251,7 +1262,7 @@ impl PgAssignmentFence {
             "SELECT deployment_audience, owner_address, lane_key, authority_incarnation,
                     owner_session, owner_epoch, assignment_revision, fencing_token,
                     assignment_json,
-                    updated_at < clock_timestamp() - $4 * interval '1 second' AS owner_lapsed
+                    updated_at < timezone('UTC',clock_timestamp()) - $4 * interval '1 second' AS owner_lapsed
              FROM social.archipelago_v4_assignments
              WHERE deployment_audience = $1
                AND owner_address = $2
@@ -1459,7 +1470,7 @@ impl PgRealmLease {
             "UPDATE social.archipelago_v4_assignments
              SET assignment_revision = assignment_revision + 1,
                  assignment_json = $7,
-                 updated_at = COALESCE($10::timestamp, now()::timestamp)
+                 updated_at = COALESCE($10::timestamp, timezone('UTC',now()))
              WHERE deployment_audience = $1
                AND owner_address = $2
                AND lane_key = $3
@@ -1467,7 +1478,7 @@ impl PgRealmLease {
                AND owner_epoch = $5
                AND fencing_token = $6
                AND assignment_revision = $9
-               AND updated_at >= clock_timestamp() - $8 * interval '1 second'
+               AND updated_at >= timezone('UTC',clock_timestamp()) - $8 * interval '1 second'
              RETURNING assignment_revision"
         } else {
             "UPDATE social.archipelago_v4_assignments
@@ -1481,7 +1492,7 @@ impl PgRealmLease {
                AND owner_epoch = $5
                AND fencing_token = $6
                AND assignment_revision = $9
-               AND updated_at >= clock_timestamp() - $8 * interval '1 second'
+               AND updated_at >= timezone('UTC',clock_timestamp()) - $8 * interval '1 second'
              RETURNING assignment_revision"
         };
         let query = sqlx::query(mutation)

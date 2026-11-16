@@ -532,7 +532,7 @@ impl SafetyStore {
             return Err(GatewayError::Unknown);
         }
         if let Some(audience) = audience {
-            let row=sqlx::query("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,updated_at>=clock_timestamp()-interval '90 seconds' AS fresh FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm' FOR UPDATE")
+            let row=sqlx::query("SELECT owner_session,owner_epoch,assignment_revision,fencing_token,updated_at>=timezone('UTC',clock_timestamp())-interval '90 seconds' AS fresh FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm' FOR UPDATE")
                 .bind(audience).bind(&stamp.wallet).fetch_optional(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
             if let Some(row) = row {
                 if require_unowned
