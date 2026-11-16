@@ -20,7 +20,9 @@ class PackageManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, 'apps/x/pnpm-lock.yaml')
-            write(root, 'apps/x/package.json', '{"packageManager": "pnpm@%s+sha512.abc"}' % check.PNPM_VERSION)
+            write(root, 'apps/x/package.json', '{"packageManager": "pnpm@%s+sha512.%s"}' % (check.PNPM_VERSION, check.PNPM_SHA512))
+            write(root, 'apps/w/pnpm-lock.yaml')
+            write(root, 'apps/w/package.json', '{"packageManager": "pnpm@%s"}' % check.PNPM_VERSION)
             write(root, 'apps/x/pnpm-workspace.yaml', 'ignoreScripts: true\nsaveExact: true\n')
             write(root, 'infra/dev/service-test/fixture/apps/x/pnpm-lock.yaml')
             write(root, 'apps/x/.npmrc', '\n'.join((
@@ -50,6 +52,8 @@ class PackageManagerTest(unittest.TestCase):
             write(root, 'apps/p/package.json', '{"packageManager": "pnpm@10.19.0"}')
             write(root, 'apps/q/pnpm-lock.yaml')
             write(root, 'apps/q/package.json', '{}')
+            write(root, 'apps/r/pnpm-lock.yaml')
+            write(root, 'apps/r/package.json', '{"packageManager": "pnpm@%s+sha512.abc"}' % check.PNPM_VERSION)
             write(root, 'apps/z/.npmrc', '\n'.join((
                 'ignore-scripts=true', 'save-exact = true', 'allow-builds=esbuild', 'minimum-release-age=0', 'fund=false')))
             commands = (
@@ -65,6 +69,7 @@ class PackageManagerTest(unittest.TestCase):
                 f'.github/workflows/x.yml:{len(commands)}: fetches pnpm 11.0.0; the projects pin {check.PNPM_VERSION}',
                 f'apps/p/package.json: pins `pnpm@10.19.0`; set packageManager to pnpm@{check.PNPM_VERSION}',
                 f'apps/q/package.json: pins `nothing`; set packageManager to pnpm@{check.PNPM_VERSION}',
+                f'apps/r/package.json: pins pnpm {check.PNPM_VERSION} with another integrity; use sha512.{check.PNPM_SHA512}',
                 'apps/x/package-lock.json: npm or yarn lockfile; convert it with `pnpm import` and delete it',
                 'apps/y/yarn.lock: npm or yarn lockfile; convert it with `pnpm import` and delete it',
                 *(f'apps/z/.npmrc: pnpm does not read `{key}` here; move it to pnpm-workspace.yaml or delete it'

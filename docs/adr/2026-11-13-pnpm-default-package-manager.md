@@ -49,8 +49,9 @@ decisions; the rest of both stands.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
   install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
 - `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
-  off the pinned pnpm (`PNPM_VERSION`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs with npm or yarn, or runs anything through
-  `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
+  off the pinned pnpm (`PNPM_VERSION`), on a pin carrying another release's integrity
+  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs
+  with npm or yarn, or runs anything through `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
 
 Where the layout differs from pnpm's default:
 
@@ -88,7 +89,7 @@ What stays on npm:
 - The electron-builder setting depends on that tool's internals and is checked on each upgrade.
 - Another pnpm version is one change: each project's pin and the record at the top of its lockfile
   (`pnpm install --lockfile-only`), the workflows, the Makefiles' `PNPM` defaults and
-  `PNPM_VERSION`, which the guard then holds everything to.
+  `PNPM_VERSION` with `PNPM_SHA512`, which the guard then holds everything to.
 - CI fetches pnpm through the corepack Node 24 ships. Node 25 and later do not ship corepack, so a
   move of CI past Node 24 needs another way to fetch the pinned pnpm. The development shell
   provides pnpm itself.
