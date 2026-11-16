@@ -142,7 +142,7 @@ Run these from the repository root after each step:
 ```bash
 make typecheck
 make test
-npx eslint "packages/inspector/src/**/*.tsx"
+pnpm exec eslint "packages/inspector/src/**/*.tsx"
 ```
 
 The last command matters because `make lint` runs
@@ -154,8 +154,8 @@ For steps 3 and 5, also run the Inspector e2e suite, which needs a dev server:
 ```bash
 cd packages/inspector
 node ./build.js
-npx http-server public -p 8000 --cors -a localhost &
-npm run test:e2e
+pnpm exec http-server public -p 8000 --cors -a localhost &
+pnpm run test:e2e
 ```
 
 The suite takes about 85 seconds and must stay at 56 passing. Run it at least

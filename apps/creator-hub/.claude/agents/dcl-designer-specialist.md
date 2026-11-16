@@ -43,13 +43,13 @@ You own `docs/DESIGN.md`, the `:root` token block of `packages/inspector/src/the
 Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
-npx prettier --check <every touched .css>
+pnpm exec prettier --check <every touched .css>
 git status --short                 # only owned paths
 ```
 
-Every value in a `docs/DESIGN.md` table grep-matches its token file, is labelled a deviation, or is marked `ships in #NNNN` (the value is in that open spoke; check it with `git show origin/<spoke-branch>:<token file>`). If a token value changed, also run `make build-inspector` and `(cd packages/creator-hub && npm run typecheck)`, and screenshot the affected surface in the running app.
+Every value in a `docs/DESIGN.md` table grep-matches its token file, is labelled a deviation, or is marked `ships in #NNNN` (the value is in that open spoke; check it with `git show origin/<spoke-branch>:<token file>`). If a token value changed, also run `make build-inspector` and `(cd packages/creator-hub && pnpm run typecheck)`, and screenshot the affected surface in the running app.
 
-Running alone: before you commit, also run the repo gate from the root (`make format`, `npm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
+Running alone: before you commit, also run the repo gate from the root (`make format`, `pnpm run lint`). Then commit only your paths (`git add -- <paths>`, never `-A`), push, and open the PR. Under the architect: **don't commit**. List your changed paths in the handoff, and the architect commits each layer in turn. Two specialists committing in one working tree would sweep up each other's files with anything broader than explicit paths. No AI attribution in commits or PRs.
 
 ## Handoff block
 

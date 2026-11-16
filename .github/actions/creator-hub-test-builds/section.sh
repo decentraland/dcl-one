@@ -78,14 +78,14 @@ MD
     if [ -n "${PREVIEW_PATH:-}" ]; then
       printf '| Preview | [Open in the browser](%s/%s) |\n' "$BASE_URL" "$PREVIEW_PATH"
     fi
-    printf '| `@dcl/inspector` | `npm install "%s/%s"` |\n' "$BASE_URL" "$PACKAGE_KEY"
+    printf '| `@dcl/inspector` | `pnpm add "%s/%s"` |\n' "$BASE_URL" "$PACKAGE_KEY"
     printf '\n%s\n' "$FOOTER"
     ;;
   asset-packs)
     : "${PACKAGE_KEY:?PACKAGE_KEY is required}"
     badge 'Asset packs' passed npm
     printf '| Product | How to use it |\n|---|---|\n'
-    printf '| `@dcl/asset-packs` | `npm install "%s/%s"` |\n' "$BASE_URL" "$PACKAGE_KEY"
+    printf '| `@dcl/asset-packs` | `pnpm add "%s/%s"` |\n' "$BASE_URL" "$PACKAGE_KEY"
     printf '\nAssets that this pull request adds are not on the CDN until it merges.\n'
     printf '\n%s\n' "$FOOTER"
     ;;
