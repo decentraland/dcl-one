@@ -734,9 +734,6 @@ mod test {
     fn soft_shadow_pipelines_compile() {
         use std::path::Path;
 
-        use assets::test_support::{
-            compile_pipelines, fragment_pipelines, headless_app, render_target,
-        };
         use bevy::{
             asset::{io::embedded::EmbeddedAssetRegistry, RenderAssetUsages},
             core_pipeline::prepass::{DepthPrepass, NormalPrepass},
@@ -745,6 +742,7 @@ mod test {
                 render_resource::{Extent3d, TextureDimension, TextureFormat},
             },
         };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
 
         use crate::{
             coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},

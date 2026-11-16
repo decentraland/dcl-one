@@ -252,11 +252,12 @@ mod tests {
             bans.ban(&actor, Some(&scene), None, now).await.unwrap(),
             Some(Ban::Platform)
         );
+        // A sent device id never hides the recorded one.
         assert_eq!(
             bans.ban(&actor, Some(&scene), Some("different-device"), now)
                 .await
                 .unwrap(),
-            Some(Ban::Scene)
+            Some(Ban::Platform)
         );
         assert_eq!(
             bans.ban(&other, None, None, now).await.unwrap(),

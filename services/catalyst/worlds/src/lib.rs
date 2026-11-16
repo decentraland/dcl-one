@@ -110,6 +110,8 @@ pub struct Settings {
     pub personal_world_max_size_bytes: u64,
     /// `/about`'s `healthy`/`acceptingUsers` source: this node's content sync.
     pub content_readiness: about::ContentReadiness,
+    /// `BLOCKED_WORLD_NAMES`, as configured ([`core::names::BlockedNames::parse`]).
+    pub blocked_world_names: String,
 }
 
 fn non_empty(value: Option<&str>) -> Option<String> {
@@ -167,6 +169,7 @@ impl Settings {
             personal_worlds_max: config.worlds.worlds_personal_worlds_max,
             personal_world_max_size_bytes: config.worlds.worlds_personal_world_max_size_bytes,
             content_readiness: about::ContentReadiness::default(),
+            blocked_world_names: config.worlds.blocked_world_names.clone(),
         }
     }
 
@@ -211,6 +214,7 @@ impl Settings {
             personal_worlds_max: 0,
             personal_world_max_size_bytes: policy::DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES as u64,
             content_readiness: about::ContentReadiness::default(),
+            blocked_world_names: String::new(),
         }
     }
 }
@@ -233,8 +237,10 @@ pub struct WorldsState {
     read_through: OnceLock<WorldReadThrough>,
     /// The permission core `/about` resolves a world's live holder through.
     policy: OnceLock<Arc<policy::Policy>>,
-    /// The DAO name deny list `/about` applies.
-    pub names: core::names::NameDenyList,
+    /// The DAO name deny list and `BLOCKED_WORLD_NAMES` `/about` and `/index` apply; `serve`
+    /// hands this instance to the policy ([`policy::Policy::with_name_deny_list`]), so every
+    /// consumer reads one memo.
+    pub names: Arc<core::names::NameDenyList>,
 }
 
 pub type SharedState = Arc<WorldsState>;
@@ -256,6 +262,9 @@ impl WorldsState {
         mirror: Option<MirrorSettings>,
         http: crate::http::Outbound,
     ) -> Self {
+        let names = Arc::new(core::names::NameDenyList::new(
+            &settings.blocked_world_names,
+        ));
         Self {
             pool,
             storage,
@@ -266,7 +275,7 @@ impl WorldsState {
             preview_memo: preview_wearables::memo(),
             read_through: OnceLock::new(),
             policy: OnceLock::new(),
-            names: core::names::NameDenyList::default(),
+            names,
         }
     }
 
@@ -348,9 +357,17 @@ impl WorldsState {
         jobs.spawn_periodic_leased("worlds-content-mirror", cfg, move |ctx| {
             let (state, mirror) = (state.clone(), mirror.clone());
             async move {
-                let summary =
-                    mirror::run_pass(&state.http, &state.pool, &state.storage, &mirror, &ctx)
-                        .await?;
+                // Asked at run time: serve attaches the policy after the jobs are registered.
+                let owners = state.policy().cloned();
+                let summary = mirror::run_pass(
+                    &state.http,
+                    &state.pool,
+                    &state.storage,
+                    &mirror,
+                    owners,
+                    &ctx,
+                )
+                .await?;
                 tracing::info!(?summary, "worlds mirror pass");
                 Ok(())
             }

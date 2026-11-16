@@ -13,7 +13,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `services/catalyst/` | Rust workspace: the `catalyst` binary (APIs, content, comms, worlds, shop, social) |
 | `apps/sites/` | Web sites |
 | `apps/dcl-scene-cli/` | The scene SDK toolchain (`dcl-scene-cli`) |
-| `apps/creator-hub/` | Creator Hub native shell |
+| `apps/creator-hub/` | Creator Hub desktop: npm workspace with the Electron app, `@dcl/inspector` and `@dcl/asset-packs` ([ADR](docs/adr/2026-11-09-creator-hub-in-dcl-one.md)) |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
 | `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |
@@ -24,7 +24,8 @@ conformance capture corpus and internal docs stay in the private repository.
 ## Agentic roles
 
 Per the [implementation pipeline][roles]; the user accepts decisions and
-approves merges. Start specialist sessions in `services/catalyst/`.
+approves merges. Start specialist sessions in `services/catalyst/`, and Creator Hub
+sessions in `apps/creator-hub/`.
 
 | Role | Goal | Main functions |
 | --- | --- | --- |
@@ -35,11 +36,25 @@ approves merges. Start specialist sessions in `services/catalyst/`.
 | [Code reviewer][roles] | Correctness | Fresh-context PR review |
 | [`divergence-analyst`][div] | Compatibility | Compare pinned source per client version; report findings and proposed conformance checks |
 | [`comms-security-reviewer`][roles] | Exploitable comms behavior | Review identity, tokens, admission, bans, rate limits |
+| [`dcl-ch-feature-architect`][ch-arch] | Coherent cross-layer Creator Hub changes | Plan a change across asset packs, inspector, app and SDK; dispatch the specialists; verify the layers together |
+| [`dcl-asset-packs-specialist`][ch-ap] | `@dcl/asset-packs` changes | Smart items, schemas, packs and catalog; a packed tarball for the next layer |
+| [`dcl-inspector-specialist`][ch-insp] | `@dcl/inspector` changes | Editor, panels, UI Designer, Bevy bridge, data layer; a packed tarball for the SDK |
+| [`dcl-creator-hub-specialist`][ch-app] | Creator Hub app changes | Electron main, preload and renderer |
+| [`dcl-sdk-toolchain-specialist`][ch-sdk] | Inspector builds reach scenes | Wire a local inspector into `@dcl/sdk-commands`; prove a previewed scene runs it |
+| [`dcl-designer-specialist`][ch-design] | Figma-faithful UI | Pull Figma frames into specs, sync tokens, validate renders |
+| [`dcl-creators-data-specialist`][ch-data] | Analytics metrics backend | Admit metrics in creators-data; run a local instance for the Analytics page |
 
 [roles]: services/catalyst/docs/comms/implementation-pipeline.md#roles
 [arch]: services/catalyst/.claude/agents/comms-architect.md
 [ci]: services/catalyst/.claude/agents/comms-ci-engineer.md
 [div]: services/catalyst/.claude/agents/divergence-analyst.md
+[ch-arch]: apps/creator-hub/.claude/agents/dcl-ch-feature-architect.md
+[ch-ap]: apps/creator-hub/.claude/agents/dcl-asset-packs-specialist.md
+[ch-insp]: apps/creator-hub/.claude/agents/dcl-inspector-specialist.md
+[ch-app]: apps/creator-hub/.claude/agents/dcl-creator-hub-specialist.md
+[ch-sdk]: apps/creator-hub/.claude/agents/dcl-sdk-toolchain-specialist.md
+[ch-design]: apps/creator-hub/.claude/agents/dcl-designer-specialist.md
+[ch-data]: apps/creator-hub/.claude/agents/dcl-creators-data-specialist.md
 
 ## Build
 

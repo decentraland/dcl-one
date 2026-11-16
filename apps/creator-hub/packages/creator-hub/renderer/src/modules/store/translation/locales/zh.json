@@ -1,0 +1,1923 @@
+{
+  "install": {
+    "message": "安装 decentraland 编辑器 v${version}",
+    "errors": {
+      "moveAppFailed": "请将 Creator Hub 应用程序移动到应用程序文件夹，并从那里打开它",
+      "checkUpdatesFailed": "无法检查更新",
+      "downloadFailed": "无法下载更新",
+      "installFailed": "无法安装更新",
+      "unknown": "发生未知错误"
+    }
+  },
+  "home": {
+    "header": {
+      "title": "欢迎来到阿尔法编辑器"
+    },
+    "creator_fund_banner": {
+      "title": "Creator Fund：在 Decentraland 赚钱",
+      "description": "吸引玩家，留住玩家，获得报酬。",
+      "cta": "了解更多",
+      "close": "关闭"
+    },
+    "cards": {
+      "sign_in": {
+        "title": "登入以發布您的現場",
+        "action": "登录"
+      }
+    },
+    "rows": {
+      "my_scenes": {
+        "title": "我的场景"
+      },
+      "templates": {
+        "title": "模板",
+        "description": "使用现成的体验节省时间，其中包含可重复使用的机制、预制件以及可供探索和聚会的空间。"
+      },
+      "learn": {
+        "title": "学习",
+        "description": "通过指南、教程和实践示例掌握创作者工具，帮助你自信地进行创作。",
+        "videos": "视频",
+        "documentation": "文档"
+      }
+    }
+  },
+  "editor": {
+    "loading": {
+      "title": "正在准备场景...",
+      "installing": "正在安装依赖项……首次可能需要一些时间。",
+      "failed": {
+        "title": "加载失败",
+        "timeout": "场景加载时间过长，可能其代码中存在错误。",
+        "back": "返回场景",
+        "retry": "重试",
+        "outdated_deps": "此场景的依赖项已过时，不支持 Bevy 渲染器。请更新它们以继续。",
+        "update_deps": "更新依赖项",
+        "data_layer_crashed": "场景反复意外停止。请返回并重新打开，或查看日志。"
+      }
+    },
+    "realm_restarted": "场景意外停止，已重新加载。最近几秒的更改可能未保存。",
+    "header": {
+      "actions": {
+        "code": "代码",
+        "optimize": "优化",
+        "play": "运行",
+        "publish": "发布",
+        "refresh": "从磁盘重新加载场景",
+        "preview_options": {
+          "title": "运行选项",
+          "client": {
+            "desktop": "桌面客户端",
+            "bevy_web": "网页（Bevy）"
+          },
+          "debugger": "在预览期间打开控制台窗口",
+          "skip_auth_screen": "跳过认证屏幕",
+          "open_new_instance": "打开多个实例",
+          "landscape_terrain_enabled": "启用景观地形",
+          "load_raw_gltfs": "加载原始 GLTF",
+          "landscape_terrain_disabled_by_scene": "此场景的设置已隐藏景观地形",
+          "multi_instance": "多实例预览",
+          "mcp": "启用 MCP 服务器",
+          "mobile_preview": "显示移动端二维码"
+        },
+        "publish_options": {
+          "title": "发布选项",
+          "publish_scene": "发布场景",
+          "republish_to_world": "重新发布到 {name}",
+          "republish_to_land": "重新发布到 {coords}"
+        },
+        "publish_status": {
+          "preparing": "准备中...",
+          "publishing": "发布中...",
+          "published": "已发布",
+          "failed": "失败"
+        }
+      }
+    },
+    "console": {
+      "clear": "清除控制台",
+      "dock": "停靠回编辑器",
+      "empty": "运行场景以查看调试输出"
+    },
+    "ai": {
+      "title": "AI 助手",
+      "toggle": "切换 AI 助手",
+      "pop_out": "在单独的窗口中打开",
+      "dock": "停靠回编辑器",
+      "close": "关闭 AI 助手",
+      "open": "AI 助手",
+      "detached_message": "助手已在单独的窗口中打开。",
+      "detached_dock": "带回此处",
+      "new_chat": "新对话",
+      "placeholder": "询问助手",
+      "send": "发送",
+      "stop": "停止",
+      "thinking": "思考中…",
+      "empty": "你好！我在这里为你提供帮助。你可以询问关于场景的问题、获取脚本编写方面的帮助，或者告诉我你想构建或修改什么。我可以检查你的场景并编写所需的代码，把你的想法变为现实。",
+      "billing_title": "关于 AI 用量",
+      "billing": "使用 AI 助手会消耗你所连接账户的额度。请留意你的账户用量。",
+      "billing_dismiss": "知道了",
+      "outdated": "你的 Claude CLI (v{version}) 已过期——请在终端中运行 \"claude update\" 以使用最新模型。",
+      "screenshot_alt": "助手的截图",
+      "attach": {
+        "button": "添加文件",
+        "remove": "移除",
+        "drop_hint": "拖放文件以添加"
+      },
+      "history": {
+        "title": "聊天记录",
+        "empty": "还没有已保存的聊天。",
+        "delete": "删除聊天",
+        "now": "刚刚",
+        "minutes": "{n} 分钟前",
+        "hours": "{n} 小时前",
+        "days": "{n} 天前"
+      },
+      "retry": "重试",
+      "revert": "撤销 AI 的更改",
+      "revert_blocked": "无法撤销：另一个 AI 应用在此之后修改了场景，现在撤销会连同它的更改一起移除。请改用编辑器中的撤销。",
+      "revert_failed": "无法撤销 AI 的更改。请改用编辑器中的撤销。",
+      "selection": "选择：{names}",
+      "selection_clear": "清除",
+      "asset_mention": "资源：{name}",
+      "asset_mention_built_in": "内置动画：{name}",
+      "asset_mention_remove": "移除",
+      "provider": "助手",
+      "provider_signin": "登录",
+      "prompt": {
+        "confirm": "确认",
+        "other_placeholder": "输入答案…",
+        "dismissed": "此问题已失效。"
+      },
+      "setup": {
+        "title": "设置 AI 助手",
+        "description": "助手会运行你安装并登录的编程 CLI。它使用你自己的订阅，无需 API 密钥。",
+        "install": "安装：",
+        "signin": "登录：",
+        "signin_button": "使用 {provider} 登录",
+        "signin_cancel": "取消登录",
+        "signin_starting": "正在开始登录…",
+        "signin_browser": "在浏览器中完成登录后返回。",
+        "signin_code_hint": "浏览器没有带你回到这里？打开上面的链接并登录，然后粘贴页面上显示的代码。",
+        "signin_code_placeholder": "粘贴代码",
+        "signin_code_submit": "提交代码",
+        "manual_title": "偏好使用终端？自行安装并登录：",
+        "recheck": "重新检查",
+        "ready": "就绪",
+        "alt_title": "没有 CLI？连接你已在使用的工具",
+        "alt_description": "已经登录了 Claude Desktop、VS Code 扩展或其他支持 MCP 的工具？直接让它指向这个场景，无需 CLI。将此内容添加到它的 MCP 配置中：",
+        "alt_copy": "复制配置",
+        "alt_copied": "已复制",
+        "alt_note": "仅限本地主机。每次 Creator Hub 重启时 URL 和令牌都会更改。",
+        "alt_access_off": "要连接工具，请在“设置 → AI”中开启“允许其他 AI 应用编辑你的场景”。",
+        "install_guide": "如果无效，请按照 {provider} 安装指南操作",
+        "desktop_detected": "已安装 Claude Desktop，但助手需要 Claude Code（Anthropic 的终端工具）。Desktop 的登录状态不会与其共享，因此请登录 Claude Code 一次。",
+        "gemini_plan_note": "Gemini CLI 现在仅支持付费 Gemini API 密钥或 Gemini Code Assist Standard/Enterprise 许可证。",
+        "needs_login_status": "需要登录",
+        "needs_login_title": "{provider} 要求你登录",
+        "needs_login_help": "即使显示为已连接，其保存的登录也可能已过期。请先退出再重新登录：在终端中逐条运行以下命令，并在浏览器中完成登录，然后重新发送你的消息：",
+        "needs_login_managed_help": "即使显示为已连接，其保存的登录状态也可能已过期。请在“设置 → AI”中点击“退出登录”，然后点击“登录”，再重新发送你的消息。",
+        "api_key_alternative": "或者使用 API 密钥：设置 {envVar}，并在“设置 → AI”中开启“{setting}”。"
+      }
+    },
+    "publish": {
+      "save_failed": "发布前无法保存你的场景，已停止发布以免部署旧内容。{reason}"
+    }
+  },
+  "scene_list": {
+    "my_scenes": "我的场景",
+    "import_scene": "导入场景",
+    "templates": "模板",
+    "sort_by": "排序方式",
+    "project_actions": {
+      "delete_project": "删除场景",
+      "duplicate_project": "复制场景",
+      "open_folder": "打开文件夹",
+      "rename_folder": "重命名文件夹",
+      "view_deployments": "查看部署"
+    },
+    "no_scenes": {
+      "title": "创建您的第一个场景",
+      "description": "释放您的创造力。开始为您的土地和世界建立场景，并与社区分享。<a>了解有关创建场景的更多信息。</a>"
+    },
+    "sort": {
+      "name": "名称",
+      "newest": "最新",
+      "size": "尺寸"
+    },
+    "results": "{count}结果",
+    "parcel_count": "{parcels} 个{parcels, plural, one {地块} other {地块}}",
+    "saving": "保存...",
+    "badges": {
+      "published": "已发布"
+    }
+  },
+  "optimize": {
+    "title": "优化模型",
+    "subtitle": "通过压缩和去重纹理以及清理网格来缩减场景 GLB 的体积。原始文件会被备份，方便随时还原。",
+    "docs_link": "了解每个选项的作用",
+    "consent": {
+      "blurb": "优化完全在你的电脑上运行，使用开源工具。首次继续时会从 npm 下载这些工具（固定版本），并保存在应用数据文件夹中。你的模型不会离开你的电脑。",
+      "show_tools": "查看这 {count} 个开源工具",
+      "hide_tools": "收起工具列表",
+      "dont_show_again": "不再显示",
+      "npm": "npm",
+      "source": "源码",
+      "note": "你的原始模型会被备份，可随时还原。",
+      "download": "现在将下载约 {size} MB。",
+      "continue": "继续",
+      "cancel": "取消",
+      "purpose": {
+        "sharp": "调整尺寸、重新编码并无损压缩纹理。",
+        "gltf": "读取和写入 GLB；执行网格清理。",
+        "meshopt": "网格重排以及 Meshopt 编解码器。"
+      }
+    },
+    "tools": {
+      "installing_blurb": "正在准备优化工具，只需一次。",
+      "installing": "正在下载优化工具…",
+      "failed": "无法下载优化工具：{message}",
+      "retry": "重试"
+    },
+    "select_project": "选择一个场景",
+    "no_projects": "未找到场景。请先创建或导入一个场景。",
+    "scan": {
+      "glbs": "{count} 个模型",
+      "size": "总大小：{size}（模型 {models} + 纹理 {textures}）",
+      "textures": "{embedded} 个内嵌纹理 · {external} 个外部纹理",
+      "last_optimized": "已于 {date} 优化 · 可还原为原始文件",
+      "empty": "该场景没有可优化的 GLB 模型。"
+    },
+    "options": {
+      "title": "优化项",
+      "mesh": {
+        "title": "网格",
+        "enabled": "优化网格（焊接、重排、清理）",
+        "enabled_tip": "无损清理：合并重复顶点（焊接）、为 GPU 缓存效率重排索引、移除未使用或重复的数据，并将纯色纹理折叠为材质颜色。输出可在所有运行时加载。"
+      },
+      "textures": {
+        "title": "纹理",
+        "compress": "压缩并缩放纹理",
+        "compress_tip": "将每个纹理缩放到其按类型的最大尺寸并重新编码。PNG 采用无损重新压缩；JPEG/WebP 使用“质量”滑块。",
+        "dedup": "移除重复纹理",
+        "dedup_tip": "查找像素完全相同的纹理（SHA-256），让所有模型指向单一共享副本。当同一纹理在多个模型中重复使用时收益最大。",
+        "externalize": "将内嵌纹理提取为文件",
+        "externalize_tip": "将纹理从 GLB 中提取到 assets/optimized-textures/ 下的共享文件，使共享纹理只下载一次而非每个模型各下载一次。跨模型去重的前提；这些文件会随场景一起部署。",
+        "format": "格式",
+        "format_tip": "输出图像格式。PNG 无损（推荐）。JPEG 和 WebP 更小但有损，并使用“质量”滑块。",
+        "quality": "质量",
+        "quality_tip": "JPEG/WebP 的编码质量（1–100）。越高保留越多细节，文件越大。对 PNG 无效。",
+        "denoise": "降噪",
+        "sizes": "纹理最大尺寸（像素）",
+        "sizes_tip": "每种纹理类型的最大高度（像素）；更大的会按比例缩小。基础色和法线贴图通常比 ORM 或自发光需要更高分辨率。",
+        "baseColor": "基础色",
+        "normal": "法线",
+        "orm": "ORM",
+        "emissive": "自发光",
+        "other": "其他"
+      }
+    },
+    "run": "优化",
+    "run_again": "再次优化",
+    "done": "完成",
+    "running": "优化中…",
+    "revert": "还原为原始文件",
+    "reverting": "正在还原原始文件…",
+    "revert_error": "无法还原原始文件：{message}",
+    "result": {
+      "title": "完成",
+      "saved": "节省了 {saved}（{percent}%）",
+      "before_after": "{before} → {after}（模型 + 纹理）",
+      "glbs_changed": "更新了 {count} 个模型",
+      "textures_extracted": "提取了 {count} 个纹理",
+      "textures_deduped": "移除了 {count} 个重复项",
+      "textures_removed": "已移除 {count} 个被替代的纹理（{bytes}）",
+      "unchanged_skipped": "{unchanged} 个未更改 · {skipped} 个已跳过",
+      "failed": "{count} 个模型失败 — 请查看每个模型的详情",
+      "ignored_files": "{count} 个提取的纹理匹配 .dclignore 中的模式，将不会被部署 — 请修改该模式，否则模型加载时会缺少这些纹理：{files}",
+      "up_to_date": "{count} 个已优化，保持原样",
+      "show_details": "查看每个模型的详情",
+      "hide_details": "收起每个模型的详情",
+      "status": {
+        "optimized": "已优化",
+        "unchanged": "无变化",
+        "skipped": "已跳过",
+        "up_to_date": "已优化",
+        "failed": "失败"
+      }
+    },
+    "error": "优化失败：{message}"
+  },
+  "navbar": {
+    "menu": {
+      "home": "首页",
+      "scenes": "场景",
+      "templates": "模板",
+      "collections": "收藏",
+      "analytics": "数据分析",
+      "manage": "管理",
+      "earn": "赚取",
+      "learn": "学习",
+      "more": "更多"
+    },
+    "earn_not_joined": "EARN，尚未加入",
+    "feedback": "给我们反馈",
+    "user_menu": {
+      "sign_in": "登录",
+      "sign_out": "登出",
+      "account_tooltip": "账户"
+    },
+    "create": {
+      "label": "创建",
+      "options": "创建选项",
+      "new_scene": "新建场景",
+      "import_scene": "导入场景"
+    },
+    "logo_menu": {
+      "main_menu_tooltip": "主菜单",
+      "about": "关于 Creator Hub",
+      "check_for_updates": "检查更新",
+      "settings": "设置",
+      "report_bug": "报告问题",
+      "help": {
+        "label": "帮助与支持",
+        "faq": "常见问题",
+        "contact_support": "联系支持",
+        "discord": "Discord"
+      }
+    }
+  },
+  "modal": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "missing_projects": {
+      "title": "缺失的场景",
+      "find": "寻找",
+      "discard": "丢弃",
+      "discard_all": "全部丢弃"
+    },
+    "delete_project": {
+      "title": "您确定要从「我的场景」中删除 {title} 吗？",
+      "files_checkbox": "也从我的电脑中删除场景文件",
+      "files_warning": "您的场景文件将从您的电脑中永久删除，您将无法再次访问此场景。"
+    },
+    "rename_folder": {
+      "title": "重命名文件夹",
+      "field_label": "文件夹名称",
+      "errors": {
+        "invalid_name": "该名称无效。请避免空名称和 / \\ : * ? \" < > | 等字符。",
+        "name_taken": "已存在同名文件夹。",
+        "rename_failed": "无法重命名文件夹，请重试。"
+      }
+    },
+    "publish_project": {
+      "title": "公共场所 \"{title}\"",
+      "select": "选择要部署此场景的位置：",
+      "roles": {
+        "owner": "所有者",
+        "collaborator": "协作者"
+      },
+      "worlds": {
+        "title": "世界赛",
+        "description": "在创世城地图中找不到。 \n最多可同时加入 100 个用户。",
+        "action": "发布到世界",
+        "select_world": {
+          "title": "发布到您的世界",
+          "description": "选择将发布您的世界的域名。",
+          "world_name": "世界（名稱）",
+          "placeholder": "選擇名稱",
+          "claim_new_name": "索取新名字",
+          "claim_new_ens_domain": "申請 ENS 域名",
+          "actions": {
+            "select_location": "選擇位置",
+            "review": "審核",
+            "publish": "發布",
+            "reset": "重置",
+            "cancel": "取消",
+            "confirm": "確認",
+            "retry": "重试"
+          },
+          "ens_providers": {
+            "dcl": "姓名",
+            "ens": "ENS 域"
+          },
+          "multi_scene": {
+            "title": "多場景世界（高級）",
+            "description": "允許你的世界包含超過1個場景。總世界大小將取決於你發布的世界佈局。",
+            "current_world": "當前世界",
+            "scenes_count": "{count} {count, plural, one {场景} other {场景}}"
+          },
+          "location": {
+            "description": "选择将发布您的场景的位置。",
+            "parcels_place": "在以下位置放置 {count} 个地块",
+            "available_parcels_count": "可用地块：{count}",
+            "no_parcels_fit_error": "当前场景大小不适合在可用地块中。"
+          },
+          "confirm_overwrite": {
+            "title": "覆盖场景？",
+            "description": "在此处发布您的场景将删除所选地块中存在的所有场景。",
+            "scenes_count": "您选择的地块已包含 <b>{count} {count, plural, one {场景} other {场景}}</b>：",
+            "scene_title_placeholder": "场景 {index}"
+          },
+          "load_error": "无法加载此世界的信息。请检查您的网络连接后重试。"
+        },
+        "empty_names": {
+          "title": "您沒有任何可用的世界",
+          "description": "<b>當您擁有一個NAME 時，您將獲得一個免費的世界</b>。<br></br>你想要多少就可以有多少。",
+          "action": "索取新名字"
+        },
+        "loading_names": {
+          "title": "正在查找您的世界..."
+        },
+        "names_error": {
+          "title": "无法加载您的世界",
+          "description": "连接 Decentraland 时出现问题。请检查您的连接并重试。",
+          "action": "重试"
+        }
+      },
+      "land": {
+        "title": "我的地盘",
+        "description": "可在创世城地图中找到。 \n无限用户可以同时加入。",
+        "action": "发布到土地",
+        "select_parcel": {
+          "select_parcel": "选择将承载场景的 LAND",
+          "place_scene": "将场景放置在 {coords}",
+          "actions": {
+            "publish": "发表",
+            "reset": "重置"
+          }
+        }
+      },
+      "alternative_servers": {
+        "title": "发布到不同的服务器",
+        "list": "备用服务器",
+        "options": {
+          "custom_server": "定制服务器"
+        },
+        "custom_server_url": "服务器地址",
+        "action": {
+          "custom_server": "发布到自定义服务器"
+        },
+        "errors": {
+          "url": "无效的网址"
+        }
+      },
+      "deploy": {
+        "world": "发布到您的世界",
+        "land": "发布到您的土地",
+        "server": "发布到服务器",
+        "scene_size": "场景大小：{size}",
+        "loading": "加载中...",
+        "error": "错误",
+        "warning": {
+          "message_replacing_world_content": "请仔细阅读：<ul><li>您的世界中的现有内容将被您即将发布的新的内容完全或部分替换。</li></ul>",
+          "checkbox": "不再显示",
+          "continue": "继续",
+          "back": "返回"
+        },
+        "ethereum": {
+          "mainnet": "主网",
+          "testnet": "测试网"
+        },
+        "files": {
+          "count": "{count} {count, plural, one {文件} other {文件}}",
+          "size": "总大小 <b>{size}</b>",
+          "size_with_limit": "总大小 <b>{size} / {limit}</b>",
+          "checking_limit": "正在检查限制…",
+          "publish": "发布"
+        },
+        "deploying": {
+          "publish": "出版...",
+          "failed": "发布失败",
+          "try_again": "请重试",
+          "step": {
+            "uploading": "上传中...",
+            "converting": "转换...",
+            "unpublishing": "取消发布中...",
+            "loading": "加载中...",
+            "failed": "失败的"
+          },
+          "progress": {
+            "checking": "正在准备上传...",
+            "uploading": "正在上传 {sent} / {total}",
+            "processing": "发布中...",
+            "batches": "已上传第 {completed} 批，共 {total} 批",
+            "cancel_too_early": "正在移除之前的场景，暂时无法取消。请稍后再试。",
+            "cancel_unauthorized": "无法在此处取消发布。退出 Creator Hub 即可停止。",
+            "cancel_unsupported": "请更新此场景的 SDK 以在此处取消发布。"
+          },
+          "errors": {
+            "details": "详细信息",
+            "code_error": "你的场景代码包含一个或多个错误。\n请修复它们并重试。",
+            "fetch_status": "获取发布信息失败。\n请重试。",
+            "fetch_timeout_error": "获取发布信息失败。\n请检查您的互联网连接并重试。",
+            "no_internet_connection": "没有互联网连接。\n请检查您的连接并重试。",
+            "catalyst": "发布到Catalyst节点失败。\n请重试或检查您的互联网连接。",
+            "max_retries": "重试次数超过限制。\n请稍后再试。",
+            "not_found": "出了问题。\n请重试。",
+            "failed": "出了问题。\n请重试。",
+            "invalid_url": "出了问题。\n请重试。",
+            "invalid_identity": "身份验证失败。",
+            "max_file_size_exceeded": "一个或多个资产超过了允许的限制（{maxFileSizeInMb}MB）。\n优化或移除大文件并重试。",
+            "max_scene_size_exceeded": "您的场景超过了允许的最大大小。\n请减少资产的数量或大小，然后重试。",
+            "deploy_state_lost": "已无法跟踪此次发布，它可能仍会完成。\n再次发布前，请在“管理”部分查看该场景。",
+            "deploy_request_timeout": "发布未在 60 分钟内完成，可能仍在进行中。\n再次发布前，请在“管理”部分查看该场景。",
+            "unknown": "出了问题。\n请重试。",
+            "invalid_creator_wallet": "创建者必须是有效的以太坊钱包地址。"
+          },
+          "actions": {
+            "report_issue": "报告问题",
+            "retry": "重试",
+            "cancel": "取消",
+            "cancelling": "正在取消..."
+          },
+          "redirect": {
+            "sign_in": "您将在 {seconds} 秒后被重定向到登录步骤……"
+          }
+        },
+        "success": {
+          "message": "您的场景已成功发布",
+          "url": "跳转到您的 {target} 的URL是：",
+          "world": "世界",
+          "land": "土地",
+          "jump_in": "跳转",
+          "world_settings": "世界设置",
+          "indexing_note": "场景已经上线。它在浏览器中的卡片（标题、描述和缩略图）是单独索引的，可能需要几分钟才会更新。"
+        }
+      },
+      "place_continuity": {
+        "title": "您的场景将失去其 Places 条目",
+        "land_description": "这些地块上已发布的场景在 Places 目录中拥有条目。此次发布既没有保留其基准地块，也没有保留其地块集合，因此 Decentraland 会将结果登记为一个新的地点，而不是更新该条目。",
+        "world_merge_description": "此位置与此 World 中 {overlap} 个现有场景重叠，因此 Decentraland 会将其登记为一个新的地点，并停用这些场景的条目。只有当发布恰好替换一个现有场景时，条目才会保留。",
+        "world_replace_description": "以单场景方式发布会先移除此 World 中的所有场景，因此 Decentraland 会将结果登记为一个新的地点，并停用当前条目。",
+        "consequences_title": "留在旧条目中的内容",
+        "consequences": {
+          "engagement": "它的点赞、收藏以及在 Places 排名中的位置。",
+          "analytics": "它的场景分析数据。新条目将从零开始。",
+          "storage": "它的多人服务器存储中的数据，这些数据可能会被清除。"
+        },
+        "tip": "若要保留当前条目，请发布到与之前相同的基准地块或相同的地块集合。",
+        "world_tip": "若要保留当前条目，请将场景放置在恰好替换此 World 中一个现有场景的位置。",
+        "world_replace_tip": "若要保留当前条目，请返回，为此 World 开启多场景，并将场景放置在它要替换的场景上。",
+        "cancel": "返回",
+        "confirm": "仍然发布",
+        "checking": "检查中…"
+      }
+    },
+    "publish_history": {
+      "title": "出版历史"
+    },
+    "deployment_history": {
+      "title": "部署历史",
+      "no_deployments": "此项目没有可用的部署历史记录。",
+      "world": "世界",
+      "land": "土地",
+      "current": "当前"
+    },
+    "app_settings": {
+      "title": "應用程式首選項",
+      "tabs": {
+        "scenes": {
+          "label": "場景"
+        },
+        "editor": {
+          "label": "編輯器"
+        },
+        "ai": {
+          "label": "AI"
+        },
+        "experimental": {
+          "label": "實驗性功能"
+        },
+        "about": {
+          "label": "關於"
+        }
+      },
+      "about": {
+        "title": "Decentraland Creator Hub",
+        "view_changelog": "查看更新日誌"
+      },
+      "fields": {
+        "scenes_folder": {
+          "label": "場景資料夾",
+          "change_button": "更改資料夾",
+          "reset_button": "重置",
+          "errors": {
+            "invalid_path": "文件夹不存在或无法在其中保存文件。请选择其他文件夹。"
+          }
+        },
+        "scene_editor_dependencies": {
+          "label": "場景依賴",
+          "options": {
+            "auto_update": "自動更新我的所有場景",
+            "notify": "有新版本更新時通知我",
+            "do_nothing": "什麼也不做"
+          }
+        },
+        "code_editor": {
+          "label": "首选代码编辑器",
+          "choose_device": "从设备中选择...",
+          "errors": {
+            "load": "加载代码编辑器失败",
+            "set": "设置默认编辑器失败",
+            "invalid_app_extension": "应用程序无效。请选择有效的 .app 文件",
+            "invalid_app_bundle": "应用程序包结构无效",
+            "invalid_exe_file": "应用程序无效。请选择有效的 .exe 文件",
+            "unknown": "设置默认编辑器失败"
+          }
+        },
+        "app_warnings": {
+          "label": "应用警告",
+          "show_warnings": "每次预览或发布包含自定义代码的场景时显示警告消息"
+        },
+        "renderer": {
+          "label": "场景渲染器",
+          "babylon": "Babylon（默认）",
+          "bevy": "Bevy（实验性）",
+          "toggle": "启用 Bevy 场景渲染器"
+        },
+        "experimental": {
+          "label": "实验性功能"
+        },
+        "dev_asset_catalog": {
+          "toggle": "使用开发环境资源 CDN",
+          "help": "从开发环境 CDN（而非生产环境）加载智能物件，以便在合并前测试从 pull request 上传的资源。更改此项后请重启编辑器并重新添加物件。仅限开发版本。"
+        },
+        "ai_assistant": {
+          "label": "启用 AI 助手",
+          "help": "使用你已安装的 Claude、Codex、Cursor 或 Gemini CLI 运行，拥有与终端相同的对你机器的完全访问权限。只有在你信任所要求的操作时才启用。"
+        },
+        "mcp_server": {
+          "label": "允许其他 AI 应用编辑你的场景",
+          "help": "让你在这台电脑上使用的 AI 应用（如 Claude Code 或 Codex）查看和修改你打开的场景。在场景文件夹中启动的 Claude Code 会自动连接。关闭后会立即断开它们。上方的 AI 助手不需要此选项。",
+          "copy": "复制配置",
+          "copied": "已复制！",
+          "note": "只有这台电脑上的应用可以连接。每次重启 Creator Hub 或关闭此选项时，这些信息都会改变。"
+        },
+        "ai_api_key": {
+          "label": "改为计入 API 密钥",
+          "help": "使用你环境中所用提供方的 API 密钥（ANTHROPIC_API_KEY、OPENAI_API_KEY、CURSOR_API_KEY 或 GEMINI_API_KEY）。默认关闭。"
+        },
+        "ai_connect": {
+          "title": "连接",
+          "connected": "已连接",
+          "sign_in": "登录",
+          "sign_out": "退出登录",
+          "sign_out_shared": "这也会让你在这台电脑上的其他地方（桌面应用、编辑器扩展、终端）退出 {agent}。",
+          "cancel": "取消",
+          "via_terminal": "通过终端",
+          "install": "安装",
+          "sign_in_label": "登录",
+          "copy": "复制"
+        }
+      },
+      "actions": {
+        "apply_button": "申請"
+      },
+      "version": {
+        "current": "當前版本：{version}",
+        "new": "新版本：{version}",
+        "up_to_date": "Creator Hub 已是最新版本。",
+        "label": "版本：{version}"
+      },
+      "update": {
+        "applying": "正在應用更新。",
+        "dont_close": "請勿關閉應用程序。",
+        "auto_restart": "更新後 Creator Hub 將自動重啟。",
+        "downloading": "正在下載... {progress}%",
+        "install": "立即安裝",
+        "update": "立即更新",
+        "check": "檢查更新",
+        "checking": "正在檢查更新...",
+        "error": "我們無法檢查更新。請稍後再試。",
+        "update_available": "更新可用",
+        "whats_new": "新功能",
+        "bug_fixes": "錯誤修復",
+        "timeout": "檢查更新超時。\n請檢查您的連接並重試。"
+      }
+    },
+    "worlds_storage": {
+      "your_storage": "您的存储",
+      "total_available_storage": "总可用存储",
+      "mana": "MANA",
+      "mana_earn_storage": "每 2,000 个代币（Polygon 或 Ethereum）赚取 100 Mb 存储空间。",
+      "mana_holdings": "由于持有 {owned} MANA 代币，您拥有 {mbs} Mb。",
+      "mana_buy": "购买 MANA",
+      "lands": "LANDs",
+      "lands_earn_storage": "每个 LAND 赚取 100 Mb 存储空间。",
+      "lands_holdings": "由于持有 {owned} LANDs，您拥有 {mbs} Mb。",
+      "lands_buy": "购买 LAND",
+      "names": "NAMEs",
+      "names_earn_storage": "每个 NAME 赚取 100 Mb 存储空间。",
+      "names_holdings": "由于持有 {owned} Decentraland NAMEs，您拥有 {mbs} Mb。",
+      "names_buy": "购买 NAME",
+      "proposal": "这些存储规则经过治理 DAO 提案的投票并获得通过。",
+      "learn_more": "了解更多"
+    },
+    "create_project": {
+      "title": "創建場景",
+      "fields": {
+        "name": "場景名稱",
+        "path": "場景路徑"
+      },
+      "actions": {
+        "create": "創建"
+      },
+      "errors": {
+        "invalid_directory": "该文件夹路径不存在。请使用文件夹按钮为场景选择一个已存在的位置。",
+        "path_exists_or_not_writable": "项目路径已存在或无法在其中保存文件。请选择其他文件夹。"
+      }
+    },
+    "install_client": {
+      "title": "要输入，您需要首先安装分散",
+      "download": "下载",
+      "download_macos": "下载",
+      "download_win": "下载",
+      "cancel": "暂不安装"
+    },
+    "warning": {
+      "title": "警告",
+      "message": "此场景包含代码元素，这些元素可能仅在场景运行时才可见",
+      "dont_show_again": "不再显示此警告",
+      "continue": "继续",
+      "cancel": "取消"
+    },
+    "mobile_qr": {
+      "title": "连接 Mobile Debug Session",
+      "description": "使用移动设备扫描此二维码预览场景",
+      "disclaimer": "您的电脑和移动设备必须在同一网络中"
+    },
+    "about": {
+      "title": "关于",
+      "app_name": "Decentraland Creator Hub",
+      "action": "确定"
+    },
+    "close": "关闭",
+    "report_issue": {
+      "title": "报告问题",
+      "description": {
+        "label": "出了什么问题？",
+        "placeholder": "描述你当时在做什么以及出了什么问题。",
+        "counter": "{count}/{max}"
+      },
+      "contact": {
+        "label": "我们如何联系你？（可选）",
+        "hint": "如果希望我们跟进，请留下你的 Discord 用户名或电子邮件。",
+        "placeholder": "Discord 用户名或电子邮件",
+        "discord_invalid": "请输入有效的 Discord 用户名。",
+        "email_invalid": "请输入有效的电子邮件地址。"
+      },
+      "logs": {
+        "label": "附带应用日志",
+        "hint": "日志包含你的钱包地址和场景名称。"
+      },
+      "help_center": "访问帮助中心",
+      "send": "发送",
+      "retry": "重试",
+      "sent_title": "问题报告已提交",
+      "sent": "感谢你帮助我们改进 Creator Hub！我们已收到你的报告，团队会调查该问题并着手修复。",
+      "queued_title": "问题报告已保存",
+      "queued": "我们已保存你的报告，会在你恢复联网后立即发送。",
+      "unknown_title": "无法确认你的报告",
+      "unknown": "我们已发送你的报告，但无法确认是否送达。如果问题仍然存在，请再次报告。",
+      "failed_title": "出了点问题",
+      "failed": "无法发送你的报告。请检查网络连接后重试。"
+    }
+  },
+  "popup": {
+    "copied_to_clipboard": "已复制！"
+  },
+  "snackbar": {
+    "generic": {
+      "import_scene": "导入场景...",
+      "import_scene_failed": "场景导入失败",
+      "import_scene_already_imported": "场景已导入",
+      "duplicate_scene": "复制场景...",
+      "duplicate_scene_failed": "复制场景失败",
+      "delete_scene": "删除场景...",
+      "delete_scene_failed": "删除场景失败",
+      "dependencies_updated": "場景相依性已更新",
+      "multiplayer_sdk_installed": "已安装 Multiplayer Server SDK。",
+      "multiplayer_sdk_uninstalled": "已移除 Multiplayer Server SDK，并安装了最新的 SDK 版本。",
+      "updating_sdk_skills": "正在安裝最新的 AI 技能...",
+      "sdk_skills_updated": "AI 技能已是最新版本",
+      "sdk_skills_update_failed": "無法安裝 AI 技能",
+      "installing_dependencies": "安装依赖项",
+      "installing_dependencies_failed": "安装依赖项失败",
+      "invalid_scenes_folder": "无效的场景文件夹。请在创建场景之前在设置中配置有效的场景文件夹。",
+      "create_scene_failed": "尝试创建场景时发生错误。请重试。",
+      "run_scene_failed": "加载项目失败。请重试。",
+      "preview_scene_failed": "启动预览失败。请检查场景代码是否有错误。",
+      "url_copied": "URL已复制到剪贴板",
+      "fetch_managed_projects_failed": "获取管理项目失败",
+      "fetch_world_settings_failed": "获取世界设置失败。请重试。",
+      "update_world_settings_failed": "更新世界设置失败。请重试。",
+      "fetch_ens_list_failed": "获取ENS列表失败",
+      "fetch_land_list_failed": "获取土地列表失败",
+      "fetch_world_permissions_failed": "获取世界权限失败。请重试。",
+      "fetch_world_scenes_failed": "获取世界场景失败。请重试。",
+      "unpublish_world_scene_failed": "从世界取消发布场景失败。请重试。",
+      "unpublish_world_failed": "取消发布世界失败。请重试。",
+      "update_permissions_failed": "更新世界权限失败。请重试。",
+      "add_permission_failed": "添加地址权限失败。请重试。",
+      "remove_permission_failed": "删除地址权限失败。请重试。",
+      "fetch_parcels_permission_failed": "获取地块权限失败。请重试。",
+      "add_parcels_permission_failed": "更新地块权限失败。请重试。",
+      "remove_parcels_permission_failed": "更新地块权限失败。请重试。",
+      "mobile_qr_failed": "获取移动预览二维码失败"
+    },
+    "missing_projects": {
+      "title": "{scenes} 丢失的 {scenes, plural, one {场景} other {场景}} 成立",
+      "actions": {
+        "view": "版本",
+        "discard_all": "全部丢弃"
+      }
+    },
+    "external_agent_access": {
+      "title": "这台电脑上的一个 AI 应用想要查看和修改你打开的场景。",
+      "actions": {
+        "allow": "允许",
+        "deny": "不允许"
+      }
+    },
+    "new_dependency_version": {
+      "title": "偵測到新的依賴項版本",
+      "actions": {
+        "update": "更新"
+      }
+    },
+    "sdk_skills": {
+      "outdated": {
+        "title": "此場景的 AI 技能有可用更新",
+        "action": "更新"
+      },
+      "missing": {
+        "title": "此場景尚未安裝 Decentraland AI 技能",
+        "action": "安裝"
+      }
+    },
+    "deploy": {
+      "pending": {
+        "title": "{title} 正在發布...",
+        "actions": {
+          "view": "查看"
+        }
+      },
+      "success": {
+        "title": "{title} 已成功發布",
+        "actions": {
+          "view": "查看"
+        }
+      },
+      "error": {
+        "title": "{title} 發布過程失敗",
+        "actions": {
+          "retry": "重試"
+        }
+      }
+    }
+  },
+  "option_box": {
+    "learn_more": "了解更多"
+  },
+  "tutorials": {
+    "title": "教程"
+  },
+  "sign_in": {
+    "back": "後退",
+    "content": {
+      "title": "請在瀏覽器中繼續",
+      "body": "我們已開啟您的瀏覽器以完成登入。<br></br>完成後，您將自動返回此處。",
+      "reopen": "瀏覽器未開啟？<a>重新開啟</a>或<b>複製連結</b>"
+    },
+    "errors": {
+      "max_attempts": "已達到最大登入嘗試次數。請稍後再試。",
+      "failed": "登入失敗。請重試。",
+      "init_failed": "無法初始化登入。請檢查您的連接。",
+      "identity_not_found": "無法完成登入。請重新登入。",
+      "identity_expired": "您的登入請求已過期。請重新登入。",
+      "network_mismatch": "無法完成登入。請停用任何 VPN 或瀏覽器私人轉送（例如 iCloud 私人轉送）後再試。",
+      "verifier_mismatch": "無法完成登入：此登入是從其他工作階段發起的。請重新登入。"
+    }
+  },
+  "more": {
+    "header": {
+      "title": "更多"
+    },
+    "cards": {
+      "create": {
+        "title": "创建",
+        "submit_event": {
+          "title": "提交事件",
+          "description": "在 Decentraland 上舉辦您自己的活動。"
+        },
+        "collections": {
+          "title": "收藏",
+          "description": "创建、审核并发布你的可穿戴设备和表情收藏。"
+        }
+      },
+      "manage": {
+        "title": "管理",
+        "names": {
+          "title": "名字",
+          "description": "领取你的独特名字，并将其分配给你的头像或地块。"
+        },
+        "land": {
+          "title": "土地",
+          "description": "发布场景，创建庄园并管理你的土地权限。"
+        }
+      },
+      "open_in_browser": "在浏览器中打开"
+    }
+  },
+  "templates": {
+    "title": "选择一个模板",
+    "results": "{count} {count, plural, one {模板} other {模板}}",
+    "actions": {
+      "code": "查看代码"
+    },
+    "new_scene": {
+      "title": "空景",
+      "description": "从头开始创建自己的场景"
+    },
+    "filters": {
+      "title": "过滤依据",
+      "difficulty": {
+        "easy": "简单的",
+        "medium": "中等的",
+        "hard": "难的"
+      }
+    },
+    "sort": {
+      "title": "排序方式：",
+      "default": "默认",
+      "newest": "最新"
+    }
+  },
+  "learn": {
+    "header": {
+      "title": "学习",
+      "videos": "视频",
+      "docs": "创作者文档",
+      "more": "更多"
+    },
+    "see_all": "查看全部",
+    "videos": {
+      "title": "视频"
+    },
+    "docs": {
+      "title": "创作者文档"
+    }
+  },
+  "manage": {
+    "header": {
+      "title": "管理"
+    },
+    "load_more": "加载更多",
+    "search": "搜索",
+    "sort_by": "排序方式",
+    "sort": {
+      "latest": "最近更新",
+      "name": "名称"
+    },
+    "filters": {
+      "all": "全部",
+      "published": "已发布",
+      "unpublished": "未发布"
+    },
+    "sign_in": {
+      "title": "你好！",
+      "description": "登录以开始管理您的世界和 LAND。",
+      "action": "登录"
+    },
+    "empty_list": {
+      "search": {
+        "title": "未找到结果",
+        "description": "尝试使用不同的关键词。"
+      },
+      "published": {
+        "title": "没有已发布的地点可显示",
+        "description": "发布您的一个场景或成为协作者以查看更多结果。"
+      },
+      "unpublished": {
+        "title": "没有地点可显示",
+        "description": "铸造一个NAME或成为协作者以查看更多结果。"
+      },
+      "worlds": {
+        "title": "还没有可管理的世界",
+        "description": "铸造一个新的 Decentraland <name>NAME</name> 或认领一个 <ens>ENS 域名</ens>，以创建您的世界并开始发布场景。",
+        "info": "Decentraland 世界是您专属的个人 3D 空间，可以聚会、举办活动和建造——您只需要一个 Decentraland NAME。",
+        "info_label": "什么是世界？"
+      },
+      "lands": {
+        "title": "还没有可管理的 LAND",
+        "description": "租用或购买 LAND 来发布您的场景。",
+        "info": "LAND 是一种非同质化代币，包含其坐标、所有者的记录，以及对内容描述文件或地块清单的引用，该文件描述并编码所有者希望在其 LAND 上提供的内容。",
+        "info_label": "什么是 LAND？"
+      }
+    },
+    "actions": {
+      "view_scenes": "查看场景",
+      "mint_name": "铸造新NAME",
+      "rent_or_buy_land": "租用或购买 LAND"
+    },
+    "worlds_storage": {
+      "used": "已使用空间",
+      "description": "总存储空间根据 MANA、LAND 和 NAME 持有量计算。",
+      "link": "查看详情 →",
+      "usage": "<b>{used}</b> / {max} MB",
+      "info_label": "关于已使用空间"
+    },
+    "cards": {
+      "roles": {
+        "collaborator": "协作者",
+        "tenant": "租户"
+      },
+      "menu": {
+        "jump_in": "进入",
+        "copy_url": "复制URL",
+        "view_storage": "查看存储",
+        "unpublish": "取消发布",
+        "create_event": "创建活动",
+        "transfer": "转让"
+      },
+      "no_scene": {
+        "title": "未发布场景",
+        "view_scenes": "查看场景"
+      },
+      "land": {
+        "lands_count": "{count, plural, other {# 块 LAND}}",
+        "parcel_name": "地块 {coords}",
+        "estate_name": "Estate {id}"
+      },
+      "scenes_count": "{count, plural, other {# 个场景}}"
+    },
+    "unpublish_world_confirmation": {
+      "title": "取消发布 <b>{worldName}</b>？"
+    },
+    "view": "查看",
+    "tabs": {
+      "worlds": "世界",
+      "lands": "LANDs"
+    },
+    "read_more": "了解更多 →",
+    "errors": {
+      "fetch": {
+        "title": "出了点问题。",
+        "description": "请重试。",
+        "retry": "重试"
+      }
+    }
+  },
+  "menu": {
+    "options_for": "{name} 的选项"
+  },
+  "recipient": {
+    "label": "钱包地址或 NAME",
+    "placeholder": "0x… 或 name.dcl.eth",
+    "errors": {
+      "invalid": "请输入钱包地址或 NAME。",
+      "not_found": "此 NAME 不存在。",
+      "self_transfer": "你不能转让给自己。",
+      "self_add": "你不能添加自己。"
+    }
+  },
+  "tx": {
+    "waiting_signature": "请在浏览器中确认此交易。",
+    "pending": "交易已发送。正在等待确认…",
+    "view_explorer": "在 Etherscan 上查看",
+    "not_confirmed": "尚未确认。可能需要几分钟，请稍后再查看。",
+    "rejected": "你在浏览器中拒绝了该请求。",
+    "expired": "请求在签名前已过期。",
+    "failed": "交易失败。",
+    "try_again": "重试",
+    "continue": "继续",
+    "step": "第 {n} 步，共 {total} 步",
+    "done": {
+      "transfer": "LAND 已转让。",
+      "details": "详情已保存。",
+      "domain_set": "域名已设置。",
+      "domain_removed": "域名已移除。",
+      "collaborator_added": "协作者已添加。",
+      "collaborator_replaced": "协作者已替换。",
+      "collaborator_removed": "协作者已移除。",
+      "collaborators_removed": "协作者已移除。",
+      "parcels_updated": "地块已更新。",
+      "manager_added": "管理者已添加。",
+      "manager_removed": "管理者已移除。"
+    }
+  },
+  "land_transfer": {
+    "title": "转让 LAND",
+    "body": "你即将转让 <b>{name}</b>。此操作不可撤销，请仔细检查地址。",
+    "confirm": "转让 LAND"
+  },
+  "unpublish_scene": {
+    "title": "取消发布场景",
+    "title_many": "取消发布场景",
+    "body": "确定要从 {land} 取消发布 <b>{scene}</b> 吗？",
+    "body_many": "确定要从 {land} 取消发布 {count} 个场景吗？",
+    "confirm": "取消发布",
+    "confirm_many": "取消发布 {count} 个场景",
+    "progress": "正在取消发布 {done}/{count}…",
+    "error": "无法取消发布 {scene}。请重试。",
+    "done": "场景已取消发布。",
+    "done_many": "已取消发布 {count} 个场景。"
+  },
+  "title": {
+    "back": "返回"
+  },
+  "land_detail": {
+    "title": "管理 - {name}",
+    "role": "角色",
+    "owner": "所有者",
+    "tabs": {
+      "details": "详情",
+      "scenes": "场景",
+      "collaborators": "协作者",
+      "managers": "管理者"
+    },
+    "not_found": "此 LAND 已不在你的列表中。",
+    "back_to_manage": "返回管理",
+    "save": "保存",
+    "details": {
+      "name": "LAND 名称",
+      "name_placeholder": "在此输入",
+      "description": "描述",
+      "description_placeholder": "在此写一些关于你的 LAND 的内容",
+      "name_required": "请输入名称。",
+      "counter": "{count}/{max}",
+      "too_long": "请使用不超过 {max} 个字符。",
+      "save_title": "保存详情",
+      "save_body": "将新名称和描述保存到区块链？",
+      "domain": "域名",
+      "domain_help": "你可以使用 Decentraland NAME 为你的 LAND 创建自定义链接。",
+      "domain_placeholder": "选择一个 NAME",
+      "claim_name": "获取 NAME",
+      "domain_used": "已被 {target} 使用",
+      "domain_change": "更改域名",
+      "domain_remove": "移除链接",
+      "domain_set_title": "设置域名",
+      "domain_set_body": "将 <b>{name}</b> 链接到 {land}？",
+      "domain_remove_title": "移除域名",
+      "domain_remove_body": "取消 <b>{name}</b> 与 {land} 的链接？",
+      "domain_step_resolver": "设置 NAME",
+      "domain_step_link": "链接到 LAND"
+    },
+    "scenes": {
+      "columns": {
+        "name": "名称",
+        "parcels": "地块",
+        "location": "位置",
+        "last_updated": "最后更新",
+        "published_by": "发布者"
+      },
+      "select_all": "选择所有场景",
+      "select": "选择 {scene}",
+      "selected": "已选择 {count} 个",
+      "unpublish_selected": "取消发布所选",
+      "download": "下载 {scene}",
+      "unpublish": "取消发布 {scene}",
+      "empty": "此 LAND 上没有已发布的场景。"
+    },
+    "download": {
+      "title": "下载 {scene}？",
+      "body": "你将获得一个可在 Creator Hub 中打开的项目。已发布场景中的自定义代码不一定能恢复；请查看文件夹中的 RECOVERY.md。",
+      "confirm": "下载",
+      "progress": "正在下载… {done}/{total}",
+      "done_self_contained": "场景已下载。",
+      "done_partial": "场景已下载。部分代码无法恢复；请查看 RECOVERY.md。",
+      "done_none": "场景已下载，但不含源代码；请查看 RECOVERY.md。",
+      "error": "无法下载 {scene}。请重试。",
+      "cancel": "取消下载 {scene}"
+    },
+    "collaborators": {
+      "description": "协作者可以在此 LAND 上发布场景。",
+      "count": "协作者：{count}",
+      "add": "添加",
+      "all_parcels": "所有地块",
+      "permissions_column": "部署权限范围",
+      "n_parcels": "{count, plural, other {# 个地块}}",
+      "custom_parcels": "自定义地块…",
+      "select_all": "选择所有协作者",
+      "select": "选择 {name}",
+      "remove_label": "移除 {name}",
+      "parcels_label": "{name} 的地块",
+      "selected": "已选择 {count} 个",
+      "remove_selected": "移除所选",
+      "add_title": "添加协作者",
+      "add_body": "<b>{name}</b> 将可以在 {land} 上发布场景。",
+      "replace_title": "替换协作者",
+      "replace_body": "<b>{new}</b> 将替换 <b>{current}</b> 成为此 LAND 的协作者。",
+      "replace_confirm": "替换",
+      "remove_title": "移除 {name}？",
+      "remove_body": "对方将无法再在此 LAND 上发布。",
+      "remove_confirm": "移除",
+      "remove_many_title": "移除 {count} 个协作者？",
+      "parcels_body": "<b>{name}</b> 将在 {count} 个地块上发布。",
+      "empty": "还没有协作者"
+    },
+    "managers": {
+      "description": "管理者可以在你所有的 LAND 上发布场景并添加或移除协作者，不仅限于此 LAND。",
+      "count": "管理者：{count}",
+      "empty": "还没有管理者",
+      "add_title": "添加管理者",
+      "add_body": "<b>{name}</b> 将可以在你所有的 LAND 上发布场景并管理协作者。",
+      "remove_title": "移除 {name}？",
+      "remove_body": "对方将不再管理你的 LAND。",
+      "step_land": "LAND",
+      "step_estates": "Estates",
+      "land_only": "只能管理你的 LAND。重新添加以包含你的 Estates。",
+      "estate_only": "只能管理你的 Estates。重新添加以包含你的 LAND。"
+    }
+  },
+  "world_detail": {
+    "tabs": {
+      "details": "详情",
+      "scenes": "场景",
+      "settings": "设置",
+      "collaborators": "协作者"
+    },
+    "owner_you": "{name}（你）",
+    "not_found": "此世界已不在你的列表中。",
+    "details": {
+      "name": "世界名称",
+      "description_placeholder": "在此写一些关于你的世界的内容",
+      "thumbnail_hint": "PNG 或 JPG | 1920x1080 (16:9)",
+      "change_thumbnail": "更换缩略图",
+      "saved": "更改已保存",
+      "categories": "类别",
+      "description": "描述",
+      "no_image": "未设置图片",
+      "thumbnail": "缩略图",
+      "categories_options": {
+        "art": "🎨 艺术",
+        "game": "🕹️ 游戏",
+        "casino": "🃏 赌场",
+        "social": "👥 社交",
+        "music": "🎶 音乐",
+        "fashion": "👠 时尚",
+        "crypto": "🪙 加密货币",
+        "education": "📚 教育",
+        "shop": "🛍️ 商店",
+        "business": "🏢 商务",
+        "sports": "🏅 体育"
+      }
+    },
+    "scenes": {
+      "parcels_shape": "{w}×{h} 地块",
+      "used": "已使用 {size}",
+      "manage_storage": "管理存储空间",
+      "last_scene": "这是 {world} 中的最后一个场景。取消发布后，该世界将下线，其标题、描述、缩略图和设置都会被删除。",
+      "empty": "此世界中尚未发布场景。",
+      "empty_filtered": "你的地块上还没有场景。",
+      "multi_scene_info": "关于多场景世界",
+      "multi_scene_description": "允许您的世界包含多个场景。\n总的世界大小将取决于您发布的世界布局。",
+      "multi_scene_title": "多场景世界",
+      "world_map": "世界地图"
+    },
+    "settings": {
+      "spawn": "出生点坐标",
+      "skybox": "昼夜时间（天空盒）",
+      "skybox_auto": "自动（Decentraland 时间）",
+      "skybox_slider": "昼夜时间",
+      "discoverable": "可在 Places 中发现",
+      "access": {
+        "invitation_only": "仅限邀请",
+        "password_protected": "密码保护",
+        "invitation_only_description": "白名单中的用户和社区可以加入",
+        "password_protected_description": "任何拥有密码的人都可以加入",
+        "tab_user": "添加用户钱包",
+        "tab_community": "添加社区",
+        "search": "搜索",
+        "csv_browse": "浏览你的设备文件。",
+        "invited": "已邀请",
+        "invited_empty": "你还没有邀请任何人。",
+        "select_all": "全选已邀请",
+        "select": "选择 {name}",
+        "remove": "移除 {name}",
+        "remove_body": "他们将无法再加入这个世界。",
+        "remove_many_title": "移除 {count} 个邀请？",
+        "label": "访问",
+        "public": "公开",
+        "public_description": "任何人都可以访问这个世界",
+        "change_type_title": "更改访问类型？",
+        "change_type_warning": "如果您切换访问类型，您的已批准地址列表将被清除。",
+        "continue": "继续",
+        "tab_csv": "导入CSV",
+        "csv_drop_text": "将CSV文件拖放到此处或",
+        "csv_invalid_count": "{count} 个无效地址",
+        "csv_replace": "替换"
+      },
+      "password": {
+        "requirements": "你的密码必须包含",
+        "min_length": "至少 8 个字符",
+        "min_numbers": "至少 2 个数字",
+        "mismatch": "密码不匹配",
+        "show": "显示密码",
+        "hide": "隐藏密码",
+        "change_password": "更改密码",
+        "create_title": "创建新密码",
+        "change_title": "更改密码",
+        "type_password": "输入您的密码",
+        "repeat_password": "重复您的密码",
+        "info": "请务必记下您的密码，以免丢失！"
+      },
+      "general": "常规",
+      "single_player": "单人游戏",
+      "single_player_streaming_note": "单人模式下不支持直播。"
+    },
+    "collaborators": {
+      "description": "添加最多 100 个协作者，并管理他们在你的世界中部署或流媒体的权限。",
+      "already_added": "该钱包已是协作者。",
+      "count": "协作者：{count}/100",
+      "stream": "流媒体",
+      "stream_label": "{name} 的流媒体权限",
+      "remove_one_title": "确定要将“{name}”从协作者中移除吗？",
+      "remove_several_title": "确定要移除所有这些协作者吗？",
+      "remove_all_title": "确定要移除所有协作者吗？",
+      "full": "你已达到 100 个协作者的上限。",
+      "none": "无",
+      "stream_open": "此世界的流媒体对所有人开放。",
+      "remove_body": "他们将无法再在这个世界中部署或流媒体。"
+    }
+  },
+  "detail_shell": {
+    "unsaved": "您有未保存的更改。离开前保存？",
+    "discard": "放弃"
+  },
+  "parcel_picker": {
+    "title": "更新地块",
+    "description": "点击单个瓷砖以将它们包含/排除在布局中。",
+    "count": "正在选择 {count} 个{count, plural, one {地块} other {地块}}",
+    "map_label": "{name} 的地块",
+    "map_instructions": "使用方向键在地块之间移动，按空格键或回车键选择或取消选择地块。",
+    "map_role": "地块地图",
+    "cursor_selected": "地块 {x},{y}，已选择",
+    "cursor_not_selected": "地块 {x},{y}，未选择"
+  },
+  "analytics": {
+    "header": {
+      "title": "数据分析"
+    },
+    "empty_list": {
+      "title": "暂无可分析的 Place",
+      "description": "发布一个场景即可开始追踪其表现。上线后，你可以在这里查看该 Place 的关键指标和数据洞察。",
+      "search": {
+        "title": "未找到 Place",
+        "description": "没有符合搜索条件的 Place。请尝试其他名称。"
+      }
+    },
+    "error": {
+      "title": "无法加载你的 Place"
+    },
+    "actions": {
+      "export": "导出分析数据",
+      "export_unavailable": "分析数据上线后即可导出"
+    },
+    "detail": {
+      "title": "数据分析 - {name}",
+      "tabs": {
+        "overview": "概览",
+        "retention": "留存",
+        "visits": "访问",
+        "engagement": "互动"
+      },
+      "place": {
+        "access": "访问权限",
+        "private": "私密",
+        "public": "公开",
+        "published_in": "发布于",
+        "last_published_by": "最后发布者",
+        "last_update": "最后更新",
+        "genesis_city": "创世城"
+      },
+      "actions": {
+        "create_event": "创建活动",
+        "edit_scene": "编辑场景",
+        "edit_scene_unavailable": "暂时无法从此处打开场景",
+        "copy_url": "复制链接",
+        "jump_in": "进入"
+      },
+      "overview": {
+        "title": "概览",
+        "description": "你的 Place 在增长、互动和用户留存方面的概况。"
+      },
+      "retention": {
+        "title": "留存",
+        "description": "了解首次访问后再次回访的用户占比。",
+        "platforms": {
+          "title": "平台",
+          "description": "你的 {days} 天滚动平均值，按移动端和桌面端对比。",
+          "tooltips": {
+            "all": "所有新用户的 7 日留存，不区分所用客户端。",
+            "desktop": "首次通过桌面客户端访问的新用户的 7 日留存。",
+            "mobile": "首次通过移动客户端访问的新用户的 7 日留存。"
+          }
+        },
+        "day_3": {
+          "title": "3 日留存",
+          "description": "首次访问后 3 天内回访的新用户占比，按移动端和桌面端对比。",
+          "tooltips": {
+            "all": "所有新用户的 3 日留存，不区分所用客户端。",
+            "desktop": "首次通过桌面客户端访问的新用户的 3 日留存。",
+            "mobile": "首次通过移动客户端访问的新用户的 3 日留存。"
+          }
+        },
+        "day_3_cohort": {
+          "title": "按首访周划分的 3 日留存",
+          "description": "首次访问后的 3 天内至少回访过一次的新用户占比，按首次进入你的 Place 的那一周分组。",
+          "benchmark": "{value}% 3 日留存目标"
+        },
+        "day_7_cohort": {
+          "title": "按首访周划分的 7 日留存",
+          "description": "首次访问后的 7 天内至少回访过一次的新用户占比，按首次进入你的 Place 的那一周分组。",
+          "benchmark": "{value}% 7 日留存目标",
+          "settling": {
+            "tooltip": "仍在统计中：该群组开始于不到 14 天前，其回访仍在计数。",
+            "caption": "点状线：最近 14 天内的群组，其回访仍在计数。"
+          }
+        },
+        "churn": {
+          "title": "每周流失率",
+          "description": "上周活跃但本周没有回访的用户占比。"
+        }
+      },
+      "visits": {
+        "title": "访问",
+        "description": "了解有多少用户访问了你的 Place，其中有多少是新访客或回访用户。",
+        "unique": {
+          "title": "最近 60 天的独立访问量",
+          "footnote": "独立用户，已跨平台去重。同时使用桌面端和移动端的用户在「所有平台」中只计一次，并在各平台的总数中各计一次。"
+        },
+        "weekly_active": {
+          "title": "每周活跃用户",
+          "description": "每周的独立活跃用户数。"
+        },
+        "flow": {
+          "title": "每周用户流动",
+          "description": "追踪每周用户在新增、回访和重新激活之间的变化。",
+          "returned": {
+            "label": "回访用户",
+            "tooltip": "上周访问过并且本周再次到访的用户。"
+          },
+          "reactivated": {
+            "label": "重新激活用户",
+            "tooltip": "曾经停止访问、本周重新回来的用户。"
+          }
+        }
+      },
+      "engagement": {
+        "title": "互动",
+        "description": "了解用户如何与你的 Place 互动。",
+        "minutes": "分钟",
+        "delta": "{value} 分钟",
+        "vs_last_week": "{value}（对比上周）",
+        "daily": {
+          "title": "平均每日游玩时长",
+          "description": "每位用户单次访问在你的 Place 中停留的平均时间。",
+          "chart_title": "每周的平均每日游玩时长"
+        },
+        "weekly": {
+          "title": "平均每周游玩时长",
+          "description": "每位用户每周在你的 Place 中停留的平均时间。",
+          "chart_title": "每位用户的平均每周游玩时长"
+        },
+        "social": {
+          "title": "社交互动",
+          "description": "每周访客中至少聊天或使用过一次表情的用户占比。",
+          "totals_title": "每周社交互动总量",
+          "rate_title": "访客社交互动率",
+          "messages": {
+            "label": "发送消息数",
+            "tooltip": "访客在你的 Place 中发送的聊天消息。"
+          },
+          "emotes": {
+            "label": "播放表情数",
+            "tooltip": "访客在你的 Place 中播放的表情动作。"
+          },
+          "friendships": {
+            "label": "新增好友",
+            "tooltip": "访客之间在你的 Place 中接受的好友请求。"
+          },
+          "engaged": {
+            "label": "社交互动访客",
+            "tooltip": "每周访客中至少聊天或使用过一次表情的用户占比。"
+          }
+        },
+        "playtime": {
+          "title": "平均游玩时长",
+          "description": "每位用户单次访问在你的 Place 中停留的平均时间。"
+        },
+        "afk": {
+          "title": "平均挂机时长",
+          "description": "每位用户在你的 Place 中没有互动的平均时间。"
+        }
+      },
+      "platforms": {
+        "all": "所有平台",
+        "desktop": "桌面端",
+        "mobile": "移动端"
+      },
+      "charts": {
+        "no_data": "此期间暂无数据"
+      },
+      "error": {
+        "title": "无法加载该 Place 的分析数据"
+      },
+      "window": {
+        "title": "时间范围",
+        "last_30_days": "最近 30 天",
+        "last_60_days": "最近 60 天"
+      },
+      "not_found": {
+        "title": "未找到场景",
+        "description": "该场景不在你的账户已发布的场景中。"
+      }
+    },
+    "metrics": {
+      "total_visits": {
+        "label": "总访问量",
+        "tooltip": "对你的 Place 的所有访问，包括同一用户的重复访问。"
+      },
+      "unique_visits": {
+        "label": "独立访问量",
+        "tooltip": "访问过你的 Place 的不同用户数，每人只计一次。"
+      },
+      "new_players": {
+        "label": "Decentraland 新玩家",
+        "tooltip": "首次进入 Decentraland、且第一天大部分时间都在你的 Place 中度过的钱包。"
+      },
+      "new_users": {
+        "label": "新用户",
+        "tooltip": "首次访问你的 Place 的用户。"
+      },
+      "concurrent_users": {
+        "label": "同时在线用户",
+        "tooltip": "同一时间在你的 Place 中的平均用户数。"
+      },
+      "revenue": {
+        "label": "收入",
+        "tooltip": "在你的 Place 中获得的 MANA。"
+      },
+      "day_3_retention": {
+        "label": "3 日留存",
+        "tooltip": "首次访问后 3 天内回访你的 Place 的新用户占比。"
+      },
+      "day_7_retention": {
+        "label": "7 日留存",
+        "tooltip": "首次访问后 7 天内回访你的 Place 的新用户占比。"
+      },
+      "median_playtime": {
+        "label": "游玩时长中位数",
+        "tooltip": "每位用户每天在你的 Place 中停留时间的中位数：一半的每日访问更长，一半更短。"
+      },
+      "afk_time": {
+        "label": "挂机时长",
+        "tooltip": "用户在你的 Place 中未进行互动的平均时间。"
+      },
+      "desktop": {
+        "label": "桌面端",
+        "tooltip": "通过桌面客户端访问你的 Place 的用户。"
+      },
+      "mobile": {
+        "label": "移动端",
+        "tooltip": "通过移动客户端访问你的 Place 的用户。"
+      },
+      "peak_concurrent_users": {
+        "label": "峰值同时在线用户",
+        "tooltip": "同一时间在你的 Place 中的最高用户数。"
+      }
+    },
+    "list": {
+      "places": "{count} 个 Place",
+      "search": "搜索",
+      "minutes": "{value} 分钟",
+      "pinned": "已固定到关注列表",
+      "sort": {
+        "title": "排序方式",
+        "name_asc": "名称 A-Z",
+        "name_desc": "名称 Z-A",
+        "most_visits": "访问量最高"
+      },
+      "columns": {
+        "place": "Place",
+        "total_visits": "总访问量",
+        "new_users": "新用户",
+        "day_7_retention": "7 日留存",
+        "revenue": "收入",
+        "median_playtime": "游玩时长中位数",
+        "concurrent_users": "同时在线用户"
+      },
+      "actions": {
+        "pin_to_watchlist": "固定到关注列表",
+        "unpin_from_watchlist": "从关注列表移除"
+      },
+      "genesis_city": "创世城 ({coords})"
+    },
+    "sign_in": {
+      "title": "登录以查看你的 Place 数据分析"
+    },
+    "no_data_yet": "暂无数据",
+    "no_data_yet_description": "该场景在最新导出的数据中没有数值。如果是最近发布的，请在下次导出后再查看。",
+    "exported_at": "截至 {date} 的数据"
+  },
+  "connection": {
+    "offline": {
+      "tooltip": "无网络连接",
+      "title": "无连接",
+      "message": "您当前处于离线状态。在您重新连接到互联网之前，某些功能可能无法使用。",
+      "retry": "重试连接",
+      "checking": "检查中..."
+    },
+    "errors": {
+      "NO_INTERNET_CONNECTION": "无可用的互联网连接",
+      "REQUEST_TIMEOUT": "请求超时。请检查您的连接并重试。"
+    }
+  },
+  "earn": {
+    "close": "关闭",
+    "loading": "加载中",
+    "landing": {
+      "title_prefix": "赚取",
+      "title": "Decentraland Creator Fund",
+      "tagline_signed_in": "创造体验。汇聚玩家。赚取 USDC。",
+      "tagline_signed_out": "创造体验。汇聚玩家。赚取收益。",
+      "description": "<hl>30,000 USDC</hl> 分 <hl>3 个周期</hl>发放，第 1 周期于 <hl>11 月 15 日</hl>开始。",
+      "know_more": "了解更多",
+      "features": {
+        "enrolment": {
+          "title": "自动加入",
+          "body": "加入后，你拥有的符合条件的场景即开始参与。"
+        },
+        "cycles": {
+          "title": "每 15 天发放奖励",
+          "body": "每月有两个奖励周期。"
+        },
+        "activity": {
+          "title": "按活跃度发放奖励",
+          "body": "你带来的新玩家、游戏时长和第 3 天留存率决定奖励。"
+        },
+        "payout": {
+          "title": "以 USDC 支付",
+          "body": "每个周期结束后 14 天内，付款会发送到你选择的钱包。"
+        }
+      },
+      "join": "加入 Creators Fund",
+      "sign_in_to_join": "登录以加入 Creators Fund",
+      "read_terms": "阅读条款",
+      "status": {
+        "suspended": "你在 Creator Fund 的参与已被暂停。"
+      }
+    },
+    "terms": {
+      "updated_line": "最后更新：{date} · 版本 {version}",
+      "region": "计划条款",
+      "hint": "滚动到底部以查看完整条款。",
+      "accept_checkbox": "我已阅读并接受 Creator Fund 计划条款",
+      "gate_open": "现在可以接受条款了",
+      "not_now": "暂不",
+      "accept_and_join": "接受并加入",
+      "close": "关闭",
+      "load_error": "无法加载条款。"
+    },
+    "reaccept": {
+      "title": "计划条款已更新",
+      "subtitle": "请查看更新后的条款以继续获得收益。",
+      "accept": "接受"
+    },
+    "checking": {
+      "title": "Decentraland Creator Fund",
+      "body_1": "我们正在通过 Creator Fund 核查你的账户。",
+      "body_2": "这可能需要几秒钟。",
+      "progress_label": "正在检查资格"
+    },
+    "check_failed": {
+      "title": "检查你的账户时出了点问题",
+      "body": "如果问题仍然存在，请通过 {email} 联系我们的支持团队"
+    },
+    "not_eligible": {
+      "title": "你暂时无法加入",
+      "got_it": "知道了",
+      "reasons": {
+        "internal": "Foundation 和 Regenesis Labs 的账户不能加入 Creator Fund。",
+        "suspended": "你的账户已被 Creator Fund 暂停。",
+        "excluded": "你的账户不符合 Creator Fund 的资格。",
+        "unknown": "你的账户目前无法加入 Creator Fund。"
+      }
+    },
+    "contact": {
+      "title": "联系信息",
+      "body": "我们需要这些信息来确认你是计划受益人，并就你参与 Creator Fund 及付款事宜与你联系。请注意，这些信息之后无法更改。",
+      "first_name": "名",
+      "last_name": "姓",
+      "email": "电子邮箱",
+      "first_name_placeholder": "名",
+      "last_name_placeholder": "姓",
+      "email_placeholder": "name@email.com",
+      "invalid_email": "电子邮箱无效",
+      "cancel": "取消",
+      "submit": "提交"
+    },
+    "welcome": {
+      "title": "欢迎加入 Creator Fund",
+      "body": "准备好你的场景，吸引玩家，开始赚取 USDC 奖励。",
+      "lets_go": "开始吧"
+    },
+    "joined": {
+      "sections": "Creator Fund 版块",
+      "tabs": {
+        "my_places": "我的地点",
+        "leaderboard": "排行榜",
+        "payouts": "付款",
+        "home": "首页"
+      },
+      "title_prefix": "赚取",
+      "title": "Creator Fund",
+      "beta": "测试版",
+      "joined_on": "加入于 {date}",
+      "more_options": "更多选项",
+      "program": "计划",
+      "program_rules": "计划规则",
+      "read_terms": "阅读条款",
+      "contact_support": "联系支持",
+      "banner": {
+        "region": "公告"
+      },
+      "filter": {
+        "cycle": "周期",
+        "all_cycles": "所有周期",
+        "current_cycle": "当前周期"
+      },
+      "leaderboard": {
+        "sentence": "本周期收益最高的前 20 个地点",
+        "sentence_all": "所有周期中收益最高的前 20 个地点",
+        "rank": "排名",
+        "place": "地点",
+        "earned": "收益",
+        "amount": "{amount} USDC",
+        "rank_label": "第 {rank} 名",
+        "jump_in": "进入",
+        "jump_in_label": "进入 {place}",
+        "empty": "本周期暂无付款。",
+        "error": "加载排行榜时出了点问题。"
+      },
+      "get_ready": {
+        "title": "准备好了吗！",
+        "body": "你的第一个奖励周期将于 11 月 15 日开始。",
+        "body_started": "你的第一个奖励周期已于 11 月 15 日开始。",
+        "build": {
+          "title": "构建你的场景",
+          "body": "打造吸引玩家来到 Decentraland 的精彩体验。浏览<docs>创作者文档</docs>和<refs>参考示例</refs>获取灵感。"
+        },
+        "name": {
+          "title": "获取 NAME 并发布你的场景",
+          "body": "让你的 Worlds 可被访问，并为玩家准备好你的体验。",
+          "link": "获取 NAME"
+        },
+        "cycle": {
+          "title": "为第一个周期做好准备",
+          "body": "第 1 周期于 11 月 15 日开始。",
+          "body_started": "第 1 周期已于 11 月 15 日开始。"
+        },
+        "community": {
+          "title": "加入社区",
+          "body": "与其他创作者交流，分享你的作品并获取反馈。",
+          "link": "加入 Discord"
+        }
+      },
+      "news": {
+        "title": "新闻"
+      },
+      "my_places": {
+        "sentence": "你在计划中的地点的表现",
+        "last_update": "最后更新 {time}",
+        "status": {
+          "in_program": "已加入计划",
+          "not_eligible": "不符合条件",
+          "replaced": "已替换"
+        },
+        "reasons": {
+          "content_policy": "此场景不符合内容政策。",
+          "excluded": "此场景已被排除在 Creator Fund 之外。",
+          "not_owner": "只有所有者能通过此地点获得收益。你是协作者。",
+          "creator_not_eligible": "你的账户不符合条件，因此此地点不能参与。",
+          "terms_outdated": "接受更新后的计划条款即可参与。",
+          "unknown": "此场景目前不能参与。"
+        },
+        "metrics": {
+          "new_players": "可归因的新玩家",
+          "new_players_info": "过去 30 天内，首次进入 Decentraland、且第一天大部分时间都在你的地点度过的钱包。",
+          "new_players_info_label": "关于可归因的新玩家",
+          "d3_retention": "D3 留存率",
+          "d3_retention_info_label": "关于 D3 留存率",
+          "playtime": "总游戏时长",
+          "playtime_info": "过去 30 天内每位玩家在你的地点停留的平均时长。",
+          "playtime_info_label": "关于总游玩时长",
+          "minutes": "{value} 分钟",
+          "no_data": "无数据"
+        },
+        "empty_body": "发布场景后，它会显示在这里，并附上本周期的表现。",
+        "empty_closed_cycle": "本周期没有地点。",
+        "no_scenes": {
+          "title": "创建你的第一个场景，开始赚取收益"
+        },
+        "unpublished": {
+          "title": "发布一个场景，开始赚取收益",
+          "heading": "你未发布的场景",
+          "parcels": "{parcels} 个地块"
+        },
+        "start_from_template": "从模板开始",
+        "create_scene": "创建场景",
+        "error": "加载你的地点时出了点问题。",
+        "replaced_tooltip": "此地点已作为新地点重新发布。其之前的数据会保留。"
+      },
+      "payouts": {
+        "wallet": {
+          "title": "收款钱包",
+          "info_label": "关于收款钱包",
+          "info": "数字钱包用于存储和管理你的数字资产。你可以用它安全地发送、接收和追踪资金，包括你的 Creator Fund USDC 奖励。",
+          "learn_more": "了解更多",
+          "copy": "复制钱包地址",
+          "edit": "编辑",
+          "add": "添加钱包"
+        },
+        "contact": {
+          "title": "联系信息",
+          "full_name": "全名",
+          "email": "电子邮箱",
+          "unverified": "未验证",
+          "verify": "验证邮箱"
+        },
+        "table": {
+          "label": "付款",
+          "cycle": "周期",
+          "status": "状态",
+          "paid_places": "已付款地点",
+          "amount": "金额",
+          "transaction": "交易",
+          "pending": "待处理",
+          "paid": "已支付",
+          "usdc": "{amount} USDC",
+          "view_transaction": "在 Etherscan 上查看交易"
+        },
+        "locked": "付款钱包设置将于 11 月 25 日开放",
+        "empty": {
+          "title": "你的奖励之旅从这里开始！",
+          "first_payout": "你的首笔付款将在 {cycle} 周期结束后到来。",
+          "body": "继续创作，聚集玩家，打造让他们想要再次回访的体验！"
+        },
+        "add": {
+          "title": "添加收款钱包",
+          "body": "我们会将你的 Creator Fund 付款以 USDC 发送到这里。",
+          "submit": "添加钱包"
+        },
+        "change": {
+          "title": "更换收款钱包",
+          "body": "保存后，后续付款将发送到此钱包。",
+          "submit": "保存"
+        },
+        "wallet_field": {
+          "label": "钱包地址",
+          "placeholder": "0x…",
+          "invalid": "钱包地址无效。应以 0x 开头，长度为 42 个字符。"
+        },
+        "erc20": "请确保此钱包可以在以太坊（ERC-20）上接收 USDC。发送到不支持的钱包的资金无法找回。",
+        "verify": {
+          "title": "验证你的邮箱",
+          "body_sent": "6 位验证码已发送至 <b>{email}</b>。",
+          "body_instruction": "请在下方输入验证码以完成验证。",
+          "digit": "第 {n} 位，共 6 位",
+          "resend": "重新发送验证码",
+          "incorrect": "验证码错误。请检查邮件后重试。",
+          "expired": "此验证码已过期。请重新发送。",
+          "submit": "验证"
+        },
+        "snackbar": {
+          "wallet_added": "已添加收款钱包",
+          "wallet_updated": "已更新收款钱包",
+          "email_verified": "邮箱已验证"
+        },
+        "cancel": "取消",
+        "error": "加载你的付款时出了点问题。"
+      }
+    },
+    "errors": {
+      "generic": "出了点问题，请重试。",
+      "load_status": "加载 Creator Fund 时出了点问题。",
+      "retry": "重试"
+    }
+  },
+  "world_atlas": {
+    "world_size": "世界大小：{size}"
+  },
+  "error_boundary": {
+    "title": "出了点问题",
+    "description": "此页面遇到意外错误。你的场景和文件是安全的。请重试，或返回主页。",
+    "modal_description": "此窗口遇到意外错误。你的场景和文件是安全的。请重试，或关闭后重新开始。",
+    "app_description": "Creator Hub 遇到意外错误。你的场景和文件是安全的。请重试，或重新加载窗口。",
+    "try_again": "重试",
+    "go_home": "返回主页",
+    "close": "关闭",
+    "reload": "重新加载"
+  }
+}

@@ -1,8 +1,8 @@
 //! The social-api CORS answers, as production's `@dcl/http-server` server
 //! (`src/components.ts` at `b6b2cef`: `cors: { methods, maxAge: 86400 }`)
-//! sends them: any origin, reflected preflight request headers, no
-//! credentials. A request without `Origin` gets no CORS headers, as the
-//! captures without one show. The shared `cors_middleware` reflects origins
+//! sends them ([`HttpServerCors`]): any origin, reflected preflight request
+//! headers, no credentials. A request without `Origin` other than a preflight
+//! gets no CORS headers, as the captures without one show. The shared `cors_middleware` reflects origins
 //! and allows credentials for the other services; this layer replaces it on
 //! the communities router only. It keeps that layer's
 //! `X-Content-Type-Options: nosniff`, which the source does not send, so
@@ -10,12 +10,18 @@
 
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-const ALLOW_METHODS: &str = "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH";
-const MAX_AGE: &str = "86400";
+use crate::shared::cors::HttpServerCors;
+
+const CORS: HttpServerCors = HttpServerCors {
+    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH"),
+    max_age: "86400",
+    nosniff: true,
+    preflight_echoes_request: false,
+};
 
 pub async fn social_api_cors(req: Request, next: Next) -> Response {
     // The source's Node adapter rejects TRACE while constructing its native
@@ -37,48 +43,7 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
         }
         return nosniff(response);
     }
-    let has_origin = req.headers().contains_key(header::ORIGIN);
-    let preflight = req.method() == Method::OPTIONS;
-    let requested_headers = req
-        .headers()
-        .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
-        .cloned();
-    let resp = if preflight {
-        let mut resp = Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .unwrap();
-        let h = resp.headers_mut();
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static(ALLOW_METHODS),
-        );
-        if let Some(value) = requested_headers
-            && !value.as_bytes().is_empty()
-        {
-            h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, value);
-        }
-        h.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static(MAX_AGE),
-        );
-        h.insert(
-            header::VARY,
-            HeaderValue::from_static("Access-Control-Request-Headers"),
-        );
-        resp
-    } else {
-        next.run(req).await
-    };
-    let mut resp = nosniff(resp);
-    let h = resp.headers_mut();
-    if has_origin || preflight {
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-    }
-    resp
+    CORS.run(req, next).await
 }
 
 /// `X-Content-Type-Options: nosniff` on a Social answer, also for the

@@ -1,0 +1,16 @@
+.MetricsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  flex: 1 1 520px;
+  padding: 30px;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXLarge);
+  background-color: var(--palette-whiteTransparent-faint);
+}
+
+.MetricsCard .MetricsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 30px 0;
+}

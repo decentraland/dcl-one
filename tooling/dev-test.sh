@@ -20,6 +20,8 @@ for suite in "${suites[@]}"; do
   case "$suite" in
     # Each test holds a scratch database with its own pools; the cluster allows 400 connections.
     rust)
+      source "$(dirname "$0")/catalyst-test-resources.sh"
+      prepare_catalyst_test_resources
       test_database_url="${FOUNDATION_DEV_TEST_DATABASE_URL:-}"
       if [ -z "${test_database_url//[[:space:]]/}" ]; then
         echo "FOUNDATION_DEV_TEST_DATABASE_URL must name disposable PostgreSQL" >&2
@@ -32,12 +34,16 @@ for suite in "${suites[@]}"; do
       export CATALYST_TEST_DATABASE_URL="$test_database_url"
       export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
       cd "$FOUNDATION_DEV_ROOT"
+      python3 -m unittest discover -s tooling/tests -p 'test_catalyst_test_resources.py'
       python3 -m unittest discover -s tooling/tests -p 'test_dev_regressions.py'
+      python3 -m unittest discover -s tooling/tests -p 'test_archipelago_fixtures.py'
+      python3 tooling/archipelago-fixtures.py check
       python3 -m unittest discover -s tooling/tests -p 'test_enet_provenance.py'
       python3 library/vendor/rusty_enet/verify.py
       python3 tooling/dev-regressions.py
       cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets
       cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib
+      python3 tooling/dev-regressions.py --archipelago-external
       make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;
     e2e) SITES_E2E_NODE_URL="$FOUNDATION_DEV_API_URL" SITES_E2E_PG_URL="$FOUNDATION_DEV_DATABASE_URL" \
          pnpm --dir "$FOUNDATION_DEV_ROOT/apps/sites" test:e2e ;;
