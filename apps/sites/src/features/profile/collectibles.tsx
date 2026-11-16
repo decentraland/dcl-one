@@ -1,6 +1,6 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
-import { useEffect, useId, useRef, type ComponentType, type ReactNode, type Ref } from "react";
-import { Link } from "react-router";
+import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type Ref } from "react";
+import { Link, useNavigate } from "react-router";
 
 import { Button, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
 import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
@@ -81,7 +81,8 @@ export function catalogueTotal(data: InfiniteData<CollectiblePage<unknown>>): nu
 /**
  * Under a list: one button that stays mounted (so keyboard focus survives a click) reading Load more,
  * or Try again after the next page failed, plus a live region that announces the page loading and
- * its failure. Nothing at the end of the list.
+ * its failure. Nothing at the end of the list. Button's `loading` keeps it focusable and refuses
+ * a second click while the page loads.
  */
 export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest: () => void): ReactNode {
   const fetching = query.isFetchingNextPage;
@@ -91,10 +92,7 @@ export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest
     <>
       <span role="status">
         {fetching ? (
-          <>
-            <Spinner variant="light" aria-hidden="true" />
-            <span className={styles.visuallyHidden}>{`Loading more ${noun}`}</span>
-          </>
+          <span className={styles.visuallyHidden}>{`Loading more ${noun}`}</span>
         ) : failed ? (
           `More ${noun} could not be loaded.`
         ) : null}
@@ -102,10 +100,8 @@ export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest
       <Button
         variant="secondary"
         size="md"
-        // Not `disabled`: a disabled button drops the focus it holds.
-        aria-disabled={fetching}
+        loading={fetching}
         onClick={() => {
-          if (fetching) return;
           onRequest();
           void query.fetchNextPage();
         }}
@@ -114,6 +110,72 @@ export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest
       </Button>
     </>
   );
+}
+
+type FocusRows = { expectRowsFrom: (index: number) => void };
+
+/** Try again for a read that ended without rows to show: read every loaded page again. */
+function tryAgain<T>(query: CollectiblesQuery<T>, focus: FocusRows): ReactNode {
+  return (
+    <Button
+      variant="secondary"
+      size="md"
+      onClick={() => {
+        focus.expectRowsFrom(0);
+        void query.refetch();
+      }}
+    >
+      Try again
+    </Button>
+  );
+}
+
+/**
+ * The state of a list before it has rows to show: the first read failed (with no data yet, a Try
+ * again refetch puts the query back to pending, so it shows as loading), is loading, or brought a
+ * page whose every row failed to read (not an empty list; Load more when later pages may still read,
+ * Try again otherwise). `null` once there are rows, or none to show.
+ */
+export function unreadyState<T extends { id: string }>(
+  query: CollectiblesQuery<T>,
+  rows: readonly T[],
+  copy: { noun: string; unavailable: string; unreadable: string },
+  focus: FocusRows,
+): CollectiblesState | null {
+  if (query.isError && !query.data) {
+    return { kind: "error", message: copy.unavailable, action: tryAgain(query, focus) };
+  }
+  if (!query.data) return { kind: "loading", label: `Loading ${copy.noun}` };
+  if (rows.length === 0 && receivedAny(query.data)) {
+    return {
+      kind: "error",
+      message: copy.unreadable,
+      action: loadMore(query, copy.noun, () => focus.expectRowsFrom(0)) ?? tryAgain(query, focus),
+    };
+  }
+  return null;
+}
+
+/**
+ * Card actions are links into the Shop and Create, which this router serves: a plain click
+ * navigates in place, as the card's title does; a modified or middle click keeps the browser's own.
+ */
+export function useRouterClick(): (href: string) => (event: MouseEvent<HTMLAnchorElement>) => void {
+  const navigate = useNavigate();
+  return (href) => (event) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    void navigate(href);
+  };
 }
 
 /**
@@ -306,33 +368,17 @@ export function CollectiblesItem({ children }: { children: ReactNode }) {
 }
 
 /** The header's link to the full list elsewhere, with its chevron. */
-export function ViewAllLink({
-  href,
-  label,
-  LinkComponent = CollectibleLink,
-}: {
-  href: string;
-  label: string;
-  LinkComponent?: ComponentType<CollectibleLinkProps>;
-}) {
+export function ViewAllLink({ href, label }: { href: string; label: string }) {
   return (
-    <LinkComponent to={href} className={styles.viewAll}>
+    <CollectibleLink to={href} className={styles.viewAll}>
       {label}
       <GeneralRightArrow size={16} aria-hidden="true" />
-    </LinkComponent>
+    </CollectibleLink>
   );
 }
 
 /** A NAME as a row: the NAME tile, the name and its `.dcl.eth` suffix, and its actions. */
-export function NameRow({
-  name,
-  suffix = ".dcl.eth",
-  actions,
-}: {
-  name: string;
-  suffix?: string;
-  actions?: ReactNode;
-}) {
+export function NameRow({ name, actions }: { name: string; actions?: ReactNode }) {
   return (
     <div className={styles.name}>
       <span className={styles.nameTile} aria-hidden="true">
@@ -340,7 +386,7 @@ export function NameRow({
       </span>
       <p className={styles.nameLabel}>
         {name}
-        <span className={styles.nameSuffix}>{suffix}</span>
+        <span className={styles.nameSuffix}>.dcl.eth</span>
       </p>
       {actions ? <div className={styles.nameActions}>{actions}</div> : null}
     </div>
@@ -369,7 +415,6 @@ export type CollectibleCardProps = {
   badges?: ReactNode;
   /** Revealed over the badge row on hover or keyboard focus, e.g. Buy. */
   action?: ReactNode;
-  LinkComponent?: ComponentType<CollectibleLinkProps>;
 };
 
 const RARITY_LABEL: Record<CollectibleRarity, string> = {
@@ -399,7 +444,6 @@ export function CollectibleCard({
   priceFallback,
   badges,
   action,
-  LinkComponent = CollectibleLink,
 }: CollectibleCardProps) {
   const { broken, ref, onError } = useBrokenImage(imageUrl);
   const PriceMark =
@@ -420,9 +464,9 @@ export function CollectibleCard({
       <div className={styles.content}>
         <h3 className={styles.title}>
           {/* The title's link covers the card, so the whole card opens the item. */}
-          <LinkComponent to={href} className={styles.cardLink}>
+          <CollectibleLink to={href} className={styles.cardLink}>
             {title}
-          </LinkComponent>
+          </CollectibleLink>
         </h3>
         {byline ? <div className={styles.byline}>{byline}</div> : null}
         {price ? (

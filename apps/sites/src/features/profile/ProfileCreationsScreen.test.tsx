@@ -64,7 +64,7 @@ function show(vm: ProfileVM = profile(), { own = false } = {}) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return client;
+  return { client, router };
 }
 
 const card = (name: string) => screen.getByRole("link", { name }).closest("article") as HTMLElement;
@@ -143,6 +143,18 @@ describe("profile creations", () => {
     expect(await screen.findByText("These creations could not be read right now.")).toBeTruthy();
     expect(screen.queryByText("This account has not created anything yet.")).toBeNull();
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+  });
+
+  it("offers Try again when a single unreadable page has no next page to load", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileCreations.mockResolvedValueOnce({ items: [], received: 2, total: 2 }).mockResolvedValueOnce(page([creation(0)]));
+    show();
+    await screen.findByText("These creations could not be read right now.");
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("link", { name: "Hat 0" })).toBeTruthy();
   });
 
   it("shows a card whose image, rarity and traits are missing without inventing them", async () => {
@@ -267,7 +279,7 @@ describe("profile creations", () => {
 
   it("keeps the list on screen when a background re-read fails", async () => {
     net.fetchProfileCreations.mockResolvedValueOnce(page([creation(0)])).mockRejectedValueOnce(new Error("503"));
-    const client = show();
+    const { client } = show();
     await screen.findByRole("link", { name: "Hat 0" });
 
     await act(async () => {

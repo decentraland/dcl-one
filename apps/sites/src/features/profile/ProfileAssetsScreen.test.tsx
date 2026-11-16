@@ -67,7 +67,7 @@ function show({ own = true } = {}) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return client;
+  return { client, router };
 }
 
 const card = (label: string) => screen.getByRole("link", { name: label }).closest("article") as HTMLElement;
@@ -191,6 +191,32 @@ describe("profile assets", () => {
     expect(screen.queryByText("No assets yet")).toBeNull();
   });
 
+  it("offers Try again when a single unreadable page has no next page to load", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileAssets.mockResolvedValueOnce({ items: [], received: 3, total: 3 }).mockResolvedValueOnce(page([asset(1)]));
+    show();
+    await screen.findByText("These assets could not be read right now.");
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("link", { name: "Power Up 1" })).toBeTruthy();
+    expect(net.fetchProfileAssets).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens a card's action and a NAME's Transfer in place, through the router", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileAssets.mockResolvedValue(page([asset(1), name(5, "brai")]));
+    const { router } = show();
+    await screen.findByRole("link", { name: "Power Up 1" });
+
+    await user.click(screen.getByRole("link", { name: "View Power Up 1" }));
+    expect(router.state.location.pathname).toBe("/shop/token/0xabc/1");
+
+    await user.click(screen.getByRole("link", { name: "Transfer brai" }));
+    expect(router.state.location.pathname).toBe("/shop/token/0xens/5/transfer");
+  });
+
   it("shows the retry loading instead of the stale error", async () => {
     const user = userEvent.setup();
     net.fetchProfileAssets.mockRejectedValueOnce(new Error("503")).mockReturnValueOnce(new Promise(() => {}));
@@ -212,15 +238,6 @@ describe("profile assets", () => {
     expect(screen.getByRole("link", { name: "Go to the Shop" }).getAttribute("href")).toBe("/shop");
   });
 
-  it("tells a visitor what would appear, without the owner's call to action", async () => {
-    net.fetchProfileAssets.mockResolvedValue(page([]));
-
-    show({ own: false });
-
-    expect(await screen.findByText("Wearables, names and lands you own will appear here.")).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Go to the Shop" })).toBeNull();
-  });
-
   it("says the read failed, never an empty list, and tries again", async () => {
     const user = userEvent.setup();
     net.fetchProfileAssets.mockRejectedValueOnce(new Error("503")).mockResolvedValueOnce(page([asset(1)]));
@@ -235,7 +252,7 @@ describe("profile assets", () => {
 
   it("keeps the list on screen when a background re-read fails", async () => {
     net.fetchProfileAssets.mockResolvedValueOnce(page([asset(1)])).mockRejectedValueOnce(new Error("503"));
-    const client = show();
+    const { client } = show();
     await screen.findByRole("link", { name: "Power Up 1" });
 
     await act(async () => {

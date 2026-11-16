@@ -17,9 +17,10 @@ import {
   CollectiblesPanel,
   loadedRows,
   loadMore,
-  receivedAny,
   useCategoryTabs,
+  unreadyState,
   useFocusNewRows,
+  useRouterClick,
   ViewAllLink,
   type CategoryOption,
   type CollectibleCardProps,
@@ -64,6 +65,7 @@ function countLabel(shown: number, total: number): string {
 }
 
 function CreationCard({ item, creator }: { item: ProfileCreation; creator: string }) {
+  const routerClick = useRouterClick();
   const href = assetPage(item.contractAddress, item.itemId, "item");
   const payment = item.payment;
   const price: CollectibleCardProps["price"] =
@@ -85,11 +87,17 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: strin
       badges={<CollectibleBadges {...item.traits} />}
       action={
         payment.kind !== "none" ? (
-          <Button href={href} size="sm" aria-label={`Buy ${item.name}`}>
+          <Button href={href} onClick={routerClick(href)} size="sm" aria-label={`Buy ${item.name}`}>
             Buy
           </Button>
         ) : (
-          <Button href={href} variant="secondary" size="sm" aria-label={`View in Shop: ${item.name}`}>
+          <Button
+            href={href}
+            onClick={routerClick(href)}
+            variant="secondary"
+            size="sm"
+            aria-label={`View in Shop: ${item.name}`}
+          >
             View in Shop
           </Button>
         )
@@ -110,55 +118,35 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
 
   const viewAll = <ViewAllLink href={creatorShopHref(profile.address)} label="View all" />;
 
-  let state: CollectiblesState;
-  // With no data yet, a Try again refetch puts the query back to pending, so it shows as loading.
-  if (query.isError && !query.data) {
-    state = {
-      kind: "error",
-      message: "Creations are unavailable right now.",
-      action: (
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => {
-            focus.expectRowsFrom(0);
-            void query.refetch();
-          }}
-        >
-          Try again
-        </Button>
-      ),
-    };
-  } else if (!query.data) {
-    state = { kind: "loading", label: "Loading creations" };
-  } else {
-    state =
-      rows.length === 0 && receivedAny(query.data)
-        ? {
-            // Every row of the page failed to read: not an empty list, and later pages may still read.
-            kind: "error",
-            message: "These creations could not be read right now.",
-            action: loadMore(query, "creations", () => focus.expectRowsFrom(0)),
-          }
-        : rows.length === 0
-          ? {
-              kind: "empty-note",
-              message: own ? "Items you create will appear here." : "This account has not created anything yet.",
-            }
-          : {
-              kind: "list",
-              // The source shows no count here; it is only announced.
-              count: countLabel(rows.length, catalogueTotal(query.data)),
-              showCount: false,
-              children: rows.map((item) => (
-                <CollectiblesItem key={item.id}>
-                  <CreationCard item={item} creator={creator} />
-                </CollectiblesItem>
-              )),
-              listRef: focus.listRef,
-              more: loadMore(query, "creations", () => focus.expectRowsFrom(rows.length)),
-            };
-  }
+  const state: CollectiblesState =
+    unreadyState(
+      query,
+      rows,
+      {
+        noun: "creations",
+        unavailable: "Creations are unavailable right now.",
+        unreadable: "These creations could not be read right now.",
+      },
+      focus,
+    ) ??
+    (rows.length === 0 || !query.data
+      ? {
+          kind: "empty-note",
+          message: own ? "Items you create will appear here." : "This account has not created anything yet.",
+        }
+      : {
+          kind: "list",
+          // The source shows no count here; it is only announced.
+          count: countLabel(rows.length, catalogueTotal(query.data)),
+          showCount: false,
+          children: rows.map((item) => (
+            <CollectiblesItem key={item.id}>
+              <CreationCard item={item} creator={creator} />
+            </CollectiblesItem>
+          )),
+          listRef: focus.listRef,
+          more: loadMore(query, "creations", () => focus.expectRowsFrom(rows.length)),
+        });
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="creations" onTab={onTab}>

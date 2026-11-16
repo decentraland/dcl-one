@@ -1,6 +1,7 @@
 //! `/v1/nfts` over the subgraph readers (first ≤ 100, skip ≤ 5000, 30 s):
 //! wearables and emotes from the collections subgraphs, LAND, estates and
-//! names from the marketplace subgraph. The filters become the subgraph's
+//! names from the marketplace subgraph; a read that names no category reads
+//! both, as upstream's answers every category. The filters become the subgraph's
 //! `where`; `search` and a page past the reader window read the nft index
 //! instead (`nft_reads`, the envelope until it is published). `isOnRent`
 //! over LAND and the page's rental listings read the local rentals
@@ -387,6 +388,40 @@ fn only_land_registries(addresses: &[String]) -> bool {
                 ) && c.address.eq_ignore_ascii_case(a)
             })
         })
+}
+
+/// The marketplace subgraph's `where` when a read names no category: upstream's `/v1/nfts`
+/// answers every category, so an owner's unfiltered list holds their LAND, estates and names
+/// next to their wearables and emotes. Only a read whose filters that subgraph's NFT carries
+/// joins it (no wearable, emote, item or creator filter, no contract, Ethereum or no network).
+fn land_merge_where(f: &NftFilters, where_: &Value) -> Option<Value> {
+    let collection_only = f.is_wearable_head
+        || f.is_wearable_accessory
+        || f.is_wearable_smart
+        || f.wearable_category.is_some()
+        || !f.wearable_genders.is_empty()
+        || f.emote_category.is_some()
+        || !f.emote_genders.is_empty()
+        || !f.emote_play_mode.is_empty()
+        || f.emote_has_geometry
+        || f.emote_has_sound
+        || !f.creator.is_empty()
+        || !f.item_rarities.is_empty()
+        || f.item_id.is_some()
+        || !f.contract_addresses.is_empty();
+    if f.category.is_some()
+        || is_land_routed(f)
+        || collection_only
+        || matches!(f.network, Some(Network::Matic))
+    {
+        return None;
+    }
+    let mut w = where_.clone();
+    if let Some(map) = w.as_object_mut() {
+        map.remove("searchEmoteOutcomeType");
+    }
+    w["category_in"] = json!(["parcel", "estate", "ens"]);
+    Some(w)
 }
 
 /// The subgraph `where` for the filters; `now_ms` bounds the open order.
@@ -840,11 +875,12 @@ async fn list_page(
     let now_ms = readers::now_ms();
     let where_ = graph_where(f, now_ms);
     let (order_by, direction) = graph_sort(f.sort_by);
-    let sources: Vec<(Network, &str, &str)> = if is_land_routed(f) {
+    let mut sources: Vec<(Network, &str, &str, Value)> = if is_land_routed(f) {
         vec![(
             Network::Ethereum,
             readers::require_marketplace(state)?,
             LAND_FIELDS,
+            where_.clone(),
         )]
     } else {
         match f.network {
@@ -852,18 +888,26 @@ async fn list_page(
                 n,
                 readers::require_collections(state, n.graph())?,
                 COLLECTION_FIELDS,
+                where_.clone(),
             )],
             None => readers::require_both_collections(state)?
                 .into_iter()
-                .map(|(n, url)| (Network::from(n), url, COLLECTION_FIELDS))
+                .map(|(n, url)| (Network::from(n), url, COLLECTION_FIELDS, where_.clone()))
                 .collect(),
         }
     };
+    // A node without the marketplace subgraph keeps answering wearables and emotes.
+    if let (Some(w), Some(url)) = (
+        land_merge_where(f, &where_),
+        state.settings.marketplace_subgraph_url.as_deref(),
+    ) {
+        sources.push((Network::Ethereum, url, LAND_FIELDS, w));
+    }
     let mut rows: Vec<(Network, Value)> = Vec::new();
     let mut total = 0;
     let mut offset = 0;
     let count = sources.len();
-    for (network, url, fields) in sources {
+    for (network, url, fields, where_) in sources {
         let page = GraphPage {
             entity: "nfts",
             filter_type: "NFT_filter",
@@ -887,16 +931,9 @@ async fn list_page(
         .await
         .map_err(|e| readers::upstream_failed("/v1/nfts", &e))?;
         offset = skip_after;
-        total += readers::count_capped(
-            state,
-            network.graph(),
-            url,
-            "nfts",
-            "NFT_filter",
-            where_.clone(),
-        )
-        .await
-        .map_err(|e| readers::upstream_failed("/v1/nfts", &e))?;
+        total += readers::count_capped(state, network.graph(), url, "nfts", "NFT_filter", where_)
+            .await
+            .map_err(|e| readers::upstream_failed("/v1/nfts", &e))?;
         rows.extend(got.into_iter().map(|v| (network, v)));
     }
     let key = |v: &Value| -> (i64, String) {
@@ -1031,6 +1068,36 @@ mod tests {
             &parse_filters(&pairs(&[("category", "estate")])).unwrap()
         ));
         assert!(!is_land_routed(&f));
+    }
+
+    #[test]
+    fn an_owner_read_without_a_category_also_reads_land_estates_and_names() {
+        let where_of = |list: &[(&str, &str)]| {
+            let f = parse_filters(&pairs(list)).unwrap();
+            land_merge_where(&f, &graph_where(&f, 5_000))
+        };
+        let owner = ("owner", "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
+        let w = where_of(&[owner, ("includeSocialEmotes", "false")]).unwrap();
+        assert_eq!(w["owner"], owner.1);
+        assert_eq!(w["category_in"], json!(["parcel", "estate", "ens"]));
+        assert!(w.get("searchEmoteOutcomeType").is_none());
+        assert!(where_of(&[owner, ("network", "ETHEREUM")]).is_some());
+        assert!(where_of(&[owner, ("isOnSale", "true")]).is_some());
+        // A category, Polygon, or a filter only collections carry keeps the collections read alone.
+        for extra in [
+            ("category", "wearable"),
+            ("category", "ens"),
+            ("network", "MATIC"),
+            ("itemRarity", "epic"),
+            ("creator", "0x1111111111111111111111111111111111111111"),
+            ("isWearableSmart", "true"),
+            (
+                "contractAddress",
+                "0x4c290f486bae507719c562b6b524bdb71a2570c9",
+            ),
+        ] {
+            assert!(where_of(&[owner, extra]).is_none(), "{extra:?}");
+        }
     }
 
     #[test]
