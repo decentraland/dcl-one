@@ -24,7 +24,9 @@ use crate::gatekeeper::auth::{
     authorize_moderator, require_service_token, service_token_error, validate_body,
     verify_signed_fetch,
 };
-use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled};
+use crate::gatekeeper::errors::{
+    ApiError, conflict, not_found_labeled, service_unavailable, unauthorized,
+};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -355,6 +357,42 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
+/// Listing a scene's bans takes upstream's `isSceneOwnerOrAdmin`: the
+/// owner-or-admin decision the ban writes use, or, failing that, an
+/// extended holder of the place (a world deployment or streaming grantee, a
+/// LAND operator or lease holder), the same addresses `/scene-admin` lists.
+/// Anyone else gets the upstream 401; an authority that cannot be read
+/// keeps its own status (503).
+async fn ensure_can_list_bans(
+    state: &CommsState,
+    place: &PlaceLookup<'_>,
+    signer: &Address,
+) -> Result<(), ApiError> {
+    match scene::scene_owner_or_admin_decision(state, place, signer).await {
+        crate::PermissionDecision::Allowed => return Ok(()),
+        crate::PermissionDecision::Refused(
+            crate::AuthorityNotEstablished::RefusedLacksAuthority { .. },
+        ) => {}
+        crate::PermissionDecision::Refused(why) => return Err(why.into()),
+    }
+    let row = place.get().await.map_err(|error| {
+        tracing::error!(
+            error,
+            place_id = place.place_id(),
+            "places lookup failed while authorizing a ban listing"
+        );
+        service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
+    })?;
+    if let Some(row) = row
+        && scene::holds_extended_permission(state, row, signer).await?
+    {
+        return Ok(());
+    }
+    Err(unauthorized(
+        "User does not have permission to list scene bans",
+    ))
+}
+
 /// GET /scene-bans (scene signed): the banned wallets of the place with
 /// names, keyed on the resolved scene.
 pub async fn list_bans(
@@ -378,6 +416,7 @@ pub async fn list_bans(
             "place_id does not match the signed scene",
         ));
     }
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation
@@ -418,6 +457,7 @@ pub async fn list_ban_addresses(
             "place_id does not match the signed scene",
         ));
     }
+    ensure_can_list_bans(&state, &context.place, &sf.signer).await?;
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation

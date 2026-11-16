@@ -30,6 +30,7 @@ use ban_block::BanBlockPlugin;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
+    core_pipeline::prepass::DepthPrepass,
     log::LogPlugin,
     prelude::*,
     render::view::RenderLayers,
@@ -47,9 +48,9 @@ use common::{
     inputs::InputMap,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, PointAtSync, PrimaryCamera,
-        PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance, ShowOutOfBounds,
-        StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
+        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
+        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -518,6 +519,9 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
+            .insert_resource(LandscapeDistance::from_config(
+                decentraland_app_config.app_config.landscape_distance,
+            ))
             .insert_resource(SceneLoadDistance {
                 load: if decentraland_app_config.arguments.launch.preview {
                     1.0
@@ -841,6 +845,9 @@ fn setup(
                 ..Default::default()
             },
             default_camera_components(),
+            // the jump marker projects onto the depth prepass; the graphics settings add the
+            // normal prepass while the avatar outline is on
+            DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,
                 ..Default::default()

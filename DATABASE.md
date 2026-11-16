@@ -99,6 +99,22 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+Partial batches for one entity hold a session advisory lock from their first
+pending-upload/replay read through the staging or committed-publication decision.
+The guard owns one connection from the shared pool, and every guarded query and
+short transaction uses it; this supports a pool with one connection. A permit
+budget shared by CoreState bounds partial-session owners to
+`min(upload_limit, max(1, pool_max / 4))`. Permit waits use the existing request
+timeout; failed lock attempts return both checkout and permit before retrying.
+Staging commits remain independent of blob persistence. Cancellation or
+uncertain unlock closes the session. Connection ownership precedes the name
+deny-list refresh mutex, and ordinary readers return their checkout before
+waiting for an active refresh. Publication releases the session before its
+existing synchronous postcommit access revocation and other effects, which still
+finish before the response. Cleanup retains its independent store lock and
+expiry rules. See the
+[session ownership decision](docs/adr/2026-11-16-worlds-partial-upload-session.md).
+
 Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
 `worlds.pending_scene_files`, with no world row until the completing batch's
 publish transaction consumes the upload and writes its
@@ -323,6 +339,69 @@ hosts. Permission revocation must also take effect in the running room, not
 merely change a row. Preserve host identity and publish/subscribe grant
 distinctions. Test shared-room joins, denied joins, revocation and reconnect
 against the real transport.
+
+Selected room ownership uses the existing `social.archipelago_v4_assignments`
+realm primary key and global connection-epoch sequence on the shared pool. Signaling
+registration writes no owner row. Expected work is one candidate allocation per
+changed eligible legacy transport, indexed single-wallet ownership reads, and
+conditional claim, renewal and assignment publication for the positively selected
+Pulse identity. Steady owned renewal is due after 30 seconds; the lease lapses after
+90 seconds. Native selection requires no signaling socket. Maintenance retries unknown,
+borrowed, conflicting or unfinished targets after five seconds; healthy exact owned
+targets become due 30 seconds after a confirmed local renewal. Each attempt can perform
+Pulse positive and retirement requests plus wallet-before-realm SQL settlement, even
+when an old source no longer responds. Due targets rotate in bounded batches refilled
+on capacity notifications, independently of the one-second fallback wake. Maintenance
+has at most 128 queued/running items, 128 lifetime mutation credits and 16 running
+items within the shared 1,024-credit, 32-running queue. Cold hint-only work may hold
+at most 112 maintenance items and lifetime credits and run eight tasks; known-owned
+or unfinished targets use the remaining maintenance reserve and run before cold
+ready lanes. Each class has its own rotating due cursor. Event and durable takeover
+lanes run first without overtaking earlier work in the same wallet. Uncertain SQL
+keeps its credit after its waiter ends. These are workload and memory bounds, not
+measured throughput or a guarantee of renewal capacity under slow dependencies.
+
+The wallet safety lock precedes the realm row lock; no broker, policy or media await
+runs inside that SQL transaction. A fresh foreign row cannot be replaced from an
+epoch comparison alone. Known exact predecessors and lapsed rows can transition;
+fresh external same-session bindings are read-only. Uncertain mutations retain their
+before/after row identities, assignment digest and admission work credit until a
+locked conditional read settles them. No reset, predecessor restoration, broad
+wallet release, assignment index or per-service pool is required.
+An explicit Pulse no-selected-owner proof can retire a local retry slot only after
+the same wallet-before-realm read has settled any uncertain mutation and its work
+credit. The exact desired generation, selected identity and outstanding operations
+must still match. Retirement performs no realm mutation or release; known settled
+ownership ceases renewal under the existing lease, and foreign rows remain intact.
+
+`social.pulse_authority_generation` holds one deployment-audience primary-key row:
+positive sequence epoch, UUID source incarnation and naive UTC update timestamp.
+The root Pulse process alone writes it on fresh acquisition of the existing session
+lease; assignments and takeovers remain in Pulse memory. Gatekeeper reads the row
+through its existing pool and takes `FOR SHARE` before wallet/realm mutations and
+credential authorization. A successor commit is the authority cutover. The row does
+not expire or need renewal updates, avoiding contention with selected transactions.
+Separate exact-stamp, single-use mint and final-delivery permissions have an original
+two-second deadline including pool acquisition; neither can be renewed from a stale
+source after cutover. Already issued credentials retain their existing validity.
+
+One bounded immutable source-specific view discovers unchanged native targets after
+restart or dropped hints. At most 49,146 targets use a canonical JSON array below
+8 MiB, with 256 entries per reply below 64 KiB; these are encoding limits, not measured
+heap or throughput. Two readers share the same live view. A complete current view is
+required before retirement of known older epochs, followed by operation-grant expiry,
+exact uncertain-SQL settlement and outstanding-handle checks. Unregistered historical
+sources cannot be forgotten from UUID inequality. Retirement does not write foreign
+assignment rows or discard independently retained cleanup/takeover obligations.
+Wallets present in the sorted complete current view retain their exact previous slots
+until reseeding; absent old wallets can still retire to free bounded capacity.
+
+This metadata is local authority, not mirrored catalogue state. Restore with writers
+stopped and admissions closed, then acquire a fresh UUID/epoch before reopening.
+Restoring the row is not permission to reuse a pre-restore capability. The dev trades
+snapshot contains only its explicit shop tables, and content snapshots contain only
+content projections. The audience primary key serves all control reads/writes; no
+secondary index or assignment checkpoint is added.
 
 World allow-lists admit explicit access wallets and members of listed active,
 unsuspended communities who are not banned. Admission probes
@@ -745,7 +824,7 @@ fails its bootstrap on the missing relations and stays down.
 The drop is not reversible without the matching backup. Do not reset a
 database.
 
-Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+Peer sync is not a backup of local state: a node taking local writes holds the only copy of that data. Before turning a write switch on, the operator backs up the database, the blob store (`STORAGE_ROOT_FOLDER`) and the credentials (`ENCRYPTION_KEY` among them) and tests a restore; the application does not enforce this. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
 
 ## Social realtime notification workload
@@ -1446,6 +1525,36 @@ two-hour challenge lifetime. Both challenge and failure updates take the
 same wallet lock. The additive `0043_credits_captcha_generated_at` step
 preserves existing challenges and establishes their solve-time baseline.
 
+## Camera reel import workload
+
+`catalyst camera-reel import` (`camera_reel::import`) copies
+camera-reel-service's `images` table into `camera_reel.images`. Inputs: the
+source table read in pages of `--batch` rows (default 500) by its
+`(created_at, id)` keyset, and two bucket objects per new photo, fetched at
+most `--concurrency` (default 8) at once. The source has no index on that
+order, so each page sorts the table's matching rows; this is a cost on the old
+database during the copy window, unmeasured. Per page, one primary-key read
+of the local rows (`id = ANY`) decides what is new; a photo already here is
+not fetched again. Writes: per new photo, its blobs in the store, then one
+transaction inserting the `images` row and its `camera_reel.imported_images`
+row; per changed imported photo, one `UPDATE` of `is_public` and `metadata`
+guarded by `review_status = 'ok'` and the provenance row. No
+`photo_events` row is written and `ranking_published` is true, so the
+community photo counts and the ranking repair never see an imported photo.
+
+`camera_reel.imported_images` is the import's provenance: which local photos
+the source may change or `--prune` may delete. It is a separate relation and
+not a column of `images`: it is a fact about the copy, read only by the
+import by primary key, and the gallery rows stay as they are. Its foreign key
+cascades from `images` (same schema, same lifecycle), so a delete of the
+photo removes it. `--prune` collects the ids of one complete pass in memory
+(16 bytes each) and deletes each imported row the pass did not read through
+the owner-delete statement, which records the blobs in `withheld_blobs`. A
+running `serve` loads that relation at boot, so a pruned photo's bytes are
+withheld on `/contents/{hash}` after its next start; its reel route answers
+404 within the servable memo's minute. The bootstrap defines the table; an
+existing database gains it from the object pass, so no step exists.
+
 ## Badges catalog and progress workload
 
 The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
@@ -1608,6 +1717,23 @@ on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is up
 `EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
+
+The `friend_first_wear` notification producer
+(`social/src/notifications/first_wear.rs`, leased `friend-first-wear`) reads
+`content.deployments` by `id` through the same id cursor and gap records,
+under source `friend_first_wear`: the signer's `entity_timestamp` is not
+storage order (a local deploy may be signed up to 15 minutes ahead, a synced
+one long before), and a cursor on it would skip every profile stored after
+one signed later and every tie past a page edge. Its first pass starts at the
+head. A batch seeds baselines and claims first wears (`social.worn_history`)
+in the transaction that advances the cursor, and notifies after it commits,
+so a restart never re-notifies a claim. Its batch is
+`BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
+(600 s), and it publishes the same lag and gap gauges under its source. A profile the
+node stored more than 24 hours after its entity timestamp is history a
+syncing node caught up on and is passed without effect; the lag is measured
+at storage, so a stalled producer still works through its backlog.
+`social.first_wear_cursor` is no longer read.
 
 ### Presence badges flow
 

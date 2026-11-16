@@ -442,10 +442,14 @@ pub(super) async fn comms_states(
 
     let non_empty = Config::non_empty;
     let archipelago_settings = archipelago::Settings::resolve(archipelago::config::RawSettings {
+        ban_sweep_interval_ms: config.worlds.ban_sweep_interval_ms,
         max_sockets: config.worlds.ws_max_sockets,
         max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
+        max_pending_handshakes: config.worlds.ws_max_pending_handshakes,
+        max_pending_handshakes_per_ip: config.worlds.ws_max_pending_handshakes_per_ip,
         trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         handshake_timeout_ms: config.worlds.handshake_timeout,
+        challenge_request_timeout_ms: config.worlds.challenge_request_timeout,
         deny_list_url: config.worlds.deny_list(),
         island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
         commit_hash: config.node.commit_hash.clone(),
@@ -731,6 +735,7 @@ pub(super) fn social_states(
             first_wear: notifications::FirstWearSettings {
                 shop_item_base_url: config.social.shop_item_base_url.clone(),
                 image_base: non_empty(&config.social.first_wear_image_base),
+                batch_size: i64::from(config.social.badges_processor_batch_size),
             },
             delivery_interval: Duration::from_secs(
                 config.social.notification_delivery_interval_secs,

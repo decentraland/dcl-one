@@ -1817,12 +1817,10 @@ async fn connections_for(pool: &PgPool, address: &str) -> i64 {
         .unwrap()
 }
 
-/// The DM token's connection record is a social write: off or held, the
-/// token still mints and nothing is recorded; on with fresh stamps, the
-/// connection is stored.
+/// The DM token's connection record is a social write: off, the token
+/// still mints and nothing is recorded; on, the connection is stored.
 #[tokio::test]
 async fn the_private_messages_token_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1834,49 +1832,33 @@ async fn the_private_messages_token_records_the_connection_only_while_social_wri
         r#"{"signer":"dcl:explorer"}"#,
     )
     .await;
-    let lab = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
-        let held = scoped(
-            lab.stamps.clone(),
-            voice::private_messages_token(
-                State(state.clone()),
-                at("/private-messages/token"),
-                headers.clone(),
-                switch,
-            ),
-        )
-        .await;
-        assert!(held.is_ok(), "the token mints whatever the switch");
-    }
-    assert_eq!(
-        connections_for(&pool, me.as_str()).await,
-        0,
-        "no stamps: nothing recorded"
-    );
-    let lab = StampLab::fresh();
-    let minted = scoped(
-        lab.stamps.clone(),
+    let mint = |switch| {
         voice::private_messages_token(
             State(state.clone()),
             at("/private-messages/token"),
             headers.clone(),
-            writes_on(),
-        ),
-    )
-    .await;
-    assert!(minted.is_ok());
+            switch,
+        )
+    };
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
+        assert!(
+            mint(switch).await.is_ok(),
+            "the token mints whatever the switch"
+        );
+    }
+    assert_eq!(
+        connections_for(&pool, me.as_str()).await,
+        0,
+        "off: nothing recorded"
+    );
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 
-/// The scene adapter's connection record is a social write too: off or
-/// held, the adapter still mints and nothing is recorded.
+/// The scene adapter's connection record is a social write too: off, the
+/// adapter still mints and nothing is recorded.
 #[tokio::test]
 async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1889,35 +1871,27 @@ async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_th
         &meta("main", &scene_id, Some("dev-held")),
     )
     .await;
-    let mint = |lab: &StampLab, switch| {
-        scoped(
-            lab.stamps.clone(),
-            handlers::get_scene_adapter(
-                State(state.clone()),
-                at("/get-scene-adapter"),
-                headers.clone(),
-                switch,
-                axum::body::Bytes::new(),
-            ),
+    let mint = |switch| {
+        handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            switch,
+            axum::body::Bytes::new(),
         )
     };
-    let held = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
         assert!(
-            mint(&held, switch).await.is_ok(),
+            mint(switch).await.is_ok(),
             "the adapter mints whatever the switch"
         );
     }
     assert_eq!(
         connections_for(&pool, me.as_str()).await,
         0,
-        "held or off: nothing recorded"
+        "off: nothing recorded"
     );
-    assert!(mint(&StampLab::fresh(), writes_on()).await.is_ok());
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 
@@ -2902,35 +2876,11 @@ async fn world_mint_refuses_at_capacity() {
 /// exercised: this crate has no LiveKit room-service double.
 #[tokio::test(flavor = "current_thread")]
 async fn revoke_maps_each_arm_to_its_livekit_call() {
-    use std::io::Write;
-    use std::sync::Mutex;
-
     use super::RoomRevocation;
+    use crate::test_logs::LogBuffer;
     use crate::world_identity::WorldName;
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let buffer = LogBuffer::default();
-    let writer = buffer.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let (buffer, _capture) = LogBuffer::capture(tracing::Level::TRACE);
 
     let state = lazy_state(Settings {
         livekit: super::LiveKit {
@@ -2970,7 +2920,7 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             tasks,
             "{variant}: no LiveKit task is spawned while LiveKit is not configured"
         );
-        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        let logs = buffer.text();
         let line = logs.lines().last().unwrap_or_default();
         assert!(
             line.contains("LiveKit not configured; no participant evicted")
@@ -2978,14 +2928,13 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             "{variant}: {logs}"
         );
     }
-    let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    let logs = buffer.text();
     assert!(!logs.contains("comms-revocation"), "{logs}");
 }
 
-/// `serve`'s one NATS link is the gatekeeper's whenever `NATS_URL` is set: the `/ws` connector
-/// publishes and subscribes over it in every process, the island subscriber in the primary.
+/// Configured credentials require an audience; building their shared NATS link does not dial it.
 #[tokio::test]
-async fn nats_url_alone_builds_the_link() {
+async fn configured_nats_requires_an_audience_and_builds_the_shared_link() {
     use super::admission::cluster::ClusterConfig;
     use super::bus::InProcessBus;
 
@@ -2993,10 +2942,23 @@ async fn nats_url_alone_builds_the_link() {
         nats_url: nats_url.map(str::to_string),
         ..ClusterConfig::default()
     };
-    let linked = comms_state(lazy_pool(), Settings::for_tests())
+    let missing_audience = comms_state(lazy_pool(), Settings::for_tests())
         .with_cluster(cluster(Some("nats://127.0.0.1:4222")))
+        .err()
+        .expect("the production constructor refuses configured credentials without an audience");
+    assert!(missing_audience.to_string().contains("deployment audience"));
+    let mut configured = cluster(Some("nats://127.0.0.1:4222"));
+    configured.control_v4_audience = Some("nats-link-test".into());
+    let linked = comms_state(lazy_pool(), Settings::for_tests())
+        .with_cluster(configured)
         .unwrap();
-    assert!(linked.bus.is_enabled(), "NATS_URL alone builds the link");
+    assert!(linked.bus.is_enabled());
+    assert!(
+        linked
+            .assignments
+            .as_ref()
+            .is_some_and(|fence| fence.generation_required())
+    );
     assert!(!linked.bus.is_connected(), "nothing dials before connect()");
 
     let unlinked = comms_state(lazy_pool(), Settings::for_tests())

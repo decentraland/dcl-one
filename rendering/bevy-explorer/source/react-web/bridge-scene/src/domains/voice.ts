@@ -5,30 +5,55 @@ import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 
-// comms `VOICE_CHAT_CHANNEL`: calls and community streams, which a nearby mute leaves audible.
-const VOICE_CHAT_CHANNEL = 'voice-chat'
+// comms `VOICE_CHAT_CHANNEL`: calls and community streams, which neither a nearby mute nor a scene's nearby-voice toggle silences.
+const CALL_CHANNEL = 'voice-chat'
 
-const speaking = new Map<string, string>()
+const nearby = new Set<string>()
+const call = new Set<string>()
+let nearbyBlocked = false
+let send: Ctx['send'] | undefined
+
+/** One rule for the nametag badge and the page: a call speaker always shows, a nearby one unless the scene blocks nearby voice. */
+function shown(address: string): boolean {
+  return call.has(address) || (!nearbyBlocked && nearby.has(address))
+}
 
 export function isSpeaking(address: string): boolean {
-  return speaking.has(address.toLowerCase())
+  return shown(address.toLowerCase())
+}
+
+/** Nearby speakers stop showing as speaking while the scene blocks nearby voice, and show again after. */
+export function setNearbyVoiceBlocked(blocked: boolean): void {
+  if (blocked === nearbyBlocked) return
+  nearbyBlocked = blocked
+  for (const address of nearby) {
+    if (!call.has(address)) send?.({ kind: 'voiceActivity', address, active: !blocked })
+  }
 }
 
 export function isSpeakingInCall(address: string): boolean {
-  return speaking.get(address.toLowerCase()) === VOICE_CHAT_CHANNEL
+  return call.has(address.toLowerCase())
 }
 
 export function registerVoice(ctx: Ctx): void {
+  send = ctx.send
   // A reopened stream only reports new changes, so whoever was talking is reset first.
   const open = async (): Promise<Awaited<ReturnType<typeof BevyApi.getVoiceStream>>> => {
-    for (const address of speaking.keys()) ctx.send({ kind: 'voiceActivity', address, active: false })
-    speaking.clear()
+    for (const address of new Set([...nearby, ...call])) {
+      if (shown(address)) ctx.send({ kind: 'voiceActivity', address, active: false })
+    }
+    nearby.clear()
+    call.clear()
     return await BevyApi.getVoiceStream()
   }
+  // The engine reports each room a peer talks in separately, so the page hears only a change of the combined answer.
   relay('voice', open, (v) => {
     const address = v.sender_address.toLowerCase()
-    if (v.active) speaking.set(address, v.channel)
-    else speaking.delete(address)
-    ctx.send({ kind: 'voiceActivity', address, active: v.active })
+    const was = shown(address)
+    const room = v.channel === CALL_CHANNEL ? call : nearby
+    if (v.active) room.add(address)
+    else room.delete(address)
+    const active = shown(address)
+    if (active !== was) ctx.send({ kind: 'voiceActivity', address, active })
   })
 }

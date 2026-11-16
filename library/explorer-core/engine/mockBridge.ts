@@ -14,10 +14,12 @@ import {
   type CommunityChannel,
   type CommunityMember,
   type CommunityMemberSection,
+  type CommunityPost,
   type CommunityRequestMember,
   type DmHistoryEntry,
   type Emote,
   type Envelope,
+  type GalleryPhoto,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
@@ -38,6 +40,8 @@ import { mentionName } from './mention'
 import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
+import { fixMapPublicReads } from '../features/map/mapApi'
+import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
 
 const badgeImg = (seed: string): string => `https://picsum.photos/seed/${seed}/96/96`
@@ -97,7 +101,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
     ],
     mutuals: 30,
     badges: mockBadges(),
-    photos: Array.from({ length: 6 }, (_, i) => `https://picsum.photos/seed/photo${i}/300/300`),
     equippedWearables: equippedNow(),
     equippedEmotes: mockEquippedEmotes(),
     info: {
@@ -136,6 +139,39 @@ const MOCK_OWNED_PLACES = [
 const mockLinkedPlaces = new Map<string, string[]>()
 // The card places unlinked per community.
 const mockRemovedPlaces = new Map<string, Set<string>>()
+// The Announcements tab's posts by community, newest first: 13 to start with, so a second page loads.
+const MOCK_POSTS_PAGE = 10
+const mockPosts = new Map<string, CommunityPost[]>()
+const MOCK_POST_TEXTS = [
+  'It was TIME for an update. See you all in the new Plaza. Enjoy!',
+  'EPIC Launch Party happening now in the theatre!',
+  'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.'
+]
+function postsOf(id: string): CommunityPost[] {
+  let posts = mockPosts.get(id)
+  if (posts == null) {
+    const day = 24 * 60 * 60 * 1000
+    // the first author is an official wallet; every third post is liked by the mock user
+    posts = Array.from({ length: 13 }, (_, i) => {
+      const official = i % 4 === 0
+      const author = official ? 'Decentraland' : 'Kimbo'
+      return {
+        id: `${id}-p${i}`,
+        author,
+        authorAddress: `0x${(0xd0 + (official ? 0 : 7)).toString(16).padStart(40, '0')}`,
+        authorPicture: `https://i.pravatar.cc/80?u=${author}`,
+        hasClaimedName: true,
+        official,
+        text: MOCK_POST_TEXTS[i % MOCK_POST_TEXTS.length],
+        timestamp: Date.now() - (i * 3 + 1) * day,
+        likes: 13 - i,
+        likedByMe: i % 3 === 0
+      }
+    })
+    mockPosts.set(id, posts)
+  }
+  return posts
+}
 // The card's member actions by community: a member's new role, or null once kicked or banned.
 const mockMemberChanges = new Map<string, Map<string, string | null>>()
 // The Members tab's other sections, by community: join requests received, invites sent and bans.
@@ -399,10 +435,25 @@ const DEFAULTS: MockOptions = {
 
 let running: (() => void) | null = null
 
+let mockPublicReels: ((address: string) => GalleryPhoto[]) | null = null
+
+export async function mockPublicReelPage(
+  address: string,
+  offset: number,
+  limit: number
+): Promise<{ ok: boolean; photos: GalleryPhoto[]; total: number; max: number }> {
+  const all = mockPublicReels?.(address) ?? []
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  return { ok: true, photos: all.slice(offset, offset + limit), total: all.length, max: 500 }
+}
+
 // Idempotent: StrictMode runs the HUD's useMemo twice, and a second bridge would answer every message again.
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
+  // Stateful so a home set from the map is the home the lobby and the map then show.
+  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } }
   const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
@@ -419,16 +470,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     { id: 'n10', type: 'community_voice_chat_started', read: false, timestamp: new Date(mockNow - 600_000).toISOString(), metadata: { communityId: 'c1', communityName: 'Decentraland Foundation', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
     { id: 'n6', type: 'credits_reminder_claim_credits', read: false, timestamp: new Date(mockNow - 5400_000).toISOString(), metadata: {} }
   ]
-  // Mock camera-reel gallery — ~3-day spacing spans two months (exercises month grouping).
-  // dateTime is a unix-seconds string, like the real compact endpoint. Mutable (delete splices).
+  // 230 photos a day apart, so the grid pages across several month headers. dateTime is a
+  // unix-seconds string, like the real compact endpoint.
   const DAY = 86_400_000
-  const mockGallery = Array.from({ length: 14 }, (_, i) => ({
+  const mockGallery = Array.from({ length: 230 }, (_, i) => ({
     id: `g${i}`,
     url: `https://picsum.photos/seed/reel${i}/1200/800`,
     thumbnailUrl: `https://picsum.photos/seed/reel${i}/400/300`,
-    isPublic: i % 2 === 0,
-    dateTime: String(Math.floor((mockNow - i * 3 * DAY) / 1000))
+    isPublic: i % 3 !== 0,
+    dateTime: String(Math.floor((mockNow - i * DAY) / 1000))
   }))
+  mockPublicReels = (address) =>
+    address.toLowerCase() === o.userId.toLowerCase()
+      ? mockGallery.filter((p) => p.isPublic)
+      : Array.from({ length: 40 }, (_, i) => ({
+          id: `${address.slice(2, 8)}-${i}`,
+          url: `https://picsum.photos/seed/${address}${i}/1200/800`,
+          thumbnailUrl: `https://picsum.photos/seed/${address}${i}/400/300`,
+          isPublic: true,
+          dateTime: String(Math.floor((mockNow - i * 2 * DAY) / 1000))
+        }))
   let mockPhotoMode: PhotoModeSnapshot = {
     active: false,
     hudHidden: false,
@@ -903,7 +964,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
 
     if (msg.kind === 'getHomeScene') {
-      reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'setHomeScene') {
+      mockHome = { realm: msg.realm, parcel: msg.parcel }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+
+    if (msg.kind === 'watchMapPlayers') {
+      if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
+      return
+    }
+    const mapReply = mockMapReply(msg)
+    if (mapReply != null) {
+      reply(mapReply)
       return
     }
 
@@ -916,11 +992,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no catalyst looks or browser to open in the mock
-    if (msg.kind === 'showLook') {
-      reply({ kind: 'lookShown', look: msg.look })
+    if (msg.kind === 'showLook' || msg.kind === 'openLegal') return
+    if (msg.kind === 'openExternalUrl') {
+      reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
       return
     }
-    if (msg.kind === 'expectLook' || msg.kind === 'preloadLook' || msg.kind === 'openLegal') return
 
     if (msg.kind === 'sendChat') {
       // Echo the local player's message back (the engine would broadcast it); a DM is stored first.
@@ -1444,6 +1520,36 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communities', communities: mockMine() })
       return
     }
+    if (msg.kind === 'getCommunityPosts') {
+      const all = postsOf(msg.id)
+      const from = (msg.page - 1) * MOCK_POSTS_PAGE
+      reply({ kind: 'communityPosts', id: msg.id, page: msg.page, posts: all.slice(from, from + MOCK_POSTS_PAGE), total: all.length })
+      return
+    }
+    if (msg.kind === 'createCommunityPost') {
+      const all = postsOf(msg.id)
+      all.unshift({ id: `${msg.id}-new${all.length}`, author: 'Mojito', authorAddress: o.userId, hasClaimedName: true, official: false, text: msg.content, timestamp: Date.now(), likes: 0, likedByMe: false })
+      setTimeout(() => {
+        reply({ kind: 'communityPostCreated', id: msg.id, ok: true })
+        reply({ kind: 'communityPosts', id: msg.id, page: 1, posts: all.slice(0, MOCK_POSTS_PAGE), total: all.length })
+      }, 400)
+      return
+    }
+    if (msg.kind === 'deleteCommunityPost') {
+      const all = postsOf(msg.id).filter((p) => p.id !== msg.postId)
+      mockPosts.set(msg.id, all)
+      reply({ kind: 'communityPosts', id: msg.id, page: 1, posts: all.slice(0, MOCK_POSTS_PAGE), total: all.length })
+      return
+    }
+    if (msg.kind === 'likeCommunityPost') {
+      const post = postsOf(msg.id).find((p) => p.id === msg.postId)
+      if (post != null) {
+        post.likedByMe = msg.like
+        post.likes = Math.max(0, post.likes + (msg.like ? 1 : -1))
+      }
+      setTimeout(() => reply({ kind: 'communityPostLiked', id: msg.id, postId: msg.postId, liked: msg.like, ok: post != null }), 200)
+      return
+    }
     if (msg.kind === 'getCommunityDetail') {
       const addr = memberAddr
       const day = 24 * 60 * 60 * 1000
@@ -1461,11 +1567,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        posts: [
-          { id: 'p1', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'It was TIME for an update. See you all in the new Plaza. Enjoy!', timestamp: Date.now() - 2 * day, likes: 10 },
-          { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
-          { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
-        ],
         // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
           { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
@@ -1532,7 +1633,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGallery') {
-      reply({ kind: 'gallery', photos: mockGallery, current: mockGallery.length, max: 500 })
+      const page = mockGallery.slice(msg.offset, msg.offset + msg.limit)
+      setTimeout(() => reply({ kind: 'gallery', requestId: msg.requestId, ok: true, photos: page, received: page.length, current: mockGallery.length, max: 500 }), o.latency)
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
@@ -1554,7 +1656,13 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)
-      reply({ kind: 'gallery', photos: mockGallery, current: mockGallery.length, max: 500 })
+      reply({ kind: 'galleryWrite', requestId: msg.requestId, ok: i >= 0, current: mockGallery.length, max: 500 })
+      return
+    }
+    if (msg.kind === 'setGalleryPhotoPublic') {
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      if (photo != null) photo.isPublic = msg.isPublic
+      reply({ kind: 'galleryWrite', requestId: msg.requestId, ok: photo != null })
       return
     }
     if (msg.kind === 'getProfile') {
@@ -1632,6 +1740,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
 
+    // only the login rpc is left
+    if (msg.kind !== 'rpc:req') return
     switch (msg.method) {
       case 'getPreviousLogin':
         reply({
@@ -1653,6 +1763,27 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       case 'loginGuest':
         reply({ kind: 'rpc:res', id: msg.id, ok: true })
         spawnPlayer()
+        return
+      // Email sign-in: any address gets a code; the code 000000 is a wrong one, any other opens a
+      // mock wallet, which signs anything.
+      case 'emailStart':
+        setTimeout(() => reply({ kind: 'rpc:res', id: msg.id, ok: true }), 600)
+        return
+      case 'emailComplete': {
+        const wrong = msg.params?.code === '000000'
+        setTimeout(
+          () =>
+            reply(
+              wrong
+                ? { kind: 'rpc:res', id: msg.id, ok: false, error: 'EmailLoginError: [incorrect-code] mock' }
+                : { kind: 'rpc:res', id: msg.id, ok: true, value: { token: 'mock', walletAddress: '0x00000000000000000000000000000000000e4a11' } }
+            ),
+          600
+        )
+        return
+      }
+      case 'guestSign':
+        reply({ kind: 'rpc:res', id: msg.id, ok: true, value: `0x${'00'.repeat(65)}` })
         return
       case 'loginIdentity':
         // Same-domain SSO hand-off: the engine would finalize the wallet from the identity.

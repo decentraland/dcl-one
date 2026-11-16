@@ -75,6 +75,14 @@ pub trait AccessPolicy: Send + Sync {
         world: &WorldName,
         parcels: &ParcelSet,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
+    /// The deployment/streaming grantees of `world` whose grant is
+    /// world-wide or touches `parcels`, without the owner: an authorization
+    /// question, so no owner fallback widens it on a fault.
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
 }
 
 /// The ONE room resolver as comms asks it; every method is the worlds
@@ -355,7 +363,7 @@ pub mod test_support {
 
     /// An [`AccessPolicy`] that gives every question the answer its field
     /// holds. The default is an unknown world, access allowed, not blocked, not
-    /// an admin, no LAND document and no protected wallet.
+    /// an admin, no LAND document, no protected wallet and no grantee.
     pub struct StubPolicy {
         pub access_type: Result<Option<AccessType>, AuthorityNotEstablished>,
         pub world_owner: Result<Option<Address>, AuthorityNotEstablished>,
@@ -364,6 +372,7 @@ pub mod test_support {
         pub admin: PermissionDecision,
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
+        pub grantees: Result<BTreeSet<Address>, AuthorityNotEstablished>,
         /// `None`: the world exists with the `access_type` setting (unrestricted when unknown).
         pub admission: Option<WorldAdmission>,
     }
@@ -378,6 +387,7 @@ pub mod test_support {
                 admin: PermissionDecision::refused("stub: not an admin"),
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
+                grantees: Ok(BTreeSet::new()),
                 admission: None,
             }
         }
@@ -449,6 +459,14 @@ pub mod test_support {
             _parcels: &ParcelSet,
         ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
             self.protected.as_ref().cloned().map_err(copy)
+        }
+
+        async fn world_grantees(
+            &self,
+            _world: &WorldName,
+            _parcels: &ParcelSet,
+        ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+            self.grantees.as_ref().cloned().map_err(copy)
         }
     }
 
@@ -586,4 +604,29 @@ pub mod test_support {
             },
         }
     }
+}
+
+/// The root's deployment lease and durable generation binding, without any room state.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PulseGenerationBinding {
+    pub audience: String,
+    pub epoch: u64,
+    pub source_incarnation: String,
+}
+impl PulseGenerationBinding {
+    pub fn valid(&self) -> bool {
+        !self.audience.is_empty()
+            && self.audience.len() <= 256
+            && self.epoch > 0
+            && self.epoch <= i64::MAX as u64
+            && uuid::Uuid::parse_str(&self.source_incarnation)
+                .is_ok_and(|source| source.to_string() == self.source_incarnation)
+    }
+}
+
+/// Supplied by root/jobs. Pulse never allocates a generation or persists assignments.
+pub trait PulseGeneration: Send + Sync {
+    fn binding(&self) -> &PulseGenerationBinding;
+    fn lost(&self) -> &tokio_util::sync::CancellationToken;
 }

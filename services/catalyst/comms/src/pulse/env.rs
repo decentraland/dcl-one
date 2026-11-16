@@ -18,8 +18,9 @@ use super::cluster::{
 use super::handshake::MAX_TIMESTAMP_SKEW_MS;
 use super::hardening::{
     DEFAULT_DISCRETE_BURST, DEFAULT_DISCRETE_RATE_PER_SEC, DEFAULT_INPUT_BURST,
-    DEFAULT_INPUT_MAX_HZ, DisconnectReason, GameplayRateLimiter, HandshakeReplayPolicy,
-    IpWhitelist,
+    DEFAULT_INPUT_MAX_HZ, DEFAULT_REPLAY_ENTRIES_PER_SOURCE, DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+    DEFAULT_REPLAY_ENTRIES_WHITELISTED, DisconnectReason, GameplayRateLimiter,
+    HandshakeReplayPolicy, IpWhitelist,
 };
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use super::server::{ENET_CAPACITY, WT_CAPACITY};
@@ -111,7 +112,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_IP_LIMITER_WHITELIST",
-        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
+        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps, PULSE_REPLAY_ENTRIES_PER_SOURCE (they share PULSE_REPLAY_ENTRIES_WHITELISTED instead) and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
     ),
     (
         "PULSE_AOI_TIER0_RADIUS",
@@ -203,6 +204,18 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "durable consumed-handshake journal; startup fails closed if it cannot be opened or parsed (default data/pulse-replay.tsv)",
     ),
     (
+        "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+        "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48, so every subscriber of an IPv6 provider that shares one /48 shares one quota, as clients behind one IPv4 NAT address do; raise it before binding IPv6 for such networks; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
+    ),
+    (
+        "PULSE_REPLAY_ENTRIES_WHITELISTED",
+        "consumed-handshake entries all PULSE_IP_LIMITER_WHITELIST sources may hold together while they are fresh, in one shared bucket in place of PULSE_REPLAY_ENTRIES_PER_SOURCE; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; the default is about half the table; 0 means unlimited (default 4096)",
+    ),
+    (
+        "PULSE_REPLAY_ENTRIES_PER_WALLET",
+        "consumed-handshake entries one wallet may hold while they are fresh, including clock-ahead handshakes the server answered; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; defense in depth beside the per-source and whitelisted quotas, which bound the table; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
+    ),
+    (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
         "shared audience for configured legacy ownership and its NATS control-position bridge; must match PULSE_V4_AUDIENCE when both are set (default unset)",
     ),
@@ -248,7 +261,7 @@ fn refuse_outside_hosts(env: &catalyst_config::posture::Lookup) -> anyhow::Resul
 
 /// Reject historical requests for an authentication mode this process cannot serve.
 /// These values validate the shipped posture; they never configure server capabilities.
-fn validate_auth_requests(
+pub fn validate_auth_requests(
     legacy: Result<String, VarError>,
     v4: Result<String, VarError>,
 ) -> anyhow::Result<()> {
@@ -276,6 +289,12 @@ fn validate_auth_requests(
 /// `catalyst pulse`: tracing, the Prometheus exporter, and the server assembled from the
 /// environment; returns when the loop ends.
 pub async fn run_from_env() -> anyhow::Result<()> {
+    run_from_env_with_generation(None).await
+}
+
+pub async fn run_from_env_with_generation(
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<()> {
     validate_auth_requests(
         std::env::var("PULSE_LEGACY_HANDSHAKE"),
         std::env::var("PULSE_V4_ENABLED"),
@@ -317,6 +336,18 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         chrono::Utc::now().timestamp_millis(),
     )
     .map_err(|_| anyhow::anyhow!("cannot open the Pulse replay journal"))?;
+    server.replay_policy.set_max_entries_per_source(env_or(
+        "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+        DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+    )?);
+    server.replay_policy.set_max_entries_per_wallet(env_or(
+        "PULSE_REPLAY_ENTRIES_PER_WALLET",
+        DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+    )?);
+    server.replay_policy.set_max_entries_whitelisted(env_or(
+        "PULSE_REPLAY_ENTRIES_WHITELISTED",
+        DEFAULT_REPLAY_ENTRIES_WHITELISTED,
+    )?);
     tracing::info!("durable Pulse handshake replay protection enabled");
     server.gameplay_limiter = GameplayRateLimiter::new(
         env_or("PULSE_INPUT_MAX_HZ", DEFAULT_INPUT_MAX_HZ)?,
@@ -342,11 +373,40 @@ pub async fn run_from_env() -> anyhow::Result<()> {
         )?,
         env_value("PULSE_V4_AUDIENCE", std::env::var("PULSE_V4_AUDIENCE"))?,
     )?;
-    server.clusters = clusters_from_env(control_audience.as_deref())?;
+    if let Some(audience) = control_audience.as_deref() {
+        anyhow::ensure!(
+            generation
+                .as_ref()
+                .is_some_and(|authority| authority.binding().valid()
+                    && authority.binding().audience == audience
+                    && !authority.lost().is_cancelled()),
+            "configured Pulse requires the root's current deployment generation"
+        );
+    }
+    server.clusters =
+        clusters_from_env_with_generation(control_audience.as_deref(), generation.clone())?;
     if let Some(clusters) = &server.clusters {
         clusters.bind_identity(&mut server.identity);
     }
-    server.run_with_webtransport(bind, 50, wt).await
+    let publisher = server
+        .clusters
+        .as_ref()
+        .map(|clusters| clusters.publisher());
+    let result = if let Some(authority) = &generation {
+        tokio::select! {
+            result = server.run_with_webtransport(bind, 50, wt) => result,
+            _ = authority.lost().cancelled() => Err(anyhow::anyhow!("Pulse deployment generation was revoked")),
+        }
+    } else {
+        server.run_with_webtransport(bind, 50, wt).await
+    };
+    if let Some(authority) = &generation {
+        authority.lost().cancel();
+    }
+    if let Some(publisher) = publisher {
+        publisher.shutdown().await;
+    }
+    result
 }
 
 fn limiter_options_from_lookup(
@@ -493,7 +553,14 @@ fn webtransport_config_from_env() -> anyhow::Result<Option<WtConfig>> {
 /// The cluster tracker, or `None` when clustering is off entirely -- which leaves every cluster
 /// path out of the server loop rather than running a tracker that publishes nothing. Publishing
 /// nothing is the separate, and far more common, stats-only mode: clustering on with no broker URL.
+#[cfg(test)]
 fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<ClusterTracker>> {
+    clusters_from_env_with_generation(control_audience, None)
+}
+fn clusters_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+) -> anyhow::Result<Option<ClusterTracker>> {
     if !env_bool_or("PULSE_CLUSTERS_ENABLED", DEFAULT_CLUSTERS_ENABLED)? {
         tracing::info!("peer clustering disabled");
         return Ok(None);
@@ -522,7 +589,7 @@ fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<Cl
     Ok(Some(ClusterTracker::new(
         options,
         ENET_CAPACITY + WT_CAPACITY,
-        cluster_feed_from_env(control_audience)?,
+        cluster_feed_from_env_with_generation(control_audience, generation)?,
     )))
 }
 
@@ -549,8 +616,15 @@ fn nats_url_from_env() -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
+#[cfg(test)]
 fn cluster_feed_from_env(
     control_audience: Option<&str>,
+) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
+    cluster_feed_from_env_with_generation(control_audience, None)
+}
+fn cluster_feed_from_env_with_generation(
+    control_audience: Option<&str>,
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
 ) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
     let Some(url) = nats_url_from_env()? else {
         tracing::info!("cluster feed in stats-only mode: no broker URL set");
@@ -579,7 +653,7 @@ fn cluster_feed_from_env(
         );
     }
     tracing::info!(server_name = %options.server_name, "cluster feed publishing");
-    let feed = NatsClusterFeed::spawn(options);
+    let feed = NatsClusterFeed::spawn_with_generation(options, generation);
     if let Some(audience) = control_audience {
         feed.enable_control_positions(audience)
             .map_err(anyhow::Error::msg)?;
@@ -942,6 +1016,18 @@ mod tests {
                 DEFAULT_DISCRETE_RATE_PER_SEC.to_string(),
             ),
             ("PULSE_DISCRETE_BURST", DEFAULT_DISCRETE_BURST.to_string()),
+            (
+                "PULSE_REPLAY_ENTRIES_PER_SOURCE",
+                DEFAULT_REPLAY_ENTRIES_PER_SOURCE.to_string(),
+            ),
+            (
+                "PULSE_REPLAY_ENTRIES_PER_WALLET",
+                DEFAULT_REPLAY_ENTRIES_PER_WALLET.to_string(),
+            ),
+            (
+                "PULSE_REPLAY_ENTRIES_WHITELISTED",
+                DEFAULT_REPLAY_ENTRIES_WHITELISTED.to_string(),
+            ),
             (
                 "PULSE_SCENE_LISTENER_MAX_PARCELS",
                 DEFAULT_SCENE_LISTENER_MAX_PARCELS.to_string(),

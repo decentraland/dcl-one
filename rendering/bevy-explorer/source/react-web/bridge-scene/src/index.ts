@@ -33,6 +33,8 @@ import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
+import { registerPlaces } from './domains/places'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -79,6 +81,8 @@ export function main(): void {
     registerCommunities(ctx)
     registerEvents(ctx)
     registerGallery(ctx)
+    registerPlaces(ctx)
+    registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)

@@ -1298,7 +1298,7 @@ mod tests {
         .unwrap();
         room_closed(&pool, &room, "ISLAND-SID").await.unwrap();
         let restarted =
-            crate::gatekeeper::admission::cluster::safety::SafetyStore::new(pool.clone());
+            crate::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(pool.clone());
         assert!(restarted.authorize(actor.as_str(), None, 0).await.is_err());
         assert!(
             restarted
@@ -1897,7 +1897,7 @@ mod tests {
             .connect_lazy_with(pool.connect_options().as_ref().clone());
         unavailable.close().await;
         state.island_safety =
-            crate::gatekeeper::admission::cluster::safety::SafetyStore::new(unavailable);
+            crate::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(unavailable);
         assert!(run_batch(&state).await.is_err());
         assert!(run_batch(&state).await.is_err());
         assert!(
