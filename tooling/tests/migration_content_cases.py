@@ -77,9 +77,7 @@ class ContentMigrationCases:
 
     def camera_db(self, name):
         db = self.content_db(name)
-        self.sql(db, "ALTER TABLE camera_reel.images ADD COLUMN original_filename text;"
-                     "ALTER TABLE camera_reel.images ADD COLUMN image_content_type text;"
-                     "INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size, content_type) VALUES "
+        self.sql(db, "INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size, content_type) VALUES "
                      f"('camera-reel-service', '{PHOTO}-photo.png', 'bafkreiimage', 10, 'image/png'),"
                      f"('camera-reel-service', '{PHOTO}-thumbnail-photo.png', 'bafkreithumb', 5, 'image/png');\n")
         return db
