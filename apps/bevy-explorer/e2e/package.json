@@ -4,6 +4,7 @@
   "private": true,
   "description": "End-to-end tests of the Bevy Explorer through its console, on the web and on the standalone",
   "type": "module",
+  "packageManager": "pnpm@11.27.0+sha512.ad12821463bb143295f1fa3ecde77a6b9b97a7990386da800ff57bffc3964dc64b7b1c7559d5dbe5c337aea659ed9c8937d4370bd198ca2009bc6fa0249808e7",
   "engines": {
     "node": ">=24"
   },
@@ -12,7 +13,8 @@
     "test": "node --test \"test/**/*.test.ts\"",
     "e2e": "node scripts/e2e.ts",
     "build-scenes": "node scripts/build-scenes.ts",
-    "gpu-probe": "node scripts/gpu-probe.ts"
+    "gpu-probe": "node scripts/gpu-probe.ts",
+    "check:environment": "node scripts/check-environment.ts"
   },
   "dependencies": {
     "@noble/curves": "2.4.0",

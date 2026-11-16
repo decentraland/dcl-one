@@ -94,6 +94,8 @@ impl FakeMarket {
             token_id: Some(ITEM_TOKEN_ID.to_string()),
             trade_id: None,
             price_wei: price_wei.to_string(),
+            seller: "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e".to_string(),
+            payee: None,
         });
         self
     }
@@ -166,6 +168,12 @@ pub(crate) struct MockBroker {
     pub configured: bool,
     pub buys: Arc<parking_lot::Mutex<Vec<BuyRequest>>>,
     pub buy_answer: parking_lot::Mutex<Result<(), BrokerError>>,
+    /// When set, a buy leaves its key's `shop.broker_purchases` claim in
+    /// this status before answering (`sent`: it broadcast; `pending`: it
+    /// re-armed a claim that failed before broadcast).
+    pub claims: Option<(PgPool, &'static str)>,
+    pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
+    pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -175,6 +183,9 @@ impl MockBroker {
             configured: true,
             buys: Arc::new(parking_lot::Mutex::new(Vec::new())),
             buy_answer: parking_lot::Mutex::new(Ok(())),
+            claims: None,
+            resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
             verifications: HashMap::new(),
         }
     }
@@ -200,10 +211,21 @@ impl Broker for MockBroker {
 
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError> {
         self.buys.lock().push(req.clone());
+        if let Some((pool, status)) = &self.claims {
+            claim_broker_buy(pool, &req.idempotency_key, status, None).await;
+        }
         self.buy_answer
             .lock()
             .clone()
             .map(|_| format!("0x{}", req.idempotency_key.replace(':', "")))
+    }
+
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError> {
+        self.resumes.lock().push(idempotency_key.to_string());
+        self.resume_answer
+            .lock()
+            .clone()
+            .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
     }
 
     async fn reclaim(
@@ -234,6 +256,27 @@ impl Broker for MockBroker {
             .cloned()
             .ok_or_else(|| ApiError::bad_request("economy rejected the txHash"))
     }
+}
+
+/// Records a broker buy claimed under `key` in `status`, as the broker's
+/// claim and broadcast leave it.
+async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
+    sqlx::query(
+        "INSERT INTO shop.broker_purchases \
+         (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
+          price_wei, chain_id, mode, status) \
+         VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
+                 'primary', $4) \
+         ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
+         DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
+    )
+    .bind(key)
+    .bind(forward_tx_hash)
+    .bind(COLLECTION)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 fn lazy_pool() -> PgPool {
@@ -596,6 +639,9 @@ async fn purchase_revoked(pool: &PgPool, pi: &str) -> String {
 
 async fn cleanup(pool: &PgPool, addr: &str) {
     for sql in [
+        "DELETE FROM shop.broker_purchases WHERE idempotency_key IN ( \
+             SELECT 'checkout:' || o.checkout_id || ':' || o.id FROM credits.fulfillment_outbox o \
+             JOIN credits.checkouts c ON c.id = o.checkout_id WHERE c.address = $1)",
         "DELETE FROM credits.fulfillment_outbox WHERE checkout_id IN (SELECT id FROM credits.checkouts WHERE address = $1)",
         "DELETE FROM credits.checkouts WHERE address = $1",
         "DELETE FROM credits.cart_items WHERE cart_id IN (SELECT id FROM credits.carts WHERE address = $1)",
@@ -994,6 +1040,7 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1016,6 +1063,16 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
         }
         other => panic!("expected a reversal, got {other:?}"),
     }
+    assert!(
+        !wallet_blocked(&pool, &addr).await,
+        "a fully covered reversal leaves the wallet usable"
+    );
+    let detail: Value = sqlx::query_scalar("SELECT detail FROM ops.admin_audit WHERE domain = 'credits' AND action = 'revoke' AND target = $1")
+        .bind(&addr)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(detail["blocked"], json!(false));
 
     assert_eq!(
         available(&pool, &addr).await.parse::<f64>().unwrap(),
@@ -1050,6 +1107,16 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
     cleanup(&pool, &addr).await;
 }
 
+async fn wallet_blocked(pool: &PgPool, addr: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address = $1), false)",
+    )
+    .bind(addr)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
     let Some(pool) = pool().await else { return };
@@ -1067,6 +1134,7 @@ async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1097,6 +1165,28 @@ async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
     }
     assert_eq!(available(&pool, &addr).await.parse::<f64>().unwrap(), 0.0);
     assert_reconciles(&pool, &addr, "after partial-clawback reversal").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "an uncovered reversal blocks the wallet"
+    );
+    credits
+        .admin_grant_credits(GrantRequest {
+            address: &addr,
+            amount: "5",
+            kind: "grant",
+            reason: None,
+            actor: Some("test"),
+            idempotency_key: None,
+            detail: &json!({}),
+            studio_name: None,
+        })
+        .await
+        .unwrap();
+    let err = credits
+        .spend(&addr, "1", "checkout:after-shortfall", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Forbidden(_)), "got {err:?}");
 
     cleanup(&pool, &addr).await;
 }
@@ -1196,6 +1286,10 @@ async fn revoke_without_a_wallet_row_is_still_audited_as_a_total_loss() {
 
     assert!(ledger_kinds(&pool, &addr).await.is_empty());
     assert_reconciles(&pool, &addr, "after a no-wallet chargeback").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "a chargeback with no wallet row blocks the address"
+    );
 
     cleanup(&pool, &addr).await;
 }
@@ -1239,6 +1333,7 @@ async fn pack_reversal_is_bounded_by_the_purchase_across_replays() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1356,7 +1451,8 @@ async fn spend_rejects_non_positive_amounts_and_never_mints() {
                     reason: None,
                     actor: Some("t"),
                     idempotency_key: None,
-                    detail: &json!({})
+                    detail: &json!({}),
+                    studio_name: None,
                 })
                 .await
                 .expect_err("admin grant must reject")
@@ -1762,6 +1858,7 @@ async fn double_post_grants_once_and_replays_original_amounts() {
         actor: Some("mana-topup"),
         idempotency_key: Some(&idem),
         detail: &detail,
+        studio_name: None,
     };
 
     let first = credits.admin_grant_credits(grant("250")).await.unwrap();
@@ -1805,7 +1902,9 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
     let Some(pool) = pool().await else { return };
     let addr = scratch_wallet().address;
     let idem = unique("grant");
-    let credits = Credits::new(pool.clone()).with_shop_base_url("https://example.org/shop/");
+    let credits = Credits::new(pool.clone())
+        .with_shop_base_url("https://example.org/shop/")
+        .with_notifications_cdn_url("https://cdn.example.org/");
     let detail = json!({});
     let grant = |amount: &'static str, kind: &'static str, keyed: bool| GrantRequest {
         address: &addr,
@@ -1815,6 +1914,7 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         actor: Some("ops"),
         idempotency_key: keyed.then_some(idem.as_str()),
         detail: &detail,
+        studio_name: None,
     };
     assert!(
         !credits
@@ -1838,6 +1938,13 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         .admin_grant_credits(grant("9", "purchase", false))
         .await
         .unwrap();
+    credits
+        .admin_grant_credits(GrantRequest {
+            studio_name: Some(" Acme Studio "),
+            ..grant("30", "grant", false)
+        })
+        .await
+        .unwrap();
 
     let metadata: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT metadata FROM social.notifications WHERE address = $1 AND type = 'credits_on_demand_granted' ORDER BY (metadata->>'usdCents')::int DESC",
@@ -1851,14 +1958,22 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         vec![
             json!({
                 "creditsGranted": 1250, "denomination": "USD", "usdCents": 12500,
-                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
                 "title": "Credits added to your account",
                 "description": "You received 1,250 Credits. They never expire: spend them in the Shop.",
                 "link": "https://example.org/shop",
             }),
             json!({
+                "creditsGranted": 30, "denomination": "USD", "usdCents": 300,
+                "studioName": "Acme Studio",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
+                "title": "A gift from Acme Studio",
+                "description": "Acme Studio gifted you 30 Credits. They never expire: spend them in the Shop.",
+                "link": "https://example.org/shop",
+            }),
+            json!({
                 "creditsGranted": 2.5, "denomination": "USD", "usdCents": 25,
-                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
                 "title": "Credits added to your account",
                 "description": "You received 2.5 Credits. They never expire: spend them in the Shop.",
                 "link": "https://example.org/shop",
@@ -1880,15 +1995,41 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     let wallet = scratch_wallet();
     let tx_hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
     let pending = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let shallow = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let cheaper_then = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let unpriced = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    // Rates recorded at fixed past instants no other test writes near; each
+    // test transfer is mined 10 s after one of them.
+    let snapshot_at = |ts: i64| chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc();
+    let (at_quarter, at_fifth, at_nothing) = (978_307_200_i64, 978_393_600_i64, 1_009_843_200_i64);
+    for (ts, rate) in [(at_quarter, "0.25"), (at_fifth, "0.20")] {
+        sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', $1::numeric, $2)")
+            .bind(rate)
+            .bind(snapshot_at(ts))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let block = |ts: i64, confirmations: u64| super::escrow::TransferBlock {
+        number: 1_000,
+        timestamp: ts + 10,
+        confirmations,
+    };
+    let payment = |block: super::escrow::TransferBlock| ManaPaymentVerification::Confirmed {
+        from: wallet.address.clone(),
+        to: "0x1111111111111111111111111111111111111111".into(),
+        value_wei: "100000000000000000000".into(),
+        block,
+    };
     let mut broker = MockBroker::configured();
-    broker.verifications.insert(
-        tx_hash.clone(),
-        ManaPaymentVerification::Confirmed {
-            from: wallet.address.clone(),
-            to: "0x1111111111111111111111111111111111111111".into(),
-            value_wei: "100000000000000000000".into(),
-        },
-    );
+    for (hash, b) in [
+        (&tx_hash, block(at_quarter, 64)),
+        (&shallow, block(at_quarter, 3)),
+        (&cheaper_then, block(at_fifth, 64)),
+        (&unpriced, block(at_nothing, 64)),
+    ] {
+        broker.verifications.insert(hash.clone(), payment(b));
+    }
     broker
         .verifications
         .insert(pending.clone(), ManaPaymentVerification::Pending);
@@ -1911,6 +2052,52 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["status"], "pending");
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": shallow })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "too few confirmations: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": unpriced })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an old transfer with no recorded rate: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": cheaper_then })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "200",
+        "priced at the rate when it was mined, below today's"
+    );
+    cleanup(&pool, &wallet.address).await;
 
     let (status, body) = call(
         &app,
@@ -1972,6 +2159,11 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     assert_eq!(body["manaUsd"], "0.25");
 
     cleanup(&pool, &wallet.address).await;
+    sqlx::query("DELETE FROM economy.price_snapshots WHERE taken_at = ANY($1)")
+        .bind(vec![snapshot_at(at_quarter), snapshot_at(at_fifth)])
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 trait Pipe: Sized {
@@ -3556,28 +3748,43 @@ async fn signer_mismatch_is_a_403_and_a_signed_wallet_reads_its_credits() {
     assert!(v["usd"].get("held").is_none(), "nothing pledged");
     assert!(v["credits"].as_array().unwrap().is_empty());
 
-    // The old service behind nginx saw the route-local path: a signature over it verifies too.
-    let route_signed = signed_headers(
-        &wallet,
-        "get",
-        &format!("/users/{}/progress", wallet.address),
-    )
-    .await;
+    // A signature over the route-local path verifies only when the proxy says
+    // the client asked for it (a prefix-stripping host).
+    let local = format!("/users/{}/progress", wallet.address);
+    let route_signed = signed_headers(&wallet, "get", &local).await;
     let (status, _, v) = send(
         &app,
         "GET",
         &format!("/credits/users/{}/progress", wallet.address),
-        route_signed,
+        route_signed.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    let mut proxied = route_signed;
+    proxied.insert("x-original-path", local.parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/users/{}/progress", wallet.address),
+        proxied,
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
-    // Whole credits held, floored like upstream's Math.floor(cents / 10).
-    assert_eq!(v["credits"]["available"], 7);
-    assert_eq!(v["credits"]["earned"], 2);
-    assert_eq!(v["credits"]["paid"], 5);
+    // Progress reports seasonal MANA; paid USD remains in /users/:address/credits.usd.
+    assert_eq!(v["credits"]["available"], 0.0);
+    assert!(v["credits"].get("earned").is_none());
+    assert!(v["credits"].get("paid").is_none());
     assert_eq!(v["user"]["hasStartedProgram"], false);
 
+    let (status, _) = call(&app, &wallet, "post", "/credits/users", &[], None).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "enrollment requires a confirmed notification email"
+    );
+    sqlx::query("INSERT INTO social.subscriptions(address,email) VALUES($1,'test@example.org') ON CONFLICT(address) DO UPDATE SET email=excluded.email").bind(&wallet.address).execute(&pool).await.unwrap();
     let (status, v) = call(&app, &wallet, "post", "/credits/users", &[], None).await;
     assert_eq!(status, StatusCode::OK, "{v}");
     let (_, v) = call(
@@ -4944,6 +5151,7 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
                 actor: Some("stripe"),
                 idempotency_key: Some("evt_inflight-grant"),
                 detail: &json!({}),
+                studio_name: None,
             },
         )
         .await
@@ -5163,6 +5371,244 @@ fn market_for_checkout() -> FakeMarket {
 }
 
 #[tokio::test]
+async fn checkout_refuses_an_item_created_by_the_buyer() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let creator = scratch_wallet();
+    let buyer = scratch_wallet();
+    let mut market = market_for_checkout();
+    market
+        .items
+        .get_mut(&(COLLECTION.to_string(), "1".to_string()))
+        .unwrap()
+        .creator = creator.address.to_uppercase().replace("0X", "0x");
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market,
+        MockBroker::configured(),
+    );
+    let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:1");
+    let app = app(state.clone());
+    for w in [&creator, &buyer] {
+        seed_paid_credits(&pool, &w.address, "100").await;
+        state
+            .credits
+            .add_item(cart_line(&w.address, "1", &urn, 1), "3")
+            .await
+            .unwrap();
+    }
+
+    let (status, v) = call(
+        &app,
+        &creator,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("own-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(available(&pool, &creator.address).await, "100");
+
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("their-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_ne!(available(&pool, &buyer.address).await, "100");
+
+    for w in [&creator, &buyer] {
+        cleanup(&pool, &w.address).await;
+    }
+}
+
+/// A cart line priced from a trade that pays the buyer is refused, whoever signed it.
+#[tokio::test]
+async fn a_cart_trade_paying_the_buyer_is_refused() {
+    let Some(pool) = pool().await else { return };
+    let buyer = scratch_wallet();
+    let mut pays_buyer = trade_book_row("a1-be5e", 4, "1");
+    pays_buyer["received"][0]["beneficiary"] =
+        json!(buyer.address.to_ascii_uppercase().replace("0X", "0x"));
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        market_for_checkout()
+            .with_trade("a1-be5e", pays_buyer)
+            .with_trade("a2-0e5e", trade_book_row("a2-0e5e", 4, "1")),
+        MockBroker::configured(),
+    );
+    let info = state.pricing.fetch_item(COLLECTION, "1").await.unwrap();
+    let basis = |trade_id: &str| super::pricing::ChargeBasis {
+        info: info.clone(),
+        basis_wei: "5000000000000000000".into(),
+        kind: super::pricing::BasisKind::Trade {
+            trade_id: trade_id.into(),
+        },
+    };
+    let session = crate::types::Session::Web3 {
+        wallet: crate::types::EvmAddress::parse(&buyer.address.to_ascii_lowercase()).unwrap(),
+    };
+    let refused = super::handlers::cart::rule_line(&state, session, &basis("a1-be5e")).await;
+    assert!(
+        matches!(refused, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying the buyer is refused"
+    );
+    let other = super::handlers::cart::rule_line(&state, session, &basis("a2-0e5e")).await;
+    assert!(
+        !matches!(other, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying someone else is not refused as self-dealing"
+    );
+}
+
+/// A cart line never fills from the buyer's own listing: the selection falls
+/// back to the next one, and refuses when only the buyer's own is open.
+#[tokio::test]
+async fn checkout_skips_the_buyers_own_listing() {
+    let Some(pool) = pool().await else { return };
+    let seller = scratch_wallet();
+    let basis = |market: FakeMarket, buyer: String| {
+        let state = state_with(
+            pool.clone(),
+            StateCfg::default(),
+            market,
+            MockBroker::configured(),
+        );
+        async move {
+            state
+                .pricing
+                .fetch_charge_bases_batch(
+                    &[(COLLECTION.to_string(), "4".to_string())],
+                    "secondary",
+                    1,
+                    Some(&buyer),
+                )
+                .await
+                .unwrap()
+                .pop()
+                .unwrap()
+        }
+    };
+    let own_first = || {
+        let mut m = market_for_checkout()
+            .with_listing(COLLECTION, "1000000000000000000")
+            .with_listing(COLLECTION, "2000000000000000000");
+        m.orders[0].seller = seller.address.to_uppercase().replace("0X", "0x");
+        m
+    };
+    let picked = basis(own_first(), seller.address.clone()).await.unwrap();
+    assert_eq!(
+        picked.basis_wei, "2000000000000000000",
+        "the buyer's own cheaper listing is skipped for the next one"
+    );
+    let picked = basis(own_first(), scratch_wallet().address).await.unwrap();
+    assert_eq!(picked.basis_wei, "1000000000000000000");
+    let mut only_own = market_for_checkout().with_listing(COLLECTION, "1000000000000000000");
+    only_own.orders[0].seller = seller.address.clone();
+    assert!(
+        matches!(
+            basis(only_own, seller.address.clone()).await,
+            Err(ApiError::Conflict(_))
+        ),
+        "no listing but the buyer's own: refused"
+    );
+
+    // A cheaper listing that pays the buyer (its beneficiary) is skipped too.
+    let mut pays_buyer = market_for_checkout()
+        .with_listing(COLLECTION, "1000000000000000000")
+        .with_listing(COLLECTION, "2000000000000000000");
+    pays_buyer.orders[0].payee = Some(seller.address.to_uppercase().replace("0X", "0x"));
+    let picked = basis(pays_buyer, seller.address.clone()).await.unwrap();
+    assert_eq!(picked.basis_wei, "2000000000000000000");
+
+    // The fill-time pick of an unpinned secondary row skips them as well.
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        own_first(),
+        MockBroker::configured(),
+    );
+    let order = state
+        .pricing
+        .fetch_open_order(COLLECTION, "4", &seller.address)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(order.price_wei, "2000000000000000000");
+}
+
+/// An operator's recovery of a top-up (any case in the key) is booked as a
+/// purchase under the claim's own key, so the claim replays it.
+#[tokio::test]
+async fn a_recovered_top_up_is_a_purchase_the_claim_replays() {
+    let Some(pool) = pool().await else { return };
+    let wallet = scratch_wallet();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state);
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": format!("MANA-TOPUP:{}", hash.to_uppercase().replace("0X", "0x")) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let kinds = ledger_kinds(&pool, &wallet.address).await;
+    assert!(
+        kinds.iter().any(|(kind, _, _)| kind == "purchase"),
+        "booked as a purchase: {kinds:?}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer,
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": "mana-topup:0x12" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed hash is refused: {v}"
+    );
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": hash })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "40",
+        "the claim replays the recovery"
+    );
+    assert_eq!(available(&pool, &wallet.address).await, "40");
+    cleanup(&pool, &wallet.address).await;
+}
+
+#[tokio::test]
 async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     let _serial = OUTBOX_SERIAL.lock().await;
     let Some(pool) = pool().await else { return };
@@ -5238,21 +5684,51 @@ async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     assert_eq!(spends, 1, "replay must not debit again");
     assert_eq!(available(&pool, &addr).await, "7");
 
-    let intruder = scratch_wallet();
+    // Keys are per wallet: another wallet's same key neither replays this
+    // checkout nor is blocked by it.
+    let other = scratch_wallet();
+    seed_paid_credits(&pool, &other.address, "100").await;
+    state
+        .credits
+        .add_item(cart_line(&other.address, "1", &urn, 1), "3")
+        .await
+        .unwrap();
     let (status, v) = call(
         &app,
-        &intruder,
+        &other,
         "post",
         "/credits/checkout",
         &[("idempotency-key", &idem)],
         Some(json!({})),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::CONFLICT,
-        "someone else's key must not replay: {v}"
-    );
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["replayed"], false, "someone else's key must not replay");
+    assert_ne!(v["id"].as_i64(), Some(first.id));
+    cleanup(&pool, &other.address).await;
+
+    // A checkout stored under an unscoped key still replays for its own wallet.
+    let legacy = unique("legacy-key");
+    let legacy_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) VALUES ($1, $2, 'fulfilled') RETURNING id",
+    )
+    .bind(&legacy)
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &legacy)],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["id"].as_i64(), Some(legacy_id));
+    assert_eq!(v["replayed"], true);
 
     let (status, v) = call(
         &app,
@@ -5380,7 +5856,11 @@ async fn signed_checkout_binds_price_and_owner_debits_once_and_fulfils_through_t
         Some(signed),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the buyer's key never replays for another wallet, and its intent names the buyer"
+    );
 
     let path = format!("/credits/checkout/{}", first["id"]);
     let (status, order) = call(&app, &buyer, "get", &path, &[], None).await;
@@ -5576,6 +6056,259 @@ async fn a_terminal_broker_failure_freezes_the_checkout_and_refunds_the_line() {
         .unwrap();
     assert_eq!(status, "reversed");
     assert_eq!(available(&pool, &addr).await, "10");
+
+    cleanup(&pool, &addr).await;
+}
+
+async fn outbox_lines(pool: &PgPool, checkout_id: i64) -> Vec<(i64, String, i32)> {
+    sqlx::query_as(
+        "SELECT id, status, attempts FROM credits.fulfillment_outbox \
+         WHERE checkout_id = $1 ORDER BY id",
+    )
+    .bind(checkout_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn checkout_status(pool: &PgPool, checkout_id: i64) -> String {
+    sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE id = $1")
+        .bind(checkout_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// One debited checkout of `items` (3 Credits each) for `addr`, nothing fulfilled.
+async fn debited_checkout(state: &SharedState, addr: &str, items: &[&str]) -> i64 {
+    let mut lines = Vec::new();
+    for item in items {
+        let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:{item}");
+        state
+            .credits
+            .add_item(cart_line(addr, item, &urn, 1), "3")
+            .await
+            .unwrap();
+        lines.push(RepricedLine {
+            basis_wei: Some("2500000000000000000".into()),
+            ..line(item, "3")
+        });
+    }
+    state
+        .credits
+        .run_checkout(addr, &unique("broker-claim"), &lines)
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn a_buy_that_mined_after_its_attempt_timed_out_is_resumed_not_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    let cfg = || StateCfg {
+        fulfillment_mode: "auto",
+        ..StateCfg::default()
+    };
+    seed_wallet(&pool, &addr, "0", "10").await;
+
+    // The first attempt broadcasts the buy, then gives up waiting for its receipt.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "sent"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), market_for_checkout(), broker);
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    assert_eq!(state.outbox_worker().run_once().await.unwrap(), 1);
+    let [(line_id, status, attempts)] = &outbox_lines(&pool, checkout).await[..] else {
+        panic!("one line")
+    };
+    assert_eq!(
+        (status.as_str(), *attempts),
+        ("pending", 0),
+        "a broadcast buy's timeout does not count toward the attempt cap"
+    );
+
+    // It mined late, minting the item's last unit: the store no longer sells
+    // it, and a fresh mintability check would refund a buy that spent MANA.
+    let sold_out = FakeMarket::default()
+        .with_item(COLLECTION, "1", "2500000000000000000", false)
+        .with_mana_usd("0.5");
+    let broker = MockBroker::configured();
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let resume_answer = broker.resume_answer.clone();
+    *resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: escrow forward tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), sold_out, broker);
+    let worker = state.outbox_worker();
+    for _ in 0..6 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+    }
+    assert_eq!(
+        outbox_lines(&pool, checkout).await[0].1,
+        "pending",
+        "an unsettled buy waits past the attempt cap"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilling");
+    assert_eq!(available(&pool, &addr).await, "7");
+
+    *resume_answer.lock() = Ok(());
+    assert_eq!(worker.run_once().await.unwrap(), 1);
+    assert!(buys.lock().is_empty(), "nothing is bought twice");
+    assert_eq!(resumes.lock().len(), 7);
+    assert!(
+        resumes
+            .lock()
+            .iter()
+            .all(|k| *k == format!("checkout:{checkout}:{line_id}"))
+    );
+    assert_eq!(outbox_lines(&pool, checkout).await[0].1, "confirmed");
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilled");
+    assert_eq!(available(&pool, &addr).await, "7", "no refund");
+    assert_reconciles(&pool, &addr, "after the resumed buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_buy_that_failed_before_broadcast_counts_its_attempts_and_is_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    // The claim failed before broadcast; each buy re-arms it to `pending`
+    // and answers 409 without broadcasting, so no transaction is recorded.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "pending"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 409: previously failed before broadcast and was re-armed".into(),
+    ));
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(&pool, &format!("checkout:{checkout}:{line}"), "error", None).await;
+
+    let worker = state.outbox_worker();
+    for expected_attempts in 1..5 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+        assert_eq!(outbox_lines(&pool, checkout).await[0].2, expected_attempts);
+    }
+    assert_eq!(
+        worker.run_once().await.unwrap(),
+        1,
+        "the fifth attempt freezes"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "10",
+        "nothing was sent: refunded"
+    );
+    assert_eq!(buys.lock().len(), 5, "every attempt is a checked buy");
+    assert!(
+        resumes.lock().is_empty(),
+        "a claim without a transaction is never resumed"
+    );
+    assert_reconciles(&pool, &addr, "after refunding the unsent claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let broker = MockBroker::configured();
+    let resumes = broker.resumes.clone();
+    *broker.resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let worker = state.outbox_worker();
+    let freeze = |checkout: i64, failed_line: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+                .bind(failed_line)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+                .bind(checkout)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    // One line failed before any broadcast; its sibling's buy is in flight.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (unsent, sent) = (lines[0].0, lines[1].0);
+    let sent_key = format!("checkout:{checkout}:{sent}");
+    claim_broker_buy(&pool, &sent_key, "sent", None).await;
+    freeze(checkout, unsent).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "compensation waits for the in-flight buy"
+    );
+    assert_eq!(available(&pool, &addr).await, "4", "nothing refunded yet");
+    assert_eq!(
+        *resumes.lock(),
+        vec![sent_key.clone()],
+        "the frozen checkout's in-flight line is resumed"
+    );
+
+    // The buy mined but the escrow forward reverted: MANA is spent, the
+    // token sits with the relayer. Only the unsent line is refunded.
+    claim_broker_buy(&pool, &sent_key, "reverted", Some("0xforward")).await;
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after holding the forward-reverted line").await;
+
+    // A buy that reverted on its own leg spent nothing and is refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(
+        &pool,
+        &format!("checkout:{checkout}:{line}"),
+        "reverted",
+        None,
+    )
+    .await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
 
     cleanup(&pool, &addr).await;
 }
@@ -5812,7 +6545,7 @@ async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_le
     assert_eq!(err.status().as_u16(), 402);
     let status: String =
         sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE idempotency_key = $1")
-            .bind(&idem)
+            .bind(super::checkout::scoped_checkout_key(&broke, &idem))
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -6234,8 +6967,12 @@ async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() 
         lab::{HOUR, StampLab},
         scoped,
     };
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("captcha_write_guards").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
+    super::goals::tests::seed_http_claim(&pool, &wallet.address).await;
     let (w, p) = (&wallet, &pool);
     let challenges = move || async move {
         sqlx::query_scalar::<_, i64>(
@@ -6282,17 +7019,22 @@ async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() 
     let (status, _) = get(on).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(challenges().await, 1);
+    db.drop().await;
 }
 
 #[tokio::test]
-async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block_flag() {
-    let Some(pool) = pool().await else { return };
+async fn captcha_generate_reuses_the_prior_challenge_and_claim_reads_the_block_flag() {
+    let Some(db) = OwnDatabase::create("captcha_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     let state = test_state(pool.clone(), StateCfg::default());
     let app = app(state.clone());
 
-    let seed_id: i64 = sqlx::query_scalar("INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2) RETURNING id")
+    let seed_id: i64 = sqlx::query_scalar("INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2) RETURNING id")
         .bind(&addr)
         .bind(future())
         .fetch_one(&pool)
@@ -6324,12 +7066,15 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(seeded_consumed, "the prior open challenge must be consumed");
+    assert!(
+        !seeded_consumed,
+        "the source refreshes the prior open challenge"
+    );
     let open_count: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.captcha_challenges WHERE address = $1 AND consumed_at IS NULL").bind(&addr).fetch_one(&pool).await.unwrap();
     assert_eq!(open_count, 1);
 
     let seed_challenge = |pool: PgPool, addr: String| async move {
-        sqlx::query("INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2)").bind(&addr).bind(future()).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2)").bind(&addr).bind(future()).execute(&pool).await.unwrap();
     };
     sqlx::query("UPDATE credits.captcha_challenges SET consumed_at = $2 WHERE address = $1")
         .bind(&addr)
@@ -6338,20 +7083,6 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
         .await
         .unwrap();
     seed_challenge(pool.clone(), addr.clone()).await;
-    let (status, v) = call(
-        &app,
-        &wallet,
-        "post",
-        "/credits/captcha",
-        &[],
-        Some(json!({ "x": 10.0 })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{v}");
-    assert_eq!(
-        v,
-        json!({ "ok": true, "credits_granted": 0.0, "isBlockedForClaiming": false })
-    );
 
     state
         .credits
@@ -6370,6 +7101,11 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .await;
     assert_eq!(v["ok"], false);
     assert_eq!(v["isBlockedForClaiming"], true);
+    state
+        .credits
+        .admin_set_blocked(&addr, false, Some("qc"), Some("token:qc"), &json!({}))
+        .await
+        .unwrap();
 
     seed_challenge(pool.clone(), addr.clone()).await;
     let (_, v) = call(
@@ -6383,6 +7119,7 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .await;
     assert_eq!(v["ok"], false, "a wrong slider answer is rejected");
 
+    seed_challenge(pool.clone(), addr.clone()).await;
     let (status, v) = call(
         &app,
         &wallet,
@@ -6392,13 +7129,24 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
         Some(json!({ "x": 10.0 })),
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["credits_granted"], 1.0);
+    let (status, _) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/captcha",
+        &[],
+        Some(json!({"x":10.0})),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::BAD_REQUEST,
-        "no open challenge left: {v}"
+        "claimed rewards cannot be claimed again"
     );
 
-    cleanup(&pool, &addr).await;
+    db.drop().await;
 }
 
 #[tokio::test]
@@ -6989,7 +7737,7 @@ async fn pricing_memoizes_the_spot_but_never_the_marketplace_feed() {
 
 async fn open_challenge(pool: &PgPool, addr: &str) {
     sqlx::query(
-        "INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2)",
+        "INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2)",
     )
     .bind(addr)
     .bind(future())
@@ -7008,10 +7756,14 @@ async fn flag_count(pool: &PgPool, addr: &str) -> i64 {
 
 #[tokio::test]
 async fn a_multi_accounting_flag_blocks_the_claim_but_not_the_spend_or_the_reservation() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("flag_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
     seed_wallet(&pool, &addr, "20", "15").await;
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     sqlx::query(
         "INSERT INTO credits.wallet_flags (address, source, ip) \
          VALUES ($1, 'explorer_anon_multi_accounting', '1.2.3.4')",
@@ -7057,13 +7809,18 @@ async fn a_multi_accounting_flag_blocks_the_claim_but_not_the_spend_or_the_reser
     .await;
     assert_eq!(v["ok"], false, "{v}");
     assert_eq!(v["isBlockedForClaiming"], true);
+    db.drop().await;
 }
 
 #[tokio::test]
 async fn the_admin_flag_blocks_the_claim_until_the_unblock_or_the_unflag() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("admin_flag_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     let state = test_state(
         pool.clone(),
         StateCfg {
@@ -7205,6 +7962,7 @@ async fn the_admin_flag_blocks_the_claim_until_the_unblock_or_the_unflag() {
         v["deleted"], false,
         "an unflag of an unflagged wallet is idempotent"
     );
+    db.drop().await;
 }
 
 async fn wait_until<F, Fut>(what: &str, mut probe: F)
@@ -7713,7 +8471,7 @@ async fn a_reservation_under_one_operation_key_takes_one_set_of_lines() {
     );
     assert_eq!(rows_of(&pool, &addr).await, 1);
     // Whichever won, its own lines replay it and the other lines are refused.
-    let won_a = matches!(outcomes[0], Ok(_));
+    let won_a = outcomes[0].is_ok();
     let (won, won_digest, lost, lost_digest) = if won_a {
         (&ga, &digest_a, &gb, &digest_b)
     } else {
@@ -8210,6 +8968,7 @@ async fn a_settled_session_naming_no_payment_intent_applies_the_reversals_of_the
                 actor: Some("stripe"),
                 idempotency_key: Some("evt_stored_pi-grant"),
                 detail: &json!({}),
+                studio_name: None,
             },
         )
         .await

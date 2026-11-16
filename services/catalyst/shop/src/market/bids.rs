@@ -178,7 +178,7 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<BidFilters, InvalidPa
 const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_contract_address, t.signer AS bidder, \
         (EXTRACT(EPOCH FROM t.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM t.expires_at) * 1000)::bigint AS expires_at, \
         upper(t.network) AS network, sent_erc20.amount::text AS price, recv_erc721.token_id, \
-        COALESCE(recv_item.item_id, CASE WHEN recv_erc721.token_id IS NOT NULL THEN div(recv_erc721.token_id::numeric, SHIFT::numeric)::text END) AS item_id, \
+        COALESCE(recv_item.item_id, div(TOKEN_NUM, SHIFT::numeric)::text) AS item_id, \
         recv.contract_address, COALESCE(recv.extra, '') AS fingerprint, \
         CASE WHEN recv_erc721.token_id IS NOT NULL THEN COALESCE(n.owner, tr.owner, '') ELSE COALESCE(i.creator, '') END AS seller, \
         CASE WHEN EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) THEN 'cancelled' \
@@ -191,11 +191,12 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.trade_assets_erc721 recv_erc721 ON recv_erc721.asset_id = recv.id \
  LEFT JOIN shop.trade_assets_item recv_item ON recv_item.asset_id = recv.id \
  LEFT JOIN shop.items i ON i.contract_address = recv.contract_address AND i.network = lower(t.network) \
-      AND i.item_id = COALESCE(recv_item.item_id::numeric, CASE WHEN recv_erc721.token_id IS NOT NULL THEN div(recv_erc721.token_id::numeric, SHIFT::numeric) END) \
+      AND i.item_id = COALESCE(ITEM_NUM, div(TOKEN_NUM, SHIFT::numeric)) \
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
-      AND n.token_id = recv_erc721.token_id::numeric \
- LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = recv_erc721.token_id::numeric \
- WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED";
+      AND n.token_id = TOKEN_NUM \
+ LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
+ WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN \
+   AND (recv_erc721.asset_id IS NULL OR TOKEN_NUM IS NOT NULL) AND (recv_item.asset_id IS NULL OR ITEM_NUM IS NOT NULL)";
 
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
 #[cfg(test)]
@@ -207,7 +208,16 @@ pub(crate) fn test_trades_bids_sql() -> String {
 fn trades_bids_sql(extra: &str) -> String {
     let sql = TRADES_BIDS_SQL
         .replace("COUNTED", &super::trades::counted_sql("t.", "$2"))
+        .replace("SERVED_CHAIN", &super::catalog::served_chain_sql("t"))
         .replace("SHIFT", super::catalog::ITEM_ID_SHIFT)
+        .replace(
+            "TOKEN_NUM",
+            &super::catalog::uint_or_null("recv_erc721.token_id"),
+        )
+        .replace(
+            "ITEM_NUM",
+            &super::catalog::uint_or_null("recv_item.item_id"),
+        )
         .replace(
             "CHAIN_STATUS",
             &super::trade_events::chain_status_sql("t", "$1"),

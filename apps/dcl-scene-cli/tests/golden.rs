@@ -26,6 +26,7 @@
 //! auto-written golden would report green having asserted nothing.
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
+#![recursion_limit = "256"]
 
 use dcl_scene_cli::build::{self, BuildOptions};
 use dcl_scene_cli::{crdt_gen, deploy, entrypoint, init, split};
@@ -37,10 +38,10 @@ mod common {
     pub mod testgate;
 }
 
-/// Pinned in Cargo.toml as `rolldown = "=1.2.6"`. Repeated here so a bump has
+/// Pinned in Cargo.toml as `rolldown = "=1.3.2"`. Repeated here so a bump has
 /// to be copied into this line, invalidating every golden in one visible place
 /// instead of scattering unexplained byte diffs.
-const BUNDLER: &str = "rolldown-1.2.6";
+const BUNDLER: &str = "rolldown-1.3.2";
 
 /// The CLI stamps the wall clock into the deploy entity, which would put a
 /// fresh CID in every run. Per-file CIDv1s are timestamp-independent, so only
@@ -146,6 +147,15 @@ async fn custom_entry_production() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_main_production() {
     golden(Fixture::new("no-main")).await;
+}
+
+#[test]
+fn the_bundler_label_is_the_pinned_rolldown() {
+    let pin = BUNDLER.replacen("rolldown-", "rolldown = { version = \"=", 1) + "\"";
+    assert!(
+        include_str!("../Cargo.toml").contains(&pin),
+        "copy the rolldown pin into BUNDLER"
+    );
 }
 
 async fn golden(fixture: Fixture) {

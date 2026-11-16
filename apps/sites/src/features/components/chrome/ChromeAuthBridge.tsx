@@ -32,11 +32,15 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
 
   const { name, avatarUrl } = useProfileIdentity(effAddress || null, effSignedIn);
 
-  const fetchNotifications = useCallback(async (): Promise<unknown> => {
+  const fetchNotifications = useCallback(async (signal?: AbortSignal): Promise<unknown> => {
     const res = await signedFetch(`${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`, {
       headers: { accept: "application/json" },
+      signal,
     });
-    if (!res.ok) throw new Error(`Notifications returned ${res.status}`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`Notifications returned ${res.status}`);
+    }
     return res.json() as Promise<unknown>;
   }, [signedFetch]);
 

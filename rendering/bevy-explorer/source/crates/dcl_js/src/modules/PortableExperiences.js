@@ -15,8 +15,10 @@ module.exports.kill = async function (body) {
     }
 }
 module.exports.exit = async function (body) { 
-    console.error("PortableExperiences::exit not implemented", body)
-    return {} 
+    let res = await Deno.core.ops.op_portable_exit();
+    return {
+        status: res
+    }
 }
 module.exports.getPortableExperiencesLoaded = async function (body) { 
     // console.log("PortableExperiences.getPortableExperiencesLoaded", body);
