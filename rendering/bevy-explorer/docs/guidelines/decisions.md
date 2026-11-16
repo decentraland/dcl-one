@@ -134,6 +134,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
+  when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
+  standing in that parcel scene. An empty parcel and a portable experience never do.
+  - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
+    and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
+    toasts "Nearby voice chat unavailable in this scene." when the count goes up.
+  - Don't play nearby players or show their speaking badge there. Their tracks stay subscribed, so
+    hearing returns on the way out.
+  - Don't touch calls and community streams: their mic, audio, badges and mic on/off sounds are
+    unaffected.
+  - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
+    hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
+  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -265,6 +278,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
   the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
   buttons are disabled, with no spinner, while its answer runs.
+- **Community announcements.** As unity-explorer: the card's ANNOUNCEMENTS tab reads 10 a page,
+  the next as the list's end comes into view, newest first. Owners and moderators get the composer
+  first ("Any Announcement to share with your Community?", 500 characters counted as UTF-16 units,
+  so most emoji take two, with a counter shown once there is text, the chat's emoji panel and `:` suggestions, a POST button held with a spinner
+  while it posts), then a separator. The owner deletes any announcement and an author their own,
+  asked first ("Are you sure you want to delete this Announcement?", DELETE and CANCEL); a
+  moderator cannot delete another member's. Anyone who sees the list likes and unlikes, one
+  request at a time for each announcement, and the count changes once the service answers. The
+  author shows a verified mark or their #tag, and the official mark when the post comes marked
+  `isOfficial` by the social API. A post or a delete reads the first page again. Every failure is
+  toasted with unity-explorer's four texts. A member who sees no announcements reads "No
+  Announcements here yet!". A private community's announcements are not read for someone who
+  isn't a member (the service refuses them); their tab stays empty. Differences: POST stays off
+  for a draft of only whitespace, and the text is posted without leading and trailing whitespace
+  (unity-explorer enables POST for any text and sends it as typed; the service refuses a post that
+  starts with whitespace); a failed post stops the button's spinner (unity-explorer
+  leaves it spinning); and the official mark comes with the post, not from the client: this
+  node's social API marks each post (`isOfficial`, a field the Foundation's API doesn't have)
+  when its author is in the explorer feature flags' `alfa-official-wallets` list (`wallets`
+  variant, first CSV line), which unity-explorer reads itself. Against the Foundation's social
+  API, which sends no such field, no post shows the official mark.
 - **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
   social client's block sets and comms' scene admission and scene-room lists through one
   `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps

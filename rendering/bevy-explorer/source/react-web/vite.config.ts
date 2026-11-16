@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react'
 import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
-// default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
+// default systemScene in dev, with scene hot-reload) alongside vite, so `pnpm run dev` is the ONE
 // command. If :8100 is already serving (your own terminal, or Playwright's webServer), leave it
 // alone. The child outlives vite's restarts and is stopped when the dev server's process ends, with
 // sdk-commands' own children (a detached group on POSIX, taskkill's tree on Windows), so none

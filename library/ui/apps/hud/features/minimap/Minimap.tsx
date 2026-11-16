@@ -36,6 +36,7 @@ import {
   saveZoom
 } from '@explorer-core/features/minimap/minimapPrefs'
 import { MinimapSettings } from './MinimapSettings'
+import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
@@ -248,6 +249,7 @@ export const Minimap = memo(function Minimap({
         <span className={styles.coords}>
           {map.x},{map.y}
         </span>
+        {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
         {donate.visible && (
           <button
             type="button"

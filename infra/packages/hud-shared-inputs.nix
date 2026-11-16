@@ -9,7 +9,7 @@ let
   domains = [ "library/ui" "library/shop" "library/catalyst-api" "library/explorer-core" ];
   resolverNames = [ "package.json" "tsconfig.json" "jsconfig.json" ];
   requiredControls = map (name: web + name) [
-    "package.json" "package-lock.json" "tsconfig.json" "vite.config.ts"
+    "package.json" "pnpm-lock.yaml" "tsconfig.json" "vite.config.ts"
     "vitest.config.ts" "vite.shared.ts" "scripts/shared-inputs.mjs"
   ] ++ [ "library/ui/package.json" "library/ui/foundations/typography/font-source.json" ];
   less = a: b: builtins.lessThan a b;

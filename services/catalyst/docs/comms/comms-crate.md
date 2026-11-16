@@ -89,9 +89,21 @@ the repository structure checks. Higher crates implement comms' traits, keeping 
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
-re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; `WS_MAX_SOCKETS_PER_IP`
-(default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64) attributable through
-`HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
+re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter); when
+that share is full a new socket closes the oldest pending one instead of being refused, so
+handshakes held open cannot refuse new joins. An evicted handshake closes without a close frame,
+like one past its deadline; the Explorer (`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
+treats that, a 503 on the upgrade and any other handshake failure alike as transient and
+reconnects after 1, 2, 4, then 5 s, and does not read `Retry-After` on `/ws`.
+`comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
+share is too small for the join rate) and `comms_ws_pending_handshakes` the sockets in the
+handshake. Each client source, counted like the per-source socket cap, holds at most
+`WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0 unlimited), beyond that 429;
+a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
+within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
+`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
+attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
 `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
@@ -104,6 +116,8 @@ with 1013; undecodable frames 1007; restart closes every socket with 1012.
 - Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
 - `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
+- `BAN_SWEEP_INTERVAL_MS` (CLI `--ban-sweep-interval-ms`, default 30,000 ms) schedules connected-wallet ban checks after the first interval and on subsequent timer ticks. A tick during an unfinished pass is skipped; passes never overlap and skipped ticks do not accumulate. Checks retain a maximum concurrency of 20. Numeric prefixes are accepted, fractional milliseconds are truncated, and values below 1 or above 2,147,483,647 become 1 ms; an empty or nonnumeric value fails startup. Shutdown stops new passes while the current pass remains owned by the existing job shutdown deadline.
+- `JOBS_FIRST_PASS_NOW=true` also bypasses the ban sweep's initial delay for development/test startup; subsequent ticks retain the configured cadence.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
 
 ## Statistics ownership and runtime

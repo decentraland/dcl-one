@@ -75,6 +75,14 @@ pub trait AccessPolicy: Send + Sync {
         world: &WorldName,
         parcels: &ParcelSet,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
+    /// The deployment/streaming grantees of `world` whose grant is
+    /// world-wide or touches `parcels`, without the owner: an authorization
+    /// question, so no owner fallback widens it on a fault.
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
 }
 
 /// The ONE room resolver as comms asks it; every method is the worlds
@@ -355,7 +363,7 @@ pub mod test_support {
 
     /// An [`AccessPolicy`] that gives every question the answer its field
     /// holds. The default is an unknown world, access allowed, not blocked, not
-    /// an admin, no LAND document and no protected wallet.
+    /// an admin, no LAND document, no protected wallet and no grantee.
     pub struct StubPolicy {
         pub access_type: Result<Option<AccessType>, AuthorityNotEstablished>,
         pub world_owner: Result<Option<Address>, AuthorityNotEstablished>,
@@ -364,6 +372,7 @@ pub mod test_support {
         pub admin: PermissionDecision,
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
+        pub grantees: Result<BTreeSet<Address>, AuthorityNotEstablished>,
         /// `None`: the world exists with the `access_type` setting (unrestricted when unknown).
         pub admission: Option<WorldAdmission>,
     }
@@ -378,6 +387,7 @@ pub mod test_support {
                 admin: PermissionDecision::refused("stub: not an admin"),
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
+                grantees: Ok(BTreeSet::new()),
                 admission: None,
             }
         }
@@ -449,6 +459,14 @@ pub mod test_support {
             _parcels: &ParcelSet,
         ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
             self.protected.as_ref().cloned().map_err(copy)
+        }
+
+        async fn world_grantees(
+            &self,
+            _world: &WorldName,
+            _parcels: &ParcelSet,
+        ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+            self.grantees.as_ref().cloned().map_err(copy)
         }
     }
 
