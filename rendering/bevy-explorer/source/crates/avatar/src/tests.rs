@@ -142,32 +142,44 @@ fn urn(urn: &str) -> WearableUrn {
     WearableUrn::new(urn).unwrap()
 }
 
+/// A body that is not the default one.
+fn other_body() -> WearableUrn {
+    let male = urn("urn:decentraland:off-chain:base-avatars:BaseMale");
+    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    if male == base_wearables::default_bodyshape_urn() {
+        female
+    } else {
+        male
+    }
+}
+
 #[test]
 fn an_avatar_keeps_its_body_until_the_body_fails() {
-    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    let body = other_body();
     assert_eq!(
-        AvatarLoadFailures::body(None, female.clone()),
-        Some(female.clone())
+        AvatarLoadFailures::body(None, body.clone()),
+        Some(body.clone())
     );
-    let other_failed = AvatarLoadFailures {
-        bodies: HashSet::from([urn("urn:decentraland:off-chain:base-avatars:BaseMale")]),
+    // another body failing does not move this one
+    let default_failed = AvatarLoadFailures {
+        bodies: HashSet::from([base_wearables::default_bodyshape_urn()]),
         ..Default::default()
     };
     assert_eq!(
-        AvatarLoadFailures::body(Some(&other_failed), female.clone()),
-        Some(female)
+        AvatarLoadFailures::body(Some(&default_failed), body.clone()),
+        Some(body)
     );
 }
 
 #[test]
 fn a_failed_body_falls_back_to_the_default_body() {
-    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    let body = other_body();
     let failures = AvatarLoadFailures {
-        bodies: HashSet::from([female.clone()]),
+        bodies: HashSet::from([body.clone()]),
         ..Default::default()
     };
     assert_eq!(
-        AvatarLoadFailures::body(Some(&failures), female),
+        AvatarLoadFailures::body(Some(&failures), body),
         Some(base_wearables::default_bodyshape_urn())
     );
 }
@@ -175,12 +187,12 @@ fn a_failed_body_falls_back_to_the_default_body() {
 #[test]
 fn an_avatar_whose_body_and_default_body_failed_has_no_body_to_build() {
     let default = base_wearables::default_bodyshape_urn();
-    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    let body = other_body();
     let failures = AvatarLoadFailures {
-        bodies: HashSet::from([female.clone(), default.clone()]),
+        bodies: HashSet::from([body.clone(), default.clone()]),
         ..Default::default()
     };
-    assert_eq!(AvatarLoadFailures::body(Some(&failures), female), None);
+    assert_eq!(AvatarLoadFailures::body(Some(&failures), body), None);
     // the default body failing alone ends the fallback too
     let failures = AvatarLoadFailures {
         bodies: HashSet::from([default.clone()]),
