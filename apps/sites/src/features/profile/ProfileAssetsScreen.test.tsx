@@ -203,6 +203,24 @@ describe("profile assets", () => {
     expect(net.fetchProfileAssets).toHaveBeenCalledTimes(2);
   });
 
+  it("says it is reading again, and that trying again failed, on a single unreadable page", async () => {
+    const user = userEvent.setup();
+    let fail: (reason: Error) => void = () => {};
+    net.fetchProfileAssets
+      .mockResolvedValueOnce({ items: [], received: 3, total: 3 })
+      .mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    show();
+    await screen.findByText("These assets could not be read right now.");
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Reading the assets again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" }).getAttribute("aria-busy")).toBe("true");
+    await act(async () => fail(new Error("503")));
+    expect(await screen.findByText("These assets could not be read right now. Trying again failed.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" }).getAttribute("aria-busy")).not.toBe("true");
+  });
+
   it("opens a card's action and a NAME's Transfer in place, through the router", async () => {
     const user = userEvent.setup();
     net.fetchProfileAssets.mockResolvedValue(page([asset(1), name(5, "brai")]));

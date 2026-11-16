@@ -196,13 +196,20 @@ async function creditPrices(rows: ParsedCreation[], signal?: AbortSignal): Promi
 }
 
 /**
- * A token's title, as the marketplace names one without a name: a NAME by its label, a parcel by
- * its coordinates, an estate as "Estate", anything else "Untitled". The catalogue names an unnamed
- * token by its capitalized category ("Parcel"), so that name counts as none.
+ * A token's title, as the marketplace names one without a name: a NAME by its label (its
+ * subdomain when the name is empty), a parcel by its coordinates, an estate as "Estate", anything
+ * else "Untitled". The catalogue names an unnamed parcel or estate by its capitalized category
+ * ("Parcel", "Estate"), so for those two that name counts as none.
  */
 function assetName(category: string, name: string | null | undefined, data: Record<string, unknown> | null | undefined): string {
-  const given = (category === "ens" ? (name ?? "").replace(/\.dcl\.eth$/i, "") : (name ?? "")).trim();
-  if (given && given.toLowerCase() !== category) return given;
+  if (category === "ens") {
+    const subdomain = (data?.ens as { subdomain?: unknown } | undefined)?.subdomain;
+    const label = (name ?? "").replace(/\.dcl\.eth$/i, "").trim() || (typeof subdomain === "string" ? subdomain.trim() : "");
+    return label || "Untitled";
+  }
+  const given = (name ?? "").trim();
+  const placeholder = (category === "parcel" || category === "estate") && given.toLowerCase() === category;
+  if (given && !placeholder) return given;
   const parcel = data?.parcel as { x?: unknown; y?: unknown } | undefined;
   if (category === "parcel" && parcel && parcel.x != null && parcel.y != null) return `Parcel ${String(parcel.x)},${String(parcel.y)}`;
   if (category === "estate") return "Estate";
