@@ -155,7 +155,7 @@ class CheckedGraphTests(unittest.TestCase):
         self.assertEqual(calls.read_text().strip(), 'bundle-native')
         calls.unlink()
         seal(self.root)
-        self.write(WEB + 'package-lock.json', 'changed local dependency lock')
+        self.write(WEB + 'pnpm-lock.yaml', 'changed local dependency lock')
         self.assertEqual(run().returncode, 0)
         self.assertEqual(calls.read_text().strip(), 'bundle-native')
         calls.unlink()
@@ -388,7 +388,7 @@ class CheckedGraphTests(unittest.TestCase):
             with self.assertRaises(ci._artifact.shared_inputs.StaleManifestError) as raised:
                 ci.plan('local', before, head, 'unused')
         self.assertIn('Stale HUD input: ' + WEB + 'src/main.ts', str(raised.exception))
-        self.assertIn('npm --prefix ' + WEB.rstrip('/') + ' run gen:shared-inputs', str(raised.exception))
+        self.assertIn('pnpm --dir ' + WEB.rstrip('/') + ' run gen:shared-inputs', str(raised.exception))
         self.assertIn('repository root', str(raised.exception))
         self.assertEqual(original, (self.root / MANIFEST).read_bytes())
 

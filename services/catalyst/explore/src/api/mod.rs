@@ -1,6 +1,6 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the uncached asset-bundle registry gateway
+//! ([`realm_provider`]), the asset-bundle Registry gateway
 //! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
@@ -67,7 +67,7 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// Registry reads without a cache (see [`registry`]): a loopback URL is the
+    /// Uncached Registry source reads (see [`registry`]): a loopback URL is the
     /// local abgen runtime, any other a public Registry; empty serves `200 []`
     /// to the boot reads.
     pub registry: String,
@@ -203,6 +203,8 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Settings {
@@ -315,6 +317,7 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -355,6 +358,7 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 
@@ -493,6 +497,8 @@ pub struct State {
     /// The onboarding checkpoints (process state), shared with the Segment
     /// webhooks that forward them (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
+    /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
+    pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 }
@@ -534,6 +540,7 @@ impl State {
             auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
             onboarding: Arc::default(),
+            registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });
         state

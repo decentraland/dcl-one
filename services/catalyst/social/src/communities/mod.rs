@@ -536,12 +536,12 @@ impl State {
         if place_ids.is_empty() || !self.settings.places_ownership_check {
             return Ok(());
         }
-        let mut unique: Vec<String> = Vec::new();
-        for id in place_ids {
-            if !unique.contains(id) {
-                unique.push(id.clone());
-            }
-        }
+        let mut seen = std::collections::HashSet::with_capacity(place_ids.len());
+        let unique: Vec<String> = place_ids
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .cloned()
+            .collect();
         if !self
             .explore
             .places
@@ -714,7 +714,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/federation/communities/snapshot", get(fed::snapshot))
         .route("/federation/communities/changes", get(fed::changes))
-        .route("/federation/communities/content", post(fed::put_content))
+        .route(
+            "/federation/communities/content",
+            post(fed::put_content).layer(DefaultBodyLimit::max(fed::MAX_CONTENT_BYTES)),
+        )
         .route("/federation/communities/content/gc", post(fed::gc_content))
         .route(
             "/federation/communities/content/{hash}",

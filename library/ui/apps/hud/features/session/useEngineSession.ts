@@ -26,7 +26,7 @@ import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
 import { color3ToHex, hexToColor3 } from '@explorer-core/lib/color'
 import { closeTopPopup, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
-import { requestDebugPanel } from '../debug/useDebugPanel'
+import { closeDebugPanel, isDebugPanelOpen, requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
@@ -88,8 +88,11 @@ import type {
   Friend,
   FriendAction,
   FriendRequest,
+  GalleryMessage,
   GalleryPhoto,
   GalleryPhotoMeta,
+  GalleryWriteMessage,
+  ExternalUrlOpenedMessage,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -97,6 +100,7 @@ import type {
   NearbyMember,
   OutfitSlot,
   OutfitsMetadata,
+  PageToScene,
   PermissionLevelChoice,
   PermissionRequestMessage,
   PermissionRuleLevel,
@@ -526,22 +530,35 @@ export interface PhotoModeState {
   take: () => void
 }
 
-export interface GalleryState {
-  /** The local player's camera-reel photos (newest first by dateTime). */
-  list: GalleryPhoto[]
-  /** Storage usage — `current` of `max` photos (0 until the gallery first loads). */
-  current: number
+/** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
+ *  the owner's storage limit. `received` counts the images the service sent, url-less ones included
+ *  (`photos.length` when absent). */
+export interface ReelPage {
+  ok: boolean
+  photos: GalleryPhoto[]
+  total: number
   max: number
-  /** False until the first gallery response arrives (spinner vs empty state). */
-  loaded: boolean
+  received?: number
+}
+
+/** The outcome of a camera-reel write; a delete also reports the storage usage that follows it. */
+export interface ReelWrite {
+  ok: boolean
+  current?: number
+  max?: number
+}
+
+export interface GalleryState {
   open: boolean
   toggle: () => void
+  /** One page of the local player's own reel (signed, so private photos are included). */
+  fetchPage: (offset: number, limit: number) => Promise<ReelPage>
   /** Per-photo metadata cache (place + people), filled lazily when a detail view opens. */
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
-  /** Delete one of the player's photos (re-emits the gallery). */
-  remove: (id: string) => void
+  setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
+  remove: (id: string) => Promise<ReelWrite>
 }
 
 export interface EmotesState {
@@ -881,6 +898,11 @@ const AUTH_PROFILE_WAIT_MS = 30_000
 const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
+export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+// camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
+export const GALLERY_DELETE_TIMEOUT_MS = 60_000
+
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1080,6 +1102,8 @@ export interface EngineSession {
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
+  /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
+  openExternalUrl: (url: string) => Promise<boolean>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: 'map' | 'avatarPreview' | 'lobby',
@@ -1511,9 +1535,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
-  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
-  const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
-  const [galleryLoaded, setGalleryLoaded] = useState(false)
+  const bridgeRequestRef = useRef(0)
+  const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
@@ -2427,10 +2450,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
           break
         case 'gallery':
-          setGalleryPhotos([...msg.photos].sort((a, b) => photoTime(b.dateTime) - photoTime(a.dateTime)))
-          setGalleryStorage({ current: msg.current, max: msg.max })
-          setGalleryLoaded(true)
+        case 'galleryWrite':
+        case 'externalUrlOpened': {
+          const resolve = bridgePendingRef.current.get(msg.requestId)
+          bridgePendingRef.current.delete(msg.requestId)
+          resolve?.(msg)
           break
+        }
         case 'galleryPhoto':
           setGalleryMetas((prev) => ({ ...prev, [msg.id]: msg.meta }))
           break
@@ -2722,7 +2748,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // re-emit fresh data through the relay, so we never need to re-pull on reopen. Avoids
   // hammering the catalyst every time a menu is reopened.
   const ensure = useCallback(
-    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities' | 'getGallery') => {
+    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities') => {
       if (fetchedRef.current.has(kind)) return
       fetchedRef.current.add(kind)
       driverRef.current?.send({ kind })
@@ -3038,7 +3064,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       clearInterval(id)
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
-  const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
   }, [])
@@ -3048,12 +3074,61 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
-  const removeGalleryPhoto = useCallback((id: string) => {
-    driverRef.current?.send({ kind: 'deleteGalleryPhoto', id })
-    // Optimistically drop it; the bridge re-emits the full gallery to confirm.
-    setGalleryPhotos((list) => list.filter((p) => p.id !== id))
-    setGalleryStorage((s) => ({ ...s, current: Math.max(0, s.current - 1) }))
-  }, [])
+  // A reply that never comes (the bridge scene reloaded mid-request) resolves null after
+  // `timeoutMs`, so a page never waits for good.
+  const bridgeCall = useCallback(
+    <K extends BridgeReply['kind']>(
+      kind: K,
+      build: (requestId: number) => PageToScene,
+      timeoutMs = BRIDGE_CALL_TIMEOUT_MS
+    ): Promise<Extract<BridgeReply, { kind: K }> | null> => {
+      const driver = driverRef.current
+      if (driver == null) return Promise.resolve(null)
+      const requestId = ++bridgeRequestRef.current
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }, timeoutMs)
+        bridgePendingRef.current.set(requestId, (msg) => {
+          clearTimeout(timer)
+          resolve(msg.kind === kind ? (msg as Extract<BridgeReply, { kind: K }>) : null)
+        })
+        try {
+          driver.send(build(requestId))
+        } catch (e) {
+          console.error(`[bridge] ${kind} request could not be sent`, e)
+          clearTimeout(timer)
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }
+      })
+    },
+    []
+  )
+  const fetchGalleryPage = useCallback(
+    async (offset: number, limit: number): Promise<ReelPage> => {
+      const msg = await bridgeCall('gallery', (requestId) => ({ kind: 'getGallery', requestId, offset, limit }))
+      return msg == null
+        ? { ok: false, photos: [], total: 0, max: 0 }
+        : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max, received: msg.received }
+    },
+    [bridgeCall]
+  )
+  const openExternalUrl = useCallback(
+    async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const setGalleryPhotoPublic = useCallback(
+    async (id: string, isPublic: boolean): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
+    [bridgeCall]
+  )
+  const removeGalleryPhoto = useCallback(
+    async (id: string): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
+    [bridgeCall]
+  )
   const teleport = useCallback((x: number, y: number) => {
     setLobbyOpen(false)
     driverRef.current?.send({ kind: 'teleport', x, y })
@@ -4611,6 +4686,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (hasOpenPopup()) closeTopPopup()
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
+      // the debug panel closes after every popup, leaf layer, panel and the lobby
+      else if (isDebugPanelOpen() && !lobbyOpen) closeDebugPanel()
       else setLobbyOpen(false)
       return
     }
@@ -4800,14 +4877,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       take: takePhoto
     },
     gallery: {
-      list: galleryPhotos,
-      current: galleryStorage.current,
-      max: galleryStorage.max,
-      loaded: galleryLoaded,
       open: galleryOpen,
       toggle: toggleGallery,
+      fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },
     permissions: {
@@ -4830,6 +4905,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
+    openExternalUrl,
     setEngineViewport,
     setInteractableArea,
     logout,

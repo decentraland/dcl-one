@@ -270,6 +270,8 @@ struct Rig {
     admin_token: String,
     encryption_key: String,
     authority_key: String,
+    /// The node's `MODERATOR_TOKEN`; Pulse polls `/comms-gatekeeper/bans` with it.
+    moderator_token: String,
     authoritative: Wallet,
 }
 
@@ -309,6 +311,7 @@ impl Rig {
             ("LIVEKIT_API_SECRET", self.livekit_secret.clone()),
             ("COMMS_GATEKEEPER_AUTH_TOKEN", self.service_token.clone()),
             ("PULSE_ROOM_AUTHORITY_KEY", self.authority_key.clone()),
+            ("MODERATOR_TOKEN", self.moderator_token.clone()),
             ("SCENE_HOST_ENABLED", "true".into()),
             (
                 "SCENE_HOST_AUTHORITATIVE_KEY",
@@ -344,6 +347,12 @@ impl Rig {
             ),
             ("PULSE_ROOM_AUTHORITY_KEY", self.authority_key.clone()),
             ("PULSE_ROOM_AUTHORITY_ALLOW_LOOPBACK_HTTP", "true".into()),
+            // Pulse requires a moderator ban snapshot source.
+            ("COMMS_MODERATOR_TOKEN", self.moderator_token.clone()),
+            (
+                "PULSE_BANS_URL",
+                format!("http://127.0.0.1:{}/comms-gatekeeper/bans", self.port),
+            ),
             ("AUTHORITATIVE_SERVER_ADDRESS", self.authoritative.address()),
             ("PULSE_CLUSTERS_ENABLED", "true".into()),
             ("PULSE_CLUSTERS_PASS_INTERVAL_MS", "200".into()),
@@ -455,8 +464,9 @@ impl Node {
     }
 
     /// A signed fetch over the public path (the nested prefix included, as a
-    /// browser at this origin would sign it; the worlds, storage and scene
-    /// host routes verify the path they were served at).
+    /// browser at this origin would sign it): every signed route verifies the
+    /// path it was served at, and accepts its route-local path only through a
+    /// proxy's `x-original-path`, which this test has no proxy to set.
     async fn signed(
         &self,
         w: &Wallet,
@@ -466,24 +476,7 @@ impl Node {
         json: Option<Value>,
     ) -> (u16, Value) {
         let route = path.split('?').next().unwrap();
-        self.signed_over(w, method, path, route, metadata, json)
-            .await
-    }
-
-    /// A signed fetch whose signature covers `signed_path`: the comms
-    /// gatekeeper verifies its vhost-root route (`/get-scene-adapter`, what
-    /// `comms-gatekeeper.<domain>` clients sign; a prefix proxy forwards
-    /// the public path as `x-original-path`).
-    async fn signed_over(
-        &self,
-        w: &Wallet,
-        method: &str,
-        path: &str,
-        signed_path: &str,
-        metadata: &str,
-        json: Option<Value>,
-    ) -> (u16, Value) {
-        let headers = w.signed(method, signed_path, metadata).await;
+        let headers = w.signed(method, route, metadata).await;
         let body = json.map(|v| (v.to_string().into_bytes(), "application/json"));
         self.send(method, path, headers, body).await
     }
@@ -849,6 +842,7 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
             k
         }),
         authority_key: random_token(32),
+        moderator_token: random_token(32),
         authoritative: Wallet::random(),
     };
     let mut node = rig.start_node().await;
@@ -1004,11 +998,10 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     let adapter_meta =
         json!({ "signer": "dcl:explorer", "realmName": world, "sceneId": world }).to_string();
     let (status, minted) = http
-        .signed_over(
+        .signed(
             &player,
             "post",
             "/comms-gatekeeper/get-scene-adapter",
-            "/get-scene-adapter",
             &adapter_meta,
             Some(json!({})),
         )
@@ -1016,7 +1009,12 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     assert_eq!(status, 200, "{minted}");
     let player_jwt = jwt_from_adapter(minted["adapter"].as_str().unwrap());
     let claims = jwt_payload(&player_jwt);
-    let room = format!("world-{world}-{entity_id}");
+    // dcl-one's scene room format (`w1:`, docs/worlds-compatibility.md "Scene
+    // room names"); upstream's is `world-<name>-<scene>`.
+    let room = catalyst::comms::rooms::worlds_service_scene_room(
+        &catalyst::comms::world_identity::WorldName::parse(&world).unwrap(),
+        &catalyst::comms::world_identity::SceneId::parse(&entity_id).unwrap(),
+    );
     assert_eq!(claims["video"]["room"], room, "{claims}");
     assert_eq!(claims["sub"], player.address());
     assert!(
@@ -1043,11 +1041,10 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
         .await;
     assert_eq!(status, 204, "{body}");
     let (status, refused) = http
-        .signed_over(
+        .signed(
             &player,
             "post",
             "/comms-gatekeeper/get-scene-adapter",
-            "/get-scene-adapter",
             &adapter_meta,
             Some(json!({})),
         )
@@ -1055,6 +1052,10 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     assert_eq!(
         status, 401,
         "the revoked player must not get a token: {refused}"
+    );
+    assert!(
+        !refused.to_string().contains("signed-fetch"),
+        "refused for the revoked access, not the signature: {refused}"
     );
     assert!(
         closed(&mut player_socket.ws, Duration::from_secs(10)).await,
@@ -1082,11 +1083,10 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
         .await;
     assert_eq!(status, 204);
     let (status, _) = http
-        .signed_over(
+        .signed(
             &player,
             "post",
             "/comms-gatekeeper/get-scene-adapter",
-            "/get-scene-adapter",
             &adapter_meta,
             Some(json!({})),
         )
@@ -1204,7 +1204,8 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
          VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind("bafkreiacceptancegenesis")
-    .bind(sqlx::types::Json(json!({ "display": { "title": "genesis plaza stub", "navmapThumbnail": "thumb.png" }, "scene": { "base": "40,-20", "parcels": ["40,-20"] } })))
+    // The content server stores entity metadata wrapped as `{"v": metadata}`.
+    .bind(sqlx::types::Json(json!({ "v": { "display": { "title": "genesis plaza stub", "navmapThumbnail": "thumb.png" }, "scene": { "base": "40,-20", "parcels": ["40,-20"] } } })))
     .bind(vec!["40,-20".to_string()])
     .fetch_one(&pool)
     .await
@@ -1290,7 +1291,9 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
                 "archipelago did not show Pulse's island over NATS within 20 s: {islands}"
             );
         }
-        let (status, health) = http.get("/archipelago-ea-stats/stats/health").await;
+        // The shared-root diagnostics; the standalone Stats mount leaves it out
+        // (docs/comms/comms-crate.md).
+        let (status, health) = http.get("/stats/health").await;
         assert_eq!(status, 200);
         assert_eq!(health["feed_connected"], true, "{health}");
         assert!(

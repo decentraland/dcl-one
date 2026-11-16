@@ -80,6 +80,8 @@ pub struct ReceiptLog {
 #[derive(Deserialize)]
 struct WireReceipt {
     status: Option<String>,
+    #[serde(rename = "blockNumber", default)]
+    block_number: Option<String>,
     #[serde(default)]
     logs: Vec<WireLog>,
 }
@@ -205,7 +207,7 @@ impl DirectSigner {
         let mut delay = self.receipt_poll_interval;
         loop {
             match tokio::time::timeout_at(deadline, self.receipt(hash)).await {
-                Ok(Ok(Some((outcome, logs)))) => {
+                Ok(Ok(Some((outcome, logs, _)))) => {
                     tracing::info!(tx_hash = %tx_hash_hex, ?outcome, "broker tx receipt observed");
                     return Ok((outcome, logs));
                 }
@@ -233,20 +235,53 @@ impl DirectSigner {
         &self,
         tx_hash_hex: &str,
     ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>), ApiError> {
+        let (outcome, logs, _) = self.fetch_receipt_with_block(tx_hash_hex).await?;
+        Ok((outcome, logs))
+    }
+
+    /// [`Self::fetch_receipt_once`] plus the block the receipt was mined in.
+    pub async fn fetch_receipt_with_block(
+        &self,
+        tx_hash_hex: &str,
+    ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>), ApiError> {
         let hash = parse_tx_hash(tx_hash_hex)?;
         match self.receipt(hash).await {
             Ok(Some(found)) => Ok(found),
-            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new())),
+            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new(), None)),
             Err(e) => Err(ApiError::RelayerFailed(format!(
                 "receipt lookup failed for {tx_hash_hex}: {e}"
             ))),
         }
     }
 
+    /// The chain head and block `number`'s timestamp (unix seconds).
+    pub async fn head_and_block_time(&self, number: u64) -> Result<(u64, i64), ApiError> {
+        let rpc = self.chain.rpc();
+        let fail = |e: RpcError| ApiError::RelayerFailed(format!("block lookup failed: {e}"));
+        let head = rpc
+            .call_hex("eth_blockNumber", json!([]))
+            .await
+            .map_err(fail)
+            .and_then(|h| parse_quantity_u64(&h).map_err(fail))?;
+        let block = rpc
+            .call(
+                "eth_getBlockByNumber",
+                json!([format!("0x{number:x}"), false]),
+            )
+            .await
+            .map_err(fail)?;
+        let timestamp = block
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| ApiError::RelayerFailed(format!("block {number} has no timestamp")))
+            .and_then(|t| parse_quantity_u64(t).map_err(fail))?;
+        Ok((head, i64::try_from(timestamp).unwrap_or(i64::MAX)))
+    }
+
     async fn receipt(
         &self,
         hash: TxHash,
-    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>)>, RpcError> {
+    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>)>, RpcError> {
         let value = self
             .chain
             .rpc()
@@ -270,7 +305,11 @@ impl DirectSigner {
                 data: l.data,
             })
             .collect();
-        Ok(Some((classify_receipt(status), logs)))
+        let block_number = match receipt.block_number.as_deref() {
+            Some(n) => Some(parse_quantity_u64(n)?),
+            None => None,
+        };
+        Ok(Some((classify_receipt(status), logs, block_number)))
     }
 
     pub async fn send_meta_transaction(&self, tx: &TransactionData) -> Result<String, ApiError> {

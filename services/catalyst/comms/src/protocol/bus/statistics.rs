@@ -112,7 +112,8 @@ pub struct Snapshot {
 /// A recovery transfer is all-or-nothing above this supported byte budget.
 pub const MAX_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 /// Retired Pulse snapshot incarnation fences per reader; the oldest is forgotten at
-/// capacity. Connector generations are separate.
+/// capacity, so a new incarnation is never *permanently* refused. Connector generations
+/// are separate.
 pub const MAX_PRODUCERS: usize = 4096;
 pub const TRANSFER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 pub const PRODUCER_QUIET: std::time::Duration = std::time::Duration::from_secs(15);
@@ -270,7 +271,8 @@ struct Transfer {
 
 /// Two bounded slots isolate an incomplete replacement from the working producer.
 /// Retired fences are kept for the last [`MAX_PRODUCERS`] replacements; beyond that the
-/// oldest is forgotten, so a new Pulse incarnation is never refused for the reader's lifetime.
+/// oldest is forgotten, so a new Pulse incarnation is never *permanently* refused for the
+/// reader's lifetime.
 #[derive(Default)]
 pub struct Assembler {
     producer: Option<uuid::Uuid>,
@@ -391,11 +393,13 @@ impl Assembler {
         Some((producer, update))
     }
     fn retire(&mut self, producer: uuid::Uuid) {
+        // Unreachable: `receive_update` rejects fenced producers before they become active.
         if !self.retired.insert(producer) {
             return;
         }
         self.retired_order.push_back(producer);
-        while self.retired_order.len() > MAX_PRODUCERS {
+        // Each call adds at most one fence, so the queue is at most one over capacity.
+        if self.retired_order.len() > MAX_PRODUCERS {
             if let Some(oldest) = self.retired_order.pop_front() {
                 self.retired.remove(&oldest);
             }
