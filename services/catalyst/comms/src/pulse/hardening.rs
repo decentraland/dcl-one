@@ -154,10 +154,10 @@ pub enum ReplayRejection {
 }
 
 /// A live `(wallet, timestamp)` pair: its signed time and, when this process admitted it, the
-/// source (`client_ip::source_key`) it came from. Pairs read back from the journal have no source.
+/// sources ([`replay_sources`]) it counts against. Pairs read back from the journal have none.
 struct ReplayEntry {
     signed_ms: i64,
-    source: Option<String>,
+    sources: Vec<String>,
 }
 
 type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
@@ -166,6 +166,24 @@ type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
 /// far above what the clients behind one address sign, and one source can take only a small part
 /// of the table.
 pub const DEFAULT_REPLAY_ENTRIES_PER_SOURCE: usize = 256;
+
+/// Prefix of the IPv6 site a peer is also counted against, so addresses spread over the /64s of
+/// one allocation share one quota, as the clients behind one IPv4 address do.
+pub const IPV6_REPLAY_SITE_PREFIX_BITS: u32 = 48;
+
+/// The sources a peer address counts against: its `client_ip::source_key` (the IPv4 address, or
+/// the IPv6 /64) and, for IPv6, its /48 site.
+fn replay_sources(ip: &str) -> Vec<String> {
+    let mut sources = vec![crate::shared::client_ip::source_key(ip)];
+    if let Ok(std::net::IpAddr::V6(v6)) = ip.parse::<std::net::IpAddr>()
+        && v6.to_ipv4_mapped().is_none()
+    {
+        let mask = u128::MAX << (128 - IPV6_REPLAY_SITE_PREFIX_BITS);
+        let site = std::net::Ipv6Addr::from(u128::from(v6) & mask);
+        sources.push(format!("{site}/{IPV6_REPLAY_SITE_PREFIX_BITS}"));
+    }
+    sources
+}
 
 /// One write to the replay journal, in the order the event loop issued it.
 enum JournalJob {
@@ -270,7 +288,7 @@ impl ReplayJournalFile {
                         (wallet.to_string(), timestamp.to_string()),
                         ReplayEntry {
                             signed_ms,
-                            source: None,
+                            sources: Vec::new(),
                         },
                     );
                 }
@@ -635,13 +653,12 @@ impl HandshakeReplayPolicy {
         }
     }
 
-    /// Records a fresh pair from `source` (`client_ip::source_key` of the peer address; `None`
-    /// is not counted per source) and issues its journal record; see the type's documentation
-    /// for when it may be answered.
+    /// Records a fresh pair from the peer address `ip` (`None` is not counted per source) and
+    /// issues its journal record; see the type's documentation for when it may be answered.
     pub fn try_admit(
         &mut self,
         now_ms: i64,
-        source: Option<&str>,
+        ip: Option<&str>,
         wallet: &str,
         timestamp: &str,
     ) -> Result<(), ReplayRejection> {
@@ -660,9 +677,12 @@ impl HandshakeReplayPolicy {
             return Err(ReplayRejection::Duplicate);
         }
 
-        let source = source.filter(|_| self.max_entries_per_source > 0);
+        let sources = match ip {
+            Some(ip) if self.max_entries_per_source > 0 => replay_sources(ip),
+            _ => Vec::new(),
+        };
         let source_full = |policy: &Self| {
-            source.is_some_and(|source| {
+            sources.iter().any(|source| {
                 policy.entries_by_source.get(source).copied().unwrap_or(0)
                     >= policy.max_entries_per_source
             })
@@ -681,19 +701,10 @@ impl HandshakeReplayPolicy {
         if let Some(journal) = self.journal.as_mut() {
             journal.append_seen(&key.0, &key.1, signed_ms);
         }
-        if let Some(source) = source {
-            *self
-                .entries_by_source
-                .entry(source.to_string())
-                .or_default() += 1;
+        for source in &sources {
+            *self.entries_by_source.entry(source.clone()).or_default() += 1;
         }
-        self.seen.insert(
-            key,
-            ReplayEntry {
-                signed_ms,
-                source: source.map(str::to_string),
-            },
-        );
+        self.seen.insert(key, ReplayEntry { signed_ms, sources });
         let compaction_due = self.max_entries.saturating_mul(4).max(4);
         if let Some(journal) = self.journal.as_mut()
             && journal.records > compaction_due
@@ -726,12 +737,12 @@ impl HandshakeReplayPolicy {
                 return true;
             }
             forgotten_through_ms = forgotten_through_ms.max(entry.signed_ms);
-            if let Some(source) = entry.source.as_deref()
-                && let Some(count) = entries_by_source.get_mut(source)
-            {
-                *count -= 1;
-                if *count == 0 {
-                    entries_by_source.remove(source);
+            for source in &entry.sources {
+                if let Some(count) = entries_by_source.get_mut(source) {
+                    *count -= 1;
+                    if *count == 0 {
+                        entries_by_source.remove(source);
+                    }
                 }
             }
             false
@@ -1613,6 +1624,44 @@ mod tests {
             p.try_admit(later, Some("192.0.2.1"), "0x1", &ts),
             Err(ReplayRejection::Forgotten)
         );
+    }
+
+    #[test]
+    fn ipv6_peers_share_the_quota_of_their_slash_48_site() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_source(2);
+        let ts = SIGNED.to_string();
+        // Two /64s of one /48 site take its whole quota.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:1::1"), "0x1", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:2::1"), "0x2", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:3::1"), "0x3", &ts),
+            Err(ReplayRejection::SourceQuota)
+        );
+        // Another /48 has its own quota, and IPv4 (also v4-mapped) is counted by address only.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:2:1::1"), "0x3", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("::ffff:192.0.2.1"), "0x4", &ts),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("192.0.2.1"), Some(&1));
+        // Expiry releases both the /64 and the /48 counts.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, Some("2001:db8:1:3::1"), "0x5", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("2001:db8:1::/48"), Some(&1));
+        assert_eq!(p.entries_by_source.get("2001:db8:1:1::/64"), None);
     }
 
     #[test]
