@@ -313,7 +313,7 @@ pub fn spawn(state: &SharedState, jobs: &Jobs) {
         move |ctx| {
             let (state, ran) = (state.clone(), ran.clone());
             async move {
-                if crate::shared::writes::ops_refusal(state.settings.writes_enabled).is_some() {
+                if !state.settings.writes_enabled {
                     return Ok(());
                 }
                 let now = crate::credits::store::now();

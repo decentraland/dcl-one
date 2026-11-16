@@ -161,10 +161,10 @@ With a base url:
 - When a content file `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2`, or one without an extension, has a texture variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes are cached under a digest of that url, never under the original's hash.
 - The reader hands the KTX2 to the image loaders as it is, after checking that its header names a BC format (BC1, BC5 or BC7). The loaders for `.png`, `.jpg`, `.jpeg`, `.webp`, `.ktx2` and paths without an extension unwrap it into a DDS with a DX10 header, inside the asset load: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, a level 0 that is not whole 4×4 blocks, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The asset keeps its original path, and the texture is sRGB or linear as it is requested.
 - On web, a `.glb` file with a `glb-br` variant is read from `{base}/{path}.br`, the Brotli copy of the original file, which the browser decodes. The bytes must hash to the original file's own content id (they are the original byte for byte), then go to the glTF loader of the original path; anything else falls back to the original. The native explorer loads original models for now.
-- `glb` variants are not used. They embed their textures as KTX2 under `KHR_texture_basisu`, and the glTF loader rejects a file that requires that extension.
-- Any failure falls back to the original for that file: no variant of a supported class, a failed fetch, a KTX2 that does not unwrap, or an image that fails to load from the variant. A failed variant is not tried again that session, and its cached copy is dropped. Five consecutive failed requests to the service turn variants off for the session.
+- When a `.glb` file has a `glb` variant and the GPU supports BC textures, the file is read from `{base}/{path}` and cached as served; on web the service sends its Brotli copy, when there is one, to a browser that accepts it. Its embedded images are BC KTX2 files of the texture variants' format. The reader checks only that the file starts with the GLB magic and hands it to the glTF loader as it is. The loader decodes each embedded KTX2 through the same KTX2 transcoder as a texture variant, which unwraps it to a DDS as above, so textures stay BC in memory, sRGB or linear as each material uses them. Images left in their own format (PNG, JPEG) load as usual. A KTX2 that does not unwrap fails the GLB's load, and a GLB that fails to load from the variant is reloaded from the original. The asset keeps its original path.
+- Any failure falls back to the original for that file: no variant of a supported class, a failed fetch, a KTX2 that does not unwrap, or an image or GLB that fails to load from the variant. A failed variant is not tried again that session, and its cached copy is dropped. Five consecutive failed requests to the service turn variants off for the session.
 - Image processing skips assets loaded from a variant, so their bytes are never re-encoded or written over the original's cache entry.
-- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, the formats taken, each scene's manifest state, how many variants were served in all and per format, and recent fallbacks with their reasons.
+- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, the formats taken, each scene's manifest state, how many variants were served in all and per format, and fallbacks per format and recent ones with their reasons.
 
 On web, a link that sets `?bevyVariants=` to a host outside Decentraland's own deployments stops on the launch gate, as `?contentServer=` does. The variants service decides what those scenes look like. On web the service must also send CORS headers for the explorer's origin.
 
@@ -247,6 +247,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/nametag_state` (the nametags: `visible`, `shown` and `hidden` counts, the glyph `atlas` page
+  sizes, the chat `bubbles` setting, and each shown tag's `player`, `name`, `suffix`, `verified`,
+  `official`, `voice`, `distance`, `opacity`, `scale`, `position`, `headOffset` and `bubble`, which is its
+  `kind`, `mention` and `length`, never the message),
+  `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` (shows a message in a chat
+  bubble over the shown nametags it names, on this client only; replies with the number asked for
+  as `bubbles`), `/chat_bubble_text <message id> <message>` (replaces the text of the bubble
+  showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
+  sets, for the session, whether a wallet's nametag carries the official badge; replies with
+  `address` and `official`),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
   nearby voice off, the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,

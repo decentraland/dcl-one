@@ -75,6 +75,12 @@ impl Chain {
     pub fn is_estate_registry(&self, address: Address) -> bool {
         self.estate == Some(address)
     }
+
+    /// The network of this chain's LAND registry, whose land-authz index
+    /// confirms its parcels and estates; `None` without LAND.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network_of_registry(&format!("{:#x}", self.land?))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -246,6 +252,11 @@ mod tests {
             crate::land_authz::LAND_REGISTRY_MAINNET
         );
         assert_eq!(
+            ethereum.land_network(),
+            Some(crate::land_authz::LAND_MAINNET)
+        );
+        assert_eq!(polygon.land_network(), None);
+        assert_eq!(
             format!("{:#x}", ethereum.legacy_marketplace.unwrap()),
             crate::market::nft_index::legacy_marketplaces(ChainNet::Ethereum)[0].0
         );
@@ -270,6 +281,7 @@ mod tests {
         let amoy = book.chain(ChainId::AMOY).unwrap();
         assert_eq!(amoy.rpc_url.as_deref(), Some("rpc-80002"));
         assert_eq!(amoy.net, Some(ChainNet::Matic));
+        assert_eq!(amoy.land_network(), None);
         let pinned: serde_json::Value =
             serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
         assert_eq!(

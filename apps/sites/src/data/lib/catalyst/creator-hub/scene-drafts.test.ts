@@ -256,20 +256,12 @@ describe("legacy drafts route: read and delete for the move, no writes", () => {
     const del = async () =>
       action({ request: await signedReq(key, "DELETE", "/api/creator-hub/drafts/kept"), params: { "*": "kept" } });
 
-    createPlane = {
-      open: false,
-      reason: "the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26",
-    };
-    const held = await del();
-    expect(held.status).toBe(503);
-    expect(held.headers.get("retry-after")).toBe("3600");
-    expect(((await held.json()) as { error: string }).error).toContain("backup.json) is 31 h old");
-    expect(await getDraft(wallet, "kept")).not.toBeNull();
-
     createPlane = { open: false, reason: "CREATE_WRITES_ENABLED=false" };
     const off = await del();
     expect(off.status).toBe(503);
+    expect(off.headers.get("retry-after")).toBe("3600");
     expect(((await off.json()) as { error: string }).error).toContain("CREATE_WRITES_ENABLED=false");
+    expect(await getDraft(wallet, "kept")).not.toBeNull();
 
     process.env.CATALYST_URL = "http://127.0.0.1:1";
     const unreachable = await del();

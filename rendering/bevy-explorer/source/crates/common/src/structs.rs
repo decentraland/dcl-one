@@ -433,6 +433,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -582,6 +609,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -595,6 +624,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -649,6 +679,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -662,6 +693,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1153,6 +1185,32 @@ pub struct SceneLoadDistance {
     pub load: f32,
     pub unload: f32, // additional
     pub load_imposter: f32,
+}
+
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
 }
 
 #[derive(Debug)]
@@ -2039,6 +2097,15 @@ pub enum PointAtMarkerVisibility {
     None,
 }
 
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
+    None,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraSmoothing {
     Raw,
@@ -2078,6 +2145,17 @@ pub struct PointAtMarkerVisibilityChanged;
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
 
     #[test]
     fn sun_cascades_split_the_shadow_distance() {
