@@ -92,6 +92,8 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: ShopC
       badges={collectibleBadges(item.traits)}
       href={href}
       linkComponent={ShopCardRouterLink}
+      variant="catalogue"
+      headingLevel={3}
       actions={
         item.payment.kind !== "none" ? (
           <Button href={href} onClick={routerClick(href)} size="md" aria-label={`Buy ${item.name}`}>

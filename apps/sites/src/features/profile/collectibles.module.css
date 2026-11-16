@@ -121,7 +121,9 @@
   list-style: none;
 }
 
+/* A flex cell, so its card stretches to the row's height. */
 .item {
+  display: flex;
   min-width: 0;
 }
 

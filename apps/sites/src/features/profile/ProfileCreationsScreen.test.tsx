@@ -86,6 +86,7 @@ describe("profile creations", () => {
     expect(net.fetchProfileCreations.mock.calls[0]?.[0]).toBe(A);
     expect(net.fetchProfileCreations.mock.calls[0]?.[1]).toMatchObject({ category: "wearable", skip: 0, first: PROFILE_COLLECTIBLES_PAGE });
     const hat = card("Hat 0");
+    expect(within(hat).getByRole("heading", { level: 3, name: "Hat 0" })).toBeTruthy();
     // The creator in the profile's own name colour.
     expect(within(hat).getByText("Billyjuice").style.getPropertyValue("--creator-color")).toBe("#ff8362");
     expect(within(hat).getByText("legendary")).toBeTruthy();

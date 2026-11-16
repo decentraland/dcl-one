@@ -60,6 +60,13 @@ export type ShopCardProps = {
   /** Without `href`, the whole card is a toggle button that calls this. */
   onSelect?: () => void
   selected?: boolean
+  /**
+   * `shop` is the in-world Shop's card: one meta row, actions on hover or focus. `catalogue` is a web
+   * grid's: a long price wraps under the label, and on a touch screen the actions always show.
+   */
+  variant?: 'shop' | 'catalogue'
+  /** Renders the name as a heading of this level, so a grid of cards can be navigated by heading. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }
 
 const RARITIES = new Set<string>([
@@ -107,11 +114,18 @@ export function ShopCard({
   href,
   linkComponent: LinkComponent,
   onSelect,
-  selected = false
+  selected = false,
+  variant = 'shop',
+  headingLevel
 }: ShopCardProps) {
   const { failed, ref, onError } = useFailedImage(image)
   const tint = rarity && RARITIES.has(rarity) ? rarity : 'base'
-  const classes = [styles.card, selected && styles.selected, actions != null && styles.hasActions]
+  const classes = [
+    styles.card,
+    variant === 'catalogue' && styles.catalogue,
+    selected && styles.selected,
+    actions != null && styles.hasActions
+  ]
     .filter(Boolean)
     .join(' ')
   const hit = href ? (
@@ -156,9 +170,15 @@ export function ShopCard({
         {discount != null && <span className={styles.discount}>{discount}</span>}
       </span>
       <span className={styles.info}>
-        <span className={styles.name} title={name}>
-          {name}
-        </span>
+        {headingLevel ? (
+          <Heading level={headingLevel} className={styles.name} title={name}>
+            {name}
+          </Heading>
+        ) : (
+          <span className={styles.name} title={name}>
+            {name}
+          </span>
+        )}
         {creator != null && (
           <span className={styles.creator}>
             {creator.picture ? (
@@ -185,6 +205,14 @@ export function ShopCard({
       </span>
     </article>
   )
+}
+
+function Heading({
+  level,
+  ...props
+}: { level: 2 | 3 | 4 | 5 | 6; className: string | undefined; title: string; children: ReactNode }) {
+  const Tag = `h${level}` as const
+  return <Tag {...props} />
 }
 
 /** The rarity's corner (its diagonal rounded at both ends) and its 20% shadow along that edge. */

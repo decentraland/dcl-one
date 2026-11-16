@@ -212,9 +212,12 @@
     color: var(--dcl-brand-ruby);
   }
 
+  /* It fills a card stretched to its grid row, so a row of cards ends level. */
   .info {
+    position: relative;
     display: flex;
     box-sizing: border-box;
+    flex: 1 0 auto;
     flex-direction: column;
     gap: var(--dcl-space-8);
     min-height: 113px;
@@ -225,6 +228,7 @@
     composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
 
     overflow: hidden;
+    margin: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -284,10 +288,7 @@
     text-transform: uppercase;
   }
 
-  /* Above the hit area, so a badge's tooltip can be hovered. */
   .badges {
-    position: relative;
-    z-index: 2;
     display: flex;
     align-items: center;
     gap: var(--dcl-space-4);
@@ -299,6 +300,7 @@
     display: inline-flex;
     flex: none;
     align-items: center;
+    max-width: 100%;
     font-variant-numeric: tabular-nums;
   }
 
@@ -308,46 +310,60 @@
     gap: var(--dcl-space-4);
   }
 
-  /* Hover or keyboard focus: the name stays on top and the 40px actions sit at the bottom of the same
-     113px (a click's focus leaves a selected card as the design draws it). */
+  /* Hover or keyboard focus: the name stays on top and the 40px actions take the bottom of the same
+     info (a click's focus leaves a selected card as the design draws it). The rows swap by opacity, so
+     the price stays in the accessibility tree and the actions stay in the focus order. */
   .actions {
-    position: relative;
+    position: absolute;
     z-index: 2;
-    display: none;
+    right: var(--dcl-space-16);
+    bottom: var(--dcl-space-16);
+    left: var(--dcl-space-16);
     height: 40px;
+    opacity: 0;
+    pointer-events: none;
   }
 
   .actions > * {
     flex: 1;
   }
 
-  .hasActions:hover .info,
-  .hasActions:has(:focus-visible) .info {
-    justify-content: space-between;
-  }
-
   .hasActions:hover .creator,
   .hasActions:has(:focus-visible) .creator,
   .hasActions:hover .meta,
   .hasActions:has(:focus-visible) .meta {
-    display: none;
+    opacity: 0;
   }
 
   .hasActions:hover .actions,
   .hasActions:has(:focus-visible) .actions {
-    display: flex;
+    opacity: 1;
+    pointer-events: auto;
   }
 
-  /* A touch screen has no hover: the actions always show, under the price. */
+  /* The catalogue variant (web grids): a price too long to share the row wraps under the label, and a
+     touch screen, which has no hover, always shows the actions under the info. */
+  .catalogue .meta {
+    flex-wrap: wrap;
+    row-gap: var(--dcl-space-4);
+  }
+
+  .catalogue .price {
+    margin-left: auto;
+  }
+
   @media (hover: none) {
-    .actions,
-    .hasActions:hover .actions {
-      display: flex;
+    .catalogue .actions {
+      position: static;
+      opacity: 1;
+      pointer-events: auto;
     }
 
-    .hasActions:hover .creator,
-    .hasActions:hover .meta {
-      display: flex;
+    .catalogue.hasActions:hover .creator,
+    .catalogue.hasActions:has(:focus-visible) .creator,
+    .catalogue.hasActions:hover .meta,
+    .catalogue.hasActions:has(:focus-visible) .meta {
+      opacity: 1;
     }
   }
 

@@ -83,12 +83,12 @@ function NameActions({ asset }: { asset: ProfileAsset }) {
         href={MANAGE_NAMES_HREF}
         onClick={routerClick(MANAGE_NAMES_HREF)}
         variant="secondary"
-        size="sm"
+        size="md"
         aria-label={`Edit ${asset.name}`}
       >
         Edit
       </Button>
-      <Button href={transfer} onClick={routerClick(transfer)} size="sm" aria-label={`Transfer ${asset.name}`}>
+      <Button href={transfer} onClick={routerClick(transfer)} size="md" aria-label={`Transfer ${asset.name}`}>
         Transfer
       </Button>
     </>
@@ -110,6 +110,8 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
       badges={collectibleBadges(asset.traits)}
       href={href}
       linkComponent={ShopCardRouterLink}
+      variant="catalogue"
+      headingLevel={3}
       actions={
         asset.category === "ens" ? (
           <NameActions asset={asset} />

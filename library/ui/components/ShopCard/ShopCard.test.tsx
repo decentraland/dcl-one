@@ -69,6 +69,29 @@ describe('ShopCard', () => {
       expect(screen.getByTestId('name-glyph')).toBeInTheDocument()
     })
 
+    it('leaves the thumbnail empty when a failed image has no placeholder', () => {
+      const { container } = setup()
+      fireEvent.error(container.querySelector('img') as HTMLImageElement)
+      expect(container.querySelector('img')).toBeNull()
+    })
+
+    it('tries a new image after the previous one failed', () => {
+      const { container, rerender } = setup()
+      fireEvent.error(container.querySelector('img') as HTMLImageElement)
+      rerender(<ShopCard {...item} image="https://example.org/armor-2.png" />)
+      expect(container.querySelector('img')).toHaveAttribute('src', 'https://example.org/armor-2.png')
+    })
+
+    it('drops an image that failed before the page hydrated', () => {
+      const complete = vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)
+      const width = vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(0)
+      const { container } = setup({ placeholder: <svg data-testid="name-glyph" /> })
+      expect(container.querySelector('img')).toBeNull()
+      expect(screen.getByTestId('name-glyph')).toBeInTheDocument()
+      complete.mockRestore()
+      width.mockRestore()
+    })
+
     it('shows the blank face when the creator has no picture', () => {
       const { container } = setup({ creator: { name: 'Alice' } })
       expect(container.querySelectorAll('img')).toHaveLength(1)
@@ -105,10 +128,33 @@ describe('ShopCard', () => {
       expect(onSelect).toHaveBeenCalledOnce()
     })
 
+    it('links rather than toggles when it has both href and onSelect', () => {
+      setup({ href: '/shop/item/0xabc/1', onSelect: vi.fn(), selected: true })
+      expect(screen.getByRole('link', { name: 'Golden Armor' })).not.toHaveAttribute('aria-pressed')
+      expect(screen.queryByRole('button')).toBeNull()
+    })
+
+    it('has no control without onSelect or href, even when selected', () => {
+      setup({ selected: true })
+      expect(screen.queryByRole('button')).toBeNull()
+    })
+
     it('has no control without onSelect or href', () => {
       setup()
       expect(screen.queryByRole('button')).toBeNull()
       expect(screen.queryByRole('link')).toBeNull()
+    })
+  })
+
+  describe('when it has a heading level', () => {
+    it('names the card by a heading of that level', () => {
+      setup({ headingLevel: 3 })
+      expect(screen.getByRole('heading', { level: 3, name: 'Golden Armor' })).toBeInTheDocument()
+    })
+
+    it('has no heading without one', () => {
+      setup()
+      expect(screen.queryByRole('heading')).toBeNull()
     })
   })
 
