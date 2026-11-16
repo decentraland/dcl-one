@@ -11,7 +11,7 @@
 // to the first GETs of its media files: `recover.webm` twice, `broken.webm` every time. The scene
 // logs `video <name> state=<VideoState>` on every reported change, read through `/scene_logs`
 // after `/set_scene` points the scene commands at it, and `/media_state` gives each player's
-// reopen count and last error. `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for
+// reopen count, last state and last error. The count restarts after 5 s of playback. `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for
 // every source failing from then on; a failure before the first scenario issues it waits its
 // 2 s. The last scenario restores the 2 s default. Only the web backend reopens (native FFmpeg ends at its first error), so on the standalone
 // both are todos. Build the scene first: `npm run build-scenes -- video`.
@@ -32,6 +32,8 @@ const FIRST_DELAY_MS = 100
 /** The longest wait: a first failure before the delay is shortened (2 s), the shortened rest
  *  (3.1 s), the scene's boot and each load, with room for a slow runner. */
 const GIVE_UP_TIMEOUT_MS = 60_000
+/** 5 s of playback restart the count; the looped 2 s file loses a moment at each loop. */
+const RESTART_TIMEOUT_MS = 20_000
 
 const native = readTarget().transport === 'native'
 const webOnly = native ? { todo: 'native: FFmpeg reopens no failed source' } : {}
@@ -96,12 +98,14 @@ scenario(
     })
     assert.ok(!stateLines(logs, 'recover').some((line) => line.endsWith('state=VS_ERROR')), `the recover screen reported VS_ERROR while reopening:\n${stateLines(logs, 'recover').join('\n')}`)
     assert.ok((server.contentGets.get(recoverHash) ?? 0) > RECOVER_FAILURES, `recover.webm was requested ${server.contentGets.get(recoverHash) ?? 0} times`)
-    const row = await player(explorer, 'assets/recover.webm')
-    assert.equal(row.retryAttempt, 0, 'the reopen count did not restart once the source opened')
+    const row = await until(() => player(explorer, 'assets/recover.webm'), (row) => row.retryAttempt === 0, {
+      timeoutMs: RESTART_TIMEOUT_MS,
+      what: 'the recover screen\'s reopen count to restart after playing'
+    })
     assert.equal(row.retryGaveUp, false)
     assert.notEqual(row.lastError, null, 'the failures left no last error')
   },
-  { ...webOnly, session: SESSION, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: SESSION, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
 )
 
 scenario(
@@ -112,14 +116,12 @@ scenario(
       await explorer.mediaRetryDelay(2000)
     })
     await prepare(explorer)
-    await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'broken').some((line) => line.endsWith('state=VS_ERROR')), {
+    const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true, {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
-      what: 'the broken screen to log VS_ERROR'
+      what: 'the broken screen to give up'
     })
     const gets = server.contentGets.get(brokenHash) ?? 0
     assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
-    const row = await player(explorer, 'assets/broken.webm')
-    assert.equal(row.retryGaveUp, true)
     assert.equal(row.retryAttempt, MAX_REOPENS)
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')

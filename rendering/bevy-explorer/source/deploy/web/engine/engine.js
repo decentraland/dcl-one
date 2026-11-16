@@ -311,6 +311,11 @@ export async function initEngine() {
     function attachHls() {
       hls = new Hls();
       let recovered = false;
+      // before the manifest parses there is nothing to recover in place
+      let manifestParsed = false;
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        manifestParsed = true;
+      });
       hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
         hlsLive = data.details.live;
       });
@@ -319,7 +324,9 @@ export async function initEngine() {
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal || destroyed) return;
-        if (!recovered && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        if (!manifestParsed) {
+          onFatal(data.type);
+        } else if (!recovered && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           recovered = true;
           hls.startLoad();
         } else if (!recovered && data.type === Hls.ErrorTypes.MEDIA_ERROR) {

@@ -1,5 +1,6 @@
-// The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`,
-// built and served at its own parcel. `visualRealm()` starts it once per process, on the realm
+// The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`
+// but `video`, which `specs/media-retry.test.ts` serves from a realm of its own, built and served
+// at its own parcel. `visualRealm()` starts it once per process, on the realm
 // port, and registers its close for the end of the run; the spec files share the process
 // (`--test-isolation=none`), so a second server on that port would fail.
 import path from 'node:path'
@@ -24,7 +25,7 @@ async function build(id: string): Promise<BuiltScene> {
 }
 
 async function start(): Promise<RealmServer> {
-  const ids = await workspaceFolders()
+  const ids = (await workspaceFolders()).filter((id) => id !== 'video')
   const realm = await serveRealm({ scenes: await Promise.all(ids.map(build)), port: readTarget().ports.realm })
   after(() => realm.close())
   return realm

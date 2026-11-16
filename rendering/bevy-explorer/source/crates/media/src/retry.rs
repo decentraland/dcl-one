@@ -1,6 +1,7 @@
 //! The reopen schedule of a failed media source: up to [`MAX_REOPENS`] reopens, the first after
 //! the first delay (2 s) and each later one after twice the one before (4, 8, 16 and 32 s). The
-//! count restarts once the source opens again; a pause cancels a scheduled reopen.
+//! count restarts after [`HEALTHY_PLAYBACK`] of playback since the last failure, so a source that
+//! fails again at the same point gives up; a pause cancels a scheduled reopen.
 
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -11,6 +12,8 @@ use std::{
 pub const MAX_REOPENS: u32 = 5;
 /// The wait before the first reopen, unless [`set_first_reopen_delay`] changed it.
 pub const FIRST_REOPEN_DELAY: Duration = Duration::from_secs(2);
+/// Playback since the last failure after which the count restarts.
+pub const HEALTHY_PLAYBACK: Duration = Duration::from_secs(5);
 
 static FIRST_REOPEN_DELAY_MS: AtomicU64 = AtomicU64::new(FIRST_REOPEN_DELAY.as_millis() as u64);
 
@@ -38,11 +41,13 @@ pub enum RetryStep {
     GiveUp,
 }
 
-/// One source's failures since it last opened.
+/// One source's failures since it last played for [`HEALTHY_PLAYBACK`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MediaRetry {
     attempts: u32,
     gave_up: bool,
+    /// Playback since the last failure.
+    played: Duration,
 }
 
 impl MediaRetry {
@@ -53,23 +58,34 @@ impl MediaRetry {
             return RetryStep::GiveUp;
         }
         self.attempts += 1;
+        self.played = Duration::ZERO;
         RetryStep::Reopen {
             attempt: self.attempts,
             delay: reopen_delay(first_delay, self.attempts),
         }
     }
 
-    /// The source opened: the next failure starts the schedule again. A source that gave up
+    /// The source played for `step`; true when that restarted the count. A source that gave up
     /// stays given up.
-    pub fn opened(&mut self) {
-        if !self.gave_up {
-            self.attempts = 0;
+    pub fn played(&mut self, step: Duration) -> bool {
+        if self.gave_up || self.attempts == 0 {
+            return false;
         }
+        self.played += step;
+        if self.played < HEALTHY_PLAYBACK {
+            return false;
+        }
+        self.cancel();
+        true
     }
 
     /// A scheduled reopen was cancelled (a pause): the next failure starts the schedule again.
+    /// A source that gave up stays given up.
     pub fn cancel(&mut self) {
-        self.opened();
+        if !self.gave_up {
+            self.attempts = 0;
+            self.played = Duration::ZERO;
+        }
     }
 
     pub fn attempts(&self) -> u32 {
@@ -84,7 +100,7 @@ impl MediaRetry {
 /// A source's reopen state, for the `/media_state` rows.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct MediaRetryStatus {
-    /// Reopens since the source last opened.
+    /// Reopens since the source last played for [`HEALTHY_PLAYBACK`].
     pub attempt: u32,
     /// The wait before the scheduled reopen, while one is scheduled.
     pub next_delay: Option<Duration>,
@@ -126,13 +142,25 @@ mod tests {
     }
 
     #[test]
-    fn opening_restarts_the_schedule() {
+    fn healthy_playback_restarts_the_schedule() {
         let mut retry = MediaRetry::default();
         retry.fail(FIRST);
         retry.fail(FIRST);
-        retry.opened();
+        assert!(!retry.played(HEALTHY_PLAYBACK - Duration::from_millis(250)));
+        assert_eq!(retry.attempts(), 2);
+        assert!(retry.played(Duration::from_millis(250)));
         assert_eq!(retry.attempts(), 0);
         assert_eq!(retry.fail(FIRST), reopen(1, 2));
+    }
+
+    #[test]
+    fn failing_again_before_healthy_playback_keeps_counting() {
+        let mut retry = MediaRetry::default();
+        for _ in 0..MAX_REOPENS {
+            retry.fail(FIRST);
+            assert!(!retry.played(HEALTHY_PLAYBACK / 2));
+        }
+        assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);
     }
 
     #[test]
@@ -151,7 +179,7 @@ mod tests {
         for _ in 0..=MAX_REOPENS {
             retry.fail(FIRST);
         }
-        retry.opened();
+        assert!(!retry.played(HEALTHY_PLAYBACK));
         retry.cancel();
         assert!(retry.gave_up());
         assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);

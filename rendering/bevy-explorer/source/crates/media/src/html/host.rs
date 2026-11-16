@@ -191,6 +191,8 @@ struct Source {
     reopen_on_play: Cell<bool>,
     /// Where a reopened source that is not live resumes.
     resume_at: Cell<Option<f64>>,
+    /// The position at the last `timeupdate`.
+    last_time: Cell<f64>,
     /// The scheduled reopen's timeout handle.
     timeout: Cell<Option<i32>>,
     /// The last scheduled reopen's callback, kept until the next one or the drop.
@@ -259,8 +261,8 @@ impl Source {
     }
 
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled or after giving up are ignored; one while paused waits for the next
-    /// play.
+    /// reopen is scheduled or after giving up are ignored; one while paused reports `VsError` and
+    /// waits for the next play.
     fn fail(self: &Rc<Self>, error: &'static str) {
         if self.url.is_none() {
             self.send_state(VideoState::VsError);
@@ -275,6 +277,7 @@ impl Source {
         if !self.wants_play.get() {
             debug!("media {}: {error} while paused; reopen on play", self.id);
             self.reopen_on_play.set(true);
+            self.send_state(VideoState::VsError);
             self.send_retry(None);
             return;
         }
@@ -296,7 +299,8 @@ impl Source {
         }
     }
 
-    /// The source can play: a scheduled reopen is cancelled and the schedule starts again.
+    /// The source can play: a scheduled reopen is cancelled. The count restarts only once it
+    /// has played long enough ([`Self::played`]).
     fn opened(&self) {
         self.failed.set(false);
         self.reopen_on_play.set(false);
@@ -304,10 +308,20 @@ impl Source {
         if let Some(time) = self.resume_at.take() {
             self.media.set_current_time(time);
         }
+    }
+
+    /// The position moved: a step forward of under a second counts as playback.
+    fn played(&self) {
+        let time = self.media.current_time();
+        let step = time - self.last_time.replace(time);
+        // a seek or a loop is no playback
+        if self.failed.get() || !(0.0..1.0).contains(&step) {
+            return;
+        }
         let mut retry = self.retry.get();
-        if retry.attempts() > 0 {
-            retry.opened();
-            self.retry.set(retry);
+        let restarted = retry.played(Duration::from_secs_f64(step));
+        self.retry.set(retry);
+        if restarted {
             self.send_retry(None);
         }
     }
@@ -349,12 +363,17 @@ impl Source {
     fn reopen(self: &Rc<Self>) {
         debug!("media {}: reopening", self.id);
         self.reopen_on_play.set(false);
+        self.suspend();
+        self.open();
+    }
+
+    /// Detaches the source; one that is not live resumes where it was on the next open.
+    fn suspend(&self) {
         let time = self.media.current_time();
         if !self.is_live() && time > 0.0 {
             self.resume_at.set(Some(time));
         }
         self.detach();
-        self.open();
     }
 
     /// Shows the cleared frame in place of the last one.
@@ -424,6 +443,7 @@ impl HostMedia {
             failed: Cell::new(false),
             reopen_on_play: Cell::new(false),
             resume_at: Cell::new(None),
+            last_time: Cell::new(0.0),
             timeout: Cell::new(None),
             timer: RefCell::new(None),
         });
@@ -465,6 +485,10 @@ impl HostMedia {
         media.set_onseeking(Some(&register(state(VideoState::VsSeeking))));
         media.set_onplaying(Some(&register(state(VideoState::VsPlaying))));
         media.set_onpause(Some(&register(state(VideoState::VsPaused))));
+        media.set_ontimeupdate(Some(&register({
+            let source = source.clone();
+            Box::new(move || source.played())
+        })));
         media.set_onerror(Some(&register({
             let source = source.clone();
             Box::new(move || {
@@ -527,6 +551,7 @@ impl HostMedia {
                 // a pause cancels a scheduled or loading reopen; the next play reopens at once
                 self.source.cancel_reopen();
                 if self.source.failed.get() && !self.source.retry.get().gave_up() {
+                    self.source.suspend();
                     let mut retry = self.source.retry.get();
                     retry.cancel();
                     self.source.retry.set(retry);
@@ -641,6 +666,7 @@ impl Drop for HostMedia {
         self.media.set_onplaying(None);
         self.media.set_onpause(None);
         self.media.set_onended(None);
+        self.media.set_ontimeupdate(None);
         let _ = self.media.pause();
         self.media.remove();
     }

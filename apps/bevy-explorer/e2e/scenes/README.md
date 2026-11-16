@@ -52,7 +52,8 @@ reference:
 ## The video scene
 
 `video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
-`specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference. Two
+`specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference, and
+left out of the visual specs' realm, so its two looping decoders run only beside its own spec. Two
 planes at z = 12 each play one looped file of `assets/` into a basic material: `recover`
 (`assets/recover.webm`, x = 5) and `broken` (`assets/broken.webm`, x = 11), 2 s, 64 by 64 VP8 of
 one colour each, so their bytes and content hashes differ. It logs `video ready` once both

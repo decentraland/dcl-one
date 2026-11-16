@@ -441,20 +441,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
 - **Media reopens on the web.** The web backend keeps unity-explorer's schedule:
   a failed URL source is reopened up to 5 times, 2, 4, 8, 16 and 32 s
-  after each failure; the count restarts when the source opens again (`canplay`) or the scene
-  changes the source, and a source that gave up stays failed until the source changes. It differs
-  in four ways:
+  after each failure; the count restarts after 5 s of playback since the last failure or when the
+  scene changes the source, and a source that gave up stays failed until the source changes. It
+  differs in four ways:
   - *States between reopens.* unity-explorer reports `VsError` after every failed attempt; here a
-    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up.
+    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up or failed while
+    paused.
   - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
     element error or an hls.js fatal error at any time starts the schedule, and a live stream that
-    ends (its feed dropped) counts as a failure rather than a normal end. hls.js first recovers a
-    fatal error in place once (`startLoad`, `recoverMediaError`); a second before a fragment
-    buffers again reopens the source, and the element's own `error` is left to hls.js. A reopened
-    source that is not live resumes where it failed.
+    ends (its feed dropped) counts as a failure rather than a normal end. Once its manifest has
+    parsed, hls.js first recovers a fatal error in place once (`startLoad`, `recoverMediaError`); a
+    second before a fragment buffers again reopens the source, and the element's own `error` is
+    left to hls.js. A reopened source that is not live resumes where it failed, so the count,
+    which only playback restarts, ends a source that keeps failing at the same point.
   - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a pause cancels a
-    scheduled or loading reopen, a failure while paused schedules none, and the next play
-    reopens at once with the count restarted.
+    scheduled reopen and detaches a loading one, a failure while paused reports `VsError` and
+    schedules none, and the next play reopens at once with the count restarted.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the
     last frame while a reopen is pending.

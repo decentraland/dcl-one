@@ -296,7 +296,7 @@ State, in every build:
   scenarios hold them still for their frames.
 - `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
   section's reading. On the web each row also carries the source's reopen state:
-  `retryAttempt` (reopens since it last opened), `retryDelaySeconds` (the wait before the
+  `retryAttempt` (reopens since its last 5 s of playback), `retryDelaySeconds` (the wait before the
   scheduled one, else null), `retryGaveUp` and `lastError`.
 - `/media_retry_delay [ms]`: the wait before a failed web media source's first reopen (2000 by
   default; later waits double from it, 5 reopens at most) as `firstDelayMs` and `maxReopens`;

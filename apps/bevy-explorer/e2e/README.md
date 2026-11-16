@@ -218,7 +218,7 @@ Specs with no explorer-automation counterpart, outside the counts above:
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
 | `debug-panel` | every debug reading resolves; the panel shows live data, stays open while the player walks and uses the world and HUD, and plays an emote | |
-| `media-retry` | a video whose source fails twice plays after two reopens, with no `VS_ERROR` meanwhile and its reopen count restarted; one whose source always fails reports `VS_ERROR` after one open and five reopens (`/media_state`, `/media_retry_delay`); web only, todos on the standalone | the scene built (`pnpm run build-scenes video`) |
+| `media-retry` | a video whose source fails twice plays after two reopens, with no `VS_ERROR` meanwhile and its reopen count restarted after 5 s of playback; one whose source always fails reports `VS_ERROR` after one open and five reopens (`/media_state`, `/media_retry_delay`); web only, todos on the standalone | the scene built (`pnpm run build-scenes video`) |
 | `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
 
 The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
