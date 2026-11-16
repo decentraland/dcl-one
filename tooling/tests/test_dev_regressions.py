@@ -37,6 +37,7 @@ class InventoryTests(unittest.TestCase):
                 "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
                 "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
                 "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+                "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
                 "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
                 "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
                 "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",

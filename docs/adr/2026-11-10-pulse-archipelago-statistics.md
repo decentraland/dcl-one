@@ -82,6 +82,9 @@ active registration and confirmation remain idempotent. This finite capacity and
 refusal policy is accepted. It does not impose a peer population limit or change
 socket admission, native ownership or room authority. A new connector whose
 statistics registration is refused cannot contribute to the legacy projection.
+Pulse exposes the outgoing-generation count and capacity-refusal count without
+producer labels. Reaching the limit emits one warning with the restart remedy;
+repeated refused registrations do not emit further warnings.
 
 A checked monotonic counter issues generations; exhaustion fails closed. Beginning
 a candidate does not replace the active writer, and an overwritten candidate cannot

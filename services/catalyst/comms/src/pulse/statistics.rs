@@ -31,6 +31,7 @@ pub struct Statistics {
 }
 impl Statistics {
     pub fn with_incarnation(incarnation: uuid::Uuid) -> Self {
+        crate::pulse::metrics::statistics_retained_connector_generations(0);
         Self {
             incarnation,
             ..Self::default()
@@ -62,6 +63,7 @@ impl Statistics {
                     return ProducerReply::Grant(grant.clone());
                 }
                 if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS {
+                    crate::pulse::metrics::statistics_registration_capacity_refused();
                     return rejected;
                 }
                 let Some(generation) = self.next_generation.checked_add(1) else {
@@ -88,8 +90,13 @@ impl Statistics {
                 {
                     return ProducerReply::Active(grant);
                 }
-                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS
-                    || self.pending.as_ref() != Some(&grant)
+                // Begin cannot grant another candidate at capacity; keep Confirm
+                // defensive before any producer state changes.
+                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS {
+                    crate::pulse::metrics::statistics_registration_capacity_refused();
+                    return rejected;
+                }
+                if self.pending.as_ref() != Some(&grant)
                     || self
                         .active
                         .as_ref()
@@ -100,6 +107,15 @@ impl Statistics {
                 self.pending = None;
                 if let Some(outgoing) = self.active.take() {
                     self.retiring.insert(outgoing.0.generation, outgoing);
+                }
+                crate::pulse::metrics::statistics_retained_connector_generations(
+                    self.retiring.len(),
+                );
+                if self.retiring.len() == MAX_RETAINED_CONNECTOR_GENERATIONS {
+                    tracing::warn!(
+                        retained_generations = self.retiring.len(),
+                        "statistics connector retention capacity reached; new statistics registrations are refused until Pulse restarts"
+                    );
                 }
                 self.active = Some((grant.clone(), 0));
                 ProducerReply::Active(grant)
@@ -332,6 +348,70 @@ mod tests {
         );
     }
     #[test]
+    fn capacity_metrics_report_retention_and_only_refused_registration_attempts() {
+        let initial = crate::pulse::metrics::render_recorded(|| {
+            Statistics::with_incarnation(uuid::Uuid::new_v4());
+        });
+        assert!(
+            initial
+                .lines()
+                .any(|line| line == "pulse_statistics_retained_connector_generations 0")
+        );
+        let rendered = crate::pulse::metrics::render_recorded(|| {
+            let mut stats = Statistics::with_incarnation(uuid::Uuid::new_v4());
+            let mut active = None;
+            for producer in 0..=MAX_RETAINED_CONNECTOR_GENERATIONS {
+                active = Some(register(
+                    &mut stats,
+                    uuid::Uuid::from_u128(producer as u128),
+                ));
+            }
+            let active = active.unwrap();
+            assert_eq!(
+                stats.control(ProducerRequest::Begin {
+                    incarnation: active.incarnation,
+                    producer: active.producer
+                }),
+                ProducerReply::Active(active.clone())
+            );
+            assert_eq!(
+                stats.control(ProducerRequest::Confirm(active.clone())),
+                ProducerReply::Active(active.clone())
+            );
+            assert!(matches!(
+                stats.control(ProducerRequest::Begin {
+                    incarnation: uuid::Uuid::new_v4(),
+                    producer: uuid::Uuid::new_v4()
+                }),
+                ProducerReply::Rejected { .. }
+            ));
+            for _ in 0..3 {
+                assert!(matches!(
+                    stats.control(ProducerRequest::Begin {
+                        incarnation: active.incarnation,
+                        producer: uuid::Uuid::new_v4()
+                    }),
+                    ProducerReply::Rejected { .. }
+                ));
+            }
+        });
+        let lines = rendered
+            .lines()
+            .filter(|line| line.starts_with("pulse_statistics_"))
+            .collect::<Vec<_>>();
+        assert!(lines.contains(&"pulse_statistics_retained_connector_generations 4096"));
+        assert!(lines.contains(&"pulse_statistics_registration_capacity_refused_total 3"));
+        assert_eq!(lines.len(), 2, "no per-producer labels or extra series");
+        let restarted = crate::pulse::metrics::render_recorded(|| {
+            Statistics::with_incarnation(uuid::Uuid::new_v4());
+        });
+        assert!(
+            restarted
+                .lines()
+                .any(|line| line == "pulse_statistics_retained_connector_generations 0")
+        );
+    }
+    #[test]
     fn capacity_refuses_registration_without_forgetting_any_cursor() {
         let mut stats = Statistics::default();
         let mut grants = Vec::new();
@@ -411,6 +491,8 @@ mod tests {
             generation: generation + 1,
             challenge: uuid::Uuid::new_v4(),
         };
+        // Public control cannot create a pending candidate at full capacity.
+        // Inject one only to exercise the defensive Confirm guard.
         stats.pending = Some(candidate.clone());
         assert!(matches!(
             stats.control(ProducerRequest::Begin {
