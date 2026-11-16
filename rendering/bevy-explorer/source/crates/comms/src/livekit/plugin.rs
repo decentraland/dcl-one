@@ -244,7 +244,7 @@ fn verify_player_update_tasks(mut player_update_tasks: PlayerUpdateTasksMut) {
 #[cfg(not(target_arch = "wasm32"))]
 fn build_kira_audio_manager(mut commands: Commands, audio_settings: Option<Res<AudioSettings>>) {
     let (scene, voice) = audio_settings
-        .map(|s| (s.scene(), s.voice_chat()))
+        .map(|s| (s.streaming(), s.voice_chat()))
         .unwrap_or((1.0, 1.0));
     let mut manager = match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
         Ok(manager) => manager,
@@ -276,7 +276,7 @@ fn respond_to_audio_settings_change(
 ) {
     livekit_audio_manager
         .scene_track
-        .set_volume(audio_settings.scene() as f64, Tween::default());
+        .set_volume(audio_settings.streaming() as f64, Tween::default());
     livekit_audio_manager
         .voice_track
         .set_volume(audio_settings.voice_chat() as f64, Tween::default());
