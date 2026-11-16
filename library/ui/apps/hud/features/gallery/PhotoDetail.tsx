@@ -2,8 +2,8 @@
 // prev/next navigation, an info sidebar (date · place · owner · people in the shot),
 // and the reel actions (jump in · download · copy link · share to X · delete).
 //
-// Rendered INSIDE MainMenuShell's scaled reference-canvas body, so it's DPI-correct
-// without any portal/--ui-scale gymnastics. While mounted it registers as a cancel layer,
+// Rendered inside a scaled reference-canvas box (MainMenuShell's body, the lobby or a popup), so
+// it's DPI-correct without its own transform. While mounted it registers as a cancel layer,
 // so the engine's Cancel action closes the lightbox first (key or gamepad), leaving the
 // next press to close the gallery.
 

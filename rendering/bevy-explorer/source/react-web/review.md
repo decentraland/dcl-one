@@ -200,7 +200,9 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
       Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
-      where the world starts.
+      where the world starts. VIEW ALL opens Places, Events, Communities and Gallery compact in the
+      lobby's section modal: Communities four cards a row, Gallery five columns of 292x219, and a
+      photo opened there covers the whole screen, its Jump In closing the photo and the modal.
 - [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
       show its avatar on the golden podium at the right, over the sign-in background (vignette and
       drifting logo pattern) drawn by the engine across the whole screen. The page's background fades

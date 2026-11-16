@@ -209,3 +209,21 @@
   font-size: 14px;
   font-weight: 600;
 }
+
+/* Clear of the section modal's close button, on its 68 px header line. */
+.compact {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.compact .head {
+  height: 68px;
+  padding: 0 92px 0 30px;
+}
+/* The popup's scaled canvas without its scrim: the viewer fills it. */
+.photoLayer.photoLayer {
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+}

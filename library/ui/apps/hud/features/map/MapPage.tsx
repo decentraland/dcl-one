@@ -239,6 +239,7 @@ export function MapPage({
 
         <RightPanel
           snapshot={snap}
+          compact={compact != null}
           onExpand={() => nav.expand()}
           onCollapse={() => nav.collapse()}
           searchBar={

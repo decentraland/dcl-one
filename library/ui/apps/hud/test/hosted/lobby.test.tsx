@@ -330,6 +330,112 @@ describe('lobby widgets', () => {
   })
 })
 
+describe('lobby VIEW ALL of Communities and Gallery', () => {
+  const photos = [
+    { id: 'p1', url: 'https://img/p1.jpg', thumbnailUrl: 'https://img/p1_t.jpg', dateTime: '1707000000' },
+    { id: 'p2', url: 'https://img/p2.jpg', thumbnailUrl: 'https://img/p2_t.jpg', dateTime: '1707000000' }
+  ]
+  const withWidgets = (): ReturnType<typeof fakeSession> => {
+    setPref(
+      PREF.lobbyLayout,
+      JSON.stringify({
+        Version: 1,
+        Entries: [
+          { Corner: 'TopLeft', Widget: 'Communities4By2', X: 0, Y: 0 },
+          { Corner: 'TopRight', Widget: 'Gallery4By2', X: 0, Y: 0 }
+        ]
+      })
+    )
+    const session = fakeSession()
+    session.communities.browse = { ...session.communities.browse, items: [{ id: 'c2', name: 'Painters', description: '', membersCount: 9, role: 'none', ownerName: 'o' }], total: 1 }
+    session.gallery.fetchPage = vi.fn(async (offset: number, limit: number) => ({ ok: true, photos: photos.slice(offset, offset + limit), total: photos.length, max: 500 }))
+    session.gallery.metas = { p1: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
+    return session
+  }
+  const viewAll = (title: string): void => {
+    const header = screen.getByRole('heading', { name: title }).parentElement!
+    fireEvent.click(within(header).getByRole('button', { name: /view all/i }))
+  }
+  const openFirstPhoto = async (): Promise<void> => {
+    const modal = screen.getByRole('dialog', { name: 'Gallery' })
+    const [first] = await within(modal).findAllByRole('button', { name: 'Open photo' })
+    fireEvent.load(first.querySelector('img')!)
+    fireEvent.click(first)
+  }
+
+  it("opens Communities compact in the lobby's section modal", () => {
+    const track = vi.spyOn(analytics, 'track')
+    const session = withWidgets()
+    render(lobbyWithPopups(session))
+    viewAll('My Communities')
+    const modal = screen.getByRole('dialog', { name: 'Communities' })
+    expect(session.communities.toggle).not.toHaveBeenCalled()
+    expect(session.communities.loadBrowse).toHaveBeenCalledWith('')
+    expect(track).not.toHaveBeenCalledWith(expect.stringMatching(/_section_opened$/), expect.anything())
+    fireEvent.click(within(modal).getByText('Painters'))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c2', expect.any(Function))
+    fireEvent.click(screen.getByRole('button', { name: 'Close Communities' }))
+    expect(screen.queryByRole('dialog', { name: 'Communities' })).toBeNull()
+  })
+
+  it('opens Gallery compact, with a photo over the whole screen above it', async () => {
+    const track = vi.spyOn(analytics, 'track')
+    const session = withWidgets()
+    render(lobbyWithPopups(session))
+    viewAll('Gallery')
+    expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
+    expect(session.gallery.toggle).not.toHaveBeenCalled()
+    expect(track).not.toHaveBeenCalledWith(expect.stringMatching(/_section_opened$/), expect.anything())
+    await openFirstPhoto()
+    const photo = screen.getByRole('dialog', { name: 'Photo' })
+    expect(screen.getByRole('dialog', { name: 'Gallery' })).not.toContainElement(photo)
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
+  })
+
+  it("jumps from a Gallery photo through the lobby's travel, closing the photo and the modal", async () => {
+    const session = withWidgets()
+    render(lobbyWithPopups(session))
+    viewAll('Gallery')
+    await openFirstPhoto()
+    fireEvent.click(screen.getByRole('button', { name: /Jump In/i }))
+    expect(session.map.teleport).toHaveBeenCalledWith(-9, 14)
+    expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Gallery' })).toBeNull()
+  })
+
+  it('keeps the photo and the modal when the jump is refused', async () => {
+    const session = withWidgets()
+    vi.mocked(session.map.teleport).mockReturnValue(false)
+    render(lobbyWithPopups(session))
+    viewAll('Gallery')
+    await openFirstPhoto()
+    fireEvent.click(screen.getByRole('button', { name: /Jump In/i }))
+    expect(screen.getByRole('dialog', { name: 'Photo' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Gallery' })).toBeInTheDocument()
+  })
+
+  it('hands over to the full Communities or Gallery page when it opens under the modal', async () => {
+    const session = withWidgets()
+    const { rerender } = render(lobbyWithPopups(session))
+    viewAll('Gallery')
+    await openFirstPhoto()
+    session.gallery.open = true
+    rerender(lobbyWithPopups({ ...session }))
+    expect(screen.queryByRole('dialog', { name: 'Gallery' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Photo' })).toBeNull()
+    session.gallery.open = false
+    rerender(lobbyWithPopups({ ...session }))
+    viewAll('My Communities')
+    session.communities.open = true
+    rerender(lobbyWithPopups({ ...session }))
+    expect(screen.queryByRole('dialog', { name: 'Communities' })).toBeNull()
+  })
+})
+
 describe('lobby go to', () => {
   const goTo = (text: string): void => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Go to a coordinate or a World' }), { target: { value: text } })

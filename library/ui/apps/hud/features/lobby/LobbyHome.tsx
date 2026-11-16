@@ -271,7 +271,7 @@ export function LobbyHome({
   )
 
   const openSection = (section: ExploreSection): void => {
-    if (section !== 'map') lobbyAnalytics.sectionOpened(section)
+    if (section === 'places' || section === 'events') lobbyAnalytics.sectionOpened(section)
     openExploreSection(section)
   }
 
@@ -404,8 +404,7 @@ export function LobbyHome({
     viewAll: (target) => {
       if (target === 'recent' || target === 'recommended') openSection('places')
       else if (target === 'live' || target === 'upcoming') openSection('events')
-      else if (target === 'communities') session.communities.toggle()
-      else session.gallery.toggle()
+      else openSection(target)
     }
   }
 

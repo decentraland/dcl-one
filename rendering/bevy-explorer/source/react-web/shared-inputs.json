@@ -8541,11 +8541,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "b569a00f74d353b1def30787e31cce3b127ff1661f3f1ca61386f9546979c387"
+      "sha256": "55bdc8f97c2f3a825ecf68784682f83763ac4049aac44d43f1884c334a17141d"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "548acb97581b3a5a5e2bac00ac4d2aace9ccf2e5cd94f581a8f86f7887fcce13"
+      "sha256": "cc8033f4d90c5df68fbbe179fa96e83fb2e1e1dd817e036dd00fdd5846e418b3"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -8817,11 +8817,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
-      "sha256": "3385a09446ebb86f2e65ea0e63c597a71c83d2e7c872c80692dafef112309fb2"
+      "sha256": "dd845f3130f8f110d8dbe4b6aae7dca16d776095cb2dbb6132f989350a19fbc5"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "sha256": "1af74887da4495feda4a0c1fcde28acf1be8905a090a0b94864ccf8f599a57bd"
+      "sha256": "7c860427da6bb8881e1483df995b8ac5a216a2ce81dff106ecb9b4ceccf3baf9"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
@@ -8833,7 +8833,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "b50127e5098179c882ad32a86ccb17b6f18865156803a78449053548c7a322b7"
+      "sha256": "17416748b11ad5ca87341e2efeda9eedee5b367f16ac63c9898dcaa85d4fefad"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
@@ -8905,11 +8905,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.module.css",
-      "sha256": "ae336b2892ffaa0cc807f12e3547815e41955848f89971af4a4a43b98d4eaddc"
+      "sha256": "b4ffde1b1bed82c478ce3f1e6f416b94f2e2ef54fb0829c2f83925a8b585a2e6"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
-      "sha256": "240509cf9bf51202582181ba6877ef3b3063931c48c1f2e15fbf6cda5cb2ae18"
+      "sha256": "f4fd62f9479f01e1e17cf613733ecd348ad71c7efae5ea74d2767a5c81cb759c"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
@@ -8933,7 +8933,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "7f1dc761fce0236988d173ecc8e7193ef08f3eca86cb83730cac8af2fb55e2a3"
+      "sha256": "e5711810de7b79f15dea0df543d8582b86954c89f341dfd49ff095eea7eccb38"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -9009,11 +9009,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
-      "sha256": "f972dafc790c1592bf2e228f8eebafa482649deb09b9785cc847e889fc1ac7b6"
+      "sha256": "17d6378d889afec5566c59e23599a8e9c077253b9371b8efec3be548524dd692"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "bdafadc627a5fd9b638bd4cff5c0f65af9295249e1f564c178cccc71e8faf620"
+      "sha256": "88d04a218b4f3cd3169a9cfc7127a1879bc1e5165411d6c8e45dd541ede0c64c"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9037,7 +9037,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/MapPanel.module.css",
-      "sha256": "11c96f1f89834130b1ecc3ddd3e4b3974c8d2b54904b415d518383a1d31fb37f"
+      "sha256": "c9cac510e7e4b24e506402ffaf8e58b5219f2d987d63cf7f495a25447f377f3b"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
@@ -9045,7 +9045,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
-      "sha256": "529288d9c6ed66e32fe9e1fbe787273da812034e22c15ec475d4b60bd3e7d8a6"
+      "sha256": "8f3203bb04af74e6d063e4a2f9a21caabf86b2137c89fdb76d961cc7297ea461"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/SearchBar.tsx",
@@ -9793,7 +9793,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "fe4e09328b74c550495f8a6bf2bccbbae9b5783aaa66b5a8956f0e26d78eb446"
+      "sha256": "74edef77284eaa28a3a6c20b5d0f2af502d677ac4b06a9da1e0542066b97fca9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyStageTab.test.tsx",
@@ -22891,6 +22891,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/features/events/EventsPage.tsx",
       "kind": "native:runtime"
     },
@@ -22902,6 +22917,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/features/events/EventsPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "kind": "test:runtime"
     },
     {
@@ -22947,6 +22977,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/features/places/PlacesPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
       "kind": "test:runtime"
     },
     {
