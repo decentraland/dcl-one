@@ -51,8 +51,7 @@ use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
 pub use moderation::{
-    AdmissionView, BanScope, HiddenByModeration, MetadataError, SceneAdmission,
-    SceneRoomModeration,
+    AdmissionView, BanScope, HiddenByModeration, MetadataError, SceneAdmission, SceneRoomModeration,
 };
 
 use self::{
