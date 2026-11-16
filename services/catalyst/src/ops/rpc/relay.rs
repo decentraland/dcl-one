@@ -23,6 +23,10 @@ const MAX_UPSTREAM_BODY: usize = 16 * 1024 * 1024;
 /// slots unanswered.
 const FALLBACK_CONCURRENCY: usize = 8;
 
+/// The most per-element fallback forwards in flight across every request
+/// at once (`State::fallback_slots`).
+pub(super) const FALLBACK_SLOTS: usize = 32;
+
 /// How long the per-element fallback of one batch may run; slots still
 /// unanswered then get a `-32603` error.
 const FALLBACK_BUDGET: Duration = UPSTREAM_TIMEOUT;
@@ -185,7 +189,8 @@ async fn forward(state: &State, upstream: &str, id: Value, req: Value) -> Value 
 
 /// One upstream batch with ids rewritten to slot indexes; anything the batch
 /// does not answer falls back to per-element forwards, at most
-/// `FALLBACK_CONCURRENCY` at a time and for at most `budget` in all.
+/// `FALLBACK_CONCURRENCY` at a time, within the relay-wide
+/// `FALLBACK_SLOTS`, and for at most `budget` in all.
 async fn forward_batch(
     state: &Shared,
     upstream: &str,
@@ -237,6 +242,7 @@ async fn forward_batch(
     let unanswered: Vec<usize> = (0..items.len()).filter(|&i| out[i].is_none()).collect();
     let mut retries = futures::stream::iter(unanswered)
         .map(|i| async move {
+            let _slot = state.fallback_slots.acquire().await;
             let item = &items[i];
             (
                 i,
@@ -609,6 +615,27 @@ pub(super) mod tests {
             assert_eq!(item["id"], json!(i));
             assert_eq!(item["error"]["code"], json!(-32603));
         }
+    }
+
+    #[tokio::test]
+    async fn fallback_forwards_share_one_relay_wide_limit() {
+        let (url, upstream) = mock_upstream(false).await;
+        let state = test_state(&[("polygon", &url)]);
+        let requests = FALLBACK_SLOTS / FALLBACK_CONCURRENCY + 2;
+        let outs = futures::future::join_all(
+            (0..requests).map(|_| handle_payload(&state, "polygon", balance_batch(MAX_BATCH))),
+        )
+        .await;
+        for out in outs {
+            assert_eq!(out.as_array().unwrap().len(), MAX_BATCH);
+            assert!(out[0]["result"].is_string(), "{}", out[0]);
+        }
+        let peak = upstream.peak.load(Ordering::SeqCst);
+        // The batch posts themselves are answered at once and may overlap too.
+        assert!(
+            peak <= FALLBACK_SLOTS + requests,
+            "{peak} requests in flight"
+        );
     }
 
     /// An answer over the cap fails every slot after the one batch call,

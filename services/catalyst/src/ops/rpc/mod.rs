@@ -227,6 +227,8 @@ pub struct State {
     pub allowed_methods: RwLock<BTreeSet<String>>,
     pub upstreams: RwLock<BTreeMap<String, String>>,
     pub memo: RpcMemo,
+    /// Per-element fallback forwards in flight across every request.
+    pub fallback_slots: tokio::sync::Semaphore,
 }
 
 pub type Shared = Arc<State>;
@@ -256,6 +258,7 @@ impl State {
             http,
             pool,
             memo: RpcMemo::default(),
+            fallback_slots: tokio::sync::Semaphore::new(relay::FALLBACK_SLOTS),
         })
     }
 
