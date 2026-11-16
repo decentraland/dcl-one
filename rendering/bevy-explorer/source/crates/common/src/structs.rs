@@ -747,6 +747,7 @@ impl AppConfig {
         self.graphics.ssao = default.graphics.ssao;
         self.graphics.sky_reflections = default.graphics.sky_reflections;
         self.graphics.oob = default.graphics.oob;
+        self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();

@@ -57,7 +57,7 @@ put back at rest.
 `TransformHelper`, as the IK systems do, and writes local rotations before the final propagate.
 
 **One setting turns it on:** `GraphicsSettings::spring_bones`, shown as "Jiggle Bones". It is off
-by default.
+by default and in the Low preset, and on in the Medium and High presets.
 
 `gravityDir` is authored for a left-handed world and is read as `(x, y, -z)`, the mapping scene
 transforms use.
@@ -78,4 +78,4 @@ transforms use.
 ## Not yet measured
 
 The cost of ten simulated avatars on the web build, and the worst frames while avatars enter and
-leave the simulated set. The setting stays off by default until that is recorded.
+leave the simulated set. The Low preset keeps the setting off.
