@@ -421,6 +421,26 @@ Expectations:
   `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu
   placement); here, `src/test/bridgeGallery.test.ts` (the bridge's requests and replies).
 
+## Map
+
+The full-screen map (`library/ui/apps/hud/features/map`, core in `library/explorer-core/features/map`).
+Expectations:
+
+- **Signed reads and writes go through the bridge:** places by parcel, the destinations search, likes,
+  favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
+  events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
+  that echoes `request` (a reminder's names its event), and every request is answered, a failed one
+  with `failed`. The points-of-interest list and the connected players are plain fetches.
+- **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
+  (`engine/requestIds.ts`), so each takes only the answers to its own requests.
+- **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
+  image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
+- **Home:** the map reads the session's home and sets it with `setHomeScene`; Set as Home does not
+  clear it.
+- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+  `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
+  `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
+
 ## Donate
 
 Tipping a place's creator in MANA, where the host can sign a tip (`@hud-host`'s `donations`: the Sites `/play`

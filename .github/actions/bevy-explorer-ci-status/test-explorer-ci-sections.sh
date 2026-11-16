@@ -81,10 +81,10 @@ artifacts "bevy-explorer-web-$SHA:11" "bevy-headless-linux-x64-$SHA:12" \
   "bevy-explorer-native-timings-Windows-X64-$SHA:17"
 compose
 check "green build badge" build.md 'Build-Success!-3fb950'
-check "web app row links the job, the result and the artifact" build.md \
-  '| [Web app](https://github.com/o/r/actions/runs/1/job/Web-engine--HUD-and-bridge-scene) | ✅ Built | 21m 40s | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
-check "web package row links the job and the result" build.md \
-  '| [Web package](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | ✅ Built | 4m 0s | — |'
+check "one web build row: the build job, both job times and the artifact" build.md \
+  '| [Web build](https://github.com/o/r/actions/runs/1/job/Web-engine--HUD-and-bridge-scene) | ✅ Built | [21m 40s](https://github.com/o/r/actions/runs/1/job/Web-engine--HUD-and-bridge-scene) + [4m 0s](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
+check_absent "the web package has no row of its own" build.md '| [Web package]'
+check "the headless row has the short name" build.md '| [Headless](https://github.com/o/r/actions/runs/1/job/Headless-Smoke) |'
 check "headless row lists both artifacts" build.md \
   '| ✅ Built | 15m 0s | [npm package](https://github.com/o/r/actions/runs/1/artifacts/12) · [engine](https://github.com/o/r/actions/runs/1/artifacts/13) |'
 check "benchmark runners by platform, sorted" build.md \
@@ -101,13 +101,15 @@ check "footer names the run and the commit" tests.md '<sub>[Run summary](https:/
 # 2. A failed Linux suite, a cancelled Windows one, a web build that failed with no artifact.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (windows-2025)' cancelled 100)" \
   "$(job 'Test Suite (ubuntu-24.04)' failure 1500)" "$(job 'Web engine, HUD and bridge scene' failure 300)" \
-  "$(job 'Web package for the CDN' skipped)" "$(job 'Headless Smoke' skipped)"
+  "$(job 'Web package for the CDN' skipped)" "$(job 'Publish the web package' skipped)" \
+  "$(job 'Headless Smoke' skipped)"
 artifacts "bevy-explorer-benchmark-linux-amd64-$SHA:14"
 compose
 check "red build badge" build.md 'Build-Failed!-ff0000'
 check "a failed web build has no download" build.md '| ❌ Failed | 5m 0s | — |'
 check "a skipped product is not selected" build.md '| — Not selected | — | — |'
 check_absent "a skipped web package has no row" build.md 'Web package'
+check_absent "a skipped publication has no row" build.md 'Web preview'
 check "red tests badge" tests.md 'Tests-Failed!-ff0000'
 check "a cancelled suite" tests.md '| ⚠️ Cancelled | 1m 40s |'
 check "a failed suite" tests.md '| ❌ Failed | 25m 0s |'
@@ -203,7 +205,8 @@ WEB_SHA=abc1234222222222222222222222222222222222
 VERSION=0.1.1-1.commit-abc1234
 SPOOF_SHA=abc1234333333333333333333333333333333333
 run_metadata pull_request "$WEB_SHA" "$WEB_SHA"
-jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 1300)"
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 1300)" \
+  "$(job 'Publish the web package' success 330)"
 artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12" \
   "bevy-explorer-web-$SPOOF_SHA:13"
 jq '.artifacts[-1].created_at = "2026-10-28T11:00:00Z"' "$WORK/artifacts.json" > "$WORK/new.json"
@@ -231,8 +234,11 @@ preview_compose() {
   PATH="$WORK:$PATH" PUBLISHED_VERSION="$VERSION" PUBLISHED_SHA="$1" compose
 }
 preview_compose "$WEB_SHA"
-check "the preview is linked after the web app" build.md \
-  "[web app](https://github.com/o/r/actions/runs/1/artifacts/11) · [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone) |"
+check "the web build row keeps only its download" build.md \
+  '| ✅ Built | 21m 40s | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
+check "the preview row links the publish job, its time and the preview" build.md \
+  "| [Web preview](https://github.com/o/r/actions/runs/1/job/Publish-the-web-package) | ✅ Published | 5m 30s | [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone) |"
+check_absent "a published preview is not publishing" build.md 'is publishing'
 check "the build report distinguishes the PR head from the web build" build.md \
   'PR head `1111111` · Web build `abc1234`'
 check_absent "a newer artifact with another SHA is ignored" build.md 'artifacts/13'
@@ -240,6 +246,8 @@ TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
 check "a newer PR tag does not change the versioned link" build.md "$VERSION/index.html"
 preview_compose "$SPOOF_SHA"
 check_absent "an upload with a different full SHA is not linked" build.md '[preview]'
+check "a publish job without a matching upload says so" build.md \
+  '| [Web preview](https://github.com/o/r/actions/runs/1/job/Publish-the-web-package) | ⚠️ No preview | 5m 30s | — |'
 MARKER_BODY='' preview_compose "$WEB_SHA"
 check_absent "an empty marker is not linked" build.md '[preview]'
 MARKER_BODY='<html>error</html>' preview_compose "$WEB_SHA"
@@ -272,7 +280,7 @@ check "a newer unpublished candidate does not hide an earlier published artifact
 run_metadata pull_request "$WEB_SHA" "$SPOOF_SHA"
 TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
 check_absent "ambiguous run metadata produces no web download" build.md 'artifacts/11'
-check_absent "ambiguous run metadata produces no web build label" build.md 'Web build'
+check_absent "ambiguous run metadata produces no web build label" build.md '· Web build `'
 check_absent "ambiguous run metadata produces no preview" build.md '[preview]'
 run_metadata pull_request
 TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
@@ -282,7 +290,7 @@ jq '.referenced_workflows[0].path = "other/r/.github/workflows/child.yml@refs/pu
   "$WORK/run.json" > "$WORK/foreign.json"
 mv "$WORK/foreign.json" "$WORK/run.json"
 TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
-check_absent "an external reusable workflow does not establish the checkout" build.md 'Web build'
+check_absent "an external reusable workflow does not establish the checkout" build.md '· Web build `'
 
 run_metadata workflow_dispatch
 VERSION=0.1.0-1.commit-1111111
@@ -304,9 +312,8 @@ jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' succe
 artifacts "bevy-explorer-web-$SHA:11"
 compose
 check "a failed web package gives the red build badge" build.md 'Build-Failed!-ff0000'
-check "the web app row still passes" build.md '| ✅ Built | 21m 40s | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
-check "the failed web package row" build.md \
-  '| [Web package](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | ❌ Failed | 3m 20s | — |'
+check "the failed package fails the web build row" build.md \
+  '| ❌ Failed (CDN package) | [21m 40s](https://github.com/o/r/actions/runs/1/job/Web-engine--HUD-and-bridge-scene) + [3m 20s](https://github.com/o/r/actions/runs/1/job/Web-package-for-the-CDN) | [web app](https://github.com/o/r/actions/runs/1/artifacts/11) |'
 
 # 8. A job name with table furniture renders as text.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (ubuntu|24.04)' success 10)"
@@ -325,6 +332,29 @@ compose
 check "the early tests section has the verdict" tests.md 'Tests-Failed!-ff0000'
 check "the early tests section has the row of each ended job" tests.md '| ✅ Passed | 8m 20s |'
 check_absent "the build section of an early report has no download" build.md 'artifacts/'
+
+# 10. The early report of the build: the products ended and the preview still publishes. No
+# registry or CDN lookup runs for a publication that has not ended (no npm or curl stub here).
+run_metadata pull_request "$WEB_SHA"
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 530)" \
+  "$(job 'Web package for the CDN' success 51)" "$(job 'Publish the web package' '')" \
+  "$(job 'Headless Smoke' success 456)" "$(job 'Test Suite (ubuntu-24.04)' '')"
+artifacts "bevy-explorer-web-$WEB_SHA:11" "bevy-headless-linux-x64-$SHA:12"
+compose
+check "the early build section has the verdict" build.md 'Build-Success!-3fb950'
+check "the early build section says the preview is publishing" build.md \
+  'The web preview is publishing; its link lands here when the run ends.'
+check "the publishing row has no time and no link yet" build.md \
+  '| [Web preview](https://github.com/o/r/actions/runs/1/job/Publish-the-web-package) | 🕓 Publishing | — | — |'
+check "the early build section has the downloads" build.md '[web app](https://github.com/o/r/actions/runs/1/artifacts/11)'
+
+# 11. A failed publication is the preview's result, not the build's.
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 530)" \
+  "$(job 'Web package for the CDN' success 51)" "$(job 'Publish the web package' failure 90)"
+compose
+check "a failed publication keeps the green build badge" build.md 'Build-Success!-3fb950'
+check "the failed preview row" build.md '| [Web preview](https://github.com/o/r/actions/runs/1/job/Publish-the-web-package) | ❌ Failed | 1m 30s | — |'
+check_absent "a failed publication is not publishing" build.md 'is publishing'
 
 echo
 if [ "$FAILURES" -gt 0 ]; then

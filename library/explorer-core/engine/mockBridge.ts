@@ -39,6 +39,8 @@ import { mentionName } from './mention'
 import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
+import { fixMapPublicReads } from '../features/map/mapApi'
+import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
 
 const badgeImg = (seed: string): string => `https://picsum.photos/seed/${seed}/96/96`
@@ -448,6 +450,9 @@ export async function mockPublicReelPage(
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
+  // Stateful so a home set from the map is the home the lobby and the map then show.
+  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } }
   const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
@@ -940,7 +945,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
 
     if (msg.kind === 'getHomeScene') {
-      reply({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } })
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'setHomeScene') {
+      mockHome = { realm: msg.realm, parcel: msg.parcel }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+
+    if (msg.kind === 'watchMapPlayers') {
+      if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
+      return
+    }
+    const mapReply = mockMapReply(msg)
+    if (mapReply != null) {
+      reply(mapReply)
       return
     }
 
@@ -1701,6 +1721,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
 
+    // only the login rpc is left
+    if (msg.kind !== 'rpc:req') return
     switch (msg.method) {
       case 'getPreviousLogin':
         reply({

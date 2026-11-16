@@ -39,6 +39,11 @@ export function registerWorld(ctx: Ctx): void {
     ctx.send({ kind: 'homeScene', ...home })
   })
 
+  ctx.on('setHomeScene', async (msg) => {
+    await BevyApi.setHomeScene({ realm: msg.realm, parcel: msg.parcel })
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+
   ctx.on('getMap', () => {
     const pos = getPlayer()?.position
     ctx.send({ kind: 'mapState', x: Math.floor((pos?.x ?? 0) / 16), y: Math.floor((pos?.z ?? 0) / 16) })

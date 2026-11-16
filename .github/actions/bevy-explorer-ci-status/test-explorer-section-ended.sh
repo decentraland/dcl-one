@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Functional tests for explorer-tests-ended.sh against a stubbed gh that serves canned /jobs and
+# Functional tests for explorer-section-ended.sh against a stubbed gh that serves canned /jobs and
 # /runs responses from files: no network, no repo. Each scenario can hand out a different response
 # per poll iteration (jobs.1.json, jobs.2.json, ...) to exercise the wait loop. Run from anywhere:
-#   bash .github/actions/bevy-explorer-ci-status/test-explorer-tests-ended.sh
+#   bash .github/actions/bevy-explorer-ci-status/test-explorer-section-ended.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROBE="$SCRIPT_DIR/explorer-tests-ended.sh"
+PROBE="$SCRIPT_DIR/explorer-section-ended.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -71,7 +71,7 @@ new_scenario() {
 # expect <name> <expected-stdout> <expected-exit>
 expect() {
   local name="$1" want="$2" want_code="$3" got code=0
-  got=$(RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=30 \
+  got=$(SECTION="${SECTION:-tests}" RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=30 \
         bash "$PROBE" 2>"$SCENARIO/stderr") || code=$?
   if [ "$got" = "$want" ] && [ "$code" -eq "$want_code" ]; then
     echo "  ok   $name"
@@ -96,7 +96,7 @@ expect_calls() {
   fi
 }
 
-echo "test-explorer-tests-ended.sh"
+echo "test-explorer-section-ended.sh"
 
 # 1. The tests ended and the web build still runs: the tests section can be written now.
 new_scenario tests-ended-run-goes-on
@@ -178,6 +178,46 @@ expect_calls "the run is read for the incomplete list and before the answer" run
 new_scenario open-past-deadline
 jobs_json 'Test Suite (macos-15):in_progress:' 'Headless Smoke:queued:' > "$SCENARIO/jobs.1.json"
 expect "a test job open past the deadline => false" false 0
+
+# 11. The build section: the products ended and the preview still publishes.
+WEB='Web engine, HUD and bridge scene:completed:success'
+PACKAGE='Web package for the CDN:completed:success'
+SMOKE='Headless Smoke:completed:success'
+new_scenario build-ended-publish-goes-on
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:in_progress:' \
+  'Test Suite (ubuntu-24.04):in_progress:' > "$SCENARIO/jobs.1.json"
+echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
+SECTION=build expect "build: the products ended, the publication runs => true" true 0
+
+# 12. The publish job is not listed yet: the section cannot tell whether a preview comes.
+new_scenario build-publish-not-listed
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" > "$SCENARIO/jobs.1.json"
+echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
+SECTION=build expect "build: the publish job not listed, no budget => false" false 0
+
+# 13. No preview (a fork) and the image build goes on.
+new_scenario build-no-preview
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:completed:skipped' \
+  'APIs + Sites / build (amd64, ubuntu-26.04):in_progress:' > "$SCENARIO/jobs.1.json"
+echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
+SECTION=build expect "build: a skipped publication and the run goes on => true" true 0
+
+# 14. The web package still runs.
+new_scenario build-package-open
+jobs_json "$WEB" 'Web package for the CDN:in_progress:' "$SMOKE" 'Publish the web package:pending:' \
+  > "$SCENARIO/jobs.1.json"
+SECTION=build expect "build: the web package still runs, no budget => false" false 0
+
+# 15. No product was selected.
+new_scenario build-skipped
+jobs_json 'Web engine, HUD and bridge scene:completed:skipped' 'Web package for the CDN:completed:skipped' \
+  'Headless Smoke:completed:skipped' 'Publish the web package:completed:skipped' \
+  'Test Suite (ubuntu-24.04):in_progress:' > "$SCENARIO/jobs.1.json"
+SECTION=build WAIT=600 expect "build: every product skipped => false, at once" false 0
+expect_calls "skipped products end the wait on the first read" jobs 1
+
+new_scenario unknown-section
+SECTION=performance expect "an unknown section is a usage error" "" 64
 
 new_scenario github-read-failed
 export GH_FAIL_EXIT=41
