@@ -4,7 +4,9 @@ use super::auth_chain::{
     AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS, is_valid_auth_chain,
     split_ephemeral_payload,
 };
-use super::eip1654::{Eip1654Validator, PeerValidated, verify_eip1654};
+use super::eip1654::{
+    Eip1654Validator, PeerValidated, verify_eip1654, verify_eip1654_at_verification_time,
+};
 use super::error::AuthError;
 use super::hex0x::{HexDecodeError, decode_hex_0x};
 use super::recover::recover_address;
@@ -74,6 +76,27 @@ pub async fn verify_auth_chain_async(
         now_ms,
         eip1654_validator,
         ExpirationPolicy::Strict,
+        ContractPolicy::Latest,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// Fresh socket authentication: latest hash pair, then a block selected for `started_ms`.
+/// The same timestamp checks every delegation expiry and every contract fallback.
+pub async fn verify_auth_chain_at_verification_time(
+    chain: &AuthChain,
+    expected_address: &str,
+    started_ms: i64,
+    eip1654_validator: Option<&dyn Eip1654Validator>,
+) -> Result<(), AuthError> {
+    walk_chain(
+        chain,
+        expected_address,
+        Some(started_ms),
+        eip1654_validator,
+        ExpirationPolicy::Strict,
+        ContractPolicy::VerificationTime,
     )
     .await
     .map(|_| ())
@@ -94,6 +117,7 @@ pub async fn verify_peer_auth_chain(
         Some(entity_timestamp_ms),
         Some(&PeerValidated),
         ExpirationPolicy::TrustPeer,
+        ContractPolicy::Latest,
     )
     .await
 }
@@ -113,8 +137,36 @@ pub async fn verify_synced_auth_chain(
         Some(entity_timestamp_ms),
         eip1654_validator,
         ExpirationPolicy::TrustPeer,
+        ContractPolicy::Latest,
     )
     .await
+}
+
+#[derive(Clone, Copy)]
+enum ContractPolicy {
+    Latest,
+    VerificationTime,
+}
+
+impl ContractPolicy {
+    async fn check(
+        self,
+        validator: &dyn Eip1654Validator,
+        contract: &str,
+        message: &[u8],
+        signature: &[u8],
+        started_ms: i64,
+    ) -> Result<bool, AuthError> {
+        match self {
+            Self::Latest => verify_eip1654(validator, contract, message, signature).await,
+            Self::VerificationTime => {
+                verify_eip1654_at_verification_time(
+                    validator, contract, message, signature, started_ms,
+                )
+                .await
+            }
+        }
+    }
 }
 
 async fn walk_chain(
@@ -123,6 +175,7 @@ async fn walk_chain(
     now_ms: Option<i64>,
     eip1654_validator: Option<&dyn Eip1654Validator>,
     policy: ExpirationPolicy,
+    contract_policy: ContractPolicy,
 ) -> Result<ChainVerdict, AuthError> {
     check_structure(chain)?;
 
@@ -149,13 +202,15 @@ async fn walk_chain(
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
-                let valid = verify_eip1654(
-                    validator,
-                    &current_authority,
-                    message.as_bytes(),
-                    &sig_bytes,
-                )
-                .await?;
+                let valid = contract_policy
+                    .check(
+                        validator,
+                        &current_authority,
+                        message.as_bytes(),
+                        &sig_bytes,
+                        now_ms,
+                    )
+                    .await?;
 
                 if !valid {
                     return Err(AuthError::Eip1654Rejected {
@@ -180,13 +235,15 @@ async fn walk_chain(
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
-                let valid = verify_eip1654(
-                    validator,
-                    &current_authority,
-                    link.payload.as_bytes(),
-                    &sig_bytes,
-                )
-                .await?;
+                let valid = contract_policy
+                    .check(
+                        validator,
+                        &current_authority,
+                        link.payload.as_bytes(),
+                        &sig_bytes,
+                        now_ms,
+                    )
+                    .await?;
 
                 if !valid {
                     return Err(AuthError::Eip1654Rejected {

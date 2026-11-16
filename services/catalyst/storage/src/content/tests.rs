@@ -839,6 +839,7 @@ async fn store_file_links_a_spooled_file_and_leaves_the_source() {
         Bytes::from_static(b"spooled bytes")
     );
     assert!(src.is_file(), "the caller owns the spooled source");
+    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let stored = storage.file_path(HASH).await.unwrap().unwrap();

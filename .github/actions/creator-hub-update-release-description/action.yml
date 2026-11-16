@@ -1,0 +1,140 @@
+name: 'Update Release Description'
+description: 'Updates a GitHub release description with provided release notes'
+
+inputs:
+  tag_name:
+    description: 'The tag name of the release to update (e.g., "v1.2.0", "creator-hub-v1.2.0")'
+    required: true
+  release_notes:
+    description: 'The release notes content in markdown format'
+    required: true
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  create_if_not_exists:
+    description: 'Create the release if it does not exist (true/false)'
+    required: false
+    default: 'false'
+  prerelease:
+    description: 'Mark as prerelease if creating a new release (true/false)'
+    required: false
+    default: 'true'
+  draft:
+    description: 'Mark as draft if creating a new release (true/false)'
+    required: false
+    default: 'false'
+  release_title:
+    description: 'Custom title for the release (defaults to "Release {tag_name}")'
+    required: false
+    default: ''
+
+outputs:
+  release_url:
+    description: 'URL of the updated/created release'
+    value: ${{ steps.update_release.outputs.release_url }}
+  release_id:
+    description: 'ID of the updated/created release'
+    value: ${{ steps.update_release.outputs.release_id }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update or create release description
+      id: update_release
+      shell: bash
+      run: |
+        echo "🔍 Checking if release '$IN_TAG_NAME' exists..."
+
+        # Check if release exists
+        RELEASE_INFO=$(gh release view "$IN_TAG_NAME" --json id,url,isDraft,isPrerelease 2>/dev/null || echo "null")
+
+        if [[ "$RELEASE_INFO" != "null" ]]; then
+          # Release exists - update it
+          echo "✅ Release found! Updating description..."
+
+          RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
+          RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.url')
+
+          # Create temporary file for release notes
+          printf '%s' "$RELEASE_NOTES" > temp_release_notes.md
+
+          # Update the release description
+          gh release edit "$IN_TAG_NAME" --notes-file temp_release_notes.md
+
+          echo "🎉 Successfully updated release description!"
+          echo "🔗 Release URL: $RELEASE_URL"
+
+          # Clean up
+          rm temp_release_notes.md
+
+          # Set outputs
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+
+        elif [[ "$IN_CREATE_IF_NOT_EXISTS" == "true" ]]; then
+          # Release doesn't exist - create it
+          echo "🆕 Release not found. Creating new release..."
+
+          # Create temporary file for release notes
+          printf '%s' "$RELEASE_NOTES" > temp_release_notes.md
+
+          # Determine release title
+          if [[ -n "$IN_RELEASE_TITLE" ]]; then
+            TITLE="$IN_RELEASE_TITLE"
+          else
+            TITLE="$IN_TAG_NAME"
+          fi
+          echo "📝 Using release title: $TITLE"
+
+          # Build create command with options
+          PRERELEASE_FLAG=""
+          DRAFT_FLAG=""
+
+          # Add optional flags
+          if [[ "$IN_PRERELEASE" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+            echo "🚧 Marking as prerelease"
+          fi
+
+          if [[ "$IN_DRAFT" == "true" ]]; then
+            DRAFT_FLAG="--draft"
+            echo "📝 Marking as draft"
+          fi
+
+          # Execute create command
+          echo "🚀 Creating release with command: gh release create \"$IN_TAG_NAME\" --title \"$TITLE\" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG"
+          # --target: without it the new tag lands on main's tip when this job runs, which in a busy
+          # monorepo can be a later commit. Package changes merged in between would then count as
+          # released, and semantic-version would never publish them.
+          gh release create "$IN_TAG_NAME" --target "$GITHUB_SHA" --title "$TITLE" --notes-file temp_release_notes.md $PRERELEASE_FLAG $DRAFT_FLAG
+
+          # Get the created release info
+          RELEASE_INFO=$(gh release view "$IN_TAG_NAME" --json id,url)
+          RELEASE_ID=$(echo "$RELEASE_INFO" | jq -r '.id')
+          RELEASE_URL=$(echo "$RELEASE_INFO" | jq -r '.url')
+
+          echo "🎉 Successfully created release!"
+          echo "🔗 Release URL: $RELEASE_URL"
+
+          # Clean up
+          rm temp_release_notes.md
+
+          # Set outputs
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+
+        else
+          # Release doesn't exist and create_if_not_exists is false
+          echo "❌ ERROR: Release '$IN_TAG_NAME' not found!"
+          echo "To create the release automatically, set 'create_if_not_exists: true'"
+          exit 1
+        fi
+      env:
+        IN_CREATE_IF_NOT_EXISTS: ${{ inputs.create_if_not_exists }}
+        IN_DRAFT: ${{ inputs.draft }}
+        IN_PRERELEASE: ${{ inputs.prerelease }}
+        IN_RELEASE_TITLE: ${{ inputs.release_title }}
+        IN_TAG_NAME: ${{ inputs.tag_name }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        RELEASE_NOTES: ${{ inputs.release_notes }}

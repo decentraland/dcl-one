@@ -19,6 +19,8 @@ export interface PopupOptions {
   /** The backdrop is the shared dimmed+blurred modal scrim (default). `false` → transparent
    *  click-catcher, for an anchored popover that must not dim the HUD behind it. */
   dim?: boolean
+  /** The dim scrim darker and unblurred, for a panel that stands alone over a busy page. */
+  deep?: boolean
   /** The dim scrim at device px, without the reference-canvas scale: for a dialog that must
    *  match the scene editor's fixed-size UI. */
   fixed?: boolean
@@ -42,6 +44,7 @@ const DEFAULTS: Required<Omit<PopupOptions, 'onClose' | 'confirmClose'>> = {
   className: '',
   backdrop: true,
   dim: true,
+  deep: false,
   fixed: false,
   backdropClickCloses: true
 }
@@ -162,6 +165,7 @@ function PopupLayer({ node, isTop, locked }: { node: PopupNode; isTop: boolean; 
   let className = styles.backdrop
   if (node.options.dim) className += ` ${styles.dim}`
   if (node.options.dim && node.options.fixed) className += ` ${styles.fixed}`
+  if (node.options.dim && node.options.deep) className += ` ${styles.deep}`
   if (node.options.className) className += ` ${node.options.className}`
   return (
     <div ref={ref} className={className} tabIndex={-1} onClick={() => { if (closesOnBackdrop(node.options)) close() }}>

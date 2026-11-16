@@ -106,6 +106,9 @@ pub async fn get_scene_adapter(
     .map_err(|_| unauthorized("Access denied, invalid signed-fetch request"))?;
     let body: SceneAdapterRequest = serde_json::from_slice(&raw_body).unwrap_or_default();
     let identity = sf.signer;
+    if state.deny_list.is_denied(identity.as_str()).await {
+        return Err(unauthorized(super::world_mint::DENY_LISTED));
+    }
     let realm_name = realm_name_from(&sf.metadata, &body)
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
     let scene_id = scene_id_from(&sf.metadata, &body).ok_or_else(|| {
@@ -139,15 +142,18 @@ pub async fn get_scene_adapter(
         &caller_ip
     };
     let record = crate::writes::side_refusal(switch).is_none();
-    let ((), gate, world_allowed) = tokio::join!(
+    let (gate, world_allowed) = tokio::join!(
         async {
-            if record {
+            // Record only an admitted connection: a refused one must not replace the recorded device.
+            let gate = state
+                .moderation
+                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .await;
+            if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
             }
+            gate
         },
-        state
-            .moderation
-            .connection_gate(&identity, device_id.as_deref(), resolved_scene_id),
         async {
             if !is_world {
                 return Ok(true);

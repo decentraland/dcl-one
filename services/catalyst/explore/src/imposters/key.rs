@@ -34,6 +34,14 @@ impl TileKey {
     }
 }
 
+/// Only tiles overlapping Genesis City are baked; one further out renders empty.
+pub fn within_bake_bounds(tile: &TileKey) -> bool {
+    let (x0, y0, x1, y1) = crate::shared::parcel::WORLD_BOUNDS;
+    let last = (1i64 << tile.level) - 1;
+    let (x, y) = (i64::from(tile.x), i64::from(tile.y));
+    x <= x1 && x + last >= x0 && y <= y1 && y + last >= y0
+}
+
 impl ImposterKey {
     pub fn new(level: u8, x: i32, y: i32, crc: u32) -> Option<Self> {
         if crc == 0 {
@@ -83,6 +91,22 @@ pub fn parse_spec_request(level_seg: &str, file: &str) -> Option<ImposterKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bakes_stay_near_the_city() {
+        for (level, x, y) in [(0, 0, 0), (0, -150, 150), (0, 163, 143), (5, -160, 128)] {
+            assert!(within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
+        }
+        for (level, x, y) in [
+            (0, 164, 0),
+            (0, 0, -151),
+            (5, -192, 0),
+            (5, i32::MIN, 0),
+            (5, i32::MAX & !31, i32::MAX & !31),
+        ] {
+            assert!(!within_bake_bounds(&TileKey::new(level, x, y).unwrap()));
+        }
+    }
 
     #[test]
     fn parses_negative_coordinates() {

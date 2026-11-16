@@ -1,0 +1,11 @@
+.RetentionTab {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.RetentionTab .Cards {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}

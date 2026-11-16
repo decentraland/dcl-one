@@ -1039,9 +1039,62 @@ async fn the_access_log_keeps_one_bounded_line_per_request() {
 /// read the port back from the banner.
 #[tokio::test]
 async fn port_zero_is_the_port_the_bind_took() {
-    let (port, listener) = bind_preview_port(Some(0)).await.unwrap();
+    let (port, listener) = bind_preview_port("start", Ipv4Addr::UNSPECIFIED.into(), Some(0))
+        .await
+        .unwrap();
     assert_ne!(port, 0);
     assert_eq!(port, listener.local_addr().unwrap().port());
+}
+
+/// The deploy server listens on the address it is given, and its URLs name
+/// `localhost` for IPv4 loopback and for every address.
+#[tokio::test]
+async fn the_signing_server_binds_the_given_address() {
+    let (port, listener) = bind_preview_port("deploy", Ipv4Addr::LOCALHOST.into(), Some(0))
+        .await
+        .unwrap();
+    let bound = listener.local_addr().unwrap();
+    assert_eq!(bound, SocketAddr::from(([127, 0, 0, 1], port)));
+    let localhost = format!("http://localhost:{port}");
+    assert_eq!(signing_origin(bound), localhost);
+    assert_eq!(
+        signing_origin(SocketAddr::from(([0, 0, 0, 0], port))),
+        localhost
+    );
+    assert_eq!(
+        signing_origin(SocketAddr::from(([192, 0, 2, 7], port))),
+        format!("http://192.0.2.7:{port}")
+    );
+    assert_eq!(
+        signing_origin(SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port))),
+        format!("http://[::1]:{port}")
+    );
+}
+
+/// A taken port: the step names `--port` of the command that listens, and
+/// the cause has the same code for each command.
+#[tokio::test]
+async fn a_taken_port_names_the_flag_of_the_command_that_ran() {
+    let held = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
+    let port = held.local_addr().unwrap().port();
+    let next = port.checked_add(1).unwrap_or(8001);
+    for (command, other) in [("deploy", "start"), ("start", "deploy")] {
+        let err = bind_preview_port(command, Ipv4Addr::LOCALHOST.into(), Some(port))
+            .await
+            .unwrap_err();
+        let text = ux::render(&err, false, false);
+        assert!(
+            text.starts_with(&format!("Error: port {port} is already in use\n")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("dcl-scene-cli {command} --port {next}\n")),
+            "{text}"
+        );
+        assert!(!text.contains(&format!("{other} --port")), "{text}");
+    }
 }
 
 /// `start --port 8123` (the default MCP port) once aimed the scene-log
@@ -1069,14 +1122,101 @@ fn the_scene_log_reader_never_polls_this_server() {
 }
 
 fn state_with_data_layer(public_dir: PathBuf) -> Arc<AppState> {
-    let (_tx, port_rx) = tokio::sync::watch::channel(1234u16);
+    let (_tx, host_rx) = tokio::sync::watch::channel(Default::default());
     std::mem::forget(_tx);
     let mut st = state(vec![]);
     st.data_layer = Some(DataLayerState {
-        port_rx,
+        host_rx,
         public_dir: Some(public_dir),
     });
     Arc::new(st)
+}
+
+fn ready_block(port: u16) -> JoinBlock {
+    JoinBlock {
+        title: "ready".to_string(),
+        position: (4, -2),
+        port,
+        ifaces: Vec::new(),
+        web_explorer: "https://decentraland.org/bevy-web".to_string(),
+        qr: QrMode::Hint,
+        unreachable: Vec::new(),
+        tunnel_hint: false,
+        editor: false,
+        optimized_assets_url: None,
+        deep_link_extra: "&hub=true".to_string(),
+        realm_override: None,
+        native_hud: true,
+        native_bin: None,
+    }
+}
+
+/// `start --json`, the `ready` line with no editor and no client: the links
+/// are the ones of the text form, and the token is the run's bearer.
+#[test]
+fn the_ready_event_names_the_links_and_the_run_token() {
+    let block = ready_block(8123);
+    let st = state(vec![]);
+    let line = serde_json::to_string(&ready_event(
+        &block,
+        &st,
+        [(false, "talk"), (false, "desktop"), (false, "web")],
+    ))
+    .unwrap();
+    assert!(
+        line.starts_with(r#"{"event":"ready","port":8123,"#),
+        "{line}"
+    );
+    let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let deep_link = block.local_desktop_link();
+    assert!(deep_link.starts_with("decentraland://"), "{deep_link}");
+    assert!(deep_link.ends_with("&hub=true"), "{deep_link}");
+    assert!(
+        block
+            .compact_body()
+            .lines()
+            .any(|row| row.trim_start().starts_with("desktop:") && row.ends_with(&deep_link)),
+        "the deep link is the one of the desktop: row"
+    );
+    assert_eq!(
+        event,
+        json!({
+            "event": "ready",
+            "port": 8123,
+            "url": "http://127.0.0.1:8123",
+            "editorUrl": null,
+            "webUrl": block.local_web_url(),
+            "deepLink": deep_link,
+            "dataLayerUrl": null,
+            "token": st.token,
+            "clientsOpened": [],
+        })
+    );
+    assert!(!st.token.is_empty());
+}
+
+/// With `--data-layer` the line names the socket, and the editor page only
+/// when an editor UI is installed; `clientsOpened` lists what the run opened.
+#[test]
+fn the_ready_event_names_the_data_layer_and_the_opened_clients() {
+    let block = ready_block(8123);
+    let opened = [(true, "talk"), (false, "desktop"), (true, "web")];
+    let with_ui = state_with_data_layer(PathBuf::from("inspector-public"));
+    let event = serde_json::to_value(ready_event(&block, &with_ui, opened)).unwrap();
+    assert_eq!(event["dataLayerUrl"], "ws://127.0.0.1:8123/data-layer");
+    assert_eq!(event["editorUrl"], "http://127.0.0.1:8123/inspector/");
+    assert_eq!(event["clientsOpened"], json!(["talk", "web"]));
+
+    let (tx, host_rx) = tokio::sync::watch::channel(Default::default());
+    let mut no_ui = state(vec![]);
+    no_ui.data_layer = Some(DataLayerState {
+        host_rx,
+        public_dir: None,
+    });
+    let event = serde_json::to_value(ready_event(&block, &no_ui, opened)).unwrap();
+    drop(tx);
+    assert_eq!(event["dataLayerUrl"], "ws://127.0.0.1:8123/data-layer");
+    assert_eq!(event["editorUrl"], serde_json::Value::Null);
 }
 
 async fn get_asset(st: &Arc<AppState>, path: &str, headers: HeaderMap) -> Response {
@@ -2302,4 +2442,117 @@ fn play_site_is_the_first_player_origin_off_this_machine() {
     );
     assert!(!is_local_origin("https://example.org"));
     assert!(is_local_origin("http://[::]:1"));
+}
+
+#[test]
+fn public_url_is_an_http_origin_with_an_optional_prefix() {
+    let public = PublicUrl::parse("https://Preview.Example.com/p/").unwrap();
+    assert_eq!(public.origin(), "https://preview.example.com/p");
+    assert_eq!(
+        PublicUrl::parse("http://example.com:8080")
+            .unwrap()
+            .origin(),
+        "http://example.com:8080"
+    );
+    for bad in [
+        "preview.example.com",
+        "ftp://example.com",
+        "https://example.com/?x=1",
+        "https://example.com/#f",
+        "https://user:pw@example.com",
+    ] {
+        let err = PublicUrl::parse(bad).unwrap_err();
+        assert!(
+            crate::ux::render(&err, false, false)
+                .contains("--public-url https://preview.example.com"),
+            "{bad} must be refused with the form to pass"
+        );
+    }
+}
+
+#[test]
+fn public_url_names_a_request_by_forwarded_host_then_host() {
+    let public = PublicUrl::parse("https://preview.example.com").unwrap();
+    let with = |name: &'static str, value: &'static str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(name, axum::http::HeaderValue::from_static(value));
+        headers
+    };
+    assert!(public.names(&with("host", "preview.example.com")));
+    assert!(public.names(&with("host", "PREVIEW.example.com:443")));
+    assert!(public.names(&with("x-forwarded-host", "preview.example.com")));
+    assert!(!public.names(&with("host", "127.0.0.1:8000")));
+    assert!(!public.names(&with("host", "preview.example.com:8443")));
+    assert!(!public.names(&with("host", "evil-preview.example.com")));
+    let mut proxied = with("host", "preview.example.com");
+    proxied.insert(
+        "x-forwarded-host",
+        axum::http::HeaderValue::from_static("other.example"),
+    );
+    assert!(
+        !public.names(&proxied),
+        "a proxy's forwarded host wins over Host, as it does for every advertised URL"
+    );
+}
+
+/// A warning `start` printed is what `/api/problems` serves and what every
+/// page's banner polls, steps included, until it stops being true.
+#[tokio::test]
+async fn open_problems_are_served_and_drawn_by_the_pages() {
+    let tmp = Tmp::new("problems-route");
+    let st = Arc::new(state(vec![testkit::scene(
+        &tmp.0,
+        "s",
+        &["0,0"],
+        "export {}",
+    )]));
+    let (addr, server) = serve(&st).await;
+    let failed: anyhow::Error = UserError::new(
+        "problems-route build failed",
+        TrySteps::one("fix the errors above"),
+    )
+    .why("src/index.ts:1:1 unexpected token")
+    .into();
+    ux::report_build(&failed);
+
+    let response = fetch(addr, PROBLEMS_PATH).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body: Value = response.json().await.unwrap();
+    let mine = body["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["what"] == "problems-route build failed")
+        .expect("the reported problem is open");
+    assert_eq!(mine["topic"], "build");
+    assert_eq!(mine["why"], "src/index.ts:1:1 unexpected token");
+    assert_eq!(mine["steps"], json!(["fix the errors above"]));
+    assert!(body["revision"].as_u64().unwrap() > 0);
+
+    let page = navigate(addr, "/").await.text().await.unwrap();
+    assert!(
+        page.contains(
+            r#"id="preview-problems" class="problems" data-problems-url="/api/problems""#
+        ),
+        "the page names the route its banner polls"
+    );
+    ux::resolve(ux::Topic::Build);
+    server.abort();
+}
+
+/// `--multi-instance` and `--skip-auth-screen`: with neither, the link has
+/// both parameters; with a flag, only the parameters of the given flags.
+#[test]
+fn the_link_flags_select_the_parameters_the_deep_link_turns_on() {
+    assert_eq!(
+        link_defaults(false, false),
+        ["multi-instance", "skip-auth-screen"]
+    );
+    assert_eq!(link_defaults(true, false), ["multi-instance"]);
+    assert_eq!(link_defaults(false, true), ["skip-auth-screen"]);
+    assert_eq!(
+        link_defaults(true, true),
+        ["multi-instance", "skip-auth-screen"]
+    );
 }

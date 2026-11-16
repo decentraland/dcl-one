@@ -1,0 +1,51 @@
+.SignIn {
+  height: 100vh;
+}
+
+.SignIn .content {
+  margin-left: 98px;
+}
+
+.SignIn .content-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.SignIn .illustration {
+  width: 360px;
+  height: auto;
+}
+
+.SignIn .text-column {
+  gap: 24px;
+}
+
+.SignIn .reopen {
+  color: var(--dcl-silver);
+}
+
+.SignIn .reopen .action-link {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.SignIn .background {
+  position: fixed;
+  height: 100%;
+  width: 100%;
+  /* TODO: Update  background image */
+  background: url("../../../../assets/images/genesis_plaza.webp") no-repeat center center fixed;
+  background-size: cover;
+  z-index: -1;
+}
+
+.SignIn .background::before {
+  content: "";
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(to left, transparent 45%, #491975 85%);
+}

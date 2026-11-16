@@ -1,0 +1,518 @@
+[
+  {
+    "id": "default",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "id": "modifier-?",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "modifier-*",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "id": "modifier-+",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "id": "braced",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "custom-digits",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "extension",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "escaped-literal",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "separator",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "wildcard",
+    "ok": true,
+    "matches": [
+      false,
+      true,
+      true
+    ]
+  },
+  {
+    "id": "suffix-prefix",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "safe-lookahead",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "lookahead",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "lookbehind",
+    "ok": true,
+    "matches": [
+      true,
+      true
+    ]
+  },
+  {
+    "id": "backref",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "error-0",
+    "ok": false,
+    "error": "TypeError: Missing parameter name at 1"
+  },
+  {
+    "id": "error-1",
+    "ok": false,
+    "error": "TypeError: Unbalanced pattern at 3"
+  },
+  {
+    "id": "error-2",
+    "ok": false,
+    "error": "TypeError: Unexpected END at 5, expected CLOSE"
+  },
+  {
+    "id": "error-3",
+    "ok": false,
+    "error": "TypeError: Unexpected MODIFIER at 1, expected END"
+  },
+  {
+    "id": "error-4",
+    "ok": false,
+    "error": "TypeError: Capturing groups are not allowed at 6"
+  },
+  {
+    "id": "error-5",
+    "ok": false,
+    "error": "TypeError: Must have text between two parameters, missing text after \"a\""
+  },
+  {
+    "id": "error-6",
+    "ok": false,
+    "error": "TypeError: Missing pattern at 5"
+  },
+  {
+    "id": "error-7",
+    "ok": false,
+    "error": "TypeError: Pattern cannot start with \"?\" at 6"
+  },
+  {
+    "id": "error-8",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/([))[\\/#\\?]?$/i: Unterminated group"
+  },
+  {
+    "id": "error-9",
+    "ok": true,
+    "matches": [
+      false
+    ]
+  },
+  {
+    "id": "dotless",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "long-s",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "kelvin",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "unicode",
+    "ok": true,
+    "matches": [
+      true,
+      true
+    ]
+  },
+  {
+    "id": "identity-u-brace",
+    "ok": true,
+    "matches": [
+      false,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "identity-k",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "octal",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "escape8",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "escape-x",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "surrogate-quantifier",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "dot-units",
+    "ok": true,
+    "matches": [
+      false
+    ]
+  },
+  {
+    "id": "dot-two",
+    "ok": true,
+    "matches": [
+      true,
+      true
+    ]
+  },
+  {
+    "id": "modifier-group",
+    "ok": true,
+    "matches": [
+      true,
+      false
+    ]
+  },
+  {
+    "id": "possessive",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/(a++))[\\/#\\?]?$/i: Nothing to repeat"
+  },
+  {
+    "id": "atomic",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/((?>a)))[\\/#\\?]?$/i: Invalid group"
+  },
+  {
+    "id": "duplicate-before-inner-alternative",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/((?<a>a)(?:(?<b>b)|(?<a>c))))[\\/#\\?]?$/i: Duplicate capture group name",
+    "exception": "Embedded engine rejects this configured duplicate-name pattern."
+  },
+  {
+    "id": "duplicate-nested-name",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/((?<a>(?<a>a))))[\\/#\\?]?$/i: Duplicate capture group name"
+  },
+  {
+    "id": "duplicate-mutually-exclusive-control",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "duplicate-same-disjunct-control",
+    "ok": false,
+    "error": "SyntaxError: Invalid regular expression: /^\\/x(?:\\/((?<a>a)(?<a>b)))[\\/#\\?]?$/i: Duplicate capture group name"
+  },
+  {
+    "id": "different-name-before-inner-alternative-control",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "id": "utf8-ascii-15",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-ascii-16",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-ascii-17",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-latin1-15",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-latin1-16",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-latin1-17",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-bmp-15",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-bmp-16",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-bmp-17",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-astral-15",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-astral-16",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "utf8-astral-17",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      true
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-high",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-low",
+    "ok": true,
+    "matches": [
+      false,
+      false,
+      false
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-pair",
+    "ok": true,
+    "matches": [
+      true,
+      false,
+      false
+    ]
+  },
+  {
+    "id": "retained-routing-0",
+    "ok": true,
+    "matches": [
+      false,
+      true,
+      true
+    ]
+  },
+  {
+    "id": "retained-routing-1",
+    "ok": true,
+    "matches": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "id": "retained-routing-2",
+    "ok": true,
+    "matches": [
+      true
+    ]
+  },
+  {
+    "id": "retained-routing-3",
+    "ok": true,
+    "matches": [
+      true,
+      true,
+      false
+    ]
+  }
+]

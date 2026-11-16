@@ -135,7 +135,8 @@ def assert_budget(statuses, capacity):
 
 def client(args):
     table = json.loads(Path(args.table).read_text())
-    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted, rate_untrusted = args.targets
+    (public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted,
+     rate_untrusted, rate_admitted) = args.targets
     for host in args.targets:
         wait_ready(host)
 
@@ -197,7 +198,10 @@ def client(args):
                       "/server", "/server.data", "/metabase/", "/metabase.data",
                       "/telemetry/dash/sql", "/telemetry/dash/sql.data",
                       "/telemetry/dash/flag.data", "/telemetry/dash/group/target.data",
-                      "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+                      "/telemetry/dash/admin.data", "/telemetry/dash/admin/users",
+                      "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/credits/admin/flags",
+                      "/market/v1/admin/audit", "/camera-reel/admin/images/1", "/scene-state/admin/scene/x/reset",
+                      "/worlds-content-server/gc", "/worlds-content-server/reprocess-ab"]
     forged = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.7",
               "CF-Connecting-IP": "203.0.113.88", "True-Client-IP": "203.0.113.88",
               "X-Catalyst-Admin-Gate": "admitted", "X-Forwarded-Proto": "https",
@@ -333,6 +337,31 @@ def client(args):
                         headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
     assert_budget(statuses, 3)
     print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
+    # Worlds reads are not limited on either mount; writes keep a budget,
+    # and a non-worlds read still has the server-wide one.
+    for i, (path, vhost) in enumerate([("/worlds-content-server/status", "example.test"),
+                                       ("/world/w.dcl.eth/about", "worlds.example.test"),
+                                       ("/status", "worlds-content-server.example.test")]):
+        statuses = [request(rate_public, path, vhost=vhost,
+                            headers={"X-Forwarded-For": f"198.51.100.{81 + i}"})[0] for _ in range(8)]
+        assert statuses == [200] * 8, ("worlds read", path, vhost, statuses)
+    for i, (method, path) in enumerate([("PUT", "/worlds-content-server/world/w.dcl.eth/permissions/deployment/0xa"),
+                                        ("GET", "/about")]):
+        statuses = [request(rate_public, path, method=method, body=b"{}" if method == "PUT" else None,
+                            headers={"X-Forwarded-For": f"198.51.100.{91 + i}"})[0] for _ in range(6)]
+        assert_budget(statuses, 3)
+    # Worlds admin calls are operator paths: a public client is refused before any budget.
+    statuses = [request(rate_public, "/worlds-content-server/admin/worlds",
+                        headers={"X-Forwarded-For": "198.51.100.99"})[0] for _ in range(6)]
+    assert statuses == [403] * 6, ("worlds admin", statuses)
+    # From an admin network they keep the read budget.
+    for i, (method, path) in enumerate([("GET", "/worlds-content-server/admin/worlds"),
+                                        ("POST", "/worlds-content-server/gc")]):
+        statuses = [request(rate_admitted, path, method=method, body=b"{}" if method == "POST" else None,
+                            headers={"X-Forwarded-For": f"198.51.100.{101 + i}"})[0] for _ in range(6)]
+        assert_budget(statuses, 3)
+    print("Real-nginx worlds reads are unlimited; worlds writes, other reads and admitted admin calls keep budgets; "
+          "public admin calls are gated.", flush=True)
 
 
 def rate_fixture(args):
@@ -342,7 +371,7 @@ def rate_fixture(args):
     nginx = re.search(r"--nginx ([^ \"']+)", wrapper)[1]
     mime = re.search(r"--mime ([^ \"']+)", wrapper)[1]
     text = gateway.render(json.loads(Path(args.table).read_text()), gateway.settings(os.environ), mime)
-    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5)]:
+    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5), ("read", 2), ("worlds", 2)]:
         text, n = re.subn(rf"(zone={zone}:10m rate=)[0-9]+r/s", r"\g<1>1r/m", text)
         assert n == 1, (zone, n)
         text = re.sub(rf"(limit_req zone={zone} burst=)[0-9]+", rf"\g<1>{burst}", text)
@@ -397,6 +426,8 @@ def smoke(args):
                 ("rate-public", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
                 ("rate-trusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
                 ("rate-untrusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": "198.51.100.0/24"}),
+                ("rate-admitted", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32",
+                                   "GATEWAY_ADMIN_CIDRS": "198.51.100.0/24"}),
             ]
             targets = []
             for name, extra in cases:
@@ -438,7 +469,7 @@ if __name__ == "__main__":
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--unresolved")
     parser.add_argument("--table")
-    parser.add_argument("--targets", nargs=10)
+    parser.add_argument("--targets", nargs=11)
     parser.add_argument("--rate-fixture")
     parser.add_argument("--image", default="foundation-gateway:nix")
     parser.add_argument("--revision")

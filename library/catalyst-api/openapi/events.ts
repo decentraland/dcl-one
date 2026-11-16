@@ -2020,6 +2020,15 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The signer uploaded too many posters this hour */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2077,6 +2086,15 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The signer uploaded too many posters this hour */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

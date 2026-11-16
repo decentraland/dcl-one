@@ -1,0 +1,56 @@
+import { withAssetDir } from '../../../lib/data-layer/host/fs-utils';
+import type { DataLayerRpcClient } from '../../../lib/data-layer/types';
+import type { AssetCatalogResponse } from '../../../tooling-entrypoint';
+import { determineAssetType } from '../../ImportAsset/utils';
+import type { TreeNode } from '../../ProjectAssetExplorer/ProjectView';
+import type { AssetNodeItem } from '../../ProjectAssetExplorer/types';
+import { isAssetNode } from '../../ProjectAssetExplorer/utils';
+import type { ScriptItem } from './types';
+
+export function fromNumber(value: number): string {
+  return value.toString();
+}
+
+export function toNumber(value: string): number {
+  return parseFloat(value) || 0;
+}
+
+export function isValidNumber(value: string): boolean {
+  return !isNaN(parseFloat(value));
+}
+
+export function isValidPath(value: string): boolean {
+  return value.length > 0 && value.trim().length > 0;
+}
+
+export const isScriptFile = (value: string): boolean =>
+  value.endsWith('.ts') || value.endsWith('.tsx');
+export const isScriptNode = (node: TreeNode): node is AssetNodeItem =>
+  isAssetNode(node) && isScriptFile(node.name);
+
+export function buildScriptPath(name: string): string {
+  const scriptsDir = withAssetDir(determineAssetType('ts'));
+  if (name.startsWith(scriptsDir)) return name; // if it's already a built path, return the name parameter
+  const scriptName = isScriptFile(name) ? name : `${name}.tsx`;
+  const scriptPath = `${scriptsDir}/${scriptName}`;
+  return scriptPath;
+}
+
+export function isScriptNameAvailable({ assets }: AssetCatalogResponse, src: string): boolean {
+  if (!src) return true;
+  return !assets.find($ => src === $.path.toLowerCase());
+}
+
+export function isScriptAlreadyAdded(scripts: ScriptItem[], src: string): boolean {
+  if (!src) return false;
+  return scripts.some(script => script.path === src);
+}
+
+export async function readScript(
+  dataLayer: DataLayerRpcClient,
+  scriptPath: string,
+): Promise<string> {
+  const { data } = await dataLayer.getAssetData({ path: scriptPath });
+  const content = new TextDecoder().decode(data);
+  return content;
+}

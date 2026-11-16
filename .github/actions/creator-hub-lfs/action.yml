@@ -1,0 +1,45 @@
+name: Creator Hub asset-pack media
+description: >-
+  Fetch the asset packs' Git LFS media (apps/creator-hub/packages/asset-packs/packs), through a
+  cache keyed on the LFS object ids, so a run downloads from LFS only what changed. Only the jobs
+  that build, validate or upload the packs need it.
+
+runs:
+  using: composite
+  steps:
+    - name: List the packs' LFS objects
+      id: objects
+      shell: bash
+      run: |
+        git lfs ls-files --long --include 'apps/creator-hub/packages/asset-packs/packs/**' \
+          | cut -d' ' -f1 | sort > "$RUNNER_TEMP/creator-hub-lfs-objects"
+        echo "count=$(wc -l < "$RUNNER_TEMP/creator-hub-lfs-objects" | tr -d ' ')" >> "$GITHUB_OUTPUT"
+        # hashFiles() only reads the workspace, so the key is hashed here.
+        echo "key=$(git hash-object "$RUNNER_TEMP/creator-hub-lfs-objects")" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the LFS object cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .git/lfs/objects
+        key: creator-hub-lfs-${{ steps.objects.outputs.key }}
+        restore-keys: creator-hub-lfs-
+
+    # The cache is not trusted: a fallback key can restore another run's entry, and `git lfs pull`
+    # keeps any object already on disk. LFS objects are named by their SHA-256, so an object whose
+    # content doesn't hash to its name was altered; drop it and let the pull fetch it again.
+    - name: Verify the cached LFS objects
+      shell: bash
+      run: |
+        [ -d .git/lfs/objects ] || exit 0
+        find .git/lfs/objects -type f -exec sha256sum {} + \
+          | awk '{ n = split($2, p, "/"); if ($1 != p[n]) print $2 }' > "$RUNNER_TEMP/creator-hub-lfs-bad"
+        if [ -s "$RUNNER_TEMP/creator-hub-lfs-bad" ]; then
+          echo "::warning::Dropping $(wc -l < "$RUNNER_TEMP/creator-hub-lfs-bad" | tr -d ' ') cached LFS objects that don't match their hash"
+          xargs rm -f < "$RUNNER_TEMP/creator-hub-lfs-bad"
+        fi
+
+    - name: Check out the packs' media
+      shell: bash
+      run: |
+        git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/**'
+        echo "Checked out ${{ steps.objects.outputs.count }} LFS objects"
