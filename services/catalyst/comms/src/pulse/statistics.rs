@@ -5,12 +5,12 @@ use crate::protocol::bus::statistics::{
 };
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+const MAX_RETAINED_CONNECTOR_GENERATIONS: usize = 4096;
+
 /// Exact-case wallet membership with Map insertion order and no expiry. Producer
 /// cursors suppress duplicate/out-of-order observations, not disconnected sessions:
 /// every accepted socket disconnect removes its wallet, regardless of other sockets.
-/// A handover keeps the outgoing writer's cursor until the next one, so its sockets'
-/// heartbeats and disconnects still count while it drains, as upstream Stats takes
-/// every connector's events.
+/// Handovers retain outgoing cursors so every admitted connector can drain.
 #[derive(Default)]
 pub struct Statistics {
     peers: BTreeMap<u64, Peer>,
@@ -19,7 +19,7 @@ pub struct Statistics {
     incarnation: uuid::Uuid,
     next_generation: u64,
     active: Option<(ProducerGrant, u64)>,
-    retiring: Option<(ProducerGrant, u64)>,
+    retiring: HashMap<u64, (ProducerGrant, u64)>,
     pending: Option<ProducerGrant>,
     islands: Vec<u8>,
     discovery: Vec<u8>,
@@ -61,6 +61,9 @@ impl Statistics {
                 {
                     return ProducerReply::Grant(grant.clone());
                 }
+                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS {
+                    return rejected;
+                }
                 let Some(generation) = self.next_generation.checked_add(1) else {
                     return rejected;
                 };
@@ -85,7 +88,8 @@ impl Statistics {
                 {
                     return ProducerReply::Active(grant);
                 }
-                if self.pending.as_ref() != Some(&grant)
+                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS
+                    || self.pending.as_ref() != Some(&grant)
                     || self
                         .active
                         .as_ref()
@@ -94,12 +98,9 @@ impl Statistics {
                     return rejected;
                 }
                 self.pending = None;
-                // Defensive: `Begin` answers `Active` to the producer that is already
-                // active, so a pending grant never shares the active producer today.
-                self.retiring = self
-                    .active
-                    .take()
-                    .filter(|(outgoing, _)| outgoing.producer != grant.producer);
+                if let Some(outgoing) = self.active.take() {
+                    self.retiring.insert(outgoing.0.generation, outgoing);
+                }
                 self.active = Some((grant.clone(), 0));
                 ProducerReply::Active(grant)
             }
@@ -112,9 +113,9 @@ impl Statistics {
             && observation.sequence > 0
             && observation.incarnation == self.incarnation
         {
-            [&mut self.active, &mut self.retiring]
-                .into_iter()
-                .flatten()
+            self.active
+                .iter_mut()
+                .chain(self.retiring.get_mut(&observation.generation))
                 .find(|(grant, _)| {
                     grant.producer == observation.producer
                         && grant.generation == observation.generation
@@ -298,7 +299,7 @@ mod tests {
         }
     }
     #[test]
-    fn producer_capacity_never_forgets_cursors_and_backlog_recovers_completely() {
+    fn invalid_observations_are_counted_without_changing_population() {
         let rendered = crate::pulse::metrics::render_recorded(|| {
             let mut stats = Statistics::default();
             assert!(!stats.observe(beat(1, "no-active"), 0));
@@ -329,20 +330,45 @@ mod tests {
             ["pulse_statistics_observations_rejected_total 7"],
             "one counter, without producer or reason labels; accepted events do not increment it"
         );
+    }
+    #[test]
+    fn capacity_refuses_registration_without_forgetting_any_cursor() {
         let mut stats = Statistics::default();
-        let mut first = None;
-        let mut current = None;
-        for producer in 0..(crate::protocol::bus::statistics::MAX_PRODUCERS * 2 + 1) {
+        let mut grants = Vec::new();
+        for producer in 0..=MAX_RETAINED_CONNECTOR_GENERATIONS {
             let grant = register(&mut stats, uuid::Uuid::from_u128(producer as u128));
-            first.get_or_insert_with(|| grant.clone());
-            let mut event = beat(1, "shared");
-            event.producer = grant.producer;
-            event.generation = grant.generation;
-            assert!(stats.observe(event, producer as i64));
-            current = Some(grant);
+            assert!(stats.observe(
+                through(
+                    &grant,
+                    1,
+                    Event::Heartbeat {
+                        address: format!("peer{producer}"),
+                        position: [1.0; 3]
+                    }
+                ),
+                1
+            ));
+            grants.push(grant);
         }
-        let first = first.unwrap();
-        let current = current.unwrap();
+        assert_eq!(stats.retiring.len(), MAX_RETAINED_CONNECTOR_GENERATIONS);
+        let state = stats.snapshot();
+        let active = stats.active.clone();
+        let retained = stats.retiring.clone();
+        let generation = stats.next_generation;
+        let begin = ProducerRequest::Begin {
+            incarnation: stats.incarnation,
+            producer: uuid::Uuid::new_v4(),
+        };
+        assert!(matches!(
+            stats.control(begin),
+            ProducerReply::Rejected { .. }
+        ));
+        assert_eq!(stats.active, active);
+        assert_eq!(stats.retiring, retained);
+        assert_eq!(stats.next_generation, generation);
+        assert!(stats.pending.is_none());
+        assert_eq!(stats.snapshot(), state);
+        let current = grants.last().unwrap();
         assert_eq!(
             stats.control(ProducerRequest::Begin {
                 incarnation: current.incarnation,
@@ -354,121 +380,126 @@ mod tests {
             stats.control(ProducerRequest::Confirm(current.clone())),
             ProducerReply::Active(current.clone())
         );
-        let mut duplicate = beat(1, "duplicate");
-        duplicate.producer = current.producer;
-        duplicate.generation = current.generation;
-        assert!(
-            !stats.observe(duplicate, 0),
-            "idempotent registration must preserve the active cursor"
-        );
+        for grant in &grants {
+            assert!(!stats.observe(
+                through(
+                    grant,
+                    1,
+                    Event::Disconnect {
+                        address: "replay".into()
+                    }
+                ),
+                999
+            ));
+            assert!(stats.observe(
+                through(
+                    grant,
+                    3,
+                    Event::Heartbeat {
+                        address: format!("peer{}", grant.producer.as_u128()),
+                        position: [3.0; 3]
+                    }
+                ),
+                -7
+            ));
+        }
+        assert_eq!(stats.snapshot().peers.len(), grants.len());
+        assert!(stats.snapshot().peers.iter().all(|peer| peer.time == -7));
+        let candidate = ProducerGrant {
+            incarnation: stats.incarnation,
+            producer: uuid::Uuid::new_v4(),
+            generation: generation + 1,
+            challenge: uuid::Uuid::new_v4(),
+        };
+        stats.pending = Some(candidate.clone());
         assert!(matches!(
-            stats.control(ProducerRequest::Confirm(first.clone())),
+            stats.control(ProducerRequest::Begin {
+                incarnation: stats.incarnation,
+                producer: uuid::Uuid::new_v4()
+            }),
             ProducerReply::Rejected { .. }
         ));
-        assert!(!stats.observe(beat(1, "shared"), 0));
-        // A delayed registration creates only a candidate, never replacing the active cursor.
-        let delayed = stats.control(ProducerRequest::Begin {
-            incarnation: stats.incarnation,
-            producer: first.producer,
-        });
-        let ProducerReply::Grant(delayed) = delayed else {
-            panic!("delayed candidate")
+        assert_eq!(stats.pending, Some(candidate.clone()));
+        assert!(matches!(
+            stats.control(ProducerRequest::Confirm(candidate.clone())),
+            ProducerReply::Rejected { .. }
+        ));
+        assert_eq!(stats.pending, Some(candidate));
+        assert_eq!(stats.active, active.map(|(grant, _)| (grant, 3)));
+        assert_eq!(stats.retiring.len(), MAX_RETAINED_CONNECTOR_GENERATIONS);
+    }
+    #[test]
+    fn candidate_confirmation_and_restart_preserve_exact_fences() {
+        let mut stats = registered();
+        let first = stats.active.as_ref().unwrap().0.clone();
+        assert!(stats.observe(beat(1, "a"), 1));
+        let begin = |producer| ProducerRequest::Begin {
+            incarnation: first.incarnation,
+            producer,
         };
-        let ProducerReply::Grant(newer) = stats.control(ProducerRequest::Begin {
-            incarnation: current.incarnation,
-            producer: uuid::Uuid::new_v4(),
-        }) else {
-            panic!("newer candidate")
-        };
-        assert!(
-            matches!(
-                stats.control(ProducerRequest::Confirm(delayed)),
-                ProducerReply::Rejected { .. }
-            ),
-            "a superseded challenge cannot hand over the writer"
-        );
-        assert_eq!(stats.pending.as_ref(), Some(&newer));
-        let mut next = beat(2, "continued");
-        next.producer = current.producer;
-        next.generation = current.generation;
-        assert!(stats.observe(next, 77));
-        assert!(stats.recovery);
-        assert!(stats.changes.is_empty());
-        let Update::Snapshot { revision, state } = stats.next_update(false).unwrap() else {
+        let ProducerReply::Grant(delayed) = stats.control(begin(uuid::Uuid::from_u128(7))) else {
             panic!()
         };
-        assert_eq!(
-            revision,
-            crate::protocol::bus::statistics::MAX_PRODUCERS as u64 * 2 + 2
-        );
-        assert_eq!(state.peers.len(), 2);
-        assert_eq!(state.peers[1].time, 77);
-        assert!(stats.next_update(false).is_none());
+        let ProducerReply::Grant(newer) = stats.control(begin(uuid::Uuid::from_u128(8))) else {
+            panic!()
+        };
+        assert!(matches!(
+            stats.control(ProducerRequest::Confirm(delayed)),
+            ProducerReply::Rejected { .. }
+        ));
+        assert_eq!(stats.pending.as_ref(), Some(&newer));
+        let mut forged = newer.clone();
+        forged.challenge = uuid::Uuid::new_v4();
+        assert!(matches!(
+            stats.control(ProducerRequest::Confirm(forged)),
+            ProducerReply::Rejected { .. }
+        ));
+        assert_eq!(stats.pending.as_ref(), Some(&newer));
+        assert!(stats.observe(beat(2, "a"), 2));
         assert_eq!(
             stats.control(ProducerRequest::Confirm(newer.clone())),
             ProducerReply::Active(newer.clone())
         );
         assert_eq!(
-            stats.snapshot(),
-            state,
-            "writer handover cannot expire retained peers"
+            stats.control(ProducerRequest::Confirm(newer.clone())),
+            ProducerReply::Active(newer)
         );
+        assert!(!stats.observe(beat(2, "a"), 99));
         assert!(matches!(
-            stats.control(ProducerRequest::Confirm(current.clone())),
+            stats.control(ProducerRequest::Confirm(first.clone())),
             ProducerReply::Rejected { .. }
         ));
-        let mut replayed = beat(2, "continued");
-        replayed.producer = current.producer;
-        replayed.generation = current.generation;
-        assert!(
-            !stats.observe(replayed, 998),
-            "the outgoing writer keeps its cursor"
-        );
-        let mut draining = beat(999, "continued");
-        draining.producer = current.producer;
-        draining.generation = current.generation;
-        assert!(
-            stats.observe(draining, 999),
-            "the outgoing writer's sockets still count while it drains"
-        );
-        register(&mut stats, uuid::Uuid::new_v4());
-        let mut stale = beat(1000, "stale");
-        stale.producer = current.producer;
-        stale.generation = current.generation;
-        assert!(
-            !stats.observe(stale, 1000),
-            "only the latest outgoing writer is kept"
-        );
         let mut restarted = Statistics::with_incarnation(uuid::Uuid::new_v4());
         assert!(matches!(
-            restarted.control(ProducerRequest::Confirm(current)),
+            restarted.control(ProducerRequest::Confirm(first.clone())),
             ProducerReply::Rejected { .. }
         ));
         assert!(matches!(
+            restarted.control(begin(first.producer)),
+            ProducerReply::Rejected { .. }
+        ));
+        assert!(!restarted.observe(beat(3, "a"), 3));
+        assert!(restarted.snapshot().peers.is_empty());
+        let fresh = register(&mut restarted, uuid::Uuid::new_v4());
+        assert!(restarted.observe(
+            through(
+                &fresh,
+                1,
+                Event::Heartbeat {
+                    address: "fresh".into(),
+                    position: [1.0; 3]
+                }
+            ),
+            -100
+        ));
+        restarted.next_generation = u64::MAX;
+        assert!(matches!(
             restarted.control(ProducerRequest::Begin {
-                incarnation: stats.incarnation,
-                producer: first.producer
+                incarnation: fresh.incarnation,
+                producer: uuid::Uuid::new_v4()
             }),
             ProducerReply::Rejected { .. }
         ));
-        assert!(!restarted.observe(beat(99, "old-incarnation"), 100));
-        let grant = register(&mut restarted, uuid::Uuid::new_v4());
-        let mut fresh = beat(1, "new-incarnation");
-        fresh.incarnation = grant.incarnation;
-        fresh.generation = grant.generation;
-        fresh.producer = grant.producer;
-        assert!(restarted.observe(fresh, -100));
-        restarted.next_generation = u64::MAX;
-        assert!(
-            matches!(
-                restarted.control(ProducerRequest::Begin {
-                    incarnation: grant.incarnation,
-                    producer: uuid::Uuid::new_v4()
-                }),
-                ProducerReply::Rejected { .. }
-            ),
-            "generation overflow must fail closed rather than reuse a fence"
-        );
     }
     #[test]
     fn a_handover_keeps_the_outgoing_connectors_heartbeats_and_disconnects() {
@@ -506,7 +537,8 @@ mod tests {
     fn a_draining_disconnect_drops_a_reconnected_wallet_until_its_next_heartbeat() {
         let mut stats = registered();
         assert!(stats.observe(beat(1, "w"), 1));
-        let incoming = register(&mut stats, uuid::Uuid::from_u128(7));
+        register(&mut stats, uuid::Uuid::from_u128(7));
+        let incoming = register(&mut stats, uuid::Uuid::from_u128(8));
         let through_new = |sequence| {
             let mut beat = beat(sequence, "w");
             beat.producer = incoming.producer;
@@ -525,16 +557,102 @@ mod tests {
         assert_eq!(stats.snapshot().peers[0].address, "w");
     }
     #[test]
-    fn only_the_most_recent_outgoing_connector_drains() {
+    fn repeated_handovers_keep_every_outgoing_connectors_events_and_cursors() {
         let mut stats = registered();
+        let a = stats.active.as_ref().unwrap().0.clone();
         assert!(stats.observe(beat(1, "a"), 1));
+        let b = register(&mut stats, uuid::Uuid::from_u128(7));
+        assert!(stats.observe(
+            through(
+                &b,
+                1,
+                Event::Heartbeat {
+                    address: "b".into(),
+                    position: [2.0; 3]
+                }
+            ),
+            2
+        ));
+        register(&mut stats, uuid::Uuid::from_u128(8));
+        while stats.next_update(false).is_some() {}
+        for (grant, address) in [(&a, "a"), (&b, "b")] {
+            let heartbeat = through(
+                grant,
+                3,
+                Event::Heartbeat {
+                    address: address.into(),
+                    position: [4.0; 3],
+                },
+            );
+            assert!(stats.observe(heartbeat.clone(), -10));
+            assert!(!stats.observe(heartbeat.clone(), 999));
+            let mut forged = heartbeat;
+            forged.sequence = 4;
+            forged.producer = uuid::Uuid::new_v4();
+            assert!(!stats.observe(forged, 999));
+            let Some(Update::Change {
+                change: Change::Peer(peer),
+                ..
+            }) = stats.next_update(false)
+            else {
+                panic!("heartbeat change")
+            };
+            assert_eq!(peer.time, -10);
+            assert_eq!(peer.position, [4.0; 3]);
+            let mut wrong_generation = through(
+                grant,
+                4,
+                Event::Disconnect {
+                    address: address.into(),
+                },
+            );
+            wrong_generation.generation += 1;
+            assert!(!stats.observe(wrong_generation, 999));
+            assert!(stats.observe(
+                through(
+                    grant,
+                    4,
+                    Event::Disconnect {
+                        address: address.into()
+                    }
+                ),
+                11
+            ));
+            assert!(
+                matches!(stats.next_update(false), Some(Update::Change { change: Change::Remove(removed), .. }) if removed == address)
+            );
+        }
+        assert!(stats.snapshot().peers.is_empty());
+    }
+    #[test]
+    fn backlog_recovery_retains_complete_state_across_handovers() {
+        let mut stats = registered();
+        for sequence in 1..=5000 {
+            assert!(stats.observe(beat(sequence, "a"), sequence as i64));
+        }
+        assert!(stats.recovery);
+        assert!(stats.changes.is_empty());
+        let state = stats.snapshot();
         register(&mut stats, uuid::Uuid::from_u128(7));
         register(&mut stats, uuid::Uuid::from_u128(8));
-        let gone = Event::Disconnect {
-            address: "a".into(),
-        };
-        assert!(!stats.observe(observation(2, gone), 2));
-        assert_eq!(stats.snapshot().peers[0].address, "a");
+        assert_eq!(stats.snapshot(), state);
+        assert!(
+            matches!(stats.next_update(false), Some(Update::Snapshot { revision: 5000, state: recovered }) if recovered == state)
+        );
+        assert!(stats.next_update(false).is_none());
+        assert!(!stats.observe(beat(5000, "a"), 999));
+        assert!(stats.observe(beat(5001, "a"), -1));
+        assert_eq!(stats.snapshot().peers[0].time, -1);
+    }
+    fn through(grant: &ProducerGrant, sequence: u64, event: Event) -> Observation {
+        Observation {
+            version: 2,
+            incarnation: grant.incarnation,
+            generation: grant.generation,
+            producer: grant.producer,
+            sequence,
+            event,
+        }
     }
     fn register(stats: &mut Statistics, producer: uuid::Uuid) -> ProducerGrant {
         let ProducerReply::Grant(grant) = stats.control(ProducerRequest::Begin {
