@@ -12,7 +12,7 @@ import type {
   ShareScreenFn,
 } from "../cast-stream/machine";
 import { StreamerStage, useCastTracks } from "./CastStage";
-import { joinCast, type CastSession } from "./session";
+import { joinCast, probeDevices, type CastSession, type Publish } from "./session";
 
 /** The name a streamer who typed none is shown with. */
 const DEFAULT_STREAMER_NAME = "Speaker";
@@ -21,19 +21,10 @@ const resolveToken: ResolveTokenFn = async ({ token, signal }) => ({
   info: await getStreamInfo(token, { signal }),
 });
 
-/** Asks for the camera and microphone once, then releases them: LiveKit opens its own tracks. */
-const requestPermissions: RequestPermissionsFn = async () => {
-  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-    return { granted: false };
-  }
-  try {
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-    probe.getTracks().forEach((t) => t.stop());
-    return { granted: true };
-  } catch {
-    return { granted: false };
-  }
-};
+/** A session's change feed as a binding: `onChange(session)` on every room event. */
+function bindSession(session: CastSession | null, onChange: (s: CastSession) => void): () => void {
+  return session ? session.subscribe(() => onChange(session)) : () => {};
+}
 
 /** `/cast/s/{streamingKey}`: publishes the camera, microphone and screen into the scene room. */
 export default function LiveCastStream({
@@ -45,8 +36,10 @@ export default function LiveCastStream({
 }) {
   const [session, setSession] = useState<CastSession | null>(null);
   const sessionRef = useRef<CastSession | null>(null);
+  const devices = useRef<Publish>({ microphone: true, camera: true });
+  const busy = useRef(false);
+  const [toggling, setToggling] = useState(false);
   const tracks = useCastTracks(session);
-  const [busy, setBusy] = useState(false);
 
   useEffect(
     () => () => {
@@ -56,14 +49,22 @@ export default function LiveCastStream({
     [],
   );
 
+  /** Each device on its own: either one, or neither with a screen share, is enough to cast. */
+  const requestPermissions = useCallback<RequestPermissionsFn>(async () => {
+    devices.current = await probeDevices();
+    const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+    const canShare = typeof md?.getDisplayMedia === "function";
+    return { granted: devices.current.microphone || devices.current.camera || canShare };
+  }, []);
+
   const goLive = useCallback<GoLiveFn>(async ({ token, identity, signal }) => {
     const credentials = await getStreamerToken(token, identity.trim() || DEFAULT_STREAMER_NAME, {
       signal,
     });
-    const next = await joinCast(credentials, { publish: true });
+    const next = await joinCast(credentials, { publish: devices.current, signal });
     if (signal?.aborted) {
       await next.disconnect();
-      throw new Error("Join cancelled");
+      throw new DOMException("Join cancelled", "AbortError");
     }
     sessionRef.current = next;
     setSession(next);
@@ -87,10 +88,9 @@ export default function LiveCastStream({
 
   const bindShareEnded = useCallback(
     (onEnded: () => void) => {
-      if (!session) return () => {};
-      let sharing = session.isPublishing("screen_share");
-      return session.subscribe(() => {
-        const now = session.isPublishing("screen_share");
+      let sharing = session?.isPublishing("screen_share") ?? false;
+      return bindSession(session, (s) => {
+        const now = s.isPublishing("screen_share");
         if (sharing && !now) onEnded();
         sharing = now;
       });
@@ -98,38 +98,60 @@ export default function LiveCastStream({
     [session],
   );
 
-  const toggle = useCallback(
-    async (source: "microphone" | "camera") => {
-      const s = sessionRef.current;
-      if (!s || busy) return;
-      setBusy(true);
-      try {
-        const on = !s.isPublishing(source);
-        if (source === "microphone") await s.setMicrophone(on);
-        else await s.setCamera(on);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [busy],
+  const bindConnectionLost = useCallback(
+    (onLost: () => void) =>
+      bindSession(session, (s) => {
+        // Our own leave clears the ref first; anything else is a lost room.
+        if (s.disconnected() && sessionRef.current === s) {
+          sessionRef.current = null;
+          onLost();
+        }
+      }),
+    [session],
   );
+
+  const toggle = useCallback(async (source: "microphone" | "camera") => {
+    const s = sessionRef.current;
+    if (!s || busy.current) return;
+    busy.current = true;
+    setToggling(true);
+    try {
+      const on = !s.isPublishing(source);
+      if (source === "microphone") await s.setMicrophone(on);
+      else await s.setCamera(on);
+    } finally {
+      busy.current = false;
+      setToggling(false);
+    }
+  }, []);
 
   const micOn = tracks.some((t) => t.local && t.source === "microphone" && !t.muted);
   const camOn = tracks.some((t) => t.local && t.source === "camera" && !t.muted);
+  const audioBlocked = session ? !session.canPlaybackAudio() : false;
 
   const live = useMemo<LiveBindings>(
     () => ({
       goLive,
       stopShare,
       bindShareEnded,
+      bindConnectionLost,
       stage: session ? <StreamerStage tracks={tracks} muted={false} /> : undefined,
       participants: session ? session.participantCount() : undefined,
+      notice: audioBlocked ? (
+        <button
+          type="button"
+          className="cast-console__btn cast-console__btn--active"
+          onClick={() => void session?.startAudio()}
+        >
+          Enable audio
+        </button>
+      ) : undefined,
       liveControls: session ? (
         <>
           <button
             type="button"
             className={"cast-console__btn" + (micOn ? "" : " cast-console__btn--active")}
-            disabled={busy}
+            disabled={toggling}
             aria-pressed={!micOn}
             onClick={() => void toggle("microphone")}
           >
@@ -138,7 +160,7 @@ export default function LiveCastStream({
           <button
             type="button"
             className={"cast-console__btn" + (camOn ? "" : " cast-console__btn--active")}
-            disabled={busy}
+            disabled={toggling}
             aria-pressed={!camOn}
             onClick={() => void toggle("camera")}
           >
@@ -147,7 +169,19 @@ export default function LiveCastStream({
         </>
       ) : undefined,
     }),
-    [goLive, stopShare, bindShareEnded, session, tracks, micOn, camOn, busy, toggle],
+    [
+      goLive,
+      stopShare,
+      bindShareEnded,
+      bindConnectionLost,
+      session,
+      tracks,
+      micOn,
+      camOn,
+      toggling,
+      toggle,
+      audioBlocked,
+    ],
   );
 
   return (

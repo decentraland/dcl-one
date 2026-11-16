@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import StCastWatcher from "@ui/web/pages/StCastWatcher";
 
@@ -18,13 +18,20 @@ type WatcherState = "onboarding" | "joining" | "live" | "waiting";
 /** Why a real join did not go live: the watcher page shows it in place of the stream. */
 export type WatchRefusal = { kind: "waiting" | "error"; title: string; message: string };
 
+/** A join's outcome: connected to `roomId`, or refused. */
+export type WatchJoin = { roomId: string; refused?: undefined } | { refused: WatchRefusal; roomId?: undefined };
+
 /** A real LiveKit session behind the watcher page; the story page leaves it out. */
 export type WatchLive = {
-  /** Resolves once connected; a refusal keeps the page off the stream. */
-  join: () => Promise<WatchRefusal | null>;
+  join: () => Promise<WatchJoin>;
   leave: () => void;
   stage: (muted: boolean) => ReactNode;
-  participantCount?: number;
+  participantCount: number;
+  /** Calls `onLost` when the room goes away while watching; answers the unsubscribe. */
+  bindLost: (onLost: (why: WatchRefusal) => void) => () => void;
+  /** The browser blocks playback until a click (Safari). */
+  audioBlocked: boolean;
+  enableAudio: () => void;
 };
 
 type CastWatchProps = {
@@ -69,22 +76,41 @@ export default function CastWatch({
       return;
     }
     live.join().then(
-      (refused) => {
-        if (refused) {
+      (joined) => {
+        if (joined.refused) {
+          const refused = joined.refused;
           onTrack("cast_watch_refused", { kind: refused.kind, reason: refused.title }, trackCtx);
           setRefusal(refused);
           setState(refused.kind === "waiting" ? "waiting" : "onboarding");
           return;
         }
-        onTrack("cast_watch_joined", { place_name: placeName, stub: false }, trackCtx);
+        onTrack(
+          "cast_watch_joined",
+          { room_id: joined.roomId, place_name: placeName, stub: false },
+          trackCtx,
+        );
         setState("live");
       },
-      () => {
+      (err: unknown) => {
+        const reason = err instanceof Error ? err.message : "join failed";
+        onTrack("cast_watch_refused", { kind: "error", reason }, trackCtx);
         setRefusal({ kind: "error", title: "Could not join the cast", message: "Try again in a moment." });
         setState("onboarding");
       },
     );
   }, [live, onTrack, roomId, placeName, trackCtx]);
+
+  const bindLost = live?.bindLost;
+  useEffect(
+    () =>
+      bindLost?.((why) => {
+        onTrack("cast_watch_lost", { reason: why.title }, trackCtx);
+        setSidebarOpen(false);
+        setRefusal(why);
+        setState("waiting");
+      }),
+    [bindLost, onTrack, trackCtx],
+  );
 
   const leave = useCallback(() => {
     onTrack("cast_watch_left", {}, trackCtx);
@@ -178,11 +204,20 @@ export default function CastWatch({
         messages={live ? [] : undefined}
         watcherTitle={refusal?.kind === "waiting" ? refusal.title : undefined}
         watcherMessage={refusal?.kind === "waiting" ? refusal.message : undefined}
-        toasts={
-          refusal?.kind === "error"
+        toasts={[
+          ...(refusal?.kind === "error"
             ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
-            : []
-        }
+            : []),
+          ...(live?.audioBlocked && state === "live"
+            ? [
+                {
+                  title: "Audio is paused",
+                  message: "Your browser needs a click before the Cast can play sound.",
+                  action: { label: "Enable audio", onClick: live.enableAudio },
+                },
+              ]
+            : []),
+        ]}
       />
       {demoMessages && demoMessages.length === 0 && null}
     </div>

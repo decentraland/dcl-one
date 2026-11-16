@@ -332,6 +332,31 @@ describe("castMachine \u{2014} a real session (goLive, stopShare, SHARE_ENDED)",
     expect(actor.getSnapshot().context.joinError).toBeUndefined();
   });
 
+  it("a lost room ends a live cast as disconnected, and an old join error does not come back", async () => {
+    const track = vi.fn();
+    const goLive = vi
+      .fn<GoLiveFn>()
+      .mockRejectedValueOnce(new Error("Streaming token has expired"))
+      .mockResolvedValue(CREDS);
+    const actor = await toPreview(goLive, track);
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches("preview") && !!s.context.joinError);
+    actor.send({ type: "BACK" });
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    expect(actor.getSnapshot().context.joinError).toBeUndefined();
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES });
+    await waitFor(actor, (s) => s.matches("preview"));
+    expect(actor.getSnapshot().context.joinError).toBeUndefined();
+
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    actor.send({ type: "CONNECTION_LOST" });
+    expect(actor.getSnapshot().matches("ended")).toBe(true);
+    expect(actor.getSnapshot().context.connectionLost).toBe(true);
+    const lost = track.mock.calls.find((c) => c[0] === CAST_EVENTS.connectionLost);
+    expect(lost?.[1]).toEqual({ room_id: "scene-room" });
+  });
+
   it("stopping a share calls stopShare; the browser ending it does not, and both leave sharing", async () => {
     const stopShare = vi.fn();
     const shareScreen: ShareScreenFn = async () => ({ published: true });

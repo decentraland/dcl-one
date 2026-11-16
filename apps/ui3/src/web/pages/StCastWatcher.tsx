@@ -103,7 +103,7 @@ function WatcherEmptyState({ title, message }: { title: ReactNode; message: Reac
   );
 }
 
-export type ChatMessage = { name: string; time: string; body: string };
+type ChatMessage = { name: string; time: string; body: string };
 
 function ChatSidebar({
   title,

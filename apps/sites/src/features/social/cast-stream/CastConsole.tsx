@@ -15,6 +15,10 @@ export type LiveBindings = {
   stopShare: StopShareFn;
   /** Calls `onEnded` when the browser ends the screen capture; answers the unsubscribe. */
   bindShareEnded: (onEnded: () => void) => () => void;
+  /** Calls `onLost` when the room goes away while live; answers the unsubscribe. */
+  bindConnectionLost: (onLost: () => void) => () => void;
+  /** Shown over the live view, e.g. an "enable audio" control. */
+  notice?: ReactNode;
   /** The published media, shown in the live view. */
   stage?: ReactNode;
   /** Microphone and camera toggles next to the share and leave buttons. */
@@ -132,6 +136,11 @@ function CastConsoleInner({
 
   const bindShareEnded = live?.bindShareEnded;
   useEffect(() => bindShareEnded?.(() => send({ type: "SHARE_ENDED" })), [bindShareEnded, send]);
+  const bindConnectionLost = live?.bindConnectionLost;
+  useEffect(
+    () => bindConnectionLost?.(() => send({ type: "CONNECTION_LOST" })),
+    [bindConnectionLost, send],
+  );
 
   const value = state.matches("live") ? "live" : (state.value as string);
   const step = stateToSlug(value);
@@ -300,6 +309,7 @@ function CastConsoleInner({
                 }
               />
               <ConsoleControls label="Live">
+                {live?.notice}
                 {live?.liveControls}
                 <button
                   type="button"
@@ -346,8 +356,14 @@ function CastConsoleInner({
         <StCastStreamer
           state="error"
           streamName={placeName}
-          errorTitle="Your cast has ended"
-          errorMessage="Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
+          errorTitle={
+            state.context.connectionLost ? "Your cast was disconnected" : "Your cast has ended"
+          }
+          errorMessage={
+            state.context.connectionLost
+              ? "The connection to the scene was lost. Open the stream link again to rejoin."
+              : "Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
+          }
           toasts={[]}
         />
       )}

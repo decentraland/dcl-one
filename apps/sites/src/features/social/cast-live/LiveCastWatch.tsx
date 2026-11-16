@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/data/lib/auth/context";
-import { getWatcherToken, defaultDisplayName } from "@/data/lib/catalyst/cast";
+import type { AuthIdentity } from "@/data/lib/auth/types";
+import { getWatcherToken, defaultDisplayName, type CastCredentials } from "@/data/lib/catalyst/cast";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import {
   fallbackPlaceName,
@@ -9,9 +10,9 @@ import {
   type WatchResult,
 } from "@/data/lib/catalyst/landings/cast-watcher";
 import type { TrackContext } from "@/core/lib/telemetry/track";
-import { openSignIn } from "../../components/auth/signin-store";
 
-import CastWatch, { type WatchLive, type WatchRefusal } from "../cast-watch/CastWatch";
+import { openSignIn } from "../../components/auth/signin-store";
+import CastWatch, { type WatchJoin, type WatchLive, type WatchRefusal } from "../cast-watch/CastWatch";
 import { WatcherStage, useCastTracks } from "./CastStage";
 import { joinCast, type CastSession } from "./session";
 
@@ -43,6 +44,53 @@ export function watchRefusal(err: unknown): WatchRefusal {
   };
 }
 
+export const LOST_REFUSAL: WatchRefusal = {
+  kind: "waiting",
+  title: "This Cast has ended",
+  message: "The connection to the scene closed. Join again when the Cast is back.",
+};
+
+export type WatchDeps = {
+  getToken: typeof getWatcherToken;
+  join: (credentials: CastCredentials, opts: { signal?: AbortSignal }) => Promise<CastSession>;
+};
+
+const LIVE_DEPS: WatchDeps = { getToken: getWatcherToken, join: (c, o) => joinCast(c, o) };
+
+/** One watcher join: the signed token, then the room. A join the page abandoned (`signal`)
+ * disconnects whatever it connected and answers null. */
+export async function joinAsWatcher(
+  identity: AuthIdentity,
+  where: { location: string; parcel?: string },
+  signal: AbortSignal,
+  deps: WatchDeps = LIVE_DEPS,
+): Promise<{ refused: WatchRefusal } | { credentials: CastCredentials; session: CastSession } | null> {
+  let credentials: CastCredentials;
+  try {
+    credentials = await deps.getToken(
+      identity,
+      { ...where, displayName: defaultDisplayName(identity.signer) },
+      { signal },
+    );
+  } catch (err) {
+    if (signal.aborted) return null;
+    return { refused: watchRefusal(err) };
+  }
+  if (signal.aborted) return null;
+  let session: CastSession;
+  try {
+    session = await deps.join(credentials, { signal });
+  } catch (err) {
+    if (signal.aborted) return null;
+    throw err;
+  }
+  if (signal.aborted) {
+    await session.disconnect();
+    return null;
+  }
+  return { credentials, session };
+}
+
 /** `/cast/w/{location}`: watches the Cast of a parcel or a world with the viewer's own wallet. */
 export default function LiveCastWatch({
   trackCtx,
@@ -56,55 +104,78 @@ export default function LiveCastWatch({
   const { identity } = useAuth();
   const [session, setSession] = useState<CastSession | null>(null);
   const sessionRef = useRef<CastSession | null>(null);
+  const aborter = useRef<AbortController | null>(null);
   const tracks = useCastTracks(session);
   const [placeName, setPlaceName] = useState(() => fallbackPlaceName(location));
 
   useEffect(
     () => () => {
+      aborter.current?.abort();
       void sessionRef.current?.disconnect();
       sessionRef.current = null;
     },
     [],
   );
 
-  const join = useCallback(async (): Promise<WatchRefusal | null> => {
+  const join = useCallback(async (): Promise<WatchJoin> => {
     if (!identity) {
       openSignIn();
-      return { kind: "error", title: "Sign in to watch", message: "Watching a Cast needs your Decentraland account." };
+      return {
+        refused: {
+          kind: "error",
+          title: "Sign in to watch",
+          message: "Watching a Cast needs your Decentraland account.",
+        },
+      };
     }
-    let credentials;
-    try {
-      credentials = await getWatcherToken(identity, {
-        location,
-        parcel,
-        displayName: defaultDisplayName(identity.signer),
-      });
-    } catch (err) {
-      return watchRefusal(err);
-    }
-    if (credentials.placeName) setPlaceName(credentials.placeName);
-    const next = await joinCast(credentials, { publish: false });
-    await next.startAudio().catch(() => {});
-    sessionRef.current = next;
-    setSession(next);
-    return null;
+    aborter.current?.abort();
+    const controller = new AbortController();
+    aborter.current = controller;
+    const joined = await joinAsWatcher(identity, { location, parcel }, controller.signal);
+    // Abandoned: the page left or a newer join started. Never settles, so nothing renders.
+    if (joined === null) return new Promise<WatchJoin>(() => {});
+    if ("refused" in joined) return { refused: joined.refused };
+    if (joined.credentials.placeName) setPlaceName(joined.credentials.placeName);
+    sessionRef.current = joined.session;
+    setSession(joined.session);
+    return { roomId: joined.credentials.roomId };
   }, [identity, location, parcel]);
 
   const leave = useCallback(() => {
+    aborter.current?.abort();
     const s = sessionRef.current;
     sessionRef.current = null;
     setSession(null);
     void s?.disconnect();
   }, []);
 
+  const bindLost = useCallback(
+    (onLost: (why: WatchRefusal) => void) => {
+      if (!session) return () => {};
+      return session.subscribe(() => {
+        // Our own leave clears the ref first; anything else is a lost room.
+        if (session.disconnected() && sessionRef.current === session) {
+          sessionRef.current = null;
+          setSession(null);
+          onLost(LOST_REFUSAL);
+        }
+      });
+    },
+    [session],
+  );
+
+  const audioBlocked = session ? !session.canPlaybackAudio() : false;
   const live = useMemo<WatchLive>(
     () => ({
       join,
       leave,
+      bindLost,
       stage: (muted) => <WatcherStage tracks={tracks} muted={muted} />,
-      participantCount: session ? session.participantCount() : undefined,
+      participantCount: session ? session.participantCount() : 0,
+      audioBlocked,
+      enableAudio: () => void session?.startAudio(),
     }),
-    [join, leave, tracks, session],
+    [join, leave, bindLost, tracks, session, audioBlocked],
   );
 
   const watch: WatchResult = {

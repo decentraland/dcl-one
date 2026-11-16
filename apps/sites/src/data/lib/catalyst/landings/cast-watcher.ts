@@ -1,21 +1,4 @@
-import { z } from "zod";
-
-export const WatcherCredentialsSchema = z.object({
-  url: z.string().min(1),
-  token: z.string().min(1),
-  roomId: z.string().min(1),
-  identity: z.string().min(1),
-  placeName: z.string().optional(),
-});
-export type WatcherCredentials = z.infer<typeof WatcherCredentialsSchema>;
-
-export const StreamInfoSchema = z.object({
-  placeName: z.string().min(1),
-  placeId: z.string().optional(),
-  location: z.string().min(1),
-  isWorld: z.boolean(),
-});
-export type StreamInfo = z.infer<typeof StreamInfoSchema>;
+import type { CastCredentials } from "../cast";
 
 const WATCH_ERRORS = ["no_active_stream", "access_expired"] as const;
 type WatchError = (typeof WATCH_ERRORS)[number];
@@ -28,7 +11,7 @@ export type WatchResult = {
   isWorld: boolean;
   placeName: string;
   identity: string;
-  credentials?: WatcherCredentials;
+  credentials?: CastCredentials;
   error?: WatchError;
   fallback?: boolean;
 };

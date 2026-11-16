@@ -28,10 +28,16 @@ describe("Cast 2.0 client (upstream gatekeeper contract)", () => {
 
   it("surfaces the gatekeeper's {error} message and status", async () => {
     const fetchImpl = vi.fn(async () => json(400, { error: "Invalid streaming key" }));
-    const err = await getStreamInfo("nope", { base: BASE, fetchImpl }).catch((e) => e);
-    expect(err).toBeInstanceOf(CatalystError);
-    expect(err.message).toBe("Invalid streaming key");
-    expect(err.status).toBe(400);
+    const call = getStreamInfo("nope", { base: BASE, fetchImpl });
+    await expect(call).rejects.toBeInstanceOf(CatalystError);
+    await expect(call).rejects.toMatchObject({ message: "Invalid streaming key", status: 400 });
+  });
+
+  it("answers a 200 that is not JSON as a CatalystError", async () => {
+    const fetchImpl = vi.fn(async () => new Response("<html>", { status: 200 }));
+    const call = getStreamInfo("k", { base: BASE, fetchImpl });
+    await expect(call).rejects.toBeInstanceOf(CatalystError);
+    await expect(call).rejects.toMatchObject({ status: 200 });
   });
 
   it("posts {token, identity} for the streamer token", async () => {

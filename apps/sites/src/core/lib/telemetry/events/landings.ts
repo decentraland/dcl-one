@@ -1,4 +1,7 @@
 export type LandingsEvents = {
+  cast_connection_lost: {
+    room_id?: string;
+  };
   cast_devices_selected: {
     camera: string;
     mic: string;
@@ -49,10 +52,13 @@ export type LandingsEvents = {
   cast_watch_chat_opened: Record<string, never>;
   cast_watch_joined: {
     place_name: string;
-    room_id?: string;
+    room_id: string;
     stub: boolean;
   };
   cast_watch_left: Record<string, never>;
+  cast_watch_lost: {
+    reason: string;
+  };
   cast_watch_muted: Record<string, never>;
   cast_watch_no_stream: {
     location: string;

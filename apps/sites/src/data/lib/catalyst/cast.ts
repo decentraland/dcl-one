@@ -26,6 +26,8 @@ export type CastCredentials = z.infer<typeof CastCredentialsSchema>;
 
 type FetchOpts = { base?: string; signal?: AbortSignal; fetchImpl?: typeof fetch };
 
+// Not `getJSON`: the page shows the gatekeeper's own refusal (`{"error": "Invalid streaming
+// key"}`), which `getJSON` replaces with the bare status.
 async function readJSON<T>(
   url: string,
   init: RequestInit,
@@ -39,7 +41,17 @@ async function readJSON<T>(
     throw new CatalystError(`Cast request failed: ${(err as Error)?.message ?? "network error"}`, url);
   }
   if (!res.ok) throw await errorFromResponse(res, url);
-  return schema.parse(await res.json());
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new CatalystError(
+      `Cast returned invalid JSON: ${(err as Error)?.message ?? "parse error"}`,
+      url,
+      res.status,
+    );
+  }
+  return schema.parse(body);
 }
 
 /** `GET /cast/stream-info/{streamingKey}`: the place a stream link casts to. Unauthenticated. */

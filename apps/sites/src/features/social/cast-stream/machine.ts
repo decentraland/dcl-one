@@ -87,6 +87,8 @@ type CastContext = {
   screenSharing: boolean;
   screenShareFailed: boolean;
   joinError?: string;
+  /** The room went away while live (closed, removed, or reconnection gave up). */
+  connectionLost: boolean;
   invalidReason?: string;
 };
 
@@ -98,6 +100,7 @@ type CastEvent =
   | { type: "BACK" }
   | { type: "TOGGLE_SCREENSHARE" }
   | { type: "SHARE_ENDED" }
+  | { type: "CONNECTION_LOST" }
   | { type: "LEAVE" }
   | { type: "RETRY" };
 
@@ -111,6 +114,7 @@ export const CAST_EVENTS = {
   previewReady: "cast_preview_ready",
   joinRequested: "cast_join_requested",
   joinFailed: "cast_join_failed",
+  connectionLost: "cast_connection_lost",
   wentLive: "cast_went_live",
   screenshareStarted: "cast_screenshare_started",
   screenshareFailed: "cast_screenshare_failed",
@@ -343,6 +347,14 @@ export const castMachine = setup({
     trackJoinFailed: ({ context }) =>
       context.track(CAST_EVENTS.joinFailed, { reason: context.joinError }, context.trackCtx),
     stopShare: ({ context }) => context.stopShare(),
+    clearJoinError: assign({ joinError: undefined }),
+    setConnectionLost: assign({ connectionLost: true, screenSharing: false }),
+    trackConnectionLost: ({ context }) =>
+      context.track(
+        CAST_EVENTS.connectionLost,
+        { room_id: context.credentials?.roomId },
+        context.trackCtx,
+      ),
     trackWentLive: ({ context }) =>
       context.track(
         CAST_EVENTS.wentLive,
@@ -392,6 +404,7 @@ export const castMachine = setup({
     permissionsDenied: false,
     screenSharing: false,
     screenShareFailed: false,
+    connectionLost: false,
   }),
   initial: "tokenCheck",
   states: {
@@ -417,6 +430,7 @@ export const castMachine = setup({
     },
 
     deviceSelect: {
+      entry: "clearJoinError",
       on: {
         SELECT_DEVICES: {
           target: "permissions",
@@ -457,7 +471,7 @@ export const castMachine = setup({
     preview: {
       entry: "trackPreviewReady",
       on: {
-        JOIN: { target: "joining", actions: "trackJoinRequested" },
+        JOIN: { target: "joining", actions: ["clearJoinError", "trackJoinRequested"] },
         BACK: { target: "deviceSelect" },
       },
     },
@@ -482,6 +496,7 @@ export const castMachine = setup({
       initial: "idle",
       on: {
         LEAVE: { target: "ending", actions: "trackEnding" },
+        CONNECTION_LOST: { target: "ended", actions: ["setConnectionLost", "trackConnectionLost"] },
       },
       states: {
         idle: {
@@ -588,6 +603,7 @@ export function resolveCastSnapshot(args: {
     permissionsDenied: false,
     screenSharing: false,
     screenShareFailed: false,
+    connectionLost: false,
     info: SIM_STREAM_INFO,
     credentials: {
       url: "wss://livekit.decentraland.org",
