@@ -26,7 +26,7 @@ use scene_runner::{
 
 use crate::terrain::{
     ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
-    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface,
+    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface, GROUND_RINGS,
     TERRAIN_TEXTURE,
 };
 
@@ -46,8 +46,6 @@ const GROUND_MATERIAL_FLAT_COLOR: Handle<TerrainFlatMaterial> =
     weak_handle!("3e91f222-a374-4f7f-ba1a-4a239c9734ae");
 const GROUND_LAYERS: u32 = 5;
 const GROUND_DISPLACEMENT: f32 = 0.01;
-// rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane
-const GROUND_RINGS: u32 = 6;
 // terrain rises at most 8 steps of 1.8 m plus ~4.4 m of noise
 const GROUND_MIN_Y: f32 = -5.0;
 const GROUND_MAX_Y: f32 = 25.0;
@@ -184,12 +182,16 @@ impl Material for ShellTexture {
     }
 }
 
+pub(crate) fn embed_shaders(app: &mut App) {
+    embedded_asset!(app, "shell_texturing.wgsl");
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ShellTexturingPlugin;
 
 impl Plugin for ShellTexturingPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "shell_texturing.wgsl");
+        embed_shaders(app);
 
         app.init_state::<ParcelGrassState>();
 
@@ -418,28 +420,32 @@ fn update_parcel_grass_material(
     );
     materials.insert(
         PARCEL_GRASS_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: parcel_grass_config.layers,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        shell_material(
+            &parcel_grass_config,
+            parcel_grass_config.layers,
+            surface.params(),
+        ),
     );
     materials.insert(
         GROUND_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: GROUND_LAYERS,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        shell_material(&parcel_grass_config, GROUND_LAYERS, surface.params()),
     );
+}
+
+pub(crate) fn shell_material(
+    config: &ParcelGrassConfig,
+    layers: u32,
+    terrain: TerrainParams,
+) -> ShellTexture {
+    ShellTexture {
+        subdivisions: config.subdivisions,
+        layers,
+        snap_anchor: Vec2::ZERO,
+        root_color: config.root_color.into(),
+        tip_color: config.tip_color.into(),
+        terrain_steps: TERRAIN_TEXTURE,
+        terrain,
+    }
 }
 
 fn shells_need_updating(
