@@ -609,6 +609,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -677,6 +679,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -1184,6 +1187,32 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct IVec2Arg(pub IVec2);
 
@@ -1300,36 +1329,9 @@ pub struct SceneMeta {
     /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
-    /// `requiredPermissions`, kept as raw json so a value of another shape never fails the
-    /// scene.json. Only the legacy permission query reads it ([`Self::legacy_declared_permissions`]).
-    pub required_permissions: Option<serde_json::Value>,
 }
 
-/// scene.json `requiredPermissions` names, indexed by their legacy `PermissionItem` value.
-pub const LEGACY_PERMISSION_NAMES: [&str; 7] = [
-    "ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE",
-    "ALLOW_TO_TRIGGER_AVATAR_EMOTE",
-    "USE_WEB3_API",
-    "USE_WEBSOCKET",
-    "USE_FETCH",
-    "ALLOW_MEDIA_HOSTNAMES",
-    "OPEN_EXTERNAL_LINK",
-];
-
 impl SceneMeta {
-    /// The legacy `PermissionItem` values this scene.json declares, as a bit set (bit `n` is
-    /// item `n`). Unknown names and non-string entries are ignored.
-    pub fn legacy_declared_permissions(&self) -> u8 {
-        self.required_permissions
-            .as_ref()
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(|name| LEGACY_PERMISSION_NAMES.iter().position(|n| *n == name))
-            .fold(0, |bits, item| bits | 1 << item)
-    }
-
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -2145,6 +2147,17 @@ mod tests {
     use crate::inputs::CommonInputAction;
 
     #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
+
+    #[test]
     fn sun_cascades_split_the_shadow_distance() {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
@@ -2427,37 +2440,6 @@ mod tests {
                 PortableExperiencesToggle::Enabled,
                 "{toggles}"
             );
-        }
-    }
-
-    #[test]
-    fn required_permissions_map_to_legacy_items_leniently() {
-        let declared = |extra: &str| -> u8 {
-            serde_json::from_str::<SceneMeta>(&format!(
-                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{extra}}}"#
-            ))
-            .unwrap()
-            .legacy_declared_permissions()
-        };
-        assert_eq!(declared(""), 0);
-        assert_eq!(
-            declared(r#","requiredPermissions":["USE_FETCH","ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE"]"#),
-            0b1_0001
-        );
-        assert_eq!(
-            declared(&format!(
-                r#","requiredPermissions":{}"#,
-                serde_json::to_string(&LEGACY_PERMISSION_NAMES).unwrap()
-            )),
-            0b111_1111
-        );
-        // values of another shape are ignored rather than failing the scene.json
-        for extra in [
-            r#","requiredPermissions":"USE_FETCH""#,
-            r#","requiredPermissions":[1,null,"use_fetch","UNKNOWN"]"#,
-            r#","requiredPermissions":{"USE_FETCH":true}"#,
-        ] {
-            assert_eq!(declared(extra), 0, "{extra}");
         }
     }
 }

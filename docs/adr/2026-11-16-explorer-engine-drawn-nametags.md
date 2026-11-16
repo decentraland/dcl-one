@@ -93,9 +93,7 @@ scene draws none.
   text of the bubble still showing that message and keeps its time. Words that arrive while the
   bubble is closing do not open it again.
 - **Tags are tonemapped with the frame.** The material writes its colours as they are specified
-  and the main pass tonemaps them with everything else in the frame. An earlier
-  version approximately inverted the tonemapper in the shader. On the web build that made no
-  measurable difference (see the colour sample below), so it was removed.
+  and the main pass tonemaps them with everything else in the frame.
 - **What a peer sends is bounded and checked before it is drawn.** A bubble shows the first 100
   characters of a message on wrapped lines, with line breaks read as spaces; a community's name
   shows its first 28 characters and a player's name its first 32. An unclaimed name shows the

@@ -471,7 +471,7 @@ async fn statistics_topology_is_retained_even_above_the_old_single_frame_cap() {
     let shared = super::tests::feed_shared(1);
     let feed = NatsClusterFeed {
         shared: shared.clone(),
-        drain: tokio::spawn(std::future::pending()),
+        drain: Mutex::new(Some(tokio::spawn(std::future::pending()))),
     };
     let mut pass = ClusterPass::default();
     pass.clusters.push(ClusterInfo {

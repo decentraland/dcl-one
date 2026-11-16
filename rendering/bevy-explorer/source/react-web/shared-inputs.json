@@ -828,6 +828,10 @@
           "kind": "directory"
         },
         {
+          "name": "content.helpers.ts",
+          "kind": "regular"
+        },
+        {
           "name": "css-modules.d.ts",
           "kind": "regular"
         },
