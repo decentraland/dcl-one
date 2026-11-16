@@ -11,8 +11,9 @@ pub(super) struct MediaDebugPanelPlugin;
 
 impl Plugin for MediaDebugPanelPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(feature = "html")]
+        app.add_console_command::<MediaRetryDelay, _>(media_retry_delay);
         app.add_console_command::<MediaState, _>(media_state)
-            .add_console_command::<MediaRetryDelay, _>(media_retry_delay)
             .add_debug_section(DebugSection {
                 title: "Media player",
                 query: "/media_state",
@@ -33,6 +34,7 @@ impl Plugin for MediaDebugPanelPlugin {
 }
 
 /// Set the wait before a failed web media source's first reopen; later waits double from it.
+#[cfg(feature = "html")]
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_retry_delay")]
 struct MediaRetryDelay {
@@ -40,6 +42,7 @@ struct MediaRetryDelay {
     milliseconds: Option<u64>,
 }
 
+#[cfg(feature = "html")]
 fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
     let Some(Ok(MediaRetryDelay { milliseconds })) = cmd.take() else {
         return;

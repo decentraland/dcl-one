@@ -14,15 +14,16 @@ import { Vector3 } from '@dcl/sdk/math'
  * video: the screens of `specs/media-retry.test.ts`, which serves this scene from a loopback realm
  * that fails the media files' first requests.
  *
- * Two planes at z = 12 facing the spawn, each playing (looped) one file of `assets/` into its own
- * basic material: `recover` (`assets/recover.webm`, x = 5) and `broken` (`assets/broken.webm`,
- * x = 11). Each logs `video <name> state=<VideoState name>` whenever its reported state changes,
- * and `video ready` once both exist.
+ * Two planes facing the spawn, each playing (looped) one file of `assets/` into its own basic
+ * material: `recover` (`assets/recover.webm`, at (5, 2, 8)), nearest the spawn, and `broken`
+ * (`assets/broken.webm`, at (11, 2, 15)), nearest (11, 0, 12). With one video playing at a time,
+ * the nearer screen plays. Each logs `video <name> state=<VideoState name>` whenever its reported
+ * state changes, and `video ready` once both exist.
  */
 
-function screen(name: string, src: string, x: number): Entity {
+function screen(name: string, src: string, x: number, z: number): Entity {
   const entity = engine.addEntity()
-  Transform.create(entity, { position: Vector3.create(x, 2, 12), scale: Vector3.create(4, 4, 1) })
+  Transform.create(entity, { position: Vector3.create(x, 2, z), scale: Vector3.create(4, 4, 1) })
   MeshRenderer.setPlane(entity)
   VideoPlayer.create(entity, { src, playing: true, loop: true })
   Material.setBasicMaterial(entity, { texture: Material.Texture.Video({ videoPlayerEntity: entity }) })
@@ -33,7 +34,7 @@ function screen(name: string, src: string, x: number): Entity {
 }
 
 export function main(): void {
-  screen('recover', 'assets/recover.webm', 5)
-  screen('broken', 'assets/broken.webm', 11)
+  screen('recover', 'assets/recover.webm', 5, 8)
+  screen('broken', 'assets/broken.webm', 11, 15)
   console.log('video ready')
 }

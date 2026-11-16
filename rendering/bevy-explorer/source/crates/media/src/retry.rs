@@ -1,7 +1,7 @@
 //! The reopen schedule of a failed media source: up to [`MAX_REOPENS`] reopens, the first after
 //! the first delay (2 s) and each later one after twice the one before (4, 8, 16 and 32 s). The
 //! count restarts after [`HEALTHY_PLAYBACK`] of playback since the last failure, so a source that
-//! fails again at the same point gives up; a pause cancels a scheduled reopen.
+//! fails again at the same point gives up. A pause keeps the count.
 
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -75,13 +75,12 @@ impl MediaRetry {
         if self.played < HEALTHY_PLAYBACK {
             return false;
         }
-        self.cancel();
+        self.restart();
         true
     }
 
-    /// A scheduled reopen was cancelled (a pause): the next failure starts the schedule again.
-    /// A source that gave up stays given up.
-    pub fn cancel(&mut self) {
+    /// The next failure starts the schedule again. A source that gave up stays given up.
+    fn restart(&mut self) {
         if !self.gave_up {
             self.attempts = 0;
             self.played = Duration::ZERO;
@@ -164,23 +163,13 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_restarts_the_schedule() {
-        let mut retry = MediaRetry::default();
-        retry.fail(FIRST);
-        retry.fail(FIRST);
-        retry.fail(FIRST);
-        retry.cancel();
-        assert_eq!(retry.fail(FIRST), reopen(1, 2));
-    }
-
-    #[test]
     fn giving_up_is_final() {
         let mut retry = MediaRetry::default();
         for _ in 0..=MAX_REOPENS {
             retry.fail(FIRST);
         }
         assert!(!retry.played(HEALTHY_PLAYBACK));
-        retry.cancel();
+        retry.restart();
         assert!(retry.gave_up());
         assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);
     }

@@ -261,8 +261,8 @@ impl Source {
     }
 
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled or after giving up are ignored; one while paused reports `VsError` and
-    /// waits for the next play.
+    /// reopen is scheduled or after giving up are ignored; one while paused counts, reports
+    /// `VsError` and leaves the reopen to the next play.
     fn fail(self: &Rc<Self>, error: &'static str) {
         if self.url.is_none() {
             self.send_state(VideoState::VsError);
@@ -274,18 +274,18 @@ impl Source {
         }
         self.failed.set(true);
         self.last_error.set(Some(error));
-        if !self.wants_play.get() {
-            debug!("media {}: {error} while paused; reopen on play", self.id);
-            self.reopen_on_play.set(true);
-            retry.cancel();
-            self.retry.set(retry);
-            self.send_state(VideoState::VsError);
-            self.send_retry(None);
-            return;
-        }
         let step = retry.fail(first_reopen_delay());
         self.retry.set(retry);
         match step {
+            RetryStep::Reopen { attempt, .. } if !self.wants_play.get() => {
+                debug!(
+                    "media {}: {error} while paused; reopen {attempt} on play",
+                    self.id
+                );
+                self.reopen_on_play.set(true);
+                self.send_state(VideoState::VsError);
+                self.send_retry(None);
+            }
             RetryStep::Reopen { attempt, delay } => {
                 debug!("media {}: {error}; reopen {attempt} in {delay:?}", self.id);
                 self.send_state(VideoState::VsLoading);
@@ -556,19 +556,21 @@ impl HostMedia {
             AVCommand::Pause => {
                 self.source.wants_play.set(false);
                 self.media.pause().report();
-                // a pause cancels a scheduled or loading reopen; the next play reopens at once
+                // a pause cancels a scheduled or loading reopen, keeping the count; the next play
+                // reopens at once
                 self.source.cancel_reopen();
                 if self.source.failed.get() && !self.source.retry.get().gave_up() {
                     self.source.suspend();
-                    let mut retry = self.source.retry.get();
-                    retry.cancel();
-                    self.source.retry.set(retry);
                     self.source.reopen_on_play.set(true);
-                    self.source.send_state(VideoState::VsPaused);
+                    self.source.send_state(VideoState::VsError);
                     self.source.send_retry(None);
                 }
             }
             AVCommand::Repeat(looping) => self.media.set_loop(looping),
+            // a failed source is detached or reopening: the seek applies once it can play
+            AVCommand::Seek(time) if self.source.failed.get() => {
+                self.source.resume_at.set(Some(time))
+            }
             AVCommand::Seek(time) => self.media.set_current_time(time),
             AVCommand::Volume(volume) => self.media.set_volume(volume.clamp(0.0, 1.0) as f64),
             // dispose arrives as `HostCommand::Drop`

@@ -15,8 +15,9 @@
 // `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for every source failing from then
 // on; a failure before a scenario issues it waits its 2 s. Each scenario closes its client, so the
 // short delay and the looping video end with it. Only the web backend reopens (native FFmpeg ends
-// at its first error), so on the standalone both are todos. Build the scene first:
-// `npm run build-scenes -- video`.
+// at its first error), so on the standalone both are todos. One video plays at a time, the nearest:
+// the spawn is nearest `recover`, and the second scenario walks to `broken`. Build the scene first:
+// `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -36,6 +37,8 @@ const FIRST_DELAY_MS = 100
 const GIVE_UP_TIMEOUT_MS = 60_000
 /** 5 s of playback restart the count; the looped 2 s file loses a moment at each loop. */
 const RESTART_TIMEOUT_MS = 20_000
+/** The scene's base parcel, `0,26`, in DCL world metres. */
+const BASE = { x: 0, z: 26 * 16 }
 
 const native = readTarget().transport === 'native'
 const webOnly = native ? { todo: 'native: FFmpeg reopens no failed source' } : {}
@@ -47,7 +50,7 @@ try {
   scene = await buildScene(SCENE_DIR)
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
-  sceneError = new Error(`the video scene is not ready (${message}); run \`npm run build-scenes -- video\` in apps/bevy-explorer/e2e`, { cause: error })
+  sceneError = new Error(`the video scene is not ready (${message}); run \`pnpm run build-scenes video\` in apps/bevy-explorer/e2e`, { cause: error })
 }
 
 const recoverHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'recover.webm')))
@@ -92,13 +95,15 @@ scenario(
   'a video whose source fails twice plays after two reopens',
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
+    const before = server.contentGets.get(recoverHash) ?? 0
     await prepare(explorer)
     const logs = await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the recover screen to log VS_PLAYING'
     })
     assert.ok(!stateLines(logs, 'recover').some((line) => line.endsWith('state=VS_ERROR')), `the recover screen reported VS_ERROR while reopening:\n${stateLines(logs, 'recover').join('\n')}`)
-    assert.ok((server.contentGets.get(recoverHash) ?? 0) > RECOVER_FAILURES, `recover.webm was requested ${server.contentGets.get(recoverHash) ?? 0} times`)
+    const gets = (server.contentGets.get(recoverHash) ?? 0) - before
+    assert.ok(gets > RECOVER_FAILURES, `recover.webm was requested ${gets} times`)
     const row = await until(() => player(explorer, 'assets/recover.webm'), (row) => row.retryAttempt === 0, {
       timeoutMs: RESTART_TIMEOUT_MS,
       what: 'the recover screen\'s reopen count to restart after playing'
@@ -113,12 +118,14 @@ scenario(
   'a video whose source always fails gives up after five reopens',
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
+    const before = server.contentGets.get(brokenHash) ?? 0
     await prepare(explorer)
+    await explorer.walkTo(BASE.x + 11, 0, BASE.z + 12)
     const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true, {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the broken screen to give up'
     })
-    const gets = server.contentGets.get(brokenHash) ?? 0
+    const gets = (server.contentGets.get(brokenHash) ?? 0) - before
     assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
     assert.equal(row.retryAttempt, MAX_REOPENS)
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
