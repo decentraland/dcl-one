@@ -8,6 +8,8 @@ use common::{
     util::QuatNormalizeExt,
 };
 
+use crate::animate::{ActiveEmote, ActiveEmoteSource};
+use comms::gait::RemoteGait;
 use comms::global_crdt::{ForeignPlayer, PlayerPositionEvent, PlayerSceneAnimEvent};
 use dcl_component::{transform_and_parent::DclTransformAndParent, SceneEntityId};
 use scene_runner::{update_world::mesh_collider::SceneColliderData, ContainingScene};
@@ -57,6 +59,18 @@ impl Plugin for PlayerMovementPlugin {
                     ("Target yaw (degrees)", "yaw"),
                     ("Packet velocity (X / Y / Z)", "velocity"),
                     ("Movement kind", "movement"),
+                    (
+                        "Remote players animated by a room clip",
+                        "animation.room_clip",
+                    ),
+                    (
+                        "Remote players animated by the velocity fallback",
+                        "animation.fallback",
+                    ),
+                    (
+                        "Remote players with a triggered emote or none yet",
+                        "animation.other",
+                    ),
                 ],
                 actions: &[("Inspect first remote player", "/movement_profile")],
                 inputs: &[DebugInput {
@@ -98,6 +112,29 @@ fn movement_profile(
     }
 }
 
+/// How many remote players each animation source currently drives.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AnimationSourceCounts {
+    room_clip: usize,
+    fallback: usize,
+    other: usize,
+}
+
+impl AnimationSourceCounts {
+    /// `None` is a player that has no animation state yet; it counts as neither source.
+    fn count(sources: impl IntoIterator<Item = Option<ActiveEmoteSource>>) -> Self {
+        let mut counts = Self::default();
+        for source in sources {
+            match source {
+                Some(ActiveEmoteSource::SceneMovementAnim) => counts.room_clip += 1,
+                Some(ActiveEmoteSource::VelocitySelected) => counts.fallback += 1,
+                Some(ActiveEmoteSource::TriggeredEmote) | None => counts.other += 1,
+            }
+        }
+        counts
+    }
+}
+
 /// Read the accepted network target and current rendered transform of a remote player.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/foreign_movement")]
@@ -116,12 +153,22 @@ fn foreign_movement(
         Option<&PlayerTargetPosition>,
         Option<&AvatarDynamicState>,
     )>,
+    emotes: Query<Option<&ActiveEmote>, With<ForeignPlayer>>,
 ) {
     let Some(Ok(_)) = input.take() else { return };
     let selector = filter.0.as_deref();
     let address = selector.and_then(|id| id.as_h160());
     let count = peers.iter().count();
-    let mut report = json!({"count": count, "selector": selector});
+    let animation = AnimationSourceCounts::count(emotes.iter().map(|e| e.map(|e| e.source())));
+    let mut report = json!({
+        "count": count,
+        "selector": selector,
+        "animation": {
+            "room_clip": animation.room_clip,
+            "fallback": animation.fallback,
+            "other": animation.other,
+        },
+    });
     if let Some((entity, player, profile, pose, target, dynamics)) = peers
         .iter()
         .filter(|(_, player, profile, ..)| {
@@ -293,6 +340,10 @@ fn update_foreign_user_target_position(
                     };
                     // Movement trigger: the first packet after an anim arrives arms it; the next one
                     // fires it, in sync with the motion (see `PendingSceneAnim`).
+                    commands.entity(ev.player).try_insert(RemoteGait {
+                        gait: ev.gait,
+                        falling: ev.falling,
+                    });
                     if let Some(mut pending) = maybe_pending {
                         if pending.pending.is_some() {
                             if pending.fire_on_next_movement {
@@ -322,6 +373,10 @@ fn update_foreign_user_target_position(
                     },
                     AvatarDynamicState::default(),
                     PendingSceneAnim::default(),
+                    RemoteGait {
+                        gait: ev.gait,
+                        falling: ev.falling,
+                    },
                 ));
             }
         }
@@ -531,5 +586,37 @@ fn update_foreign_user_actual_position(
                     .try_insert(SceneDrivenAnim { active: anim });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_split_room_clips_from_the_fallback() {
+        let counts = AnimationSourceCounts::count([
+            Some(ActiveEmoteSource::SceneMovementAnim),
+            Some(ActiveEmoteSource::VelocitySelected),
+            Some(ActiveEmoteSource::VelocitySelected),
+            Some(ActiveEmoteSource::TriggeredEmote),
+            None,
+        ]);
+        assert_eq!(
+            counts,
+            AnimationSourceCounts {
+                room_clip: 1,
+                fallback: 2,
+                other: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn no_remote_players_counts_nothing() {
+        assert_eq!(
+            AnimationSourceCounts::count([]),
+            AnimationSourceCounts::default()
+        );
     }
 }

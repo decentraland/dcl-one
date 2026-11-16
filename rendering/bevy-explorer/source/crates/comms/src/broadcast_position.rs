@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use common::structs::{
-    AvatarDynamicState, HeadSync, MoveKind, PointAtSync, PrimaryUser, SceneDrivenAnim,
+    AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
+    SceneDrivenAnim,
 };
 use dcl_component::{
     proto_components::kernel::comms::rfc4,
@@ -66,6 +67,7 @@ fn broadcast_position(
             Option<&SceneDrivenAnim>,
             Option<&HeadSync>,
             Option<&PointAtSync>,
+            Option<&LocomotionSpeeds>,
         ),
         With<PrimaryUser>,
     >,
@@ -89,7 +91,7 @@ fn broadcast_position(
     let Ok(global_crdt) = contexts.single() else {
         return;
     };
-    let Ok((player, dynamics, scene_anim, head_sync, point_at)) = player.single() else {
+    let Ok((player, dynamics, scene_anim, head_sync, point_at, speeds)) = player.single() else {
         return;
     };
     let head_sync = head_sync.copied().unwrap_or_default();
@@ -168,13 +170,15 @@ fn broadcast_position(
         global_crdt.realm_bounds.0,
         global_crdt.realm_bounds.1,
     );
+    let grounded = dynamics.ground_height < 0.2;
+    let falling = crate::gait::is_falling(grounded, dynamics.velocity.y);
     let temporal = Temporal::from_parts(
         time,
-        false,
+        falling,
         rotation.to_euler(bevy::math::EulerRot::YXZ).0,
         movement.velocity_tier(),
         dynamics.move_kind,
-        dynamics.ground_height < 0.2,
+        grounded,
     );
 
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
@@ -299,7 +303,10 @@ fn broadcast_position(
         velocity_x: dynamics.velocity.x,
         velocity_y: dynamics.velocity.y,
         velocity_z: -dynamics.velocity.z,
-        movement_blend_value: dynamics.velocity.length_squared(),
+        movement_blend_value: crate::gait::movement_blend(
+            Vec2::new(dynamics.velocity.x, dynamics.velocity.z).length(),
+            &speeds.copied().unwrap_or_default(),
+        ),
         slide_blend_value: 0.0,
         is_grounded: movement_compressed.temporal.grounded(),
         is_jumping: movement_compressed.temporal.jump(),
