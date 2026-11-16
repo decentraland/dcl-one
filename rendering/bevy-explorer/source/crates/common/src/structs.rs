@@ -1807,9 +1807,18 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// Nearby voice is off where the player stands: the scene turns it off, or the scene room
+    /// refused the player as banned. Nobody nearby is heard and the mic stays closed. Written
+    /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
     pub scene_blocked: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(skip)]
+    pub scene_disabled: bool,
+    /// The current scene's room refused the player as banned: a banned player neither speaks nor
+    /// listens there.
+    #[serde(skip)]
+    pub scene_banned: bool,
     /// Counts the mic opens the scene refused.
     #[serde(default)]
     pub refusals: u32,
@@ -1817,9 +1826,20 @@ pub struct MicState {
 
 impl MicState {
     /// Leaving the scene does not reopen the mic.
-    pub fn set_scene_blocked(&mut self, blocked: bool) {
-        self.scene_blocked = blocked;
-        if blocked {
+    pub fn set_scene_disabled(&mut self, disabled: bool) {
+        self.scene_disabled = disabled;
+        self.update_scene_blocked();
+    }
+
+    /// Being admitted again does not reopen the mic.
+    pub fn set_scene_banned(&mut self, banned: bool) {
+        self.scene_banned = banned;
+        self.update_scene_blocked();
+    }
+
+    fn update_scene_blocked(&mut self) {
+        self.scene_blocked = self.scene_disabled || self.scene_banned;
+        if self.scene_blocked {
             self.enabled = false;
         }
     }
@@ -2117,13 +2137,32 @@ mod tests {
         let mut mic = MicState {
             available: true,
             enabled: true,
-            scene_blocked: false,
-            refusals: 0,
+            ..Default::default()
         };
-        mic.set_scene_blocked(true);
+        mic.set_scene_disabled(true);
         assert!(mic.scene_blocked && !mic.enabled);
-        mic.set_scene_blocked(false);
+        mic.set_scene_disabled(false);
         assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_ban_and_a_scene_turning_voice_off_block_nearby_voice_until_both_clear() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            ..Default::default()
+        };
+        mic.set_scene_banned(true);
+        assert!(mic.scene_blocked && !mic.enabled, "a ban closes the mic");
+        mic.set_scene_disabled(true);
+        mic.set_scene_banned(false);
+        assert!(mic.scene_blocked, "the scene still turns voice off");
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        mic.set_scene_disabled(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+        mic.request_enabled(true);
+        assert!(mic.enabled);
     }
 
     #[test]
@@ -2131,9 +2170,9 @@ mod tests {
         let mut mic = MicState {
             available: true,
             enabled: false,
-            scene_blocked: true,
-            refusals: 0,
+            ..Default::default()
         };
+        mic.set_scene_disabled(true);
         mic.request_enabled(true);
         assert!(!mic.enabled);
         assert_eq!(mic.refusals, 1);
@@ -2145,7 +2184,7 @@ mod tests {
         assert_eq!(mic.refusals, 1, "no mic to refuse");
 
         mic.available = true;
-        mic.scene_blocked = false;
+        mic.set_scene_disabled(false);
         mic.request_enabled(true);
         assert!(mic.enabled);
         assert_eq!(mic.refusals, 1);

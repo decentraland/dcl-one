@@ -118,6 +118,11 @@ impl Plugin for MicPlugin {
 
         app.add_systems(Startup, add_ping_systems);
         app.add_systems(Update, transmission_state);
+        app.add_systems(
+            Update,
+            suppress_nearby_voice_on_refusal
+                .run_if(resource_exists_and_changed::<crate::SceneAdmission>),
+        );
 
         #[cfg(not(target_arch = "wasm32"))]
         app.insert_state(MicrophonePermission::Granted);
@@ -314,6 +319,21 @@ fn add_ping_systems(world: &mut World) {
 #[derive(Resource, Default)]
 struct LastTransmission {
     call: bool,
+}
+
+/// The scene room refused the player as banned: nearby voice is off until the admission resets
+/// on the next scene, realm or wallet, or the room admits the player. Calls are unaffected.
+fn suppress_nearby_voice_on_refusal(
+    admission: Res<crate::SceneAdmission>,
+    mic_state: Option<ResMut<MicState>>,
+) {
+    let Some(mut mic_state) = mic_state else {
+        return;
+    };
+    let banned = matches!(admission.view(), crate::AdmissionView::Refused { .. });
+    if mic_state.scene_banned != banned {
+        mic_state.set_scene_banned(banned);
+    }
 }
 
 /// While the scene blocks nearby voice, only the call's mic can be the one that stopped by choice.
@@ -944,6 +964,7 @@ mod routing_tests {
             enabled: true,
             scene_blocked: false,
             refusals: 0,
+            ..Default::default()
         };
         let mut call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
@@ -982,6 +1003,7 @@ mod routing_tests {
             enabled: true,
             scene_blocked: false,
             refusals: 0,
+            ..Default::default()
         };
         let mut call_mic = CallMic {
             enabled: false,
@@ -1012,6 +1034,7 @@ mod routing_tests {
             enabled: false,
             scene_blocked: false,
             refusals: 0,
+            ..Default::default()
         };
         let call_mic = CallMic {
             enabled: true,
@@ -1232,6 +1255,7 @@ mod routing_tests {
             enabled: true,
             scene_blocked: true,
             refusals: 0,
+            ..Default::default()
         };
         let call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
@@ -1242,12 +1266,58 @@ mod routing_tests {
     }
 
     #[test]
+    fn a_scene_room_ban_turns_nearby_voice_off_until_the_admission_resets() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(MicState {
+            available: true,
+            enabled: true,
+            ..Default::default()
+        });
+        let mut admit = |admission: crate::SceneAdmission| {
+            world.insert_resource(admission);
+            world
+                .run_system_once(suppress_nearby_voice_on_refusal)
+                .unwrap();
+            let mic = world.resource::<MicState>();
+            (mic.scene_blocked, mic.enabled)
+        };
+        assert_eq!(admit(crate::SceneAdmission::allowed("s")), (false, true));
+        assert_eq!(
+            admit(crate::SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "s",
+            )),
+            (true, false),
+            "a scene ban closes the mic and silences nearby voice"
+        );
+        assert_eq!(
+            admit(crate::SceneAdmission::unknown()),
+            (false, false),
+            "leaving lifts the ban without reopening the mic"
+        );
+        assert_eq!(
+            admit(crate::SceneAdmission::from_refusal(
+                401,
+                Some("You are banned from world x"),
+                true,
+                "w",
+            )),
+            (true, false),
+            "a world ban too"
+        );
+    }
+
+    #[test]
     fn a_scene_that_disables_nearby_voice_leaves_the_call_mic_alone() {
         let mic = MicState {
             available: true,
             enabled: false,
             scene_blocked: true,
             refusals: 0,
+            ..Default::default()
         };
         let call_mic = CallMic {
             enabled: true,

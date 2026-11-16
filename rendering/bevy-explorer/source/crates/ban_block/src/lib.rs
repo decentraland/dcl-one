@@ -4,9 +4,11 @@
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
 //! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
 //! system parameter. There are no events of its own: every fact it answers from is a resource
-//! or a component.
+//! or a component. It also fills comms' nearby voice filter, which comms cannot compute itself
+//! without depending on this crate.
 
 mod debug;
+mod nearby_voice;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
@@ -28,6 +30,7 @@ impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(platform_ban::PlatformBanPlugin);
         app.add_plugins(debug::BanBlockDebugPlugin);
+        app.add_plugins(nearby_voice::NearbyVoiceFilterPlugin);
     }
 }
 

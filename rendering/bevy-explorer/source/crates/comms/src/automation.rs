@@ -540,6 +540,7 @@ mod tests {
                 enabled: false,
                 scene_blocked: false,
                 refusals: 0,
+                ..Default::default()
             },
             livekit: None,
             call: None,
@@ -565,6 +566,7 @@ mod tests {
                 enabled: true,
                 scene_blocked: false,
                 refusals: 0,
+                ..Default::default()
             },
             livekit: Some(LivekitVoice::new(
                 [

@@ -127,6 +127,7 @@ impl Plugin for GlobalCrdtPlugin {
         }
         app.add_observer(remove_transport_from_foreign_audio_source);
         app.add_observer(remove_transport_from_foreign_players);
+        app.init_resource::<NearbyVoiceDenied>();
         // a headless app plays no voices, so never subscribes to foreign audio
         if app
             .world()
@@ -576,6 +577,11 @@ impl VoicePan {
         value
     }
 }
+
+/// The players whose nearby voice is not played: blocked in either direction, or banned from
+/// the connected scene room. The `ban_block` crate fills it; calls ignore it.
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub struct NearbyVoiceDenied(pub HashSet<Address>);
 
 #[derive(Component)]
 #[require(VoicePan)]
@@ -1496,9 +1502,10 @@ fn remove_transport_from_foreign_audio_source(
     }
 }
 
-fn handle_foreign_audio(
+pub fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
     mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    denied: Res<NearbyVoiceDenied>,
     #[cfg(feature = "livekit")] call_rooms: Query<
         &crate::livekit::participant::ParticipantIndex,
         With<crate::voice_chat::VoiceRoom>,
@@ -1510,25 +1517,6 @@ fn handle_foreign_audio(
         .collect::<HashMap<_, _>>();
 
     for (mut source, player) in q.iter_mut() {
-        // a call's peers are heard flat through the call, not spatially as well
-        #[cfg(feature = "livekit")]
-        let in_call_with = call_rooms.iter().any(|index| {
-            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
-                &format!("{:#x}", player.address),
-            ))
-        });
-        #[cfg(not(feature = "livekit"))]
-        let in_call_with = false;
-        if in_call_with {
-            if let Some(current) = source.current_transport.take() {
-                if let Some(control) = transports.get(&current) {
-                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
-                }
-                source.audio_receiver = None;
-            }
-            continue;
-        }
-
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1558,8 +1546,27 @@ fn handle_foreign_audio(
             source.audio_receiver = None;
         }
 
-        // request a new source
-        if source.current_transport.is_none() {
+        // A call's peers are heard flat through the call, not spatially as well. Blocked and
+        // scene-banned players are not heard nearby at all. Either way the stream is dropped, and
+        // the next frame without the reason subscribes again. The availability events above are
+        // still read, so a long skip neither fills their channel nor leaves stale transports.
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with || denied.0.contains(&player.address) {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+        } else if source.current_transport.is_none() {
+            // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
@@ -1946,5 +1953,93 @@ mod tests {
             foreign_players(&mut app),
             vec![HashSet::from_iter([other, socket])]
         );
+    }
+
+    /// A player with an available stream, as `process_transport_updates` spawns one, on a
+    /// transport whose voice control channel the test reads.
+    fn voice_app() -> (App, Address, Entity, mpsc::Receiver<ChannelControl>) {
+        let mut app = App::new();
+        app.init_resource::<NearbyVoiceDenied>();
+        app.add_systems(Update, handle_foreign_audio);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _) = mpsc::channel(1);
+        let (control, control_rx) = mpsc::channel(8);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::Livekit,
+                sender,
+                control: Some(control),
+                context,
+            })
+            .id();
+        let peer = Address::repeat_byte(0xab);
+        let (audio_sender, audio_receiver) = mpsc::channel(10);
+        audio_sender
+            .try_send(ForeignAudioData::TransportAvailable(transport))
+            .unwrap();
+        app.world_mut().spawn((
+            ForeignPlayer {
+                address: peer,
+                context,
+                transports: HashSet::from_iter([transport]),
+                scene_id: SceneEntityId::new(*SceneEntityId::FOREIGN_PLAYER_RANGE.start(), 0),
+                profile_version: 0,
+                audio_sender,
+            },
+            ForeignAudioSource {
+                audio_available_receiver: audio_receiver,
+                audio_receiver: None,
+                available_transports: Default::default(),
+                current_transport: None,
+            },
+        ));
+        (app, peer, transport, control_rx)
+    }
+
+    fn voice_controls(rx: &mut mpsc::Receiver<ChannelControl>) -> Vec<&'static str> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|control| match control {
+                ChannelControl::VoiceSubscribe(..) => "subscribe",
+                ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_denied_player_is_unsubscribed_and_heard_again_once_allowed() {
+        let (mut app, peer, _, mut controls) = voice_app();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+
+        app.world_mut()
+            .resource_mut::<NearbyVoiceDenied>()
+            .0
+            .insert(peer);
+        app.update();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["unsubscribe"]);
+
+        app.world_mut()
+            .resource_mut::<NearbyVoiceDenied>()
+            .0
+            .clear();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+    }
+
+    #[test]
+    fn a_denied_player_is_never_subscribed_and_keeps_its_streams_known() {
+        let (mut app, peer, transport, mut controls) = voice_app();
+        app.world_mut()
+            .resource_mut::<NearbyVoiceDenied>()
+            .0
+            .insert(peer);
+        app.update();
+        assert!(voice_controls(&mut controls).is_empty());
+        let mut sources = app.world_mut().query::<&ForeignAudioSource>();
+        let source = sources.single(app.world()).unwrap();
+        assert!(source.available_transports.contains(&transport));
+        assert!(source.current_transport.is_none());
     }
 }
