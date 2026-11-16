@@ -1,10 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { hasOpenPopup } from '../../design/popups'
 import { DebugPanelHost } from '../../features/debug/DebugPanel'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { requestDebugPanel } from '../../features/debug/useDebugPanel'
 import { fakeSession } from '../harness'
+
+const site = vi.hoisted(() => ({ revision: null as string | null }))
+vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), siteRevision: () => site.revision }))
+
+afterEach(() => {
+  site.revision = null
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {
   const session = fakeSession()
@@ -241,4 +250,93 @@ it('keeps the panel open when the world sidebar unmounts and closes it with its 
   expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
   tree.rerender(<></>)
   expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+})
+
+const statusReply = (reply: () => Promise<unknown>) =>
+  vi.fn<typeof globalThis.fetch>(async (input) => String(input).endsWith('/content/status')
+    ? reply() as Promise<Response>
+    : ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response)
+
+const statusReads = (fetch: ReturnType<typeof statusReply>) =>
+  fetch.mock.calls.filter(([url]) => String(url).endsWith('/content/status')).length
+
+const openDeployment = async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel' ? '[]' : 'false')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('Deployment', vi.fn()))
+  return within(screen.getByRole('dialog', { name: 'Debug panel' }))
+}
+
+const committed = () =>
+  statusReply(async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'c0ffee' }) }))
+
+it('shows the Catalyst commit and no Sites row where no Sites serves the HUD', async () => {
+  vi.stubGlobal('fetch', committed())
+  const panel = await openDeployment()
+  expect(panel.getByText(/^Catalyst \(.+\)$/)).toBeInTheDocument()
+  expect(panel.getByText('c0ffee')).toBeInTheDocument()
+  expect(panel.queryByText('Sites')).toBeNull()
+})
+
+it.each([
+  ['abc123', 'abc123'],
+  ['', 'not reported by Sites'],
+  ['unversioned', 'unversioned build']
+])('shows the Sites build serving the page (%j)', async (revision, shown) => {
+  site.revision = revision
+  vi.stubGlobal('fetch', committed())
+  const panel = await openDeployment()
+  expect(panel.getByText('Sites')).toBeInTheDocument()
+  expect(panel.getByText(shown)).toBeInTheDocument()
+})
+
+it('reads the Catalyst once while expanded, not every second', async () => {
+  vi.useFakeTimers()
+  const fetch = committed()
+  vi.stubGlobal('fetch', fetch)
+  await openDeployment()
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(statusReads(fetch)).toBe(1)
+})
+
+it('reads the Catalyst again when the section is expanded again', async () => {
+  const fetch = committed()
+  vi.stubGlobal('fetch', fetch)
+  const panel = await openDeployment()
+  const header = panel.getByRole('button', { name: 'Deployment' })
+  fireEvent.click(header)
+  await act(async () => { fireEvent.click(header) })
+  expect(statusReads(fetch)).toBe(2)
+})
+
+it.each([
+  ['a refused request', 'no answer from the node', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['a failed status', 'status 502', async () => ({ ok: false, status: 502, json: async () => ({}) })],
+  ['an HTML page', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('HTML') } })],
+  ['a JSON null', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => null })],
+  ['no commitHash', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({}) })],
+  ['an Unknown commit', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'Unknown' }) })],
+  ['an unversioned build', 'unversioned build', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'unversioned' }) })],
+  ['a reset mid-body', 'no answer from the node', async () => ({ ok: true, status: 200, json: async () => { throw new TypeError('terminated') } })]
+])('explains a Catalyst commit it cannot read: %s', async (_case, reason, reply) => {
+  vi.stubGlobal('fetch', statusReply(reply))
+  const panel = await openDeployment()
+  expect(panel.getByText(reason)).toBeInTheDocument()
+})
+
+it('releases the body of a failed status', async () => {
+  const cancel = vi.fn(async () => { throw new TypeError('locked') })
+  vi.stubGlobal('fetch', statusReply(async () => ({ ok: false, status: 502, body: { cancel }, json: async () => ({}) })))
+  const panel = await openDeployment()
+  expect(panel.getByText('status 502')).toBeInTheDocument()
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('reports a status read that times out as no answer', async () => {
+  vi.stubGlobal('fetch', statusReply(async () => ({
+    ok: true, status: 200, json: async () => { throw new DOMException('The operation timed out.', 'TimeoutError') }
+  })))
+  const panel = await openDeployment()
+  expect(panel.getByText('no answer from the node')).toBeInTheDocument()
 })

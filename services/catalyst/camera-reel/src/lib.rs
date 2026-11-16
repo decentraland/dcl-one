@@ -13,7 +13,8 @@
 //! Signed fetch goes through the shared verifier under the camera-reel
 //! profiles (`shared::signed_fetch::VerificationProfile::camera_reel_read` and
 //! `camera_reel_write`: upstream's dcl-crypto-middleware-rs rules, a signature
-//! at most 60 s old and never too new, mandatory raw metadata, the 6.x payload
+//! at most 60 s old and at most 60 s ahead (upstream accepts any future
+//! timestamp), mandatory raw metadata, the 6.x payload
 //! followed by the unguarded legacy one) with the process's EIP-1654
 //! validator; every chain link must carry a signature string, as the source's
 //! parser requires. A write whose metadata names the scene signer
@@ -80,6 +81,11 @@
 //! The local byte route serves complete GET responses; it
 //! does not implement byte ranges or ETag validators, and its HEAD response is 404.
 //!
+//! Photos copied from camera-reel-service by `catalyst camera-reel import`
+//! ([`import`]) keep their ids, owners, documents, visibility, dates and file
+//! names, so their old URLs resolve as an upload's; the import records them
+//! in `camera_reel.imported_images`.
+//!
 //! Mount: `.nest("/camera-reel-service", camera_reel::router(state))`;
 //! the router's own paths are `/api/...`, `/admin/...`, `/health`. It is not
 //! merged at the root: `/api/places/{id}/...` is the explore places
@@ -111,6 +117,7 @@ pub mod dto;
 pub mod events;
 pub mod handlers;
 pub mod http;
+pub mod import;
 pub mod writes;
 
 #[cfg(test)]

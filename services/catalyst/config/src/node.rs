@@ -219,17 +219,15 @@ pub struct WritesConfig {
     // social: the first slice where this node is the authority for user
     // writes (communities, friendships, blocks, settings, moderation,
     // notifications, badges). Off by default: every mutating request to a
-    // social route answers 503 until a backup restore of this node's
-    // database, blobs and credentials has been demonstrated (DATABASE.md,
-    // "Bootstrap, schema versions and local writes").
+    // social route answers 503 until it is turned on; back up first
+    // (DATABASE.md, "Bootstrap, schema versions and local writes").
     #[arg(long, env = "SOCIAL_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub social_writes_enabled: bool,
 
     // content writes (src/content/writes.rs): the content server's local
     // write path, POST /entities and DELETE /scenes/{coord}. Off by default:
-    // both answer 503 until a backup restore of this node's database, blobs
-    // and credentials has been demonstrated (DATABASE.md, "Bootstrap, schema versions and
-    // local writes"); the social switch's twin.
+    // both answer 503 until it is turned on; back up first (DATABASE.md,
+    // "Bootstrap, schema versions and local writes"); the social switch's twin.
     #[arg(long, env = "CONTENT_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_writes_enabled: bool,
 
@@ -267,23 +265,6 @@ pub struct WritesConfig {
     // they sit behind the social switch's twin (`marketplace::DataWrites`).
     #[arg(long, env = "DATA_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub data_writes_enabled: bool,
-
-    /// The directory deploy/backup leaves its stamps in: `backup.json` once
-    /// a snapshot's manifest is complete, `drill.json` once a restore drill
-    /// passed. Set, a write switch that is on lets writes through only while
-    /// both are within their budgets, checked live on each write (no
-    /// restart); the 503 names the missing or stale stamp and its age.
-    /// Unset, the switches alone decide.
-    #[arg(long, env = "WRITES_RESTORE_STAMP_DIR")]
-    pub writes_restore_stamp_dir: Option<String>,
-
-    /// The oldest `backup.json` that still vouches for writes, hours.
-    #[arg(long, env = "WRITES_BACKUP_MAX_AGE_HOURS", default_value_t = 26)]
-    pub writes_backup_max_age_hours: u64,
-
-    /// The oldest `drill.json` that still vouches for writes, days.
-    #[arg(long, env = "WRITES_DRILL_MAX_AGE_DAYS", default_value_t = 8)]
-    pub writes_drill_max_age_days: u64,
 }
 
 #[cfg(test)]
@@ -386,73 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn the_restore_stamps_are_unset_by_default_with_a_day_and_a_week_of_budget() {
-        let c = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
-        assert_eq!(c.writes.writes_restore_stamp_dir, None);
-        assert_eq!(c.writes.writes_backup_max_age_hours, 26);
-        assert_eq!(c.writes.writes_drill_max_age_days, 8);
-        assert_eq!(c.restore_stamp_dir(), None);
-        assert!(c.write_switches_on().is_empty());
-        c.require_restore_stamps()
-            .expect("nothing to vouch for while every switch is off");
-
-        let c = parse(&[
-            "x",
-            "--database-url",
-            "postgres:///catalyst",
-            "--social-writes-enabled",
-            "true",
-            "--ops-writes-enabled",
-            "true",
-            "--writes-restore-stamp-dir",
-            "  ",
-        ])
-        .unwrap();
-        assert_eq!(c.write_switches_on(), ["social", "ops"]);
-        assert_eq!(c.restore_stamp_dir(), None, "a blank directory is unset");
-        let err = c.require_restore_stamps().unwrap_err().to_string();
-        assert!(
-            err.contains("social,ops") && err.contains("WRITES_RESTORE_STAMP_DIR"),
-            "{err}"
-        );
-
-        let c = parse(&[
-            "x",
-            "--database-url",
-            "postgres:///catalyst",
-            "--create-writes-enabled",
-            "true",
-            "--writes-restore-stamp-dir",
-            "/var/lib/stamps",
-            "--writes-backup-max-age-hours",
-            "0",
-        ])
-        .unwrap();
-        assert_eq!(c.restore_stamp_dir(), Some("/var/lib/stamps"));
-        let err = c.require_restore_stamps().unwrap_err().to_string();
-        assert!(err.contains("WRITES_BACKUP_MAX_AGE_HOURS=0"), "{err}");
-        let c = Config {
-            writes: super::WritesConfig {
-                writes_backup_max_age_hours: 26,
-                ..c.writes
-            },
-            ..c
-        };
-        c.require_restore_stamps().unwrap();
-    }
-
-    #[test]
     fn social_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.writes.social_writes_enabled,
-            "social writes are opt-in; a restore must be demonstrated first"
-        );
-        assert!(
-            !c.writes.content_writes_enabled,
-            "local deploys are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.writes.social_writes_enabled, "social writes are opt-in");
+        assert!(!c.writes.content_writes_enabled, "local deploys are opt-in");
         assert!(
             c.writes.content_forward_upstream_url.is_none()
                 && c.writes.catalyrst_content_admin_token.is_none(),

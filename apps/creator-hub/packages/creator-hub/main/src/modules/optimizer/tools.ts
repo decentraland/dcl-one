@@ -16,7 +16,7 @@ import toolsPackageJson from './tools/optimizer-tools.package.json?raw';
 //
 // Pinned to releases: optimizer-tools.package.json holds exact versions and its committed
 // lockfile carries the registry URL + integrity hash of every package, so `npm ci` installs
-// byte-for-byte what was reviewed. Bump a version there, then `npm run lock:optimizer-tools`.
+// byte-for-byte what was reviewed. Bump a version there, then `pnpm run lock:optimizer-tools`.
 //
 // Why not bundle: ~20 MB per architecture (15 MB of it libvips) and a cross-arch provisioning
 // step for the Intel dmg. Downloading keeps the installer lean and lets the worker run on the
@@ -153,7 +153,7 @@ async function assertSingleSharp(dir: string): Promise<void> {
     throw new Error(
       `The optimizer tools installed a second copy of sharp at ${nested}. Align the pinned ` +
         'sharp version with the one its dependents require, then re-run ' +
-        '`npm run lock:optimizer-tools`.',
+        '`pnpm run lock:optimizer-tools`.',
     );
   }
 }

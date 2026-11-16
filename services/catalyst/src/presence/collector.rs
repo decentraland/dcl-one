@@ -363,7 +363,6 @@ pub async fn sweep_retention(pool: &PgPool, cutoff: NaiveDateTime, limit: i64) -
 /// writes are disabled: the archive is local authority, and a pass recorded
 /// here would be lost with the node.
 pub async fn run_pass(state: &PresenceState, now: DateTime<Utc>) -> Result<SnapshotSummary> {
-    // The switch alone, not the restore stamps: a pass records this node's own regenerable observations.
     if !state.settings.writes_enabled {
         anyhow::bail!(
             "the presence collector records nothing while {}=false",

@@ -1,5 +1,5 @@
 //! The camera-reel signed-fetch profile at the routes: a signature at most
-//! 60 s old and never too new, `x-identity-metadata` required but unread,
+//! 60 s old and at most 60 s ahead, `x-identity-metadata` required but unread,
 //! every chain link carrying a signature string, and the scene signer served
 //! on the owner reads and refused on every write with the source's 401.
 
@@ -293,16 +293,33 @@ async fn the_timestamp_window_and_the_metadata_header_are_upstreams() {
 
     let an_hour_ahead = 60 * 60 * 1000;
     assert_eq!(
+        patch(
+            signed(&w, "patch", &vis, Some("{}"), an_hour_ahead).await,
+            true
+        )
+        .await,
+        unauthorized(),
+        "a signature an hour ahead"
+    );
+    assert_eq!(
         listed(signed(&w, "get", &images, Some("{}"), an_hour_ahead).await).await,
+        Some(0),
+        "a read signed an hour ahead is anonymous"
+    );
+    assert_eq!(s.is_public(private.id).await, Some(false));
+
+    let thirty_seconds_ahead = 30 * 1000;
+    assert_eq!(
+        listed(signed(&w, "get", &images, Some("{}"), thirty_seconds_ahead).await).await,
         Some(1),
-        "a future signature reads as the owner"
+        "a signature within the skew reads as the owner"
     );
     let (status, _) = patch(
-        signed(&w, "patch", &vis, Some("{}"), an_hour_ahead).await,
+        signed(&w, "patch", &vis, Some("{}"), thirty_seconds_ahead).await,
         true,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "a future signature writes");
+    assert_eq!(status, StatusCode::OK, "a signature within the skew writes");
     assert_eq!(s.is_public(private.id).await, Some(true));
     s.done().await;
 }

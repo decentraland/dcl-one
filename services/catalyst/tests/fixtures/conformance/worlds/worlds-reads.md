@@ -118,7 +118,7 @@ Files read:
 - **Writes switch.** `core::router` sits behind `worlds::writes::guard`; with
   `WORLDS_WRITES_ENABLED=false` (the default) `POST /gc` answers 503 `{ok:false, error:"Service
   Unavailable", message}` with `Retry-After: 3600`; `POST /entities/active` stays open
-  (`worlds/src/writes.rs:30-75`).
+  (`worlds/src/writes.rs:29-67`).
 - **Service startup** (`test/integration/startup.spec.ts`: database, then migrations, before any
   component) is not a wire contract; dcl-one applies its schema with `catalyst schema migrate`. No row.
 
@@ -634,8 +634,8 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - Severity: none (closed).
 
 29. **WR-29 · `POST /gc` · refused while worlds writes are off.** Status: intended (worlds-compatibility.md).
-    - dcl-one: 503 `{ok:false,error:"Service Unavailable",message}` with `Retry-After: 3600` until a
-      restore is demonstrated (`worlds/src/writes.rs:30-75`, DATABASE.md). Upstream has no such gate.
+    - dcl-one: 503 `{ok:false,error:"Service Unavailable",message}` with `Retry-After: 3600` while
+      `WORLDS_WRITES_ENABLED` is off (`worlds/src/writes.rs:29-67`, DATABASE.md). Upstream has no such gate.
       Listed under "`/gc`".
     - Severity: none (closed).
 
