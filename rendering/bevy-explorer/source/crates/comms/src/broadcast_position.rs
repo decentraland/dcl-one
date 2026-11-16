@@ -156,6 +156,7 @@ fn broadcast_position(
         && (dynamics.velocity - last_position.2).length_squared() < 0.01
         && last_anim.pending_seek.is_none()
         && !anim_changed
+        && !last_anim.announcer.repeat_pending()
         && !head_changed
         && !point_at_changed
     {

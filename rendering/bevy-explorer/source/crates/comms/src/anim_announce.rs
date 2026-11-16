@@ -9,6 +9,11 @@
 //! joiners learn it. Repeating the pair is safe for the receiver: it rebuilds the same clip URN, and
 //! seeks and sounds travel only on the send that latches them.
 //!
+//! A character at rest sends only once a second, so the repeats would be a second apart exactly
+//! when a clip changes at rest (stopping, landing). [`ClipAnnouncer::repeat_pending`] lets the
+//! caller's send gate treat an owed repeat as a reason to send, which puts the repeats on the next
+//! regular sends.
+//!
 //! A pure object, like the Pulse pacer: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
 
@@ -40,6 +45,11 @@ pub struct ClipAnnouncer {
 }
 
 impl ClipAnnouncer {
+    /// Whether the next send still owes a repeat of the last change or clear.
+    pub fn repeat_pending(&self) -> bool {
+        self.repeats_left > 0
+    }
+
     /// The announcement for a send at `now` while `current` is the active clip. Call it once per
     /// packet actually sent. `keepalive` is how often an unchanged active clip is re-announced.
     pub fn announce(
@@ -109,6 +119,43 @@ mod tests {
         // the change and its repeats, then once a second after the last of them (at 0.25 s)
         assert_eq!(announced, [0, 1, 2, 10, 18]);
         assert!(all.iter().all(|a| *a != Clear));
+    }
+
+    #[test]
+    fn repeats_are_pending_from_a_change_until_they_are_spent() {
+        let mut announcer = ClipAnnouncer::default();
+        let walk = clip("walk");
+        assert!(!announcer.repeat_pending());
+        // the send that sees the change owes the next two
+        for _ in 0..ANNOUNCE_REPEATS {
+            announcer.announce(0.0, Some(&walk), KEEPALIVE);
+            assert!(announcer.repeat_pending());
+        }
+        announcer.announce(0.25, Some(&walk), KEEPALIVE);
+        assert!(!announcer.repeat_pending());
+        // a keepalive owes nothing
+        assert_eq!(
+            announcer.announce(1.25, Some(&walk), KEEPALIVE),
+            Announcement::Clip
+        );
+        assert!(!announcer.repeat_pending());
+    }
+
+    #[test]
+    fn a_clear_followed_by_silence_still_yields_its_repeats() {
+        use Announcement::*;
+        let mut announcer = ClipAnnouncer::default();
+        let walk = clip("walk");
+        sends(&mut announcer, 0.0, 3, Some(&walk));
+        // the caller sends only while a repeat is pending once nothing else changes
+        let mut announced = Vec::new();
+        let mut now = 0.375;
+        while announcer.repeat_pending() || announced.is_empty() {
+            announced.push(announcer.announce(now, None, KEEPALIVE));
+            now += 0.125;
+        }
+        assert_eq!(announced, [Clear, Clear, Clear]);
+        assert_eq!(announcer.announce(now, None, KEEPALIVE), Nothing);
     }
 
     #[test]
