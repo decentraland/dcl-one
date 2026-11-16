@@ -30,7 +30,8 @@ const hostEntryParams = (): string[] => []
  *  carries. */
 const exitUrl = (): string => `${window.location.origin}/`
 
-const siteRevision: HudHost['siteRevision'] = () => window.__DCL_PUBLIC__?.commitHash ?? ''
+const siteRevision: HudHost['siteRevision'] = () =>
+  typeof window.__DCL_PUBLIC__ === 'object' ? window.__DCL_PUBLIC__.commitHash ?? '' : null
 
 export { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
