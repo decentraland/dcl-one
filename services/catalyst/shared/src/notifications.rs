@@ -190,6 +190,7 @@ where
     insert_batch(executor, batch, false).await
 }
 
+/// Social's event notices only; other producers use [`insert_notifications`].
 /// Event delivery opts into in-app preferences without silently changing the
 /// established behavior of other producers. Hidden rows are already read so
 /// they never enter the bell's partial unread index; email remains independent.

@@ -26,7 +26,7 @@ use chrono::NaiveDateTime;
 use serde_json::json;
 use sqlx::PgPool;
 
-pub use crate::shared::notifications::SendFailure;
+use crate::shared::notifications::SendFailure;
 
 pub const BATCH: i64 = 100;
 pub const MAX_ATTEMPTS: i32 = 5;

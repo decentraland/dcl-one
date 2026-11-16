@@ -2,7 +2,8 @@
 //! friendship and block RPC mutations
 //! (`social::rpc::limits::FriendshipMutationLimiter`) and the plaintext
 //! direct-message sends (`social::communities::friends`, 60 per signer per
-//! minute, the old `catalyrst-communities` budget). In-process state that
+//! minute, the old `catalyrst-communities` budget), and Shop's federation
+//! ingest and listing writes (`market::federation`, `market::listings`). In-process state that
 //! follows the process's lifetime, never the database.
 
 use dashmap::DashMap;

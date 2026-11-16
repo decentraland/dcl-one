@@ -2,7 +2,7 @@
 //! real-time layer), the archipelago connector (the `/ws` sockets that hand
 //! each wallet its island), the comms gatekeeper (admission, moderation,
 //! voice, streaming, the LiveKit webhook and room events) and live presence.
-//! Worlds, social and shop call it; it imports nothing from worlds, social or
+//! Worlds and social call it; it imports nothing from worlds, social or
 //! above. It also owns the vocabulary comms shares with the crates above it: the
 //! world identity types (`world_identity`), the access vocabulary of a world
 //! join (`access`), the per-key rate limiter (`limits`, from `shared`), the worlds error
