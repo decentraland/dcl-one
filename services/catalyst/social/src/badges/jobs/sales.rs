@@ -112,7 +112,6 @@ impl Log {
                               AND t.token_id = e.token_id AND t.block_number = e.block_number \
                               AND t.log_index > e.log_index AND t.kind = 'transfer' \
                               AND t.from_address = e.to_address \
-                              AND (t.tx_hash IS NULL OR e.tx_hash IS NULL OR t.tx_hash = e.tx_hash) \
                             ORDER BY t.log_index LIMIT 1) \
                         ELSE e.to_address END AS buyer, \
                         coalesce(e.tx_hash, 'nft_event:matic:' || e.block_number || ':' || e.log_index) AS tx_hash, \

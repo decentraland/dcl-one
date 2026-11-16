@@ -68,8 +68,9 @@ pub fn is_png(bytes: &[u8]) -> bool {
 
 /// Writes `bytes` at the sanitized `path` under `dir`, whole or not at all,
 /// across a crash too: a hidden temporary file (never served), synced, then
-/// renamed over the target and the directory synced. A failure removes the
-/// temporary file.
+/// renamed over the target and the directory synced. A failure before the
+/// rename removes the temporary file; once renamed the file is live, so a
+/// directory sync failure (refused by some shared volumes) is only logged.
 pub async fn store(dir: &Path, path: &str, bytes: &[u8]) -> std::io::Result<()> {
     let target = dir.join(path);
     let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
@@ -86,14 +87,18 @@ pub async fn store(dir: &Path, path: &str, bytes: &[u8]) -> std::io::Result<()> 
         file.write_all(bytes).await?;
         file.sync_all().await?;
         drop(file);
-        tokio::fs::rename(&temporary, &target).await?;
-        tokio::fs::File::open(parent).await?.sync_all().await
+        tokio::fs::rename(&temporary, &target).await
     }
     .await;
     if written.is_err() {
         let _ = tokio::fs::remove_file(&temporary).await;
+        return written;
     }
-    written
+    let synced = async { tokio::fs::File::open(parent).await?.sync_all().await }.await;
+    if let Err(error) = synced {
+        tracing::warn!(path, %error, "badge asset directory sync failed; the file is in place");
+    }
+    Ok(())
 }
 
 /// The file under `assets_dir`, else 404 (no directory configured, a

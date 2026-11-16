@@ -994,7 +994,6 @@ async fn off_chain_goods_are_credited_to_their_beneficiaries() {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// A `transfer` of the token from `from` to `to`.
 async fn forward(
     pool: &PgPool,
@@ -1020,6 +1019,7 @@ async fn forward(
     .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn nft_event(
     pool: &PgPool,
     block: i64,
