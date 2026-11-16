@@ -131,11 +131,23 @@ impl NameDenyList {
         if let Some(cached) = self.fresh() {
             return cached;
         }
+        // Connection ownership precedes the refresh mutex, including for ordinary readers.
+        // A partial batch may already own the pool's only session when refreshing this list.
+        match pool.acquire().await {
+            Ok(mut conn) => self.snapshot_on(&mut conn).await,
+            Err(error) => self.read(Err::<Vec<String>, _>(error)),
+        }
+    }
+
+    pub async fn snapshot_on(&self, conn: &mut sqlx::PgConnection) -> Arc<BannedNames> {
+        if let Some(cached) = self.fresh() {
+            return cached;
+        }
         let _reading = self.reading.lock().await;
         if let Some(cached) = self.fresh() {
             return cached;
         }
-        self.read(crate::explore::api::lists::values(pool, BANNED_NAMES_LIST).await)
+        self.read(crate::explore::api::lists::values(&mut *conn, BANNED_NAMES_LIST).await)
     }
 
     /// The memoized list, or a failed read's fallback shortly after it failed.
@@ -172,6 +184,14 @@ impl NameDenyList {
 
     pub async fn check_name_deny_list(&self, pool: &PgPool, world_name: &str) -> bool {
         self.snapshot(pool).await.allows(world_name)
+    }
+
+    pub async fn check_name_deny_list_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world_name: &str,
+    ) -> bool {
+        self.snapshot_on(conn).await.allows(world_name)
     }
 
     #[cfg(test)]
@@ -391,5 +411,31 @@ mod tests {
         crate::explore::api::lists::clear_local(&pool, BANNED_NAMES_LIST, &name)
             .await
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod session_refresh_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_refresh_waiting_for_the_pool_does_not_hold_the_reading_mutex() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let checker = NameDenyList::new("blocked.dcl.eth");
+        let mut conn = pool.acquire().await.unwrap();
+        let ordinary = checker.snapshot(&pool);
+        tokio::pin!(ordinary);
+        // This reader is forced to wait for the only connection, before any cache exists.
+        assert!(futures::poll!(&mut ordinary).is_pending());
+        let guarded = tokio::time::timeout(Duration::from_secs(5), checker.snapshot_on(&mut conn))
+            .await
+            .expect(
+                "an ordinary reader must not hold the refresh mutex while waiting for this session",
+            );
+        assert!(!guarded.allows("blocked.dcl.eth"));
+        drop(conn);
+        assert!(!ordinary.await.allows("blocked.dcl.eth"));
     }
 }

@@ -159,13 +159,24 @@ pub(super) async fn refuse_if_newer_scene(
     entity_id: &str,
     entity: &Value,
 ) -> Result<(), Response> {
+    store::entity_timestamp_value(entity).map_err(IntoResponse::into_response)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|e| internal(format!("newer-scene check: {e}")).into_response())?;
+    refuse_if_newer_scene_on(&mut conn, world, parcels, entity_id, entity).await
+}
+
+pub(super) async fn refuse_if_newer_scene_on(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    parcels: &[String],
+    entity_id: &str,
+    entity: &Value,
+) -> Result<(), Response> {
     let timestamp = store::entity_timestamp_value(entity).map_err(IntoResponse::into_response)?;
-    let newer = match state.pool.acquire().await {
-        Ok(mut conn) => {
-            store::newer_scene_deployed(&mut conn, world, parcels, entity_id, timestamp).await
-        }
-        Err(e) => Err(e),
-    };
+    let newer = store::newer_scene_deployed(conn, world, parcels, entity_id, timestamp).await;
     match newer {
         Ok(false) => Ok(()),
         Ok(true) => Err(failed(partial::NEWER_SCENE_MESSAGE).into_response()),
@@ -672,6 +683,7 @@ pub(super) enum Check<'a> {
 /// now, or a partial upload's first batch.
 pub(super) async fn validate(
     state: &SharedState,
+    conn: Option<&mut sqlx::PgConnection>,
     entity: &Value,
     signer: &Address,
     entity_id: &str,
@@ -758,9 +770,21 @@ pub(super) async fn validate(
         return Err(failed(e));
     }
     let parcels = ParcelSet::parse(&pointers).map_err(|e| failed(e.to_string()))?;
+    // Ordinary publishes acquire only after the pure entity checks; partial batches
+    // supply the session that already owns their entity lock.
+    let mut acquired;
+    let conn: &mut sqlx::PgConnection = match conn {
+        Some(conn) => conn,
+        None => {
+            acquired = state.pool.acquire().await.map_err(|e| {
+                internal(format!("Failed to read the world limits of {world}: {e}"))
+            })?;
+            &mut acquired
+        }
+    };
     let limits = state
         .policy
-        .world_limits(&world)
+        .world_limits_on(&mut *conn, &world)
         .await
         .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
     if pointers.len() > limits.max_parcels as usize {
@@ -772,7 +796,7 @@ pub(super) async fn validate(
 
     if !state
         .names
-        .check_name_deny_list(&state.pool, world_name)
+        .check_name_deny_list_on(&mut *conn, world_name)
         .await
     {
         return Err(failed(format!(
@@ -782,7 +806,11 @@ pub(super) async fn validate(
     let check_permission = !matches!(check, Check::Stage { permission: false });
     let replacement = match check_permission {
         false => None,
-        true => match state.policy.can_deploy(&world, signer, &parcels).await {
+        true => match state
+            .policy
+            .can_deploy_on(&mut *conn, &world, signer, &parcels)
+            .await
+        {
             Ok(decision) => Some(decision),
             Err(AuthorityNotEstablished::RefusedLacksAuthority { detail }) => {
                 tracing::info!(world = %world, signer = %signer.as_str(), "deploy denied: {detail}");
@@ -803,7 +831,7 @@ pub(super) async fn validate(
             }
         },
     };
-    match store::is_world_disabled(&state.pool, &world).await {
+    match store::is_world_disabled(&mut *conn, &world).await {
         Ok(false) => {}
         Ok(true) => return Err(forbidden(store::world_disabled(&world).public_message())),
         Err(e) => {
@@ -893,7 +921,7 @@ pub(super) async fn validate(
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
     let cap = state
-        .scene_cap(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
+        .scene_cap_on(&mut *conn, &world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
         .await
         .map_err(|e| {
             tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
@@ -928,6 +956,48 @@ pub(super) async fn publish(
     validated: &Validated,
     completion: Option<&store::PartialCompletion<'_>>,
 ) -> Result<i64, Response> {
+    let mut conn = state.pool.acquire().await.map_err(|e| {
+        internal(format!(
+            "Failed to persist deployment {entity_id} to {}: {e:?}",
+            validated.world
+        ))
+        .into_response()
+    })?;
+    let deployed = persist_publish_on(
+        state,
+        &mut conn,
+        entity_id,
+        entity,
+        signer,
+        deployment_auth_chain,
+        validated,
+        completion,
+    )
+    .await?;
+    drop(conn);
+    Ok(finish_publish(
+        state,
+        headers,
+        entity_id,
+        signer,
+        validated,
+        completion.is_some(),
+        deployed,
+    )
+    .await)
+}
+
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+pub(super) async fn persist_publish_on(
+    state: &SharedState,
+    conn: &mut sqlx::PgConnection,
+    entity_id: &str,
+    entity: &Value,
+    signer: &Address,
+    deployment_auth_chain: &Value,
+    validated: &Validated,
+    completion: Option<&store::PartialCompletion<'_>>,
+) -> Result<store::Deployed, Response> {
     let Validated {
         world,
         parcels,
@@ -941,8 +1011,8 @@ pub(super) async fn publish(
         return Err(internal("Publish without a deploy authorization").into_response());
     };
 
-    let persisted = store::deploy_scene_with(
-        &state.pool,
+    let persisted = store::deploy_scene_with_on(
+        &mut *conn,
         &state.storage,
         SceneDeployment {
             world,
@@ -986,6 +1056,27 @@ pub(super) async fn publish(
             .into_response());
         }
     };
+    Ok(deployed)
+}
+
+pub(super) async fn finish_publish(
+    state: &SharedState,
+    headers: &HeaderMap,
+    entity_id: &str,
+    signer: &Address,
+    validated: &Validated,
+    partial: bool,
+    deployed: store::Deployed,
+) -> i64 {
+    let Validated {
+        world,
+        replacement,
+        name_owner,
+        size,
+        ..
+    } = validated;
+    let replacement = replacement.as_ref().expect("persisted authorization");
+    let name_owner = name_owner.as_ref().expect("persisted owner");
     // A new holder's publish moved worlds.owner: re-decide the previous one now.
     if let Some(previous) = &deployed.previous_owner {
         state.policy.note_owner(world, Some(name_owner));
@@ -997,7 +1088,7 @@ pub(super) async fn publish(
         signer = %signer.as_str(),
         world = %world,
         authz = match replacement { Deploy::Owner => "name-ownership", Deploy::Scoped(_) => "acl" },
-        partial = completion.is_some(),
+        partial,
         content_size = size,
         user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("unknown"),
         forwarded = state.forwarder.is_some(),
@@ -1014,7 +1105,7 @@ pub(super) async fn publish(
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }
-    Ok(deployed.created_at_ms)
+    deployed.created_at_ms
 }
 
 async fn deploy_entity_inner(
@@ -1073,6 +1164,7 @@ async fn deploy_entity_inner(
 
     let validated = match validate(
         state,
+        None,
         &entity,
         &signer,
         &entity_id,

@@ -1459,42 +1459,47 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = owned(&f).await;
     let u = upload(&world, 1);
-    insert_world(&f, &world).await;
     expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
-
-    // Both exact requests pass upsert, and one reaches publish, before releasing the world row.
-    let mut held = f.pool.begin().await.unwrap();
-    sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
-        .bind(world.key())
-        .execute(&mut *held)
-        .await
-        .unwrap();
-    let holder = backend_pid(&mut held).await;
-    let a_upsert = Arc::new(Notify::new());
+    let reached = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    let busy = Arc::new(Notify::new());
     let b_upsert = Arc::new(Notify::new());
-    let a_resume = Arc::new(Notify::new());
     let b_resume = Arc::new(Notify::new());
-    let (a, b, ()) = tokio::join!(
-        partial::AFTER_UPSERT.scope(
-            (a_upsert.clone(), a_resume.clone()),
-            partial::REPLICA.scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0])))
-        ),
-        partial::AFTER_UPSERT.scope(
-            (b_upsert.clone(), b_resume.clone()),
-            partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0])))
-        ),
-        async {
-            reached_stage(&a_upsert).await;
-            reached_stage(&b_upsert).await;
-            a_resume.notify_one();
-            b_resume.notify_one();
-            blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
-            held.commit().await.unwrap();
-        },
+    let a_request = partial::AFTER_UPSERT.scope(
+        (reached.clone(), resume.clone()),
+        partial::REPLICA.scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
     );
+    let b_request = async {
+        reached_stage(&reached).await;
+        partial::ENTITY_LOCK_BUSY
+            .scope(
+                busy.clone(),
+                partial::AFTER_UPSERT.scope(
+                    (b_upsert.clone(), b_resume.clone()),
+                    partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+                ),
+            )
+            .await
+    };
+    let (a, b, ()) = tokio::join!(a_request, b_request, async {
+        reached_stage(&busy).await;
+        assert!(
+            b_upsert.notified().now_or_never().is_none(),
+            "the other replica cannot stage while A holds the entity"
+        );
+        // Upsert committed even though the batch's session lock remains held.
+        assert_eq!(pending_count(&f.pool, &u.entity_id).await, 1);
+        resume.notify_one();
+        // Prevent a broken implementation from hanging the test after recording a failure.
+        b_resume.notify_one();
+    });
     assert_eq!((a.0.as_u16(), b.0.as_u16()), (200, 200), "{} {}", a.2, b.2);
     assert_same_completion(&a.2, &b.2, &world);
     assert_one_completion(&f, &u, &world).await;
+    assert!(
+        b_upsert.notified().now_or_never().is_none(),
+        "B replays before staging"
+    );
 }
 
 #[tokio::test]
@@ -1506,26 +1511,23 @@ async fn a_completion_consumed_after_upsert_replays_before_reservation() {
         expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
         let reached = Arc::new(Notify::new());
         let resume = Arc::new(Notify::new());
-        let b_publish = Arc::new(Notify::new());
-
-        let (b, (a, received_bytes)) = tokio::join!(
+        let publish = Arc::new(Notify::new());
+        let (batch, received_bytes) = tokio::join!(
             partial::PUBLISH_REACHED.scope(
-                b_publish.clone(),
+                publish.clone(),
                 pause_reservation(
                     after_owner,
                     reached.clone(),
                     resume.clone(),
-                    partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+                    send(&f.app, &u, Batch::of(&owner, false, &[0])),
                 )
             ),
             async {
                 reached_stage(&reached).await;
-                let a = partial::REPLICA
-                    .scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0])))
-                    .await;
-                assert_eq!(a.0, StatusCode::OK, "{}", a.2);
-                assert_one_completion(&f, &u, &world).await;
-                // Keep the rate assertion within one window; rollover has its own tests.
+                // Cleanup and ordinary publishes can still consume a pending row independently.
+                completed_elsewhere(&f.pool, &u, &owner, &world).await;
+                // Completion injection does not alter rate state. Anchor this assertion to
+                // the seeded manifest's charge and keep the resumed batch in the same window.
                 let received_bytes: i64 = sqlx::query_scalar(
                     "UPDATE worlds.partial_upload_rates SET window_started = timezone('UTC', now()) \
                      WHERE deployer = $1 RETURNING bytes",
@@ -1535,16 +1537,15 @@ async fn a_completion_consumed_after_upsert_replays_before_reservation() {
                 .await
                 .unwrap();
                 resume.notify_one();
-                (a, received_bytes)
+                received_bytes
             },
         );
-        assert_eq!(b.0, StatusCode::OK, "{}", b.2);
-        assert_same_completion(&a.2, &b.2, &world);
+        assert_eq!(batch.0, StatusCode::OK, "{}", batch.2);
+        assert_eq!(batch.2["creationTimestamp"], 7);
         assert!(
-            b_publish.notified().now_or_never().is_none(),
-            "the losing request must replay without another publish"
+            publish.notified().now_or_never().is_none(),
+            "a consumed upload replays before publish"
         );
-        assert_one_completion(&f, &u, &world).await;
         let charged: i64 =
             sqlx::query_scalar("SELECT bytes FROM worlds.partial_upload_rates WHERE deployer = $1")
                 .bind(owner.address.as_str())
@@ -1559,9 +1560,68 @@ async fn a_completion_consumed_after_upsert_replays_before_reservation() {
                 } else {
                     0
                 },
-            "an already-received batch retains its independent rate charge; a missing owner never reaches charging"
+            "a batch that read its upload owner retains its received-byte charge; a missing owner must replay without charging"
         );
     }
+}
+
+#[tokio::test]
+async fn partial_batches_complete_and_replay_with_one_pool_connection() {
+    let Some(pool) = crate::db::scratch::pool(1).await else {
+        return;
+    };
+    let f = fixture_on_pool(
+        pool,
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        "",
+    )
+    .await;
+    let (world, owner) = owned(&f).await;
+    // The allowance path performs wallet usage and overlap-credit SQL as well as policy reads.
+    f.allowance.set(&owner.address, Some(1024 * 1024));
+    let u = upload(&world, 2);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+        let done = expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200).await;
+        let replay = expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200).await;
+        assert_eq!(replay, done);
+        assert_one_completion(&f, &u, &world).await;
+        let grantee = Wallet::random();
+        grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
+        let mut replacement = upload(&world, 1);
+        let previous: Value = serde_json::from_slice(&u.entity_bytes).unwrap();
+        let mut entity: Value = serde_json::from_slice(&replacement.entity_bytes).unwrap();
+        entity["timestamp"] = json!(previous["timestamp"].as_i64().unwrap() + 1);
+        replacement.entity_bytes = serde_json::to_vec(&entity).unwrap();
+        replacement.entity_id = hash_bytes_v1(&replacement.entity_bytes);
+        // Scoped authorization and the existing scene's overlap credit use the same session.
+        expect_batch(&f.app, &replacement, Batch::of(&grantee, true, &[0]), 200).await;
+
+        let recorded = Arc::new(RecordedRevocations::default());
+        f.state.add_revocation_sink(recorded.clone());
+        sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+            .bind(world.key()).execute(&f.pool).await.unwrap();
+        let new_owner = Wallet::random();
+        f.names.forget(&owner.address);
+        f.names.set(&new_owner.address, world.label());
+        f.market.graph.names.clear();
+        f.market.graph.name_owner.clear();
+        let mut transfer = upload(&world, 1);
+        let mut entity: Value = serde_json::from_slice(&transfer.entity_bytes).unwrap();
+        entity["timestamp"] = json!(previous["timestamp"].as_i64().unwrap() + 2);
+        transfer.entity_bytes = serde_json::to_vec(&entity).unwrap();
+        transfer.entity_id = hash_bytes_v1(&transfer.entity_bytes);
+        expect_batch(&f.app, &transfer, Batch::of(&new_owner, true, &[0]), 200).await;
+        assert!(recorded.take().contains(&super::super::Revocation::Address {
+            world: world.clone(), address: owner.address.clone(),
+        }), "postcommit revocation must finish before the originating response even with pool size one");
+
+    })
+    .await
+    .expect("a partial batch must not check out a second connection");
 }
 
 #[tokio::test]
@@ -1791,4 +1851,145 @@ async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
         "the catalogue names it"
     );
     assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+}
+
+#[tokio::test]
+async fn cancelling_a_batch_keeps_committed_staging_resumable() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    let reached = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    let mut request = Box::pin(partial::AFTER_UPSERT.scope(
+        (reached.clone(), resume),
+        send(&f.app, &u, Batch::of(&owner, true, &[])),
+    ));
+    tokio::select! {
+        _ = reached.notified() => {},
+        response = &mut request => panic!("batch escaped pause: {}", response.2),
+    }
+    // A separate session sees the committed row while the request still owns its entity session.
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 1);
+    drop(request);
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 200).await;
+    })
+    .await
+    .expect("cancellation must close its locked session");
+    assert_one_completion(&f, &u, &world).await;
+}
+
+#[tokio::test]
+async fn a_paused_entity_does_not_block_another_entity() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    let (other_world, other_owner) = owned(&f).await;
+    let other = upload(&other_world, 1);
+    let reached = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    let (first, ()) = tokio::join!(
+        partial::AFTER_UPSERT.scope(
+            (reached.clone(), resume.clone()),
+            send(&f.app, &u, Batch::of(&owner, true, &[]))
+        ),
+        async {
+            reached_stage(&reached).await;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                expect_batch(&f.app, &other, Batch::of(&other_owner, true, &[0]), 200),
+            )
+            .await
+            .expect("entity locks must not serialize different entities");
+            resume.notify_one();
+        },
+    );
+    assert_eq!(first.0, StatusCode::ACCEPTED, "{}", first.2);
+}
+
+#[tokio::test]
+async fn a_blob_failure_keeps_committed_reservations_resumable() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    let scratch = f.storage.scratch_dir();
+    tokio::fs::create_dir_all(&scratch).await.unwrap();
+    let manifest = scratch.join("failed-batch-manifest");
+    tokio::fs::write(&manifest, &u.entity_bytes).await.unwrap();
+    let files = [
+        super::super::upload_spool::SpooledFile {
+            name: u.entity_id.clone(),
+            hash: u.entity_id.clone(),
+            len: u.entity_bytes.len(),
+            path: manifest.clone(),
+        },
+        super::super::upload_spool::SpooledFile {
+            name: u.files[0].0.clone(),
+            hash: u.files[0].0.clone(),
+            len: u.files[0].1.len(),
+            path: scratch.join("missing-batch-content"),
+        },
+    ];
+    let chain = serde_json::to_value(owner.chain(&u.entity_id).await).unwrap();
+    let response = partial::stage(
+        &f.state,
+        &HeaderMap::new(),
+        &u.entity_id,
+        &chain,
+        &owner.address,
+        &files,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 1);
+    let charged: i64 =
+        sqlx::query_scalar("SELECT reserved_bytes FROM worlds.pending_scenes WHERE entity_id = $1")
+            .bind(&u.entity_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(
+        charged >= u.files[0].1.len() as i64,
+        "reservation committed before the blob failed"
+    );
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 200).await;
+    assert_one_completion(&f, &u, &world).await;
+    tokio::fs::remove_file(manifest).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelling_after_stored_progress_keeps_its_manifest_and_files() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    let reached = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    let mut request = Box::pin(partial::AFTER_STORED.scope(
+        (reached.clone(), resume),
+        send(&f.app, &u, Batch::of(&owner, true, &[0])),
+    ));
+    tokio::select! {
+        _ = reached.notified() => {},
+        response = &mut request => panic!("batch escaped pause: {}", response.2),
+    }
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM worlds.pending_scene_files WHERE entity_id = $1 AND stored",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored, 2,
+        "manifest and first content receipt committed before cancellation"
+    );
+    drop(request);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200),
+    )
+    .await
+    .expect("stored progress must survive request cancellation");
+    assert_one_completion(&f, &u, &world).await;
 }

@@ -483,11 +483,20 @@ impl Policy {
     /// world's size is `ENS_MAX_SIZE` whatever an override says (the upstream
     /// checks ENS before its whitelist).
     pub async fn world_limits(&self, world: &WorldName) -> Result<WorldLimits, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.world_limits_on(&mut conn, world).await
+    }
+
+    pub async fn world_limits_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+    ) -> Result<WorldLimits, sqlx::Error> {
         let row: Option<(Option<i32>, Option<i64>)> = sqlx::query_as(
             "SELECT max_parcels, max_size_bytes FROM worlds.world_limit_overrides WHERE world_name = $1",
         )
         .bind(world.key())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *conn)
         .await?;
         let (parcels, mut size) = row.unwrap_or_default();
         if world.is_ens_world() {
@@ -501,6 +510,15 @@ impl Policy {
     }
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.world_on(&mut conn, world).await
+    }
+
+    pub async fn world_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+    ) -> Result<Option<WorldRow>, sqlx::Error> {
         let row = sqlx::query(concat!(
             "SELECT w.name, w.owner, w.access_type, w.access_secret_hash, w.access_nft, w.blocked_since, \
                     q.created_at AS quota_blocked_since, w.mirror_source, ",
@@ -511,7 +529,7 @@ impl Policy {
             " WHERE w.name = $1"
         ))
         .bind(world.key())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *conn)
         .await?;
         Ok(row.map(|r| WorldRow {
             name: r.get("name"),
@@ -849,10 +867,26 @@ impl Policy {
         &self,
         world: &WorldName,
     ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        if self.has_live_authority(world) || !self.ownable(world) {
+            return self.owner_from(world, None).await;
+        }
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        self.current_owner_on(&mut conn, world).await
+    }
+
+    pub async fn current_owner_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+    ) -> Result<Option<Address>, AuthorityNotEstablished> {
         let row = if self.has_live_authority(world) || !self.ownable(world) {
             None
         } else {
-            self.world(world)
+            self.world_on(&mut *conn, world)
                 .await
                 .map_err(|e| store_unavailable("worlds.worlds", &e))?
         };
@@ -959,6 +993,19 @@ impl Policy {
         actor: &Address,
         required: &ParcelSet,
     ) -> Result<bool, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.has_permission_covering_on(&mut conn, world, permission, actor, required)
+            .await
+    }
+
+    pub async fn has_permission_covering_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+        permission: Permission,
+        actor: &Address,
+        required: &ParcelSet,
+    ) -> Result<bool, sqlx::Error> {
         sqlx::query_scalar(
             "SELECT EXISTS ( \
                SELECT 1 FROM worlds.world_permissions wp \
@@ -973,13 +1020,23 @@ impl Policy {
         .bind(permission.as_str())
         .bind(actor)
         .bind(required.canonical())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await
     }
 
     /// The deployed scenes of `world` whose footprint overlaps `parcels`.
     pub async fn overlapping_scenes(
         &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<Vec<(SceneId, ParcelSet)>, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        self.overlapping_scenes_on(&mut conn, world, parcels).await
+    }
+
+    pub async fn overlapping_scenes_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
         world: &WorldName,
         parcels: &ParcelSet,
     ) -> Result<Vec<(SceneId, ParcelSet)>, sqlx::Error> {
@@ -992,7 +1049,7 @@ impl Policy {
         )
         .bind(world.key())
         .bind(parcels.canonical())
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
         Ok(rows
             .into_iter()
@@ -1018,14 +1075,48 @@ impl Policy {
         actor: &Address,
         parcels: &ParcelSet,
     ) -> Result<Deploy, AuthorityNotEstablished> {
+        self.can_deploy_using(None, world, actor, parcels).await
+    }
+
+    pub async fn can_deploy_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+        actor: &Address,
+        parcels: &ParcelSet,
+    ) -> Result<Deploy, AuthorityNotEstablished> {
+        self.can_deploy_using(Some(conn), world, actor, parcels)
+            .await
+    }
+
+    async fn can_deploy_using(
+        &self,
+        mut conn: Option<&mut sqlx::PgConnection>,
+        world: &WorldName,
+        actor: &Address,
+        parcels: &ParcelSet,
+    ) -> Result<Deploy, AuthorityNotEstablished> {
         if let Some(owner) = world.personal_owner() {
+            let mut acquired;
+            let conn: &mut sqlx::PgConnection = match conn.as_deref_mut() {
+                Some(conn) => conn,
+                None => {
+                    acquired = self
+                        .pool
+                        .acquire()
+                        .await
+                        .map_err(|e| store_unavailable("worlds.world_scenes", &e))?;
+                    &mut acquired
+                }
+            };
+
             let (already, hosted): (bool, i64) = sqlx::query_as(
                 "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NULL), \
                         (SELECT count(DISTINCT world_name) FROM worlds.world_scenes \
                           WHERE world_name ~ '^0x[0-9a-f]{40}\\.dcl\\.eth$' AND mirror_source IS NULL)",
             )
             .bind(world.key())
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *conn)
             .await
             .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable { store: "worlds.world_scenes", reason_for_operators: e.to_string() })?;
             return match self.personal_worlds.admit(already, hosted.max(0) as u64) {
@@ -1056,18 +1147,31 @@ impl Policy {
             }) => {}
             PermissionDecision::Refused(undetermined) => return Err(undetermined),
         }
-        let overlapping = self.overlapping_scenes(world, parcels).await.map_err(|e| {
-            AuthorityNotEstablished::UndeterminedStoreUnavailable {
+        let mut acquired;
+        let conn: &mut sqlx::PgConnection = match conn.as_deref_mut() {
+            Some(conn) => conn,
+            None => {
+                acquired = self
+                    .pool
+                    .acquire()
+                    .await
+                    .map_err(|e| store_unavailable("worlds.world_scenes", &e))?;
+                &mut acquired
+            }
+        };
+        let overlapping = self
+            .overlapping_scenes_on(&mut *conn, world, parcels)
+            .await
+            .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable {
                 store: "worlds.world_scenes",
                 reason_for_operators: e.to_string(),
-            }
-        })?;
+            })?;
         let mut required = parcels.clone();
         for (_, footprint) in &overlapping {
             required.extend(footprint.iter().copied());
         }
         let covered = self
-            .has_permission_covering(world, Permission::Deployment, actor, &required)
+            .has_permission_covering_on(&mut *conn, world, Permission::Deployment, actor, &required)
             .await
             .map_err(|e| store_unavailable("worlds.world_permissions", &e))?;
         if !covered {
