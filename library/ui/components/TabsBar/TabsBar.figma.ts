@@ -2,6 +2,7 @@
 // source=components/TabsBar/TabsBar.tsx
 // component=TabsBar
 // contract=1
+// states=viewport
 import figma from 'figma'
 const instance = figma.selectedInstance
 const page = instance.getEnum('page', {
@@ -10,10 +11,9 @@ const page = instance.getEnum('page', {
   learn: ' page="learn" search={searchControl} actions={actions}'
 })
 // The viewport selects responsive CSS; the application supplies real controls and route data.
-const viewport = instance.getEnum('viewport', { desktop: '', mobile: '', 'large-desktop': '' })
 export default {
-  example: figma.tsx`<TabsBar mode="navigation"${page}${viewport} items={items} activeId={activeId} label="Sections" />`,
+  example: figma.tsx`<TabsBar mode="navigation"${page} items={items} activeId={activeId} label="Sections" />`,
   imports: ["import { TabsBar } from '@dcl/one-ui'"],
-  id: 'TabsBar',
+  id: 'tabs-bar',
   metadata: { nestable: true }
 }

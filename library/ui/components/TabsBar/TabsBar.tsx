@@ -2,6 +2,7 @@ import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
 import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType } from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
+import { isPlainLinkClick } from '../../link.helpers'
 
 type PanelTabsBarProps = {
   label: string
@@ -67,12 +68,13 @@ export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   'data-label'?: string
 }
 type SharedProps = {
-  /** Validated route configuration. Invalid entries throw; validate remote data at the app boundary. */
+  /** Caller-owned route configuration. IDs, labels and destinations must be non-empty. */
   items: readonly TabsBarItem[]
   activeId: string
   label?: string
   onSelect?: (id: string) => void
   /** The app adapter forwards anchor attributes and owns client routing and intent prefetch. */
+  /** Keep adapter identity stable across renders to preserve native DOM and scroll state. */
   LinkComponent?: ComponentType<TabsBarLinkProps>
   className?: string
 }
@@ -123,6 +125,9 @@ function NavigationTabsBar({
   useLayoutEffect(() => {
     const list = listRef.current
     if (!list) return
+    let manualScroll = false
+    let expectedScroll = list.scrollLeft
+    let viewportWidth = list.ownerDocument.defaultView?.innerWidth
     const revealCurrent = () => {
       if (!list.isConnected) return
       const current = list.querySelector<HTMLElement>('[aria-current="page"]')
@@ -141,13 +146,28 @@ function NavigationTabsBar({
               ? route.right - frame.right
               : 0
       if (Math.abs(offset) > 1) list.scrollLeft += offset
+      expectedScroll = list.scrollLeft
     }
     revealCurrent()
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(revealCurrent)
+    const onScroll = () => {
+      if (Math.abs(list.scrollLeft - expectedScroll) > 1) manualScroll = true
+    }
+    const observer = new ResizeObserver(() => {
+      const width = list.ownerDocument.defaultView?.innerWidth
+      if (width !== viewportWidth) {
+        viewportWidth = width
+        manualScroll = false
+      }
+      if (!manualScroll) revealCurrent()
+    })
+    list.addEventListener('scroll', onScroll, { passive: true })
     observer.observe(list)
     for (const item of list.children) observer.observe(item)
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      list.removeEventListener('scroll', onScroll)
+    }
   }, [activeId, routeLayout, page, LinkComponent])
   return (
     <nav
@@ -159,15 +179,7 @@ function NavigationTabsBar({
         <ul ref={listRef} className={styles.routeList}>
           {items.map((item) => {
             const select: AnchorHTMLAttributes<HTMLAnchorElement>['onClick'] = (event) => {
-              if (
-                !event.defaultPrevented &&
-                event.button === 0 &&
-                !event.ctrlKey &&
-                !event.metaKey &&
-                !event.altKey &&
-                !event.shiftKey
-              )
-                onSelect?.(item.id)
+              if (isPlainLinkClick(event)) onSelect?.(item.id)
             }
             return (
               <li

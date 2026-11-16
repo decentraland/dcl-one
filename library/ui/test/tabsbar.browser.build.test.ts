@@ -280,8 +280,8 @@ async function clickControl(selector: string) {
     })
 }
 describe('when a user scrolls away from the selected section', () => {
-  it('should preserve manual scroll through an unrelated caller rerender', async () => {
-    await navigate('shop', 768, '4')
+  it('should preserve manual scroll when caller actions resize the navigation tray', async () => {
+    await navigate('shop', 1024, '4')
     await paint()
     const point = await browser.evaluate<{ x: number; y: number }>(
       `(()=>{const r=document.querySelector('nav ul').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
@@ -295,10 +295,37 @@ describe('when a user scrolls away from the selected section', () => {
     await paint()
     expect(await currentRouteVisible()).toBe(false)
     const before = await browser.evaluate<number>('document.querySelector("nav ul").scrollLeft')
+    const widthBefore = await browser.evaluate<number>(
+      'document.querySelector("nav ul").getBoundingClientRect().width'
+    )
     await clickControl('[aria-label="Fixture cart, 0"]')
     await paint()
+    expect(
+      await browser.evaluate<number>(
+        'document.querySelector("nav ul").getBoundingClientRect().width'
+      )
+    ).toBeLessThan(widthBefore)
     expect(await browser.evaluate('document.querySelector("nav ul").scrollLeft')).toBe(before)
     expect(await currentRouteVisible()).toBe(false)
+    expect(await browser.evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Fixture cart, 1'
+    )
+    await browser.session.send('Emulation.setDeviceMetricsOverride', {
+      width: 1200,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await paint()
+    expect(await currentRouteVisible()).toBe(true)
+  })
+  it('should keep the selected route visible after action growth before manual scrolling', async () => {
+    await navigate('shop', 1024, '4')
+    await paint()
+    expect(await currentRouteVisible()).toBe(true)
+    await clickControl('[aria-label="Fixture cart, 0"]')
+    await paint()
+    expect(await currentRouteVisible()).toBe(true)
     expect(await browser.evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
       'Fixture cart, 1'
     )

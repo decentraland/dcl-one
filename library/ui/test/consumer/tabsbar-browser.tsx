@@ -66,6 +66,7 @@ function App() {
                 <button
                   className={styles.icon}
                   aria-label={'Fixture cart, ' + count}
+                  data-expanded={count > 0 || undefined}
                   onClick={() => setCount(count + 1)}
                 >
                   <ShopCart size={24} aria-hidden="true" />
