@@ -325,7 +325,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 15. **LL-15: The `/lands` index path reads the registries of `ETH_NETWORK`.** Status: MATCH, no work.
     - Expected: the registries of `ETH_NETWORK` (`decentraland/lamb2:src/ports/the-graph.ts:38`).
     - dcl-one: `/lands` and `/genesis-parcels` open the land snapshot and bind the registries of `land_network(ETH_NETWORK)` (`services/catalyst/shop/src/market/lambdas_land.rs`; `land_snapshot`, `services/catalyst/shop/src/market/nft_reads.rs`). Pinned by `user_lands_read_the_registries_of_the_configured_network` (`services/catalyst/shop/src/market/lambdas_tests.rs`).
-    - Not covered: the marketplace `/v1/nfts` reads and the MANA facts still name the mainnet registries (`LAND_MAINNET`); they are not lamb2 routes.
+    - Outside lamb2: the marketplace's index reads of LAND (the `/v1/nfts` search and deep pages, `/v1/prices`, `/v1/stats/estate/size`) read the same registries (`MarketplaceState::land_network`). Their LAND names, descriptions and orders come from the nft index, which walks the mainnet registries only (`services/catalyst/shop/src/market/nft_index.rs`, `groups`), so on a Sepolia node those fields are empty. The MANA LAND checks read the registries of the venue book's chain (`Chain::land_network`, `services/catalyst/shop/src/mana/venues.rs`); only the production book lists LAND.
     - Severity: none (closed).
 16. **LL-16: Reader page caps.** Endpoints: names and lands (reader path), operators and lands-permissions (subgraph path). Status: MATCH, no work (`FULL_WALK_PAGES`, a 1,000-page runaway guard; one sequential GraphQL request per 1000 rows per uncached key).
     - Gap: 10 or 20 pages at most, which truncates large holders.

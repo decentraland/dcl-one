@@ -20,7 +20,9 @@ faces -Z. It is tracked with Git LFS, like the other visual fixtures.
 
 For manual preview, open this scene with the scene CLI and use the **Scene environment**
 debug section to inspect the overrides and change the clock. Removing a component
-restores that renderer's time-of-day defaults. The GPU test
+restores that renderer's time-of-day defaults. Fields without an override remain
+null in `/scene_environment`, with a per-field `unavailable` explanation for the
+debug panel. The GPU test
 `environment::tests::scene_environment_pipelines_compile` additionally reads raw
 HDR cubemaps with nonzero daylight, including the exact nadir and both ambient-map
 quality settings; a normal screen capture cannot prove those raw texels are finite.
