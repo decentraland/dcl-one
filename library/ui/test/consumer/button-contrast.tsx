@@ -39,6 +39,13 @@ function Fixture() {
               pointerType: probe.pointerType
             }
         }}
+        leadingIcon={
+          q.has('icon') ? (
+            <svg viewBox="0 0 24 24">
+              <path fill="currentColor" d="M4 4h16v16H4z" />
+            </svg>
+          ) : undefined
+        }
         size={size}
         viewport={viewport}
         variant={variant}
