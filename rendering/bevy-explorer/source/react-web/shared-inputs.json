@@ -4846,12 +4846,12 @@
       "sha256": "166bbb9cb41c0b98dbbc970791ff2227f673814773947adab66ea3f22c887076"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package-lock.json",
-      "sha256": "fdc8e5c2c85df27b95e2dbdea7d531aef8b8edb11a553c0873772ca70270dac6"
+      "path": "rendering/bevy-explorer/source/react-web/package.json",
+      "sha256": "915298c4c41811c8c6d029cd6a40b01861506a22ece4cbf9ce9bd5b42075d0e5"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package.json",
-      "sha256": "7489c23e7dc87c0b3967864e56c1c13970e97fac518e9e4b6500847106960540"
+      "path": "rendering/bevy-explorer/source/react-web/pnpm-lock.yaml",
+      "sha256": "d9455d0665084e10809a0975c53a9eeb6932bf17979f7ca8457cca85331c0103"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.d.mts",
@@ -4859,7 +4859,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "e4d4b363c729f018930449d614493675bdf77d7abb7fb7f8a2d81f664f1863dc"
+      "sha256": "391cdf1699d614589ff6c97a5fe696aecf01256d907ad442d03c9ef043c423aa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
@@ -5103,7 +5103,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
-      "sha256": "8970e85613a7d1a0f5767c4871436e39ab4c906e781ed0a7bf6bfe265c8b44c1"
+      "sha256": "faf2740495b8da333d01637e8302a7fe8ffccc8e86908d696737967dd5a7377b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
@@ -5131,7 +5131,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "9e3940ff6f67a581d0af247464154961fbf8fdfbc4f223a483af9728f142cf69"
+      "sha256": "04eb2dffd9934a2d8a1fb5bc4f8e72361f417b19fb92c4ec148c52c2cc7819a4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -5731,7 +5731,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "f9883596628b37b450c0127f08fc55e936c868ad008ad982c5e330e5961d502b"
+      "sha256": "d711002caf9daa922ae96aa5fddbd3ad3d6fa422523f0138b897628e3722bbd6"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -7159,7 +7159,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Modal.tsx",
-      "sha256": "98a405a4c402d7855eb0972237510e02aedc5e8e04a1bc326a11a6f54f2e879a"
+      "sha256": "21900a6889385e0530b8190dbf032ebd242bd5b0783965bc6d1a439bb423b0c2"
     },
     {
       "path": "library/ui/apps/hud/design/OptionMenu.module.css",
@@ -7483,11 +7483,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
-      "sha256": "ce418c31dfd86b9afba6b2cf6e7938d1ed0f0fcfe57ebea5d69836f61e765578"
+      "sha256": "9633c7c38bc527a050139f2676a76a10d8a9828b0c55bb5294ac4068f9649e81"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "d3fe873d2d0e2357c2cfb6753d80722ef7906c82a9f3ad16ecca925f6b76e819"
+      "sha256": "3e8e43438ae96e06e6c122ff1787693d2a7a281834e356a7536d26122750f212"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
@@ -7499,7 +7499,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "94859614803b162d43e0957b63f143819b31653af59281dd90e2f5b5f564eca2"
+      "sha256": "954c7a9c4795903a16a547a678598d25e2dcc0395cec3f69c029589839039c0d"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -8139,7 +8139,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "637760adbc8d8c91c5cb3e82921387f1a08cc26098e279e1273c6ca9ba8cc0e4"
+      "sha256": "9c58123e37b1351eee55a6e192ee01a3fbae3e71fc69ab21a6ffe0ab5f39e3f8"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8179,7 +8179,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "3f1655495d5a071d481830e0e133010aea232b792561dc4d21e73d2924e31454"
+      "sha256": "8053a5d133c8776fe963cd2f33c50602fab23c5db8a5843ee61086574eb9ee50"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
@@ -8439,7 +8439,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "171c148b77dd75fc4fe87857fc4f054ff46bcbba8672c636658633d640f1c65e"
+      "sha256": "083aac570174c4f37facebad291a038fe729a1a824aa5e572c0b93100332c753"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/dm.render.test.tsx",
@@ -8643,7 +8643,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "147544d9988c8b869070d790c4688a869ce2a94233eb31835d399a9843ee49be"
+      "sha256": "09221144b3c705b1117c1f7291fceede1dc7ba991633fc77a1d6f218cccabfec"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
@@ -10714,6 +10714,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "kind": "native:runtime"
     },
@@ -17643,6 +17658,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
       "kind": "native:runtime"
@@ -17685,21 +17730,6 @@
     {
       "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "to": "library/explorer-core/lib/bugReport.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -30304,6 +30334,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
       "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "kind": "native:runtime"
     },
@@ -32640,6 +32685,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "kind": "test:runtime"
     },
     {
@@ -34559,7 +34619,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "kind": "test:runtime"
     },
     {

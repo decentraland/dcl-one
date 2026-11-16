@@ -40,6 +40,9 @@ pub struct Client {
     pub size: u32,
 
     /// Cancelled when the client is removed: the socket loop ends and closes.
+    /// The runtime holds it too and cancels it when it stops; the socket loop
+    /// then removes the client, so its index is freed only after the socket
+    /// stopped reading.
     pub cancel: CancellationToken,
 
     /// How the permission core admitted this client (`None` for the local
@@ -165,7 +168,10 @@ impl Scene {
         grant: Option<AccessGrant>,
     ) -> (Arc<Client>, crate::scene_state::runtime::InitState) {
         let index = self.runtime.allocate_client_index();
-        let init = self.runtime.on_client_open(index, tx.clone());
+        let cancel = CancellationToken::new();
+        let init = self
+            .runtime
+            .on_client_open(index, tx.clone(), cancel.clone());
         let client = Arc::new(Client {
             index,
             id: NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed),
@@ -173,7 +179,7 @@ impl Scene {
             tx,
             start: init.start,
             size: init.size,
-            cancel: CancellationToken::new(),
+            cancel,
             grant,
         });
         let mut since = self.empty_since.lock();
