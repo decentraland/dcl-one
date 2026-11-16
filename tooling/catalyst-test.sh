@@ -3,6 +3,7 @@
 # The node's integration tests link as a few grouped binaries (services/catalyst/Cargo.toml), so
 # the node_* groups run with twice the test threads of a crate's binary. The socket groups
 # (sockets_*) keep wall-clock budgets: they run after the others, sharing one test thread per core.
+# An explicit RUST_TEST_THREADS caps every binary, groups included.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -54,8 +55,9 @@ jobs="${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}"
 [ "$jobs" -ge 1 ] || { echo "catalyst-test: CATALYST_TEST_JOBS must be at least 1" >&2; exit 1; }
 # Up to jobs * RUST_TEST_THREADS tests run at once (a node_* group counting twice), each with up
 # to 10 of the cluster's 400 connections.
+cap="${RUST_TEST_THREADS:-}"
 export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
-group_threads=$(( RUST_TEST_THREADS * 2 ))
+group_threads=$(( ${cap:-$(( RUST_TEST_THREADS * 2 ))} ))
 grep -E '/sockets_[^/]*$' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]
 grep -v -E '/sockets_[^/]*$' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]
 socket_jobs=$(( $(wc -l < "$logs/sockets") ))
@@ -63,6 +65,7 @@ socket_jobs=$(( $(wc -l < "$logs/sockets") ))
 [ "$socket_jobs" -le "$jobs" ] || socket_jobs="$jobs"
 socket_threads=$(( cores / socket_jobs ))
 [ "$socket_threads" -ge 1 ] || socket_threads=1
+[ -z "$cap" ] || [ "$socket_threads" -le "$cap" ] || socket_threads="$cap"
 run() {
   xargs -P "$1" -I{} sh -c '
 name=$(basename "$1")
