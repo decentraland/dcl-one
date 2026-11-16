@@ -1,3 +1,5 @@
+# Fixed wire vectors recorded from protoc-gen-bitwise runtime/cs/Quantize.cs (sha256 da4f59d6…).
+# Do not edit to match Rust output; a mismatch means the client diverged from the C# encoder.
 # kind value_bits min_bits max_bits power_bits bits encoded
 linear	bf800000	00000000	41800000	00000000	8	0
 linear	00000000	00000000	41800000	00000000	8	0
