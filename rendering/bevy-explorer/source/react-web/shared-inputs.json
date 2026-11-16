@@ -5800,7 +5800,7 @@
     },
     {
       "path": "library/explorer-core/features/friends/friendLocation.ts",
-      "sha256": "1bf431cebd28b6657f331061ce2a1ac873c587b2d858c1b17b342357c2c836f6"
+      "sha256": "dc2c989c1726c5512a24ac34ea87f11426c73e704d6f7b5c9dc5c46f06f5d837"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
@@ -5824,7 +5824,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "d375fbcd08626a4a6eb7f006d4f189e4c1ec0d9b9cf45986b6d17dcdd4804c3b"
+      "sha256": "695cd088937712b412e056d7ccb7b0ebfed6b0a93ac59e96f281d1a3f962822a"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -6080,7 +6080,7 @@
     },
     {
       "path": "library/explorer-core/test/friendLocation.test.ts",
-      "sha256": "c44b8e81fdd8ba50b32aa5a8ac4477dd3ba67d0fa65f2e75ef41015f1ac5d9c2"
+      "sha256": "765c89962851ec95ecf78507a1943e98c90a6665ee141da57d639eec198b9866"
     },
     {
       "path": "library/explorer-core/test/googleTag.test.ts",
@@ -9172,7 +9172,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
-      "sha256": "aff0abf3c3c92bd6ce9fa21855d2b2bc01310132ae158c3b9d01b7ee52088dff"
+      "sha256": "a0b4adf87249eb0fdeeeb7ab2c2b89edf070a9ea4b46091cfb9fabd3539ce7d1"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/keyBindingsApply.test.ts",
@@ -10243,6 +10243,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/lobby/lobbyApi.ts",
       "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "native:runtime"
@@ -11185,6 +11200,21 @@
     {
       "from": "library/explorer-core/test/friendLocation.test.ts",
       "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "test:runtime"
     },
     {

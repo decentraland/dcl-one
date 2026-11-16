@@ -116,12 +116,16 @@ describe('friends panel row', () => {
     await vi.waitFor(() => expect(friends.toggle).toHaveBeenCalledTimes(1))
   })
 
-  it('stays open when the jump goes to a World or finds no one', async () => {
-    const onJump = vi.fn<OnJump>(async () => ({ kind: 'world', world: 'boedo.dcl.eth' }))
+  it.each([
+    ['goes to a World', { kind: 'world', world: 'boedo.dcl.eth' } as const],
+    ['finds no one', null]
+  ])('stays open when the jump %s', async (_, to) => {
+    const onJump = vi.fn<OnJump>(async () => to)
     const { friends } = renderPanel([ONLINE], onJump)
     await userEvent.click(screen.getByRole('button', { name: /^Jump to .*'s location$/ }))
-    await vi.waitFor(() => expect(onJump).toHaveBeenCalled())
-    await Promise.resolve()
+    expect(onJump).toHaveBeenCalledWith('0xf')
+    // let the jump's answer reach the panel before checking it did not close
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(friends.toggle).not.toHaveBeenCalled()
   })
 })
