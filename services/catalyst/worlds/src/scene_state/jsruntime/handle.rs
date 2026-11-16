@@ -1371,6 +1371,45 @@ mod tests {
         );
     }
 
+    /// Whether the scene stops within `budgets` tick budgets of `limits`.
+    fn stops_within(handle: &JsRuntimeHandle, limits: RuntimeLimits, budgets: u64) -> bool {
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(limits.js_tick_budget_ms * budgets);
+        while handle.shared.running.load(Ordering::SeqCst) {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        true
+    }
+
+    #[test]
+    fn a_spinning_on_update_getter_is_terminated() {
+        let js = r#"
+            Object.defineProperty(module.exports, 'onUpdate', {
+              get: function () { for (;;) {} }
+            });
+        "#
+        .to_string();
+        let limits = RuntimeLimits {
+            js_tick_budget_ms: 100,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "getter-spin".into(),
+            js,
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        assert!(
+            stops_within(&handle, limits, 30),
+            "the watchdog must stop an onUpdate getter that never returns"
+        );
+    }
+
     /// Runs `body` in `onStart` and reports whether it set `ok`, by writing
     /// entity 600 only when it did.
     fn scene_reports(name: &str, body: &str, limits: RuntimeLimits) -> bool {
