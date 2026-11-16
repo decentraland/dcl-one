@@ -918,10 +918,12 @@ fn update_render_avatar(
         }
 
         if let Some(attach_points) = maybe_attach_points {
-            // reparent attach points
+            // reparent attach points. they leave the bones the nametag's offset was measured
+            // on: it is measured again on the new body
             commands
                 .entity(entity)
-                .try_push_children(&attach_points.entities());
+                .try_push_children(&attach_points.entities())
+                .try_remove::<NametagHeadOffset>();
         }
 
         if let Some(scene_ent) = maybe_scene_ent {
