@@ -70,10 +70,6 @@ pub struct RendererSceneContext {
     /// This scene's `featureToggles.portableExperiences`, applied to portables while the
     /// player stands in it.
     pub portable_experiences: PortableExperiencesToggle,
-    /// scene.json `requiredPermissions` as legacy `PermissionItem` bits
-    /// (`SceneMeta::legacy_declared_permissions`). Reported by legacy permission queries only;
-    /// it grants nothing.
-    pub legacy_declared_permissions: u8,
 
     // entities waiting to be born in bevy
     pub nascent: HashSet<SceneEntityId>,
@@ -233,7 +229,6 @@ impl RendererSceneContext {
             scene_bounds,
             spawn_points,
             portable_experiences: PortableExperiencesToggle::default(),
-            legacy_declared_permissions: 0,
             nascent: Default::default(),
             death_row: Default::default(),
             outbound_born: Default::default(),
