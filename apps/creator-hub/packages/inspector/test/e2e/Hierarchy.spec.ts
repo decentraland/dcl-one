@@ -1,0 +1,177 @@
+import { type Page } from 'playwright';
+import { App } from './pageObjects/App';
+import { Hierarchy } from './pageObjects/Hierarchy';
+import { installMouseHelper } from './utils/install-mouse-helper';
+import { expect, test } from './fixtures';
+
+declare const page: Page;
+
+const ROOT = 0;
+
+test.describe('Hierarchy', () => {
+  test.beforeAll(async () => {
+    await installMouseHelper(page);
+    // Page is already navigated in setup
+    await App.waitUntilReady();
+  });
+
+  test('create a new entity', async () => {
+    await Hierarchy.addChild(ROOT, 'new entity');
+    await expect(Hierarchy.getId('new entity')).resolves.toBeGreaterThanOrEqual(512);
+  });
+
+  test('add three children to the entity', async () => {
+    const parent = await Hierarchy.getId('new entity');
+    await Hierarchy.addChild(parent, 'child 1');
+    await Hierarchy.addChild(parent, 'child 2');
+    await Hierarchy.addChild(parent, 'child 3');
+    const child1 = await Hierarchy.getId('child 1');
+    const child2 = await Hierarchy.getId('child 2');
+    const child3 = await Hierarchy.getId('child 3');
+    await expect(Hierarchy.isAncestor(child1, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child2, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child3, parent)).resolves.toBe(true);
+  });
+
+  test('reparent "child 2" under "child 1"', async () => {
+    const child1 = await Hierarchy.getId('child 1');
+    const child2 = await Hierarchy.getId('child 2');
+    await expect(Hierarchy.isAncestor(child2, child1)).resolves.toBe(false);
+    await Hierarchy.setParent(child2, child1);
+    await expect(Hierarchy.isAncestor(child2, child1)).resolves.toBe(true);
+  });
+
+  test('move "child 2" to the root entity\'s children', async () => {
+    const child2 = await Hierarchy.getId('child 2');
+    await Hierarchy.setParent(child2, ROOT);
+    const child1 = await Hierarchy.getId('child 2');
+    await expect(Hierarchy.isAncestor(child2, child1)).resolves.toBe(false);
+  });
+
+  test('move "child 3" before "child 1" inside "new entity"', async () => {
+    const parent = await Hierarchy.getId('new entity');
+    const child1 = await Hierarchy.getId('child 1');
+    const child3 = await Hierarchy.getId('child 3');
+    await Hierarchy.setParent(child3, parent, { x: 'inside', y: 'after' });
+
+    // check that parent is still the same for both childs
+    await expect(Hierarchy.isAncestor(child1, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child3, parent)).resolves.toBe(true);
+
+    await expect(Hierarchy.hasChildrenInOrder(parent, child3, child1)).resolves.toBe(true);
+  });
+
+  test('add "child 4" to the root entity and move it after "child 3" inside "new entity"', async () => {
+    await Hierarchy.addChild(ROOT, 'child 4');
+    const parent = await Hierarchy.getId('new entity');
+    const child1 = await Hierarchy.getId('child 1');
+    const child3 = await Hierarchy.getId('child 3');
+    const child4 = await Hierarchy.getId('child 4');
+    await Hierarchy.setParent(child4, child3, { x: 'inside', y: 'after' });
+
+    // check that parent is the same for all childs
+    await expect(Hierarchy.isAncestor(child1, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child3, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child4, parent)).resolves.toBe(true);
+
+    await expect(Hierarchy.hasChildrenInOrder(parent, child3, child4, child1)).resolves.toBe(true);
+  });
+
+  test('duplicate "new entity"', async () => {
+    const parent = await Hierarchy.getId('new entity');
+    const parentChildrenIds = await Hierarchy.getChildrenIds(parent, '.Tree');
+    await Hierarchy.duplicate(parent);
+    const rootChildrenIds = await Hierarchy.getChildrenIds(ROOT, '.Tree.is-parent');
+    const lastChildId = rootChildrenIds.pop() || NaN;
+    const lastChildLabel = await Hierarchy.getLabel(lastChildId);
+    await Hierarchy.toggleOpen(lastChildId);
+    const duplicatedChildrenIds = await Hierarchy.getChildrenIds(lastChildId, '.Tree');
+
+    expect(lastChildLabel).toBe('new entity_2');
+    expect(duplicatedChildrenIds.length).toBe(parentChildrenIds.length);
+  });
+
+  test('rename "child 2" to "gltf', async () => {
+    const child2 = await Hierarchy.getId('child 2');
+    await Hierarchy.rename(child2, 'gltf');
+    await expect(Hierarchy.getId('gltf')).resolves.not.toThrow();
+    await expect(Hierarchy.getLabel(child2)).resolves.toBe('gltf');
+  });
+
+  test('keep consecutive spaces of a name visible once out of edit mode', async () => {
+    const label = 'this  is  a  test';
+    await Hierarchy.addChild(ROOT, label);
+    const entity = await Hierarchy.getId(label);
+    await expect(Hierarchy.getRenderedLabel(entity)).resolves.toBe(label);
+    await Hierarchy.select(entity);
+    await expect(
+      page.locator('.EntityHeader .Title').evaluate(el => (el as HTMLElement).innerText),
+    ).resolves.toBe(label);
+    await Hierarchy.remove(entity);
+  });
+
+  test('keep consecutive spaces visible in the rename confirmation', async () => {
+    const label = 'spaced  name';
+    await Hierarchy.addChild(ROOT, label);
+    const entity = await Hierarchy.getId(label);
+
+    // The confirmation appears when the edit input loses focus with a changed
+    // value, and it previews both names — they must read as they will be saved.
+    const renamed = 'renamed  by  blur';
+    await Hierarchy.startRenameAndBlur(entity, renamed);
+    await expect(
+      page
+        .locator('.EditTree span')
+        .first()
+        .evaluate(el => (el as HTMLElement).innerText),
+    ).resolves.toBe(`Do you want to rename "${label}" to "${renamed}"`);
+
+    await page.locator('.EditTree button', { hasText: 'Cancel' }).click();
+    await Hierarchy.remove(entity);
+  });
+
+  test('add Gltf to "gltf"', async () => {
+    const gltf = await Hierarchy.getId('gltf');
+    await expect(Hierarchy.addComponent(gltf, 'GLTF')).resolves.not.toThrow();
+  });
+
+  test('check it\'s not possible to add another Gltf to "gltf"', async () => {
+    const gltf = await Hierarchy.getId('gltf');
+    await expect(Hierarchy.addComponent(gltf, 'GLTF')).rejects.toThrow();
+  });
+  test('delete an entity', async () => {
+    const gltf = await Hierarchy.getId('gltf');
+    await expect(Hierarchy.exists(gltf)).resolves.toBe(true);
+    await Hierarchy.remove(gltf);
+    await expect(Hierarchy.exists(gltf)).resolves.toBe(false);
+  });
+  test('delete the parent entity with its children', async () => {
+    const parent = await Hierarchy.getId('new entity');
+    const child = await Hierarchy.getId('child 1');
+    await expect(Hierarchy.exists(parent)).resolves.toBe(true);
+    await expect(Hierarchy.exists(child)).resolves.toBe(true);
+    await Hierarchy.remove(parent);
+    await expect(Hierarchy.exists(parent)).resolves.toBe(false);
+    await expect(Hierarchy.exists(child)).resolves.toBe(false);
+  });
+
+  test('drag and drop multiple selected entities', async () => {
+    await Hierarchy.addChild(ROOT, 'multi-parent');
+    await Hierarchy.addChild(ROOT, 'multi-child-1');
+    await Hierarchy.addChild(ROOT, 'multi-child-2');
+    await Hierarchy.addChild(ROOT, 'multi-child-3');
+
+    const parent = await Hierarchy.getId('multi-parent');
+    const child1 = await Hierarchy.getId('multi-child-1');
+    const child2 = await Hierarchy.getId('multi-child-2');
+    const child3 = await Hierarchy.getId('multi-child-3');
+
+    await Hierarchy.selectMultiple([child1, child2, child3]);
+
+    await Hierarchy.setParent(child1, parent); // this should move all selected children
+
+    await expect(Hierarchy.isAncestor(child1, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child2, parent)).resolves.toBe(true);
+    await expect(Hierarchy.isAncestor(child3, parent)).resolves.toBe(true);
+  });
+});

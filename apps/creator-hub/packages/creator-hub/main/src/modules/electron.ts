@@ -1,0 +1,77 @@
+import path from 'path';
+import fs from 'fs/promises';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+  shell,
+} from 'electron';
+import type { Env } from '/shared/types/env';
+
+// Store environment override from CLI arguments
+let envOverride: Env | null = null;
+
+export function setEnvOverride(value: Env | null) {
+  envOverride = value;
+}
+
+export function getEnvOverride(): Env | null {
+  return envOverride;
+}
+
+export function getHome() {
+  return app.getPath('home');
+}
+
+export function getUserDataPath() {
+  return app.getPath('userData');
+}
+
+export function getAppDataPath() {
+  return app.getPath('appData');
+}
+
+export function getAppHomeLegacy() {
+  return path.join(getHome(), '.decentraland');
+}
+
+export async function getWorkspaceConfigPath(_path: string) {
+  const editorHomePath = path.join(_path, '.editor');
+  try {
+    await fs.stat(_path);
+  } catch (error) {
+    await fs.mkdir(editorHomePath, { recursive: true });
+  }
+  return editorHomePath;
+}
+
+export async function showOpenDialog(opts: Partial<OpenDialogOptions>): Promise<string[]> {
+  const window = BrowserWindow.getFocusedWindow();
+  if (!window) return [];
+
+  const { filePaths } = await dialog.showOpenDialog(window, opts);
+  return filePaths;
+}
+
+export async function showSaveDialog(opts: Partial<SaveDialogOptions>): Promise<string | null> {
+  const window = BrowserWindow.getFocusedWindow();
+  if (!window) return null;
+
+  const { canceled, filePath } = await dialog.showSaveDialog(window, opts);
+  return canceled || !filePath ? null : filePath;
+}
+
+export async function openExternal(url: string) {
+  shell.openExternal(url);
+}
+
+export async function getAppVersion() {
+  return app.getVersion();
+}
+
+export async function copyToClipboard(text: string) {
+  clipboard.writeText(text);
+}

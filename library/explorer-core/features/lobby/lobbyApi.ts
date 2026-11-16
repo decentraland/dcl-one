@@ -46,7 +46,7 @@ export function fetchWorld(name: string): Promise<DiscoverPlace | null> {
   return cached(`world:${name}`, async () => (await placesData(`${PLACES_API}/worlds?names=${encodeURIComponent(name)}`))[0] ?? null)
 }
 
-export type LiveEvent = DclEvent & { connected_addresses?: string[] }
+export type LiveEvent = DclEvent
 
 /** People in a live event right now. */
 export function eventPeople(e: LiveEvent): number {

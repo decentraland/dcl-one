@@ -440,6 +440,12 @@ struct CompletionFaultBus {
 
 #[async_trait::async_trait]
 impl NatsBus for CompletionFaultBus {
+    async fn statistics_control(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, catalyst::comms::gatekeeper::bus::RequestError> {
+        self.inner.statistics_control(payload).await
+    }
     fn is_enabled(&self) -> bool {
         self.inner.is_enabled()
     }

@@ -30,7 +30,6 @@ import {
   componentModulePaths,
   componentPackages,
   createComponentGeneration,
-  handWrittenComponentDirectories,
   isComponentModulePath
 } from '../component-generation.mjs'
 
@@ -631,47 +630,73 @@ async function installComponents(
   }
   await verifyInputs()
   return publishInstall(root, 'components', outDir, planned, verifyInputs, (current) =>
-    handWrittenComponents(current, lock.publicComponents?.files, planned)
+    unownedComponentFiles(current, lock.publicComponents?.files, planned)
   )
 }
 
 /**
- * Hand-written components in the current target: directories that hold none of the outputs the lock's public table
- * pins or the current generation record lists, read from the same snapshot the transaction publishes over. They are carried into the published tree byte for byte, never
- * planned, regenerated or deleted, and a plan that would write into one is refused.
+ * Files in the current target that the install does not own, read from the same snapshot the transaction publishes
+ * over. Ownership is per file: the install owns its record and registry, and an output the lock's public table or the
+ * current generation record pins, while its bytes still match that pin. Only owned files may be removed or
+ * overwritten. Every other file in a component directory is carried into the published tree byte for byte, so a
+ * maintained file, or an edit committed over a generated one, survives a component moving from generated to
+ * hand-written. A plan that would write over such a file, or into a component directory that holds one, is refused,
+ * so a generated component never mixes with files its record does not pin; so is an unowned file at the top of the
+ * target, which the public output check refuses.
  */
-function handWrittenComponents(
+function unownedComponentFiles(
   current: Map<string, Buffer> | undefined,
   table: Record<string, unknown> | undefined,
   planned: ReadonlyMap<string, Buffer>
 ): Map<string, Buffer> {
   const kept = new Map<string, Buffer>()
   if (!current) return kept
-  const owned = new Set(Object.keys(table ?? {}))
-  // The installed record also names outputs a lock not yet resealed does not; an unreadable record adds nothing,
-  // which can only keep more, never delete a hand-written file.
+  const pins = new Map<string, Set<string>>()
+  const pin = (file: unknown, sha256: unknown) => {
+    if (typeof file !== 'string' || typeof sha256 !== 'string') return
+    if (!pins.has(file)) pins.set(file, new Set())
+    pins.get(file)!.add(sha256)
+  }
+  for (const [file, entry] of Object.entries(table ?? {}))
+    pin(file, (entry as { sha256?: unknown } | null)?.sha256)
+  // The installed record also pins outputs a lock not yet resealed does not, so a repeat install before the reseal
+  // still owns them. It releases a file only at the exact bytes it pins; an unreadable record adds nothing, which can
+  // only keep more, never delete a file.
   try {
     const output = (
       JSON.parse(current.get('generation.json')?.toString('utf8') ?? '{}') as { output?: unknown }
     ).output
     if (Array.isArray(output))
-      for (const entry of output as { path?: unknown }[])
-        if (typeof entry?.path === 'string') owned.add(entry.path)
+      for (const entry of output as { path?: unknown; sha256?: unknown }[])
+        pin(entry?.path, entry?.sha256)
   } catch {
     // The lock table alone decides.
   }
-  const directories = new Set(handWrittenComponentDirectories(current.keys(), owned))
+  const owned = (file: string, bytes: Buffer) =>
+    file === 'generation.json' ||
+    file === 'promotion.json' ||
+    pins.get(file)?.has(digest(bytes)) === true
   const fold = (name: string) => name.normalize('NFC').toLowerCase()
+  const plannedFiles = new Set([...planned.keys()].map(fold))
   const plannedDirectories = new Set(
     [...planned.keys()]
       .filter((file) => file.includes('/'))
       .map((file) => fold(file.split('/')[0]!))
   )
-  for (const directory of directories)
-    if (plannedDirectories.has(fold(directory)))
-      throw new Error('Component install would overwrite a hand-written component: ' + directory)
-  for (const [file, bytes] of current)
-    if (file.includes('/') && directories.has(file.split('/')[0]!)) kept.set(file, bytes)
+  for (const file of [...current.keys()].sort()) {
+    const bytes = current.get(file)!
+    if (owned(file, bytes)) continue
+    if (plannedFiles.has(fold(file)))
+      throw new Error('Component install would overwrite a file it does not own: ' + file)
+    if (!file.includes('/'))
+      throw new Error('Component install target holds a top-level file it does not own: ' + file)
+    if (plannedDirectories.has(fold(file.split('/')[0]!)))
+      throw new Error(
+        'Component install would write a generated component next to a file it does not own: ' +
+          file
+      )
+    kept.set(file, bytes)
+  }
   return kept
 }
 
@@ -741,7 +766,14 @@ async function publishInstall(
   keep: (current: Map<string, Buffer> | undefined) => Map<string, Buffer> = () => new Map()
 ): Promise<InstallResult> {
   const current = await tree(outDir)
-  const kept = keep(current)
+  let kept: Map<string, Buffer>
+  try {
+    kept = keep(current)
+  } catch (error) {
+    // A dirty target is reported as such before an ownership refusal.
+    await cleanTarget(root, target, outDir, current, planned)
+    throw error
+  }
   // Kept files are published as they are and are not reported as install output.
   const publication = new Map([...planned, ...kept])
   await cleanTarget(root, target, outDir, current, publication)

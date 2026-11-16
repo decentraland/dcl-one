@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/healing_pad.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/HealingPad.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"healPoints\":{\"type\":\"number\",\"value\":5,\"optional\":true,\"tooltip\":\"How much health each tick restores.\"},\"interval\":{\"type\":\"number\",\"value\":0.5,\"optional\":true,\"tooltip\":\"Seconds between heal ticks.\"},\"sound\":{\"type\":\"string\",\"value\":\"heal.mp3\",\"optional\":true,\"tooltip\":\"Audio file in this item's folder played when the player steps on (e.g. heal.mp3). Empty for none.\"}},\"actions\":[{\"methodName\":\"heal\",\"description\":\"Restores one tick of health to the player right now.\",\"params\":{}}],\"events\":[]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Heal",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/HealingPad.ts\",\"methodName\":\"heal\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -37,12 +37,14 @@ fn assert_peer_shape(peer: &Value, address: &str) {
 #[tokio::test]
 async fn peers_shape_and_comms_alias_match() {
     let (port, state) = start_server().await;
-    state.peers.upsert_peer(
+    archipelago::heartbeat(
+        &state,
         "0xaaaa".into(),
         [16.0, 0.0, 32.0],
         [1, 2],
         "catalyrst".into(),
-    );
+    )
+    .await;
 
     for path in ["/peers", "/comms/peers"] {
         let (status, body) = get_json(port, path).await;
@@ -55,7 +57,7 @@ async fn peers_shape_and_comms_alias_match() {
         assert_eq!(peers[0]["parcel"], serde_json::json!([1, 2]), "{path}");
         assert_eq!(
             peers[0]["position"],
-            serde_json::json!([16.0, 0.0, 32.0]),
+            serde_json::json!([16, 0, 32]),
             "{path}"
         );
     }
@@ -64,15 +66,30 @@ async fn peers_shape_and_comms_alias_match() {
 #[tokio::test]
 async fn parcels_count_peers_per_tile_on_every_prefix() {
     let (port, state) = start_server().await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [16.0, 0.0, 32.0], [1, 2], "r".into());
-    state
-        .peers
-        .upsert_peer("0xbbbb".into(), [31.0, 3.0, 47.0], [1, 2], "r".into());
-    state
-        .peers
-        .upsert_peer("0xcccc".into(), [-1.0, 0.0, 0.0], [-1, 0], "r".into());
+    archipelago::heartbeat(
+        &state,
+        "0xaaaa".into(),
+        [16.0, 0.0, 32.0],
+        [1, 2],
+        "r".into(),
+    )
+    .await;
+    archipelago::heartbeat(
+        &state,
+        "0xbbbb".into(),
+        [31.0, 3.0, 47.0],
+        [1, 2],
+        "r".into(),
+    )
+    .await;
+    archipelago::heartbeat(
+        &state,
+        "0xcccc".into(),
+        [-1.0, 0.0, 0.0],
+        [-1, 0],
+        "r".into(),
+    )
+    .await;
 
     for path in ["/parcels", "/comms/parcels", "/stats/parcels"] {
         let (status, body) = get_json(port, path).await;
@@ -91,9 +108,9 @@ async fn parcels_count_peers_per_tile_on_every_prefix() {
         );
     }
 
-    state.peers.remove_peer("0xaaaa");
-    state.peers.remove_peer("0xbbbb");
-    state.peers.remove_peer("0xcccc");
+    archipelago::disconnect(&state, "0xaaaa").await;
+    archipelago::disconnect(&state, "0xbbbb").await;
+    archipelago::disconnect(&state, "0xcccc").await;
     let (status, body) = get_json(port, "/stats/parcels").await;
     assert_eq!(status, 200);
     assert_eq!(body, serde_json::json!({"parcels": []}));
@@ -102,9 +119,14 @@ async fn parcels_count_peers_per_tile_on_every_prefix() {
 #[tokio::test]
 async fn stats_prefix_serves_peers_and_islands() {
     let (port, state) = start_server().await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [16.0, 0.0, 32.0], [1, 2], "r".into());
+    archipelago::heartbeat(
+        &state,
+        "0xaaaa".into(),
+        [16.0, 0.0, 32.0],
+        [1, 2],
+        "r".into(),
+    )
+    .await;
 
     let (status, body) = get_json(port, "/stats/peers").await;
     assert_eq!(status, 200);
@@ -113,7 +135,7 @@ async fn stats_prefix_serves_peers_and_islands() {
     assert_eq!(peers.len(), 1);
     assert_peer_shape(&peers[0], "0xaaaa");
 
-    let (status, body) = get_json(port, "/stats/peers/0xAAAA").await;
+    let (status, body) = get_json(port, "/stats/peers/0xaaaa").await;
     assert_eq!(status, 200);
     assert_peer_shape(&body["peer"], "0xaaaa");
 
@@ -129,30 +151,23 @@ async fn stats_prefix_serves_peers_and_islands() {
 }
 
 #[tokio::test]
-async fn peers_id_filter_is_case_insensitive() {
+async fn peers_id_filter_preserves_exact_case() {
     let (port, state) = start_server().await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
-    state
-        .peers
-        .upsert_peer("0xbbbb".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    archipelago::heartbeat(&state, "0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into()).await;
+    archipelago::heartbeat(&state, "0xbbbb".into(), [0.0, 0.0, 0.0], [0, 0], "r".into()).await;
 
     let (status, body) = get_json(port, "/peers?id=0xAAAA").await;
     assert_eq!(status, 200);
-    let peers = body["peers"].as_array().unwrap();
-    assert_eq!(peers.len(), 1);
-    assert_eq!(peers[0]["address"], "0xaaaa");
+    assert!(body["peers"].as_array().unwrap().is_empty());
+    assert_eq!(get_json(port, "/peers/0xAAAA").await.0, 404);
 }
 
 #[tokio::test]
 async fn peer_by_id_found_and_not_found() {
     let (port, state) = start_server().await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    archipelago::heartbeat(&state, "0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into()).await;
 
-    for path in ["/peers/0xaaaa", "/comms/peers/0xAAAA"] {
+    for path in ["/peers/0xaaaa", "/comms/peers/0xaaaa"] {
         let (status, body) = get_json(port, path).await;
         assert_eq!(status, 200, "{path}");
         assert_eq!(body["ok"], true, "{path}");
@@ -181,9 +196,7 @@ async fn hot_scenes_is_json_array() {
     )
     .await;
     let port = archipelago::serve(state.clone()).await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    archipelago::heartbeat(&state, "0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into()).await;
 
     let (status, body) = get_json(port, "/hot-scenes").await;
     assert_eq!(status, 200);
@@ -191,9 +204,7 @@ async fn hot_scenes_is_json_array() {
     assert_eq!(body.as_array().unwrap().len(), 0);
 
     let (unreachable, offline) = start_server().await;
-    offline
-        .peers
-        .upsert_peer("0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    archipelago::heartbeat(&offline, "0xaaaa".into(), [0.; 3], [0, 0], "r".into()).await;
     let resp = reqwest::get(format!("http://127.0.0.1:{unreachable}/hot-scenes"))
         .await
         .expect("request");
@@ -214,5 +225,8 @@ async fn status_uses_camelcase_fields() {
 
     assert!(obj.contains_key("version"));
     assert!(obj.contains_key("currentTime"));
-    assert_eq!(body["commitHash"], "deadbeef");
+    assert_eq!(
+        body["commitHash"],
+        std::env::var("COMMIT_HASH").unwrap_or_default()
+    );
 }
