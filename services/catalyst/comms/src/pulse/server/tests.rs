@@ -1270,6 +1270,124 @@ async fn a_peer_that_floods_while_its_handshake_is_held_is_refused() {
 }
 
 #[tokio::test]
+async fn a_held_handshake_is_answered_on_release_before_the_packets_behind_it() {
+    let path = JournalPath::new("release-over-enet");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let host = Host::bind(HostConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        max_peers: 2,
+        channel_limit: 3,
+    })
+    .await
+    .unwrap();
+    let addr = host.local_addr().unwrap();
+    let mut transports = Transports::enet_only(host, 2);
+    let mut client = rusty_enet::Host::new(
+        std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
+        rusty_enet::HostSettings {
+            peer_limit: 1,
+            channel_limit: 3,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    client.connect(addr, 3, 0).unwrap();
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    server.peers.clear();
+    let mut peer = None;
+    let mut connected = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while peer.is_none() || !connected {
+        assert!(std::time::Instant::now() < deadline);
+        if let Some(Event::Connect { peer: id, .. }) = transports.service().await.unwrap() {
+            server
+                .connect_pending(id as u32, "127.0.0.1".into(), 0)
+                .unwrap();
+            peer = Some(id as u32);
+        }
+        if let Some(rusty_enet::Event::Connect { .. }) = client.service().unwrap() {
+            connected = true;
+        }
+    }
+    let peer = peer.unwrap();
+
+    let profile = client_msg(client_message::Message::ProfileAnnouncement(
+        ProfileVersionAnnouncement { version: 7 },
+    ));
+    for data in [bytes, profile] {
+        client
+            .peer_mut(rusty_enet::PeerID(0))
+            .send(channel::RELIABLE, &rusty_enet::Packet::reliable(data))
+            .unwrap();
+    }
+    client.flush();
+    let mut received = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while received < 2 {
+        assert!(std::time::Instant::now() < deadline, "packets missing");
+        let _ = client.service().unwrap();
+        if let Some(Event::Receive {
+            peer: id,
+            channel,
+            packet,
+        }) = transports.service().await.unwrap()
+        {
+            server
+                .receive(
+                    &mut transports,
+                    id as u32,
+                    channel,
+                    &packet.data,
+                    timestamp,
+                    1,
+                )
+                .await
+                .unwrap();
+            received += 1;
+        }
+    }
+    assert!(!server.is_authenticated(peer), "no answer before the sync");
+    assert_eq!(server.profiles.get(peer), 0);
+
+    gate.send(Ok(())).unwrap();
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        server.replay_policy.journal_progressed(),
+    )
+    .await
+    .unwrap();
+    server.release_journaled(&mut transports).await.unwrap();
+    assert!(server.is_authenticated(peer));
+    assert_eq!(server.identity.peer_by_wallet(&wallet), Some(peer));
+    assert_eq!(
+        server.profiles.get(peer),
+        7,
+        "the packet behind the handshake is applied after it"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "handshake answer missing"
+        );
+        let _ = transports.service().await.unwrap();
+        if let Some(rusty_enet::Event::Receive { packet, .. }) = client.service().unwrap() {
+            assert!(matches!(
+                ServerMessage::decode(packet.data()).unwrap(),
+                ServerMessage {
+                    message: Some(server_message::Message::Handshake(HandshakeResponse {
+                        success: true,
+                        ..
+                    }))
+                }
+            ));
+            break;
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_disconnect_drops_the_held_handshake() {
     let path = JournalPath::new("disconnect-held");
     let (bytes, _, timestamp) = signed_handshake_request().await;
