@@ -425,7 +425,7 @@ pub async fn publish_key_packages(
 }
 
 /// `GET /mls/key-packages/{owner}` consumes the package it returns: a
-/// social write behind the social switch and the restore stamps.
+/// social write behind the social switch.
 pub async fn claim_key_package(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
@@ -444,8 +444,8 @@ pub async fn claim_key_package(
         &SignedPath::at(&uri, format!("/mls/key-packages/{owner}")),
     )
     .await?;
-    if let Some(refusal) = crate::comms::writes::side_refusal(switch) {
-        return Ok(crate::writes::refused_response(&refusal));
+    if !crate::comms::writes::side_writes_on(switch) {
+        return Ok(crate::writes::disabled_response());
     }
     if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
         return Err(claim_rate_limited());
@@ -1282,14 +1282,10 @@ mod tests {
         )
     }
 
-    /// A claim consumes the package it returns: off or held it answers the
-    /// social 503 and consumes nothing.
+    /// A claim consumes the package it returns: off it answers the social
+    /// 503 and consumes nothing.
     #[tokio::test]
     async fn a_key_package_claim_is_a_social_write() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
@@ -1303,19 +1299,12 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["message"], crate::writes::DISABLED_MESSAGE);
         let on = app_with("peer-on", pool.clone(), &dir, true).await;
-        let lab = StampLab::fresh();
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
-            assert_eq!(status, StatusCode::NOT_FOUND, "fresh stamps reach the store");
-            lab.advance(30 * HOUR);
-            let (status, body) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(
-                body["message"],
-                "social writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-        })
-        .await;
+        let (status, _) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "on, the claim reaches the store"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

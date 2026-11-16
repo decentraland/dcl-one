@@ -14,7 +14,8 @@ pub struct LandAuthzConfig {
     pub land_authz_index_interval_secs: u64,
 
     /// Log, timestamp-header and legacy-repair RPC budget per pass (minimum 2).
-    /// Head probes are excluded; timestamp batches contain at most 100 blocks.
+    /// Head probes and the headers that check a range's fork are excluded;
+    /// timestamp batches contain at most 100 blocks.
     #[arg(long, env = "LAND_AUTHZ_INDEX_REQUESTS_PER_PASS", default_value_t = 50)]
     pub land_authz_index_requests_per_pass: usize,
 
@@ -27,4 +28,9 @@ pub struct LandAuthzConfig {
     /// Development bound: index no further; an index held short of the head is never published.
     #[arg(long, env = "LAND_AUTHZ_STOP_BLOCK")]
     pub land_authz_stop_block: Option<u64>,
+
+    /// Blocks the index stays behind the chain head; a reorg past this depth is
+    /// detected by the cursor block's hash and re-indexed.
+    #[arg(long, env = "LAND_AUTHZ_CONFIRMATIONS", default_value_t = 12)]
+    pub land_authz_confirmations: u64,
 }

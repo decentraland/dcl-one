@@ -18,22 +18,15 @@ use axum::Router;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-pub const DISABLED_MESSAGE: &str = "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const DISABLED_MESSAGE: &str =
+    "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false)";
 
-pub use crate::shared::writes::{Gate, Refusal, guard_with, is_gated};
+pub use crate::shared::writes::{Gate, guard_with, is_gated};
 
 /// The 503 the gate answers: the builder error envelope with a `Retry-After`
 /// so a client does not hammer a node that will not change its mind soon.
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("creator", DISABLED_MESSAGE);
-    let body =
-        serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": message });
+    let body = serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": DISABLED_MESSAGE });
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -52,8 +45,7 @@ pub fn guard(router: Router, writes_enabled: bool) -> Router {
         Gate {
             enabled: writes_enabled,
             open_while_disabled: &[],
-            refuse: refused_response,
-            blobs: true,
+            refuse: disabled_response,
         },
     )
 }
@@ -134,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_gate_with_open_paths_and_its_own_envelope() {
-        fn refuse(_: &Refusal) -> Response {
+        fn refuse() -> Response {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [(header::RETRY_AFTER, "1")],
@@ -146,7 +138,6 @@ mod tests {
             enabled: false,
             open_while_disabled: &["/api/places/images"],
             refuse,
-            blobs: true,
         };
         assert!(gate.refuses(&Method::POST, "/api/images"));
         assert!(!gate.refuses(&Method::POST, "/api/places/images"));
@@ -182,32 +173,5 @@ mod tests {
             res.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json"
         );
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/builder-api/v1/newsletter").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.advance(26 * HOUR);
-            let (status, body) = call(&app, "POST", "/builder-api/v1/newsletter").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(
-                v["message"],
-                "creator writes are held on this node: the last complete backup (backup.json) is 27 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            let (status, _) = call(&app, "GET", "/builder-api/v1/collections").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

@@ -52,3 +52,37 @@ pub fn land_network(eth_network: &str) -> Option<LandNetwork> {
         _ => None,
     }
 }
+
+/// The network whose LAND or estate registry is `address` (any case);
+/// `None` for another contract.
+pub fn land_network_of_registry(address: &str) -> Option<LandNetwork> {
+    [LAND_MAINNET, LAND_SEPOLIA].into_iter().find(|net| {
+        address.eq_ignore_ascii_case(net.land_registry)
+            || address.eq_ignore_ascii_case(net.estate_registry)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_registry_names_its_network_in_any_case() {
+        for (address, net) in [
+            (LAND_REGISTRY_MAINNET, LAND_MAINNET),
+            (ESTATE_REGISTRY_MAINNET, LAND_MAINNET),
+            (LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA),
+            (ESTATE_REGISTRY_SEPOLIA, LAND_SEPOLIA),
+        ] {
+            assert_eq!(land_network_of_registry(address), Some(net));
+            assert_eq!(
+                land_network_of_registry(&address.to_ascii_uppercase().replace("0X", "0x")),
+                Some(net)
+            );
+        }
+        assert_eq!(
+            land_network_of_registry("0x2a187453064356c898cae034eaed119e1663acb8"),
+            None
+        );
+    }
+}

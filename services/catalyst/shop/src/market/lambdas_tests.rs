@@ -1859,8 +1859,8 @@ async fn user_lands_answer_on_a_pool_of_one_connection() {
     db.drop().await;
 }
 
-/// LL-15: `/lands` and `/genesis-parcels` read the index of the registries
-/// `ETH_NETWORK` names. A Sepolia node answers from its Sepolia index; a
+/// LL-15: `/lands`, `/genesis-parcels` and the marketplace `/v1/nfts`
+/// read the index of the registries `ETH_NETWORK` names. A Sepolia node answers from its Sepolia index; a
 /// mainnet node over the same database finds no mainnet cursor and does not
 /// read the Sepolia rows.
 #[tokio::test]
@@ -1926,6 +1926,34 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
 
     let mainnet = state_for("mainnet");
     let (status, body) = get(&mainnet, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "no mainnet cursor: {body}"
+    );
+
+    // The marketplace LAND search (the index path of `/v1/nfts`) reads the
+    // same registries.
+    let (status, body) = get_via(
+        super::market_router(sepolia.clone()),
+        "/v1/nfts?category=parcel&search=10,-3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["total"].as_i64(),
+            body["data"][0]["nft"]["contractAddress"].as_str(),
+            body["data"][0]["nft"]["tokenId"].as_str()
+        ),
+        (Some(1), Some(LAND_REGISTRY_SEPOLIA), Some("7")),
+        "{body}"
+    );
+    let (status, body) = get_via(
+        super::market_router(mainnet.clone()),
+        "/v1/nfts?category=parcel&search=10,-3",
+    )
+    .await;
     assert_eq!(
         (status, body["source"].as_str()),
         (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),

@@ -1817,12 +1817,10 @@ async fn connections_for(pool: &PgPool, address: &str) -> i64 {
         .unwrap()
 }
 
-/// The DM token's connection record is a social write: off or held, the
-/// token still mints and nothing is recorded; on with fresh stamps, the
-/// connection is stored.
+/// The DM token's connection record is a social write: off, the token
+/// still mints and nothing is recorded; on, the connection is stored.
 #[tokio::test]
 async fn the_private_messages_token_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1834,49 +1832,33 @@ async fn the_private_messages_token_records_the_connection_only_while_social_wri
         r#"{"signer":"dcl:explorer"}"#,
     )
     .await;
-    let lab = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
-        let held = scoped(
-            lab.stamps.clone(),
-            voice::private_messages_token(
-                State(state.clone()),
-                at("/private-messages/token"),
-                headers.clone(),
-                switch,
-            ),
-        )
-        .await;
-        assert!(held.is_ok(), "the token mints whatever the switch");
-    }
-    assert_eq!(
-        connections_for(&pool, me.as_str()).await,
-        0,
-        "no stamps: nothing recorded"
-    );
-    let lab = StampLab::fresh();
-    let minted = scoped(
-        lab.stamps.clone(),
+    let mint = |switch| {
         voice::private_messages_token(
             State(state.clone()),
             at("/private-messages/token"),
             headers.clone(),
-            writes_on(),
-        ),
-    )
-    .await;
-    assert!(minted.is_ok());
+            switch,
+        )
+    };
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
+        assert!(
+            mint(switch).await.is_ok(),
+            "the token mints whatever the switch"
+        );
+    }
+    assert_eq!(
+        connections_for(&pool, me.as_str()).await,
+        0,
+        "off: nothing recorded"
+    );
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 
-/// The scene adapter's connection record is a social write too: off or
-/// held, the adapter still mints and nothing is recorded.
+/// The scene adapter's connection record is a social write too: off, the
+/// adapter still mints and nothing is recorded.
 #[tokio::test]
 async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1889,35 +1871,27 @@ async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_th
         &meta("main", &scene_id, Some("dev-held")),
     )
     .await;
-    let mint = |lab: &StampLab, switch| {
-        scoped(
-            lab.stamps.clone(),
-            handlers::get_scene_adapter(
-                State(state.clone()),
-                at("/get-scene-adapter"),
-                headers.clone(),
-                switch,
-                axum::body::Bytes::new(),
-            ),
+    let mint = |switch| {
+        handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            switch,
+            axum::body::Bytes::new(),
         )
     };
-    let held = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
         assert!(
-            mint(&held, switch).await.is_ok(),
+            mint(switch).await.is_ok(),
             "the adapter mints whatever the switch"
         );
     }
     assert_eq!(
         connections_for(&pool, me.as_str()).await,
         0,
-        "held or off: nothing recorded"
+        "off: nothing recorded"
     );
-    assert!(mint(&StampLab::fresh(), writes_on()).await.is_ok());
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 

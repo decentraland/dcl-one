@@ -187,6 +187,10 @@
     "primitives": 0,
     "tokens": 6
   },
+  "library/ui/components/CardImage/CardImage.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
     "tokens": 25
