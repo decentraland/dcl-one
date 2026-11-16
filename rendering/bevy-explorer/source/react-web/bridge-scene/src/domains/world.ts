@@ -11,6 +11,7 @@ import { getRealm } from '~system/Runtime'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { throttleByDt, singleFlight } from '../system-helpers'
+import { setNearbyVoiceBlocked } from './voice'
 
 // Pose stream: ~20/s is smooth enough for the minimap once React interpolates between
 // samples, and keeps the bridge far quieter than a per-frame push.
@@ -251,10 +252,12 @@ export function registerWorld(ctx: Ctx): void {
     acc = 0
     BevyApi.getMicState()
       .then((s) => {
-        const key = `${String(s.enabled)}|${String(s.available)}`
+        // a refusal leaves the rest unchanged but must still reset the HUD's optimistic toggle
+        const key = `${String(s.enabled)}|${String(s.available)}|${String(s.scene_blocked)}|${String(s.refusals)}`
         if (key === lastKey) return
         lastKey = key
-        ctx.send({ kind: 'mic', enabled: s.enabled, available: s.available })
+        setNearbyVoiceBlocked(s.scene_blocked)
+        ctx.send({ kind: 'mic', enabled: s.enabled, available: s.available, sceneBlocked: s.scene_blocked, refusals: s.refusals })
       })
       .catch(() => undefined)
   })

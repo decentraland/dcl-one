@@ -327,6 +327,7 @@ mod gateway_tests {
             (Service::AssetsCdn, "assets-cdn"),
             (Service::MarketplaceApi, "marketplace-api"),
             (Service::Autotranslate, "autotranslate-server"),
+            (Service::BuilderApi, "builder-api"),
         ] {
             let direct_path = match service {
                 Service::Catalyst => String::new(),

@@ -32,4 +32,4 @@ jobs:
       # Reuse the shared build instead of regenerating protoc / rebuilding asset-packs.
       - uses: ./.github/actions/creator-hub-download-build
 
-      - run: npm run typecheck --if-present
+      - run: make typecheck

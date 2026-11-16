@@ -67,6 +67,8 @@ export type RpcMethod =
   | 'guestLogin'
   | 'guestSign'
   | 'guestDiscard'
+  | 'emailStart'
+  | 'emailComplete'
 
 // ---- page -> scene ---------------------------------------------------------
 
@@ -235,6 +237,10 @@ export type PageToScene =
   | CancelJoinRequestRequest
   | ManageCommunityRequestRequest
   | UnbanCommunityMemberRequest
+  | GetCommunityPostsRequest
+  | CreateCommunityPostRequest
+  | DeleteCommunityPostRequest
+  | LikeCommunityPostRequest
   | GetCommunityInvitesRequest
   | GetCommunityInvitesCountRequest
   | GetCommunityMemberSectionRequest
@@ -251,9 +257,7 @@ export type PageToScene =
   | GetMapRequest
   | GetHomeSceneRequest
   | GetWelcomeRequest
-  | ExpectLookRequest
   | ShowLookRequest
-  | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | OpenExternalUrlRequest
@@ -832,6 +836,10 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
+  /** The scene the player stands in turns nearby voice off. */
+  sceneBlocked?: boolean
+  /** Counts the mic opens the scene refused. */
+  refusals?: number
 }
 
 export interface SetMicRequest {
@@ -872,25 +880,11 @@ export interface WelcomeMessage extends WelcomeState {
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
- *  (the scene's own fetches are signed, so it can't before sign-in): the guest start page's pick, or
- *  the welcome page's RANDOMIZE. Signed in it is the Backpack's unsaved look, deployed on
- *  `acceptWelcome`; before sign-in the stage wears it as a stand-in. */
+ *  (the scene's own fetches are signed, so it can't before sign-in): a new account's starting look.
+ *  Signed in it is the Backpack's unsaved look, deployed on `acceptWelcome`; before sign-in the
+ *  stage wears it as a stand-in. */
 export interface ShowLookRequest {
   kind: 'showLook'
-  look: number
-  avatar: AvatarLook
-}
-
-/** A `showLook` is on its way (RANDOMIZE was hit; the page is fetching the look): the lobby stage's
- *  avatar turns away now rather than when the look arrives. */
-export interface ExpectLookRequest {
-  kind: 'expectLook'
-}
-
-/** The look the next RANDOMIZE will show: the stage loads it out of sight once the one on show has
- *  loaded, so the swap is instant. */
-export interface PreloadLookRequest {
-  kind: 'preloadLook'
   look: number
   avatar: AvatarLook
 }
@@ -959,11 +953,10 @@ export interface LobbyStageReadyMessage {
   kind: 'lobbyStageReady'
 }
 
-/** The look `default<look>` (a `showLook`) is on the lobby stage, loaded and facing front (scene →
- *  page): the next RANDOMIZE can go. */
-export interface LookShownMessage {
-  kind: 'lookShown'
-  look: number
+/** The sign-in stage (its background and the new account's avatar podium) has been drawn (scene →
+ *  page), so the page's own background can fade out. */
+export interface SigninStageReadyMessage {
+  kind: 'signinStageReady'
 }
 
 export interface SceneInfoMessage {
@@ -1178,6 +1171,11 @@ export interface PermissionResolveRequest {
   realm: string
 }
 
+/** The engine-backed views a page can open: the rich map, the Backpack's avatar preview, the lobby
+ *  stage, and the sign-in stage (the whole screen's background, with a new account's avatar in the
+ *  rect). */
+export type EngineViewportRegion = 'map' | 'avatarPreview' | 'lobby' | 'signin'
+
 /**
  * Tells the scene to render an engine-backed view (the rich map, or the avatar
  * preview) into a screen rectangle that a React page has carved out as transparent.
@@ -1185,7 +1183,7 @@ export interface PermissionResolveRequest {
  */
 export interface EngineViewportRequest {
   kind: 'engineViewport'
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   rect: { x: number; y: number; width: number; height: number } | null
   /** `devicePixelRatio` at the time the rect was measured. The rect is in CSS pixels, so this is
    *  what turns it into the physical pixels the scene should actually render — without it a
@@ -1447,6 +1445,10 @@ export type CommunityAction =
   | CommunityMemberAction
   | 'unban'
   | CommunityRequestAction
+  | 'fetchPosts'
+  | 'createPost'
+  | 'deletePost'
+  | 'likePost'
 
 /** Lift a member's ban, from the card's Banned section (page → scene → signed DELETE
  *  /v1/communities/{id}/members/{address}/bans). */
@@ -1571,6 +1573,8 @@ export interface CommunityActionFailedMessage {
   id: string
   action: CommunityAction
   message: string
+  /** The announcement a failed `deletePost` was about. */
+  postId?: string
 }
 
 /** A member of a community (Members tab). */
@@ -1609,9 +1613,77 @@ export interface CommunityPost {
   author: string
   authorAddress: string
   authorPicture?: string
+  /** The author claimed their name: a verified mark instead of the address's #tag. */
+  hasClaimedName: boolean
+  /** The social API marked the post official (its author is one of the official wallets): the official mark. */
+  official: boolean
   text: string
   timestamp: number
   likes: number
+  /** The signed-in user likes it. */
+  likedByMe: boolean
+}
+
+/** Read a page of a community's announcements (page → scene → signed GET
+ *  /v2/communities/{id}/posts, POSTS_PAGE a page). */
+export interface GetCommunityPostsRequest {
+  kind: 'getCommunityPosts'
+  id: string
+  /** 1-based. */
+  page: number
+}
+
+/** A page of a community's announcements, newest first (scene → page). A failed read arrives as
+ *  `communityActionFailed` with action `fetchPosts`. */
+export interface CommunityPostsMessage {
+  kind: 'communityPosts'
+  id: string
+  page: number
+  posts: CommunityPost[]
+  /** Every announcement the community has. */
+  total: number
+}
+
+/** Post an announcement as an owner or moderator (page → scene → signed POST
+ *  /v1/communities/{id}/posts). The first page is read again after it. */
+export interface CreateCommunityPostRequest {
+  kind: 'createCommunityPost'
+  id: string
+  content: string
+}
+
+/** How an announcement's post went (scene → page): the composer clears on `ok`, and a failure is toasted. */
+export interface CommunityPostCreatedMessage {
+  kind: 'communityPostCreated'
+  id: string
+  ok: boolean
+}
+
+/** Delete an announcement: the owner any, an author their own (page → scene → signed DELETE
+ *  /v1/communities/{id}/posts/{postId}). The first page is read again after it; a failure arrives
+ *  as `communityActionFailed` with action `deletePost`. */
+export interface DeleteCommunityPostRequest {
+  kind: 'deleteCommunityPost'
+  id: string
+  postId: string
+}
+
+/** Like or unlike an announcement (page → scene → signed POST or DELETE
+ *  /v1/communities/{id}/posts/{postId}/like). */
+export interface LikeCommunityPostRequest {
+  kind: 'likeCommunityPost'
+  id: string
+  postId: string
+  like: boolean
+}
+
+/** How a like or unlike went (scene → page); a failure is toasted and changes nothing. */
+export interface CommunityPostLikedMessage {
+  kind: 'communityPostLiked'
+  id: string
+  postId: string
+  liked: boolean
+  ok: boolean
 }
 
 /** An upcoming event (right-hand sidebar). */
@@ -1638,7 +1710,6 @@ export interface CommunityDetailMessage {
   kind: 'communityDetail'
   id: string
   members: CommunityMember[]
-  posts: CommunityPost[]
   places: CommunityPlace[]
   events: CommunityEvent[]
   photos: CommunityPhoto[]
@@ -2283,6 +2354,9 @@ export type SceneToPage =
   | VoiceActivityMessage
   | NearbyMutesMessage
   | CommunityActionFailedMessage
+  | CommunityPostsMessage
+  | CommunityPostCreatedMessage
+  | CommunityPostLikedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
   | CommunityDeletedMessage
@@ -2314,7 +2388,7 @@ export type SceneToPage =
   | RealmInfoMessage
   | SceneInfoMessage
   | LobbyStageReadyMessage
-  | LookShownMessage
+  | SigninStageReadyMessage
   | GalleryMessage
   | GalleryPhotoMessage
   | GalleryWriteMessage
