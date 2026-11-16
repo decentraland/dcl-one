@@ -60,6 +60,31 @@ pub struct ChangesQuery {
     pub limit: Option<i64>,
 }
 
+/// The published form of a stored role envelope payload, built field by
+/// field per message type like the posts and places rows, so a field not
+/// named here stays out of the feed. Stored payloads carry no type tag; the
+/// type follows from its fields: `CommunityRole` has a `role`,
+/// `CommunityLeave` a `member`, `CommunityBan` and `CommunityUnban` a
+/// `target`, and `CommunityJoin` only the community. A ban's free-text
+/// reason is for the community's moderators, who read it through the ban
+/// listing; peers apply the ban without it.
+pub(super) fn public_role_payload(stored: &Value) -> Value {
+    if !stored.is_object() {
+        return Value::Null;
+    }
+    let field = |name: &str| stored.get(name).cloned().unwrap_or(Value::Null);
+    let community_id = field("community_id");
+    if stored.get("role").is_some() {
+        json!({ "community_id": community_id, "target": field("target"), "role": field("role") })
+    } else if stored.get("member").is_some() {
+        json!({ "community_id": community_id, "member": field("member") })
+    } else if stored.get("target").is_some() {
+        json!({ "community_id": community_id, "target": field("target") })
+    } else {
+        json!({ "community_id": community_id })
+    }
+}
+
 pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result<Value> {
     let limit = limit.clamp(1, MAX_CHANGES);
     let rows = |kinds: &'static [&'static str]| async move {
@@ -78,12 +103,7 @@ pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result
         .iter()
         .map(|r| {
             let (community_id, signer, kind): (String, String, String) = (r.get("community_id"), r.get("signer"), r.get("kind"));
-            let mut payload: Value = if kind == "create" { json!({ "type": "CommunityCreate", "community_id": community_id, "creator": signer, "role": "owner" }) } else { r.get("payload") };
-            // A ban's free-text reason is for the community's moderators, who
-            // read it through the ban listing; peers apply the ban without it.
-            if let Some(fields) = payload.as_object_mut() {
-                fields.remove("reason");
-            }
+            let payload = if kind == "create" { json!({ "type": "CommunityCreate", "community_id": community_id, "creator": signer, "role": "owner" }) } else { public_role_payload(&r.get("payload")) };
             json!({
                 "kind": "role",
                 "signature_hash": r.get::<String, _>("signature_hash"),
