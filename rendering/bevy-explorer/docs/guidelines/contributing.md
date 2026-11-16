@@ -193,6 +193,6 @@ on unrelated callers. Give changes with independent consumers or failure modes t
 PR and test evidence.
 
 For browser forwarding changes, run
-`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
 `rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
 referrer policy and disposal of unread response bodies.

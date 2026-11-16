@@ -110,20 +110,20 @@ jobs:
         if: steps.gate.outputs.changed == 'true'
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Install the suite
         if: steps.gate.outputs.changed == 'true'
-        run: npm ci
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: Typecheck
         if: steps.gate.outputs.changed == 'true'
-        run: npm run typecheck
+        run: pnpm run typecheck
       # The driver's tests, with the web transport against a stub page in the runner's Chrome.
       - name: Test the driver
         if: steps.gate.outputs.changed == 'true'
         env:
           DCL_E2E_REQUIRE_CHROME: '1'
-        run: npm test
+        run: pnpm test
       - name: Test the tooling
         if: steps.gate.outputs.changed == 'true'
         working-directory: ${{ github.workspace }}
@@ -262,8 +262,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Download the web app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -272,7 +270,9 @@ jobs:
           run-id: ${{ needs.inputs.outputs.web_run_id }}
           github-token: ${{ github.token }}
       - name: Install the suite
-        run: npm ci
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       # The web driver looks for Chrome under Google's install paths; an image without one gets
       # the pinned Chrome for Testing build, checked against the sum recorded here (Google
       # publishes none), which CHROME_PATH points the driver at. The image's Edge is not used: it
@@ -298,7 +298,7 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$exe"
       # What the scenarios will find, said in seconds rather than after a boot's timeout: the
       # GPU and its driver, whether the job's session is interactive, and the GPU the browser
-      # gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`, chrome://gpu
+      # gives a page, bare and then with the scenarios' flags (`pnpm run gpu-probe`, chrome://gpu
       # into the report). On the VM the browser starts on the paravirtual display adapter and
       # WebGPU finds no hardware there; the probe names the NVIDIA adapter's LUID, and the
       # scenarios start their browser on it. CHROME_EXTRA_ARGS is set here, first thing, so a
@@ -312,9 +312,9 @@ jobs:
           $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
           if ($smi) { & $smi.Source } else { Write-Output 'nvidia-smi: not on PATH' }
           $env:CHROME_EXTRA_ARGS = ''
-          npm run gpu-probe
+          pnpm run gpu-probe
           $env:CHROME_EXTRA_ARGS = $env:WEBGPU_FLAGS
-          $lines = npm run gpu-probe -- --adapter nvidia 2>&1 | ForEach-Object { "$_" }
+          $lines = pnpm run gpu-probe --adapter nvidia 2>&1 | ForEach-Object { "$_" }
           $lines
           $luid = ($lines | Select-String -Pattern '^adapter-luid: (\S+)' | Select-Object -First 1)
           if ($luid) {
@@ -339,7 +339,7 @@ jobs:
         env:
           # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
           DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
-        run: npm run build-scenes -- smart-wearable
+        run: pnpm run build-scenes smart-wearable
       - name: InWorld scenarios
         id: inworld
         if: env.GROUP != 'visual'
@@ -347,13 +347,13 @@ jobs:
         timeout-minutes: 60
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
-        run: npm run e2e -- --inworld
+        run: pnpm run e2e --inworld
       - name: Build the visual scenes
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
           # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
           DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
-        run: npm run build-scenes
+        run: pnpm run build-scenes
       - name: Visual scenarios
         id: visual
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
@@ -362,7 +362,7 @@ jobs:
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
           DCL_E2E_RECORD: ${{ github.event.inputs.record == 'true' && '1' || '' }}
-        run: npm run e2e -- --visual
+        run: pnpm run e2e --visual
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

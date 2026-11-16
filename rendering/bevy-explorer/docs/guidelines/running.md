@@ -78,10 +78,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-npm --prefix react-web ci
+corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
 corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
 corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-npm --prefix react-web run bundle:native
+corepack pnpm@11.27.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -422,7 +422,7 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
-  source change run `npm run export-native` (native) or `npm run bundle` (web) from
+  source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.
 - **Local SDK builds install through overrides, never `file:` paths** in a scene's
   `package.json`. The `@dcl/sdk` tarball carries internal `file:` references that break once
@@ -438,7 +438,7 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
-- `react-web`: `npm test` runs the checked-in Vitest suite. The Playwright visual/engine
+- `react-web`: `pnpm test` runs the checked-in Vitest suite. The Playwright visual/engine
   gate specs and configs are absent from this public checkout; the corresponding package
   scripts do not establish suite availability. See `react-web/review.md` for the optional
   tiers and report them as not run unless the authorized test workspace supplies them.
