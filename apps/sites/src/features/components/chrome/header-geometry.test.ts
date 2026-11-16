@@ -22,11 +22,13 @@ const startupController = new AbortController();
 // Chrome stayed alive without writing their DevTools port for the whole 30-second limit, at times
 // after every other test file had finished. A launch that is not ready within openSession's start
 // limit is stopped and replaced, up to START_ATTEMPTS launches in all; only the browser start is
-// repeated, never an assertion.
+// repeated, never an assertion. Any other startup failure, such as a browser that exits, fails at
+// once.
 const START_ATTEMPTS = 3;
 const START_LIMIT_MS = 30_000;
-// Per launch: the port file, then up to 10 seconds each for the DevTools endpoint and socket.
-const START_BUDGET_MS = START_ATTEMPTS * (START_LIMIT_MS + 20_000);
+// Per launch: the port file, up to 10 seconds each for the DevTools endpoint and socket, and up to
+// 7 seconds of teardown.
+const START_BUDGET_MS = START_ATTEMPTS * (START_LIMIT_MS + 27_000);
 
 async function startBrowser(signal: AbortSignal) {
   const executable = await findBrowser([
@@ -43,10 +45,15 @@ async function startBrowser(signal: AbortSignal) {
         startTimeoutMs: START_LIMIT_MS,
       });
     } catch (error) {
-      if (signal.aborted || attempt === START_ATTEMPTS) throw error;
+      if (
+        signal.aborted ||
+        attempt === START_ATTEMPTS ||
+        (error as Error).message !== "Capture browser did not start"
+      )
+        throw error;
       // openSession has already stopped this browser and printed its startup diagnostics.
       console.warn(
-        `Capture browser launch ${attempt} of ${START_ATTEMPTS} failed (${(error as Error).message}); launching another`,
+        `Capture browser launch ${attempt} of ${START_ATTEMPTS} was not ready; launching another`,
       );
     }
   }

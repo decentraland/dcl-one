@@ -21,8 +21,9 @@ report() {
   echo "catalyst-test: failed with status $status while $phase"
   if [ -s "$failures" ]; then
     cat "$failures"
-  elif [ "$phase" != "building the test binaries" ] && [ "$phase" != "running the doc-tests" ]; then
-    echo "catalyst-test: no test binary reported a failure; a runner shell stopped (see the xargs message)"
+  elif [ "$phase" != "building the test binaries" ] && [ "$phase" != "selecting the test binaries" ] \
+    && [ "$phase" != "running the doc-tests" ]; then
+    echo "catalyst-test: a runner shell failed without naming a binary (see the output above)"
   fi
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
     while IFS= read -r line; do echo "::error title=Rust test binary failed::$line"; done < "$failures"
@@ -37,6 +38,7 @@ for line in sys.stdin:
         target = artifact["target"]
         print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\t")
 ' > "$logs/binaries"
+phase="selecting the test binaries"
 [ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }
 shard="${CATALYST_TEST_SHARD:-1/1}"
 index="${shard%/*}" total="${shard#*/}"

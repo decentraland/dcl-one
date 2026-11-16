@@ -337,6 +337,8 @@ TEST_SCRIPT = [
     'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
     '"$1" > "$log" 2>&1 || status=$?',
+    'cat "$log"',
+    'echo "$line" >> "$2/failures"; exit 1',
     'run "$jobs" < "$logs/shard"',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',

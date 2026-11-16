@@ -670,28 +670,36 @@ class InventoryTests(unittest.TestCase):
                 self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
                 self.assertIn("private success detail", log)
 
-    def test_every_failing_binary_is_named_with_its_status_or_signal_and_failed_tests(self):
+    FAILING_FIXTURE = ("printf '%s\\n' 'test a::passes ... ok' 'test a::breaks ... FAILED' "
+                       "'test result: FAILED. 1 passed; 1 failed'\nexit 101\n")
+    KILLED_FIXTURE = "printf '%s\\n' 'test b::slow has been running for over 60 seconds'\nkill -9 $$\n"
+    PASSING_FIXTURE = "printf '%s\\n' 'test c::passes ... ok' 'test result: ok. 1 passed; 0 failed'\n"
+
+    def run_binaries(self, directory, fixtures, github_actions):
+        # Runs the script's own report and run functions over the fixture binaries.
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
         report = script.split("report() {\n", 1)[1].split("\n}\n", 1)[0]
+        for name, text in fixtures.items():
+            (directory / name).write_text("#!/bin/sh\n" + text)
+            (directory / name).chmod(0o755)
+        env = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
+        if github_actions:
+            env["GITHUB_ACTIONS"] = "true"
+        return subprocess.run(
+            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; shift; '
+             ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
+             'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
+             *(str(directory / name) for name in fixtures)],
+            capture_output=True, text=True, env=env,
+        )
+
+    def test_every_failing_binary_is_named_with_its_status_or_signal_and_failed_tests(self):
         with tempfile.TemporaryDirectory(prefix="failing-binaries-") as temporary:
             directory = Path(temporary)
-            fixtures = {
-                "failing-fixture": "printf '%s\\n' 'test a::passes ... ok' 'test a::breaks ... FAILED' "
-                                   "'test result: FAILED. 1 passed; 1 failed'\nexit 101\n",
-                "killed-fixture": "printf '%s\\n' 'test b::slow has been running for over 60 seconds'\nkill -9 $$\n",
-                "passing-fixture": "printf '%s\\n' 'test c::passes ... ok' 'test result: ok. 1 passed; 0 failed'\n",
-            }
-            for name, text in fixtures.items():
-                (directory / name).write_text("#!/bin/sh\n" + text)
-                (directory / name).chmod(0o755)
-            result = subprocess.run(
-                [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; shift; '
-                 ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
-                 'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
-                 *(str(directory / name) for name in fixtures)],
-                capture_output=True, text=True, env={**os.environ, "GITHUB_ACTIONS": "true"},
-            )
+            fixtures = {"failing-fixture": self.FAILING_FIXTURE, "killed-fixture": self.KILLED_FIXTURE,
+                        "passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=True)
             # GNU xargs exits 123 when a command fails, BSD xargs 1.
             self.assertIn(result.returncode, (1, 123), result.stdout + result.stderr)
             failing = "catalyst-test: failing-fixture exited with status 101; failed tests: a::breaks"
@@ -704,6 +712,29 @@ class InventoryTests(unittest.TestCase):
             summary = result.stdout.split(f"catalyst-test: failed with status {result.returncode}", 1)[1].splitlines()[1:]
             self.assertEqual(sorted(summary[:2]), [failing, killed])
             self.assertEqual(sorted(summary[2:]), ["::error title=Rust test binary failed::" + line for line in (failing, killed)])
+
+    def test_failing_binaries_outside_github_actions_print_no_annotations(self):
+        with tempfile.TemporaryDirectory(prefix="failing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {"failing-fixture": self.FAILING_FIXTURE, "passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=False)
+            self.assertIn(result.returncode, (1, 123), result.stdout + result.stderr)
+            failing = "catalyst-test: failing-fixture exited with status 101; failed tests: a::breaks"
+            summary = result.stdout.split(f"catalyst-test: failed with status {result.returncode}", 1)[1].splitlines()[1:]
+            self.assertEqual(summary, [failing])
+            self.assertNotIn("::error", result.stdout + result.stderr)
+
+    def test_passing_binaries_report_no_failure(self):
+        with tempfile.TemporaryDirectory(prefix="passing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {"passing-fixture": self.PASSING_FIXTURE, "other-passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((directory / "failures").read_text(), "")
+            self.assertIn("passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertIn("other-passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertNotIn("catalyst-test: failed", result.stdout + result.stderr)
+            self.assertNotIn("::error", result.stdout + result.stderr)
 
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
@@ -778,6 +809,8 @@ class InventoryTests(unittest.TestCase):
                     script.replace('[ -z "$same" ] || ', ''),
                     script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace('echo "$line" >> "$2/failures"; exit 1', 'echo "$line" >> "$2/failures"'),
+                    script.replace('  cat "$log"\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:
             with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
                 guard.validate_test_script(bad)
