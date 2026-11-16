@@ -462,6 +462,7 @@ pub(crate) fn load_scene_javascript(
             meta.authoritative_multiplayer.unwrap_or_default(),
         );
         renderer_context.portable_experiences = portable_experiences;
+        renderer_context.legacy_declared_permissions = meta.legacy_declared_permissions();
 
         // start from this scene's crdt context (its own room's on a multi-tenant server,
         // the shared context otherwise), with position data localized for this scene.

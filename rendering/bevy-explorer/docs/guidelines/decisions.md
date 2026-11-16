@@ -372,7 +372,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
   portable like any other: each restricted action goes through the stored rules and the per-use
   prompt, which shows what is being done (the URL to open, the realm to change to). So
-  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `requiredPermissions` grants and refuses nothing (legacy permission queries only report it),
+  and nothing is asked before the scene starts. On native,
   `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
   permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
   declared-permission check on them would be bypassable.
@@ -499,13 +500,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
-- **Legacy permission queries report current runtime policy without granting it.** Native
+- **Legacy permission queries report declarations and current runtime policy without granting
+  either.** As in kernel@5b2cff4, a permission the scene.json `requiredPermissions` declares
+  reports true, and a portable also reports move-player and trigger-emote. Otherwise native
   queries use the same trusted scene, realm, portable and presence rules as per-use checks;
   an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
-  availability for an assigned scene because those browser paths are ungated. Media hostname
-  grants report false because the engine has no such grant store. Actions still pass their
-  existing permission and wallet checks. Scene metadata does not create grants. A query accepts
-  at most 16 permission items and resolves the scene policy once.
+  availability for an assigned scene because those browser paths are ungated. Undeclared media
+  hostname grants report false because the engine has no such grant store. Actions still pass
+  their existing permission and wallet checks, so a declaration does not create a grant. A
+  query accepts at most 16 permission items and resolves the scene policy once.
 - **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
   assigned scene's actual identifier, metadata, content mappings and content URL. Its
   `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and

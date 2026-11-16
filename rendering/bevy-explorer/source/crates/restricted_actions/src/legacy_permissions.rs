@@ -26,10 +26,16 @@ fn permission_available(
     value: i32,
     web: bool,
     scene_exists: bool,
+    declared: bool,
     policy: impl FnOnce(PermissionType, bool) -> bool,
 ) -> bool {
     if !scene_exists {
         return false;
+    }
+    // kernel@5b2cff4 answered from scene.json `requiredPermissions` (and gave portables
+    // move-player and trigger-emote). Reporting it grants nothing: actions keep their checks.
+    if declared {
+        return true;
     }
     let Some(ty) = permission_type(value) else {
         return false;
@@ -40,22 +46,22 @@ fn permission_available(
     (web && networking) || policy(ty, networking)
 }
 
-fn permission_values<P: Fn(PermissionType, bool) -> bool>(
+fn permission_values<D: Fn(i32) -> bool, P: Fn(PermissionType, bool) -> bool>(
     permissions: &[i32],
     web: bool,
-    resolve_scene: impl FnOnce() -> Option<P>,
+    resolve_scene: impl FnOnce() -> Option<(D, P)>,
 ) -> Vec<bool> {
     // An empty result rejects oversized queries without scene work or proportional allocation.
     // The runtime requires one result per input and rejects a mismatched response.
     if permissions.len() > MAX_PERMISSION_QUERIES || permissions.is_empty() {
         return Vec::new();
     }
-    let Some(policy) = resolve_scene() else {
+    let Some((declared, policy)) = resolve_scene() else {
         return vec![false; permissions.len()];
     };
     permissions
         .iter()
-        .map(|value| permission_available(*value, web, true, &policy))
+        .map(|value| permission_available(*value, web, true, declared(*value), &policy))
         .collect()
 }
 
@@ -71,7 +77,11 @@ pub(super) fn get_permissions(mut events: EventReader<RpcCallEvent>, perms: Perm
                 cfg!(target_arch = "wasm32"),
                 || {
                     let policy = perms.for_scene(event.origin.scene()?)?;
-                    Some(move |ty, allow_out_of_scene| policy.is_allowed(ty, allow_out_of_scene))
+                    let declared = policy.legacy_declared();
+                    Some((
+                        move |item| declared.contains(item),
+                        move |ty, allow_out_of_scene| policy.is_allowed(ty, allow_out_of_scene),
+                    ))
                 },
             ));
         }
@@ -86,7 +96,7 @@ mod tests {
     fn oversized_queries_do_no_scene_or_policy_work_and_allocate_no_results() {
         for len in [17, 1_000_000] {
             for web in [false, true] {
-                let values = permission_values::<fn(PermissionType, bool) -> bool>(
+                let values = permission_values::<fn(i32) -> bool, fn(PermissionType, bool) -> bool>(
                     &vec![0; len],
                     web,
                     || panic!("oversized queries must not resolve a scene or policy"),
@@ -105,14 +115,17 @@ mod tests {
         let permissions = [4, 0, 5, 4, 2, 6, -1, 3, 1, 0, 4, 2, i32::MAX, 6, 3, 1];
         let result = permission_values(&permissions, false, || {
             resolutions.set(resolutions.get() + 1);
-            Some(|ty, allow_out| {
-                policy_calls.set(policy_calls.get() + 1);
-                assert_eq!(
-                    allow_out,
-                    matches!(ty, PermissionType::Fetch | PermissionType::Websocket)
-                );
-                matches!(ty, PermissionType::Fetch | PermissionType::PlayEmote)
-            })
+            Some((
+                |_| false,
+                |ty, allow_out| {
+                    policy_calls.set(policy_calls.get() + 1);
+                    assert_eq!(
+                        allow_out,
+                        matches!(ty, PermissionType::Fetch | PermissionType::Websocket)
+                    );
+                    matches!(ty, PermissionType::Fetch | PermissionType::PlayEmote)
+                },
+            ))
         });
         assert_eq!(resolutions.get(), 1);
         assert_eq!(policy_calls.get(), 13);
@@ -124,9 +137,11 @@ mod tests {
             ]
         );
         assert!(
-            permission_values::<fn(PermissionType, bool) -> bool>(&[], false, || panic!(
-                "empty query"
-            ))
+            permission_values::<fn(i32) -> bool, fn(PermissionType, bool) -> bool>(
+                &[],
+                false,
+                || panic!("empty query")
+            )
             .is_empty()
         );
     }
@@ -173,31 +188,113 @@ mod tests {
     fn web_network_permission_reflects_the_ungated_browser_path() {
         for value in 0..=6 {
             assert_eq!(
-                permission_available(value, true, true, |_, _| false),
+                permission_available(value, true, true, false, |_, _| false),
                 matches!(value, 3 | 4)
             );
-            assert!(!permission_available(value, false, true, |_, _| false));
-            assert!(!permission_available(value, true, false, |_, _| true));
+            assert!(!permission_available(value, false, true, false, |_, _| {
+                false
+            }));
+            assert!(!permission_available(value, true, false, true, |_, _| true));
         }
     }
 
     #[test]
     fn grants_are_read_from_policy_and_unknown_permissions_are_never_granted() {
         for value in [0, 1, 2, 3, 4, 6] {
-            assert!(permission_available(value, false, true, |ty, allow_out| {
-                assert_eq!(
-                    allow_out,
-                    matches!(ty, PermissionType::Fetch | PermissionType::Websocket)
-                );
-                true
-            }));
+            assert!(permission_available(
+                value,
+                false,
+                true,
+                false,
+                |ty, allow_out| {
+                    assert_eq!(
+                        allow_out,
+                        matches!(ty, PermissionType::Fetch | PermissionType::Websocket)
+                    );
+                    true
+                }
+            ));
         }
         for value in [-1, 5, 7, i32::MAX] {
-            assert!(!permission_available(value, false, true, |_, _| panic!(
-                "no policy for unknown permission"
-            )));
+            assert!(!permission_available(
+                value,
+                false,
+                true,
+                false,
+                |_, _| panic!("no policy for unknown permission")
+            ));
         }
     }
+    #[test]
+    fn declared_required_permissions_report_true_without_prompting_or_granting() {
+        use common::{
+            rpc::{RpcOrigin, RpcResultSender},
+            structs::{AppConfig, PermissionValue},
+        };
+        use scene_runner::{
+            permissions::PermissionManager, renderer_context::RendererSceneContext,
+        };
+        let (mut app, scene) = crate::ethereum_tests::app();
+        app.add_systems(Update, get_permissions);
+        for ty in [
+            PermissionType::MovePlayer,
+            PermissionType::PlayEmote,
+            PermissionType::Web3,
+            PermissionType::Fetch,
+            PermissionType::Websocket,
+            PermissionType::OpenUrl,
+        ] {
+            app.world_mut()
+                .resource_mut::<AppConfig>()
+                .default_permissions
+                .insert(ty, PermissionValue::Ask);
+        }
+        fn probe(app: &mut App, scene: Entity) -> Vec<bool> {
+            let (response, mut receiver) = RpcResultSender::channel();
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: "untrusted".into(),
+                },
+                call: RpcCall::GetPermissions {
+                    permissions: vec![0, 1, 2, 3, 4, 5, 6, -1, 7],
+                    response,
+                },
+            });
+            app.update();
+            assert!(app
+                .world()
+                .resource::<PermissionManager>()
+                .pending
+                .is_empty());
+            receiver.try_recv().unwrap()
+        }
+        let web = cfg!(target_arch = "wasm32");
+        assert_eq!(
+            probe(&mut app, scene),
+            vec![false, false, false, web, web, false, false, false, false]
+        );
+        // USE_FETCH, ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE and ALLOW_MEDIA_HOSTNAMES declared.
+        app.world_mut()
+            .get_mut::<RendererSceneContext>(scene)
+            .unwrap()
+            .legacy_declared_permissions = 0b11_0001;
+        assert_eq!(
+            probe(&mut app, scene),
+            vec![true, false, false, web, true, true, false, false, false]
+        );
+        let mut ctx = app
+            .world_mut()
+            .get_mut::<RendererSceneContext>(scene)
+            .unwrap();
+        ctx.legacy_declared_permissions = 0;
+        ctx.is_portable = true;
+        assert_eq!(
+            probe(&mut app, scene),
+            vec![true, true, false, web, web, false, false, false, false]
+        );
+    }
+
     #[test]
     fn native_legacy_probe_uses_scene_realm_and_portable_policy_without_prompting() {
         use common::{
@@ -275,9 +372,10 @@ mod tests {
         );
         app.world_mut()
             .insert_resource(common::autopilot::Autopilot { measure: false });
+        // A portable reports move-player as the kernel did; Web3 and media still report false.
         assert_eq!(
             probe(&mut app, scene),
-            vec![true, false, false, false, false]
+            vec![true, false, true, false, false]
         );
         app.world_mut()
             .remove_resource::<common::autopilot::Autopilot>();
