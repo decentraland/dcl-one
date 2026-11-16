@@ -917,20 +917,13 @@ const RING_CELL: f32 = 16.0;
 /// the same terrain points; terrain_vertex.wgsl snaps each coarser ring to its own cell size
 /// (`ring_origin`) so that its cells do too.
 const TERRAIN_RINGS: u32 = 2;
-/// Rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane and
-/// the highest `hill_reach`.
+/// Rings beyond the parcel grass area, out to 13 km: past where the hills flatten at the longest
+/// Landscape Distance.
 pub(crate) const GROUND_RINGS: u32 = 6;
 
-/// How far the hills are displaced for a Landscape Distance: never short of the `RING_CELL` rings,
-/// which always followed the terrain.
+/// How far the hills are displaced for a Landscape Distance: never short of the `RING_CELL` rings.
 pub(crate) fn hill_reach(distance_m: f32) -> f32 {
     distance_m.max(ground_extent(TERRAIN_RINGS))
-}
-
-/// Origin of a ground ring with `cell`-sized cells (x and -bevy z): the corner of the player's
-/// cell, so the ring moves only in whole cells. terrain_vertex.wgsl's `ring_origin` does the same.
-pub(crate) fn ring_origin(player: Vec2, cell: f32) -> Vec2 {
-    (player / cell).floor() * cell
 }
 
 /// Flat ground relative to the player's parcel corner (Unity x/z). Parcels near the player get
@@ -1000,10 +993,10 @@ pub(crate) fn ground_extent(rings: u32) -> f32 {
     (-GROUND_NEAR_MIN * 16) as f32 * (1 << rings) as f32
 }
 
-/// Ground placement: the corner of the player's parcel, the origin of the `RING_CELL` rings.
+/// Ground placement: the corner of the player's parcel.
 pub(crate) fn ground_origin(player: Vec3) -> Vec3 {
-    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
-    Vec3::new(corner.x, 0.0, -corner.y)
+    let parcel = vec3_to_parcel(player);
+    Vec3::new(parcel.x as f32 * 16.0, 0.0, -(parcel.y as f32) * 16.0)
 }
 
 #[cfg(test)]

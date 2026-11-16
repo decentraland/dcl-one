@@ -519,7 +519,7 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
-            .insert_resource(LandscapeDistance(
+            .insert_resource(LandscapeDistance::from_config(
                 decentraland_app_config.app_config.landscape_distance,
             ))
             .insert_resource(SceneLoadDistance {

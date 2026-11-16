@@ -162,7 +162,7 @@ fn ring_cell(distance: f32) -> f32 {
     return cell;
 }
 
-// terrain.rs `ring_origin`: the corner of the `cell` holding `p` (x and -bevy z)
+// The corner of the `cell` holding `p` (x and -bevy z): a ring moves only in whole cells
 fn ring_origin(p: vec2<f32>, cell: f32) -> vec2<f32> {
     return floor(p / cell) * cell;
 }

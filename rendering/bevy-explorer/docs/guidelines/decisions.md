@@ -443,10 +443,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
-  (default 1000 m, Unity's default), read at startup; there is no setting for it in the menu yet.
+  (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
   ground's rings are displaced out to the Landscape Distance from the player, never less than the
-  832 m the parcel-sized rings always reached, and the hills flatten over a further tenth of it, so
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
   the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
   Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
   terrain points and the far hills do not swim.
@@ -454,9 +454,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
   player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
   7 km would mean hundreds of chunks with their invisible walls.
-- **One sea plane.** Unity culls its water chunks one by one beyond the Landscape Distance. Bevy
-  has one sea plane, shown while the nearest sea (beyond the terrain bounds, at sea level) is
-  within the Landscape Distance of the camera.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 
 ## Deliberate choices that look like mistakes
 

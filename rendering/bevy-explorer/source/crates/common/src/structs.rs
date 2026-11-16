@@ -1158,10 +1158,25 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
-/// The landscape distance in metres: how far the hills are displaced and the cliffs and the sea
-/// are drawn. Set from the config's `landscape_distance` at startup.
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
 
 impl Default for LandscapeDistance {
     fn default() -> Self {
@@ -2051,6 +2066,17 @@ pub struct PointAtMarkerVisibilityChanged;
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
 
     #[test]
     fn sun_cascades_split_the_shadow_distance() {

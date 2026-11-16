@@ -231,13 +231,13 @@ fn scene_casts_hit_the_heightfield() {
     }
 }
 
-/// The lowest Landscape Distance still displaces the hills as far as the fine rings always did.
+/// The shortest Landscape Distance still displaces the hills across the `RING_CELL` rings.
 #[test]
 fn hill_reach_never_below_832() {
-    assert_eq!(hill_reach(500.0), 832.0);
+    assert_eq!(hill_reach(LandscapeDistance::MIN), 832.0);
     assert_eq!(hill_reach(832.0), 832.0);
     assert_eq!(hill_reach(1000.0), 1000.0);
-    assert_eq!(hill_reach(7000.0), 7000.0);
+    assert_eq!(hill_reach(LandscapeDistance::MAX), 7000.0);
 
     let mut surface = TerrainSurface::default();
     assert_eq!(surface.params().hill_reach, 1000.0);
@@ -253,32 +253,11 @@ fn hill_reach_never_below_832() {
     assert_eq!(surface.params().hill_reach, 832.0);
 }
 
-/// The ground mesh reaches past the highest setting, so hills are displaced all the way out.
+/// The ground mesh reaches past where the hills flatten at the longest Landscape Distance, so
+/// they never run to its edge.
 #[test]
-fn ground_reaches_the_highest_hill_reach() {
-    assert!(ground_extent(GROUND_RINGS) >= hill_reach(7000.0) * 1.1);
-}
-
-/// A ring's origin moves only when the player crosses a whole cell of that ring, so its vertices
-/// stay on the same terrain points while the player walks.
-#[test]
-fn ring_origins_snap_to_cell_size() {
-    for cell in [32.0, 64.0, 128.0, 256.0] {
-        let origin = ring_origin(Vec2::new(1000.0, -3000.0), cell);
-        assert_eq!(origin % cell, Vec2::ZERO);
-        for step in [0.0, 1.0, 15.9, 16.0, 31.0] {
-            let player = origin + Vec2::new(step, step * 0.5);
-            assert_eq!(ring_origin(player, cell), origin, "{cell} {step}");
-        }
-        assert_eq!(
-            ring_origin(origin + Vec2::new(cell, -0.5), cell),
-            origin + Vec2::new(cell, -cell)
-        );
-    }
-    // the whole ground snaps to its first rings' cell, the player's parcel corner
-    let player = Vec3::new(37.0, 0.0, -21.0);
-    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
-    assert_eq!(ground_origin(player), Vec3::new(corner.x, 0.0, -corner.y));
+fn ground_reaches_the_longest_hill_reach() {
+    assert!(ground_extent(GROUND_RINGS) >= hill_reach(LandscapeDistance::MAX) * 1.1);
 }
 
 /// Every terrain vertex shader variant (flat ground and grass shells, main pass, prepasses and
