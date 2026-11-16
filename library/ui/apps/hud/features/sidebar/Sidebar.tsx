@@ -390,11 +390,9 @@ export function Sidebar({
             <MePanel
               profile={profile}
               backpackKey={keyHintFor(snap, 'Backpack')}
-              galleryKey={keyHintFor(snap, 'Gallery')}
               onBackpack={session.backpack.toggle}
               onProfile={onViewProfile != null ? () => onViewProfile() : session.profile.toggle}
               onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}
-              onGallery={session.gallery.toggle}
               onSignOut={signOutOffered ? signOutOfWorld : undefined}
               onExit={canExit() ? exitApplication : undefined}
               onClose={closePanel}

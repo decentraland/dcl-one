@@ -3,13 +3,13 @@
 .root {
   position: fixed;
   left: calc(var(--rail-panel-left) * var(--ui-scale));
-  /* the Friends button's bottom: Camera, Nearby Voice and Chat are under it */
-  bottom: calc(160px * var(--ui-scale));
+  /* the bottom-left corner beside the rail, 6px off the screen's bottom, as unity-explorer's */
+  bottom: calc(6px * var(--ui-scale));
   z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
   width: min(400px, calc(100vw / var(--ui-scale) - var(--rail-panel-left) - 14px));
-  height: min(680px, calc(100vh / var(--ui-scale) - 170px));
+  height: min(638px, calc(100vh / var(--ui-scale) - 12px));
   /* the alphas of the panel's layers over the world */
   --friends-rule: rgba(122, 122, 122, 0.527);
   background: rgba(0, 0, 0, 0.651);

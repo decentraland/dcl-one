@@ -1,6 +1,6 @@
 // explorer-automation `ExplorePanelTests` (7): the sidebar opens each section; the tabs switch
 // between them. The Bevy HUD has a page per section instead of one panel with tabs: a row of the
-// panel a rail button opens (Discover, Me, System) opens a page, and an open page's top bar
+// panel a rail button opens (Discover, Me, Camera, System) opens a page, and an open page's top bar
 // switches to the others.
 //
 // | Unity test                      | Here                                                     | Class   |
@@ -8,7 +8,7 @@
 // | TestOpenPlacesFromSidebar       | rail Discover, its Places row opens the Places page      | Port    |
 // | TestOpenCommunitiesFromSidebar  | rail Discover, its Communities row opens the Communities page | Port |
 // | TestOpenBackpackFromSidebar     | rail Me, its Backpack row opens the Backpack page        | Port    |
-// | TestOpenGalleryFromSidebar      | rail Me, its Gallery row opens the Gallery page          | Port    |
+// | TestOpenGalleryFromSidebar      | rail Camera, its Gallery row opens the Gallery page      | Port    |
 // | TestOpenSettingsFromSidebar     | rail System, its Settings row opens the Settings page    | Port    |
 // | TestSwitchBetweenAllTabs        | the top bar switches Events, Places, Communities, Map, Backpack, Gallery, Settings; Shop is not a page of these | Partial |
 import assert from 'node:assert/strict'

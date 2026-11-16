@@ -34,7 +34,6 @@ describe('sidebar clicks', () => {
   const rows: [string, string, (s: EngineSession) => (...args: never[]) => void][] = [
     ['Me', 'Backpack', (s) => s.backpack.toggle],
     ['Me', 'Profile', (s) => s.profile.toggle],
-    ['Me', 'Gallery', (s) => s.gallery.toggle],
     ['Discover', 'Events', (s) => s.events.toggle],
     ['Discover', 'Places', (s) => s.places.toggle],
     ['Discover', 'Communities', (s) => s.communities.toggle],

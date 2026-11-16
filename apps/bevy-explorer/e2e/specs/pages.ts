@@ -44,7 +44,7 @@ export type PageName = 'backpack' | 'communities' | 'gallery' | 'settings' | 'pl
 export const PAGES: Record<PageName, Page> = {
   backpack: { key: 'KeyI', rail: { button: 'Me', row: 'Backpack' }, tab: 'Backpack [ I ]', marker: { name: 'Backpack', role: 'heading' } },
   communities: { key: 'KeyO', rail: { button: 'Discover', row: 'Communities' }, tab: 'Communities [ O ]', marker: { name: 'Communities', role: 'heading' } },
-  gallery: { key: 'KeyG', rail: { button: 'Me', row: 'Gallery' }, tab: 'Gallery [ G ]', marker: { name: 'Gallery', role: 'heading' } },
+  gallery: { key: 'KeyG', rail: { button: 'Camera', row: 'Gallery' }, tab: 'Gallery [ G ]', marker: { name: 'Gallery', role: 'heading' } },
   settings: { key: 'KeyP', rail: { button: 'System', row: 'Settings' }, tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
   places: { key: 'KeyZ', rail: { button: 'Discover', row: 'Places' }, tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
   events: { key: 'KeyX', rail: { button: 'Discover', row: 'Events' }, tab: 'Events [ X ]', marker: { name: 'Events', role: 'heading' } },

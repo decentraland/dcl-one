@@ -110,7 +110,7 @@ describe('sidebar parity', () => {
 // What the bar opens beside itself: one panel at a time, each a dialog named as its button.
 describe('sidebar panels', () => {
   const PANELS: [string, string[]][] = [
-    ['Me', ['Backpack', 'Profile', 'Gallery', 'Exit']],
+    ['Me', ['Backpack', 'Profile', 'Exit']],
     ['Discover', ['Events', 'Places', 'Communities']],
     ['System', ['Settings', 'FAQ', 'Report Bug', 'Contact Support', 'Discord']],
     ['Camera', ['Take A Shot', 'Gallery']]
@@ -136,7 +136,7 @@ describe('sidebar panels', () => {
     const onViewProfile = vi.fn()
     await renderSettled(<Sidebar session={fakeSession()} onViewProfile={onViewProfile} />)
     await press('Me')
-    expect(rowsOf('Me')).toEqual(['Backpack', 'Profile', 'Badges', 'Gallery', 'Exit'])
+    expect(rowsOf('Me')).toEqual(['Backpack', 'Profile', 'Badges', 'Exit'])
     await userEvent.click(within(screen.getByRole('dialog', { name: 'Me' })).getByRole('button', { name: 'Badges' }))
     expect(onViewProfile).toHaveBeenLastCalledWith('badges')
     await press('Me')

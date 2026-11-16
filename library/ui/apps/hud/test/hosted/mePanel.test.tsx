@@ -13,7 +13,6 @@ function panel(over: Partial<MePanelProps> = {}): MePanelProps {
     backpackKey: 'I',
     onBackpack: vi.fn(),
     onProfile: vi.fn(),
-    onGallery: vi.fn(),
     onClose: vi.fn(),
     ...over
   }
@@ -46,13 +45,13 @@ describe('Me panel', () => {
 
   it('is the dialog "Me" with the rows the bar gives an action for, in the design\'s order', () => {
     panel({ onBadges: vi.fn(), onSignOut: vi.fn(), onExit: vi.fn() })
-    expect(rowNames()).toEqual(['Copy address', 'Backpack', 'Profile', 'Badges', 'Gallery', 'Sign Out', 'Exit'])
+    expect(rowNames()).toEqual(['Copy address', 'Backpack', 'Profile', 'Badges', 'Sign Out', 'Exit'])
     expect(screen.getAllByRole('separator')).toHaveLength(2)
   })
 
   it('draws no Badges, Sign Out or Exit row, and no second rule, without their actions', () => {
     panel()
-    expect(rowNames()).toEqual(['Copy address', 'Backpack', 'Profile', 'Gallery'])
+    expect(rowNames()).toEqual(['Copy address', 'Backpack', 'Profile'])
     expect(screen.getAllByRole('separator')).toHaveLength(1)
   })
 
@@ -60,14 +59,13 @@ describe('Me panel', () => {
     ['Backpack', 'onBackpack'],
     ['Profile', 'onProfile'],
     ['Badges', 'onBadges'],
-    ['Gallery', 'onGallery'],
     ['Exit', 'onExit']
   ] as const)('%s runs its action once and closes the panel', async (name, prop) => {
     const props = panel({ onBadges: vi.fn(), onSignOut: vi.fn(), onExit: vi.fn() })
     await userEvent.click(screen.getByRole('button', { name }))
     expect(props[prop]).toHaveBeenCalledTimes(1)
     expect(props.onClose).toHaveBeenCalledTimes(1)
-    for (const other of ['onBackpack', 'onProfile', 'onBadges', 'onGallery', 'onSignOut', 'onExit'] as const) if (other !== prop) expect(props[other]).not.toHaveBeenCalled()
+    for (const other of ['onBackpack', 'onProfile', 'onBadges', 'onSignOut', 'onExit'] as const) if (other !== prop) expect(props[other]).not.toHaveBeenCalled()
   })
 
   it('Sign Out asks first, in a dialog over the open panel, and signs nothing out yet', async () => {
@@ -106,10 +104,9 @@ describe('Me panel', () => {
   })
 
   it('names a row by its label alone: the key is a hint beside it', () => {
-    panel({ galleryKey: 'K' })
+    panel()
     const backpack = screen.getByRole('button', { name: 'Backpack' })
     expect(backpack).toHaveTextContent('Backpack[I]')
-    expect(screen.getByRole('button', { name: 'Gallery' })).toHaveTextContent('Gallery[K]')
     expect(screen.getByRole('button', { name: 'Profile' })).toHaveTextContent(/^Profile$/)
   })
 
@@ -150,7 +147,7 @@ describe('Me panel', () => {
     panel({ profile: null })
     expect(screen.queryByTitle('Copy address')).toBeNull()
     expect(screen.queryByRole('separator')).toBeNull()
-    expect(rowNames()).toEqual(['Backpack', 'Profile', 'Gallery'])
+    expect(rowNames()).toEqual(['Backpack', 'Profile'])
   })
 
   it('offers no wallet button when the profile has no wallet address', () => {

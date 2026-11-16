@@ -1934,10 +1934,6 @@
           "kind": "regular"
         },
         {
-          "name": "gallery.webp",
-          "kind": "regular"
-        },
-        {
           "name": "map-on.svg",
           "kind": "regular"
         },
@@ -6752,10 +6748,6 @@
       "sha256": "677372d1a35455a1ef57bb8fa16515c7aeb0d489ac2d7ec87c7794608ece5253"
     },
     {
-      "path": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "sha256": "241863122fcd52a6bfed8c470b1e9b87027a94a7cc213140cd0c2e79bd1f374e"
-    },
-    {
       "path": "library/ui/apps/hud/assets/sidebar-rail/map-on.svg",
       "sha256": "e6d243f762871b95383c8c870e578e2c359c2f5f23164494d020252f3929cd6b"
     },
@@ -7909,7 +7901,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendsPanel.module.css",
-      "sha256": "e6dc39110e7cb0a00a857e3556aad24c498ffb94779a11672f2410d4e5f38f58"
+      "sha256": "5cb633c5d8e817f902e456a929288aa63d089abe8eacf843bbf96aa1baaad0b3"
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
@@ -8349,7 +8341,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "d383cefceabfba1491407ca83380c0e9f607163e8d281de0b47add3bd6c5f9bc"
+      "sha256": "51d9f179f0637583a8a86717bd6385e8fb92147155013338b7436988d7cea823"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -8369,7 +8361,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "sha256": "843773be44ffd71d4e7f4bf0f4cc8893b15455b9a13a448271e4b6eec168e489"
+      "sha256": "2ef58bb741a12d9dcd1fb6d59d0361fcfd8d372da7f4fda5817cdb399151db0b"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/ShopPanel.module.css",
@@ -8705,7 +8697,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
-      "sha256": "205d1ed4a727fcc167ab1cbd9f60eae0b406e54cac578f50638685d473edcbaa"
+      "sha256": "79736c03d88b7d1f3b6dd20e1005dd45d5c7a41dcb66ad2fad00505fcc03ca29"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
@@ -8845,7 +8837,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mePanel.test.tsx",
-      "sha256": "e52c374ae54bdcaf1dd6ac0dce57da13076083b908245c9af5d2ea788e226e09"
+      "sha256": "41113c341711f7aa71709dee180029e33341c94e4bee79e48f1f2e052ae18a0f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
@@ -8953,7 +8945,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "500a8081e35eb8b31ef68ba432af28b16f6e874ad5a65ee2202f64c8174bd1fd"
+      "sha256": "24d29332920e42adab5f9abf014a9178ac673881a3b85dd94b7c151831d31005"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -27526,21 +27518,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
       "to": "library/ui/apps/hud/assets/sidebar-rail/me-backpack.svg",
       "kind": "native:runtime"
     },
@@ -42397,21 +42374,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/sidebar-rail/friends.svg",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/sidebar-rail/gallery.webp",
       "kind": "test:asset"
     },
     {

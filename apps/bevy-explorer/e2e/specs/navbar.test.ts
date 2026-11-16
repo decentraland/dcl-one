@@ -11,8 +11,8 @@
 // Partial:
 // - TestSidebarShowsAllNavigationButtons reads the client's feature flags; the Bevy HUD reads none,
 //   so the expectation is the rail's fixed set of buttons. Unity's Events, Places, Communities,
-//   Backpack, Gallery, Settings and profile entries are rows of the panels the rail's Discover, Me
-//   and System buttons open; each panel is opened and its rows read. Presence only: Portable
+//   Backpack, Gallery, Settings and profile entries are rows of the panels the rail's Discover, Me,
+//   Camera and System buttons open; each panel is opened and its rows read. Presence only: Portable
 //   experiences shows only while one is listed, and Create (a System row) in editor builds only,
 //   so neither is required nor forbidden. Unity logs that Map is absent from the rail by design;
 //   here Map is a rail button, which shows and hides the minimap. "Exactly these buttons" is not
@@ -54,7 +54,8 @@ const RAIL_BUTTONS = [
 
 /** The rail buttons that open a list of rows, and the rows every build has. */
 const RAIL_ROWS: Array<{ button: string; rows: string[] }> = [
-  { button: 'Me', rows: ['Backpack', 'Profile', 'Gallery'] },
+  { button: 'Me', rows: ['Backpack', 'Profile'] },
+  { button: 'Camera', rows: ['Take A Shot', 'Gallery'] },
   { button: 'Discover', rows: ['Events', 'Places', 'Communities'] },
   { button: 'System', rows: ['Settings'] }
 ]

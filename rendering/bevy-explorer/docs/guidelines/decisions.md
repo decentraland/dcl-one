@@ -574,8 +574,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Controls category.
 - **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
   Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
-  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile,
-  Badges and Gallery, then Sign Out (an account on the web) and Exit (where the page can
+  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
+  and Badges, then Sign Out (an account on the web) and Exit (where the page can
   close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
   and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
   a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and

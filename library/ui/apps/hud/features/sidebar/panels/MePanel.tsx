@@ -3,7 +3,7 @@
 // by props, and a row whose action the bar does not pass is not drawn.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, MaskIcon, MenuList, MenuPanel, MenuRow, showConfirm } from '../../../design'
+import { Avatar, MenuList, MenuPanel, MenuRow, showConfirm } from '../../../design'
 import { isAddress, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Profile } from '@explorer-core/engine/protocol'
 import backpackIcon from '../../../assets/sidebar-rail/me-backpack.svg?no-inline'
@@ -12,7 +12,6 @@ import badgesIcon from '../../../assets/sidebar-rail/me-badges.svg?no-inline'
 import signOutIcon from '../../../assets/sidebar-rail/me-sign-out.svg?no-inline'
 import exitIcon from '../../../assets/sidebar-rail/me-exit.svg?no-inline'
 import copyIcon from '../../../assets/sidebar-rail/me-copy.svg?no-inline'
-import galleryArt from '../../../assets/sidebar-rail/gallery.webp'
 import styles from './MePanel.module.css'
 
 export interface MePanelProps {
@@ -20,12 +19,9 @@ export interface MePanelProps {
   profile: Pick<Profile, 'address' | 'name' | 'picture' | 'hasClaimedName' | 'nameColor'> | null
   /** The key bound to the Backpack, drawn as "[I]" after the label. */
   backpackKey?: string
-  /** The key bound to the Gallery. */
-  galleryKey?: string
   onBackpack: () => void
   /** Open the player's own passport. */
   onProfile: () => void
-  onGallery: () => void
   /** Open the player's own passport on its badges. */
   onBadges?: () => void
   /** Leave the world for the start screen, signed out; the row asks first. The bar passes it for an account on the web only. */
@@ -44,7 +40,7 @@ const art = (src: string): React.JSX.Element => <img src={src} alt="" draggable=
 /** "0x10e...a7a92": the first five and the last five characters. */
 const shortWallet = (address: string): string => `${address.slice(0, 5)}...${address.slice(-5)}`
 
-export function MePanel({ profile, backpackKey, galleryKey, onBackpack, onProfile, onGallery, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
+export function MePanel({ profile, backpackKey, onBackpack, onProfile, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(copiedTimer.current), [])
@@ -110,7 +106,6 @@ export function MePanel({ profile, backpackKey, galleryKey, onBackpack, onProfil
         <MenuRow icon={art(backpackIcon)} label="Backpack" hint={backpackKey} onClick={pick(onBackpack)} />
         <MenuRow icon={art(profileIcon)} label="Profile" onClick={pick(onProfile)} />
         {onBadges != null && <MenuRow icon={art(badgesIcon)} label="Badges" onClick={pick(onBadges)} />}
-        <MenuRow icon={<MaskIcon src={galleryArt} size={22} />} label="Gallery" hint={galleryKey} onClick={pick(onGallery)} />
       </MenuList>
       {footer && (
         <>
