@@ -14,6 +14,7 @@ export interface DebugSection {
   fields: [label: string, path: string][]
   actions: [label: string, command: string][]
   inputs?: WidgetInput[]
+  poll?: boolean
 }
 
 interface WidgetInput {
@@ -222,7 +223,7 @@ function InputWidget({ input, live, reason, busy, submit }: {
 }
 
 function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
-  const { value, error, refresh } = useCommandResult<unknown>(run, section.query, true)
+  const { value, error, refresh } = useCommandResult<unknown>(run, section.query, section.poll !== false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState('')
   async function invoke(line: string) {

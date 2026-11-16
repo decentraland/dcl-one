@@ -185,6 +185,9 @@ Pulse and LiveKit rooms show one connection button. It changes from **Disconnect
 to **Connect** when paused, and is disabled when there is no controllable connection.
 
 World and Scene Loading show where the player is and which load stage is active.
+Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
+this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
+is Performance's client version.
 Performance and Memory and limits expose the engine's measurements and budgets.
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
@@ -208,6 +211,9 @@ web and on the standalone, with no Playwright
 
 State, in every build:
 
+- `/legacy_social`: `subscribedScenes`, `queuedEvents`, `resyncScenes` and `trackedPeers`.
+  Each scene's legacy avatar queue holds at most 1024 events. Overflow schedules a current-state
+  recovery on the next pull. The Legacy avatar events debug section reads these counts.
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and

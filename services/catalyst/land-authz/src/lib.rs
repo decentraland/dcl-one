@@ -86,7 +86,7 @@ pub const SCHEMA: &str = "land_authz";
 pub use crate::chain_index::registries::{
     ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_MAINNET, LAND_REGISTRY_MAINNET,
     LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA, LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA,
-    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, land_network,
+    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, land_network, land_network_of_registry,
 };
 
 pub const KIND_UPDATE_OPERATOR: &str = "update_operator";
