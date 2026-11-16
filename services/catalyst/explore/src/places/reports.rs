@@ -19,7 +19,88 @@ use sqlx::Row;
 
 use super::admin::RequireAdmin;
 use crate::SharedState;
+use crate::rate::WindowLimiter;
 use crate::shared::errors::{ApiData, ApiDataTotal, ApiError};
+
+/// `POST /api/report` takes a small JSON request or a signed envelope.
+pub const REPORT_BODY_LIMIT: usize = 16 << 10;
+/// The uploaded report document.
+pub const UPLOAD_BODY_LIMIT: usize = 64 << 10;
+const REPORTS_PER_WALLET_PER_HOUR: u32 = 20;
+const REPORTS_PER_NETWORK_PER_HOUR: u32 = 60;
+
+static REPORTS: std::sync::LazyLock<WindowLimiter> =
+    std::sync::LazyLock::new(|| WindowLimiter::new(std::time::Duration::from_secs(3600), 100_000));
+
+/// The network a report comes from, IPv6 by its /64, when the address names
+/// one client: a trusted proxy's `X-Real-IP` or a public peer. An untrusted
+/// private peer (most likely a gateway missing from
+/// `HTTP_TRUSTED_PROXY_CIDRS`) would put every reporter in one bucket, so it
+/// gives none and only the wallet limit applies.
+fn report_source(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<String> {
+    report_source_with(headers, peer, trusted_proxies, &UNTRUSTED_PROXY_WARNED)
+}
+
+static UNTRUSTED_PROXY_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn report_source_with(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+    warned: &std::sync::atomic::AtomicBool,
+) -> Option<String> {
+    use crate::shared::client_ip::{distinct_client_ip, is_internal, is_trusted_proxy};
+    if let Some(p) = peer.map(|p| p.ip().to_canonical())
+        && !is_trusted_proxy(p, trusted_proxies)
+        && is_internal(p)
+        && headers.contains_key("x-real-ip")
+    {
+        warn_untrusted_proxy_once(p, warned);
+    }
+    let ip = distinct_client_ip(headers, peer, trusted_proxies)?;
+    // A trusted proxy forwarding a private address names no one client.
+    if ip
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(crate::shared::client_ip::is_internal)
+    {
+        return None;
+    }
+    Some(crate::shared::client_ip::source_key(&ip))
+}
+
+/// Once per process, as content warns for deploys.
+fn warn_untrusted_proxy_once(peer: std::net::IpAddr, warned: &std::sync::atomic::AtomicBool) {
+    use std::sync::atomic::Ordering;
+    if !warned.load(Ordering::Relaxed) && !warned.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            %peer,
+            "place reports: a private or loopback peer forwards X-Real-IP but is not in \
+             HTTP_TRUSTED_PROXY_CIDRS, so reports behind it get no per-network limit; \
+             list the backend proxy networks there"
+        );
+    }
+}
+
+/// Counts one report against the reporter and its network (when known), or
+/// none of them; 429 past any limit.
+fn admit_report(reporter: &str, source: Option<&str>) -> Result<(), ApiError> {
+    let wallet = format!("w:{}", reporter.to_ascii_lowercase());
+    let network = source.map(|s| format!("ip:{s}"));
+    let mut keys = vec![(wallet.as_str(), REPORTS_PER_WALLET_PER_HOUR)];
+    if let Some(network) = network.as_deref() {
+        keys.push((network, REPORTS_PER_NETWORK_PER_HOUR));
+    }
+    if REPORTS.try_acquire(&keys) {
+        Ok(())
+    } else {
+        Err(ApiError::http(429, "too many reports, retry later"))
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReportRow {
@@ -78,31 +159,14 @@ fn report_filename(address: &str, now_seconds: i64) -> String {
     )
 }
 
-fn request_base_url(headers: &HeaderMap) -> String {
-    let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get("host"))
-        .and_then(|v| v.to_str().ok())
-        .filter(|host| {
-            !host
-                .chars()
-                .any(|c| c.is_whitespace() || "/\\?#@".contains(c))
-        })
-        .unwrap_or("127.0.0.1")
-        .to_string();
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .filter(|scheme| matches!(*scheme, "http" | "https"))
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
-                "http".into()
-            } else {
-                "https".into()
-            }
-        });
-    format!("{scheme}://{host}")
+/// The upload URL on this node's configured origin; only the route's public
+/// path comes from the request.
+fn upload_url(public_url: &str, headers: &HeaderMap, route: &str, filename: &str) -> String {
+    format!(
+        "{}{}/upload/{filename}",
+        public_url.trim_end_matches('/'),
+        public_path(headers, route)
+    )
 }
 
 /// The public path of this route: a prefix-stripping proxy's
@@ -123,14 +187,20 @@ fn public_path<'a>(headers: &'a HeaderMap, route: &'a str) -> &'a str {
 /// `report.post.bad_signature`); the 201 is the router layer's.
 pub async fn post_report(
     State(state): State<SharedState>,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     method: Method,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
+    let source = report_source(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
     if let Some(Json(env)) = body.as_ref().filter(|Json(v)| catalyst_fed::is_envelope(v)) {
-        return fed_report(&state, &headers, env.clone()).await;
+        return fed_report(&state, &headers, source.as_deref(), env.clone()).await;
     }
     let reporter = state
         .wkc_signer(&headers, method.as_str(), uri.path())
@@ -141,14 +211,16 @@ pub async fn post_report(
         .and_then(Value::as_str)
         .or_else(|| payload.get("place_id").and_then(Value::as_str))
         .map(str::to_string);
+    if let Some(id) = entity_id.as_deref()
+        && state.places.find_by_id_for(id, None).await?.is_none()
+    {
+        return Err(ApiError::not_found(format!("Not found place \"{id}\"")));
+    }
+    admit_report(&reporter, source.as_deref())?;
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
-    let signed_url = format!(
-        "{}{}/upload/{filename}",
-        request_base_url(&headers),
-        public_path(&headers, uri.path())
-    );
+    let signed_url = upload_url(&state.settings.public_url, &headers, uri.path(), &filename);
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at, upload_token_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
         .bind(entity_id.as_deref())
         .bind(&reporter)
@@ -169,6 +241,7 @@ pub async fn post_report(
 async fn fed_report(
     state: &SharedState,
     headers: &HeaderMap,
+    source: Option<&str>,
     body: Value,
 ) -> Result<Json<Value>, ApiError> {
     use crate::fed;
@@ -185,6 +258,7 @@ async fn fed_report(
             "Not found place \"{place_id}\""
         )));
     }
+    admit_report(&signer, source)?;
     let hash = signed.signature_hash();
     let reason = serde_json::to_value(signed.message.reason).unwrap_or_else(|_| json!("other"));
     let logged =
@@ -405,6 +479,99 @@ mod tests {
     /// characters lowercased, the request second in lowercase hex, `.json`
     /// (fixture report.post.signed_user); the random suffix is this node's.
     #[test]
+    fn a_reporter_is_limited_per_hour_and_others_are_not() {
+        let wallet = "0xrate-limit-test-wallet";
+        for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
+            assert!(admit_report(wallet, Some("198.51.100.200")).is_ok());
+        }
+        assert_eq!(
+            admit_report(wallet, Some("198.51.100.201"))
+                .unwrap_err()
+                .status(),
+            429,
+            "a wallet is limited on every network"
+        );
+        assert!(admit_report("0xrate-limit-test-other", Some("198.51.100.201")).is_ok());
+    }
+
+    #[test]
+    fn a_network_is_limited_without_spending_the_wallets_it_refuses() {
+        let network = "198.51.100.210";
+        for i in 0..REPORTS_PER_NETWORK_PER_HOUR {
+            assert!(admit_report(&format!("0xnet-test-{i}"), Some(network)).is_ok());
+        }
+        let late = "0xnet-test-late";
+        assert_eq!(admit_report(late, Some(network)).unwrap_err().status(), 429);
+        for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
+            assert!(
+                admit_report(late, Some("198.51.100.211")).is_ok(),
+                "the refused report did not count against the wallet"
+            );
+        }
+    }
+
+    #[test]
+    fn report_sources_trust_only_listed_proxies_and_group_ipv6() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+        let peer = |s: &str| Some(s.parse::<std::net::SocketAddr>().unwrap());
+        assert_eq!(
+            report_source(&headers, peer("203.0.113.5:1"), &[]).as_deref(),
+            Some("203.0.113.5")
+        );
+        let proxies = ["10.0.0.0/8".parse().unwrap()];
+        assert_eq!(
+            report_source(&headers, peer("10.0.0.5:1"), &proxies).as_deref(),
+            Some("198.51.100.7")
+        );
+        assert_eq!(
+            report_source(&headers, peer("10.0.0.5:1"), &[]),
+            None,
+            "an unlisted private gateway gives no shared bucket"
+        );
+        assert_eq!(
+            report_source(&HeaderMap::new(), peer("10.0.0.5:1"), &proxies),
+            None,
+            "a trusted proxy without X-Real-IP names no client"
+        );
+        let mut internal = HeaderMap::new();
+        internal.insert("x-real-ip", "172.17.0.3".parse().unwrap());
+        assert_eq!(
+            report_source(&internal, peer("10.0.0.5:1"), &proxies),
+            None,
+            "a forwarded private address names no client"
+        );
+        let warned = std::sync::atomic::AtomicBool::new(false);
+        report_source_with(&HeaderMap::new(), peer("10.0.0.5:1"), &[], &warned);
+        assert!(
+            !warned.load(std::sync::atomic::Ordering::Relaxed),
+            "no warning without X-Real-IP"
+        );
+        report_source_with(&headers, peer("10.0.0.5:1"), &[], &warned);
+        assert!(warned.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            report_source(&headers, peer("[2001:db8:1:2::9]:1"), &[]).as_deref(),
+            Some("2001:db8:1:2::/64")
+        );
+        assert_eq!(report_source(&headers, None, &[]), None);
+    }
+
+    #[test]
+    fn reports_without_a_network_are_limited_per_wallet_only() {
+        for i in 0..(REPORTS_PER_NETWORK_PER_HOUR + 5) {
+            assert!(
+                admit_report(&format!("0xno-network-{i}"), None).is_ok(),
+                "no shared bucket for unknown networks"
+            );
+        }
+        let wallet = "0xno-network-wallet";
+        for _ in 0..REPORTS_PER_WALLET_PER_HOUR {
+            assert!(admit_report(wallet, None).is_ok());
+        }
+        assert_eq!(admit_report(wallet, None).unwrap_err().status(), 429);
+    }
+
+    #[test]
     fn filename_keeps_upstream_prefix() {
         let f = report_filename("0x1234567890ABCDEF1234567890abcdef12345678", 0x6500_0000);
         assert!(f.starts_with("1234567865000000"), "{f}");
@@ -442,7 +609,6 @@ mod tests {
         assert_eq!(public_path(&headers, "/api/report"), "/places/api/report");
         headers.insert("x-original-path", "/elsewhere".parse().unwrap());
         assert_eq!(public_path(&headers, "/api/report"), "/api/report");
-        assert_eq!(request_base_url(&headers), "https://node.example");
     }
     async fn request(
         app: &axum::Router,
@@ -716,17 +882,15 @@ mod tests {
         }
     }
     #[test]
-    fn forwarded_host_cannot_insert_query_or_credentials_into_upload_urls() {
+    fn upload_urls_use_the_configured_origin_whatever_the_request_headers() {
         let mut headers = HeaderMap::new();
-        for host in [
-            "node.example?token=injected",
-            "node.example/path",
-            "user@node.example",
-            "node.example#fragment",
-        ] {
-            headers.insert("x-forwarded-host", host.parse().unwrap());
-            assert_eq!(request_base_url(&headers), "http://127.0.0.1");
-        }
+        headers.insert("x-forwarded-host", "attacker.example".parse().unwrap());
+        headers.insert("host", "attacker.example".parse().unwrap());
+        headers.insert("x-original-path", "/places/api/report".parse().unwrap());
+        assert_eq!(
+            upload_url("https://node.example/", &headers, "/api/report", "f.json"),
+            "https://node.example/places/api/report/upload/f.json"
+        );
     }
 
     #[tokio::test]

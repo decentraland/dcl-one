@@ -118,6 +118,7 @@ printf 'LAUNCHED soft=%s hard=%s\n' "$(ulimit -Sn)" "$(ulimit -Hn)"
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("LAUNCHED", result.stdout)
                 self.assertIn("kernel per-process limit", result.stderr)
+                self.assertIn("sudo sysctl -w kern.maxfilesperproc=65536", result.stderr)
         result = self.run_prerequisite("10240", "unlimited", platform="Darwin")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("kern.maxfilesperproc=65536", result.stdout)

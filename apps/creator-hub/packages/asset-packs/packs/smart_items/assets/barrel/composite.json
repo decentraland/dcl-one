@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/barrel.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Barrel.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"health\":{\"type\":\"number\",\"value\":30,\"optional\":true,\"tooltip\":\"How many hits the barrel takes before it explodes.\"},\"explosionRadius\":{\"type\":\"number\",\"value\":10,\"optional\":true,\"tooltip\":\"How far the explosion's damage reaches.\"},\"explosionDamage\":{\"type\":\"number\",\"value\":30,\"optional\":true,\"tooltip\":\"How much damage the explosion deals to each target.\"},\"explosionTarget\":{\"type\":\"enum\",\"value\":\"all\",\"options\":[\"all\",\"player\",\"non_player\"],\"optional\":true,\"tooltip\":\"Who the explosion damages.\"},\"animation\":{\"type\":\"string\",\"value\":\"Animation\",\"optional\":true,\"tooltip\":\"Animation clip played when it explodes.\"},\"removeAfter\":{\"type\":\"number\",\"value\":1,\"optional\":true,\"tooltip\":\"Seconds after exploding before the barrel is removed.\"}},\"actions\":[{\"methodName\":\"explode\",\"description\":\"Explodes the barrel: plays the animation, deals area damage, then removes it.\",\"params\":{}}],\"events\":[\"exploded\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Explode",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Barrel.ts\",\"methodName\":\"explode\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

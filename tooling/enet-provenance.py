@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Authenticate the reviewed ENet import against public Git blobs; never check out code."""
+"""Authenticate the reviewed ENet import against public Git blobs; never check out code.
+
+The Explorer's in-tree crates are proved by tooling/vendor-provenance.py, which reads the fetch
+and the manifest reader from this file.
+"""
 import hashlib
 import json
 import os
@@ -104,10 +108,11 @@ def validate_workflow(workflow):
     jobs = re.findall(r"^  rust:\n(.*?)(?=^  [\w-]+:|\Z)", workflow, re.M | re.S)
     require(len(jobs) == 1, "online provenance Rust job missing/conditional")
     # The only condition allowed keeps it running whatever happens to the jobs it needs, skipping it only when the
-    # plan compared the change and found none of push.paths (library/** among them) touched.
+    # plan compared the change and found none of push.paths (library/** among them) touched, or no input of the
+    # Rust tests (RUST_INPUTS in tooling/dev-ci.py; the ENet source and this check are on that list).
     conditions = re.findall(r"^    (?:if|continue-on-error):.*$", jobs[0], re.M)
     needs = re.search(r"^    needs:", jobs[0], re.M)
-    require(conditions == (["    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}"] if needs else []),
+    require(conditions == (["    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' && needs.changes.outputs.rust != 'false' }}"] if needs else []),
             "online provenance Rust job missing/conditional")
     matrix = re.findall(r"^        os:(.*?)(?=^ {0,8}\S|\Z)", jobs[0], re.M | re.S)
     platforms = re.findall(r"\[[^\]]*\]", matrix[0]) if len(matrix) == 1 else []
@@ -119,7 +124,9 @@ def validate_workflow(workflow):
             "online provenance step missing/conditional/changed; retain explicit failure")
 
 
-def main():
+def main(arguments):
+    require(not arguments, "usage: enet-provenance.py (no arguments); "
+            "tooling/vendor-provenance.py proves the Explorer's in-tree crates")
     validate_workflow((ROOT / ".github/workflows/development.yml").read_text())
     pin = json.loads((SOURCE / "upstream.lock.json").read_text())
     manifest_bytes = (SOURCE / "upstream-files.sha256").read_bytes()
@@ -130,6 +137,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        main(sys.argv[1:])
     except (OSError, ValueError, KeyError) as error:
         sys.exit(f"ENet public provenance: {error}")
