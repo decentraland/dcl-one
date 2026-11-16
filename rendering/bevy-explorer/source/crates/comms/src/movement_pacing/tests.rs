@@ -133,19 +133,33 @@ fn regular_movement_keeps_its_hundred_millisecond_spacing() {
     assert_eq!(sends.len(), 100);
 }
 
-/// The server's input bucket: 20 a second, 16 held, refilled in whole 50 ms steps
-/// (`GameplayRateLimiter` in `services/catalyst/comms/src/pulse/hardening.rs`).
+/// The server's input limits, as `DEFAULT_INPUT_MAX_HZ` and `DEFAULT_INPUT_BURST` in
+/// `services/catalyst/comms/src/pulse/hardening.rs` (lines 694-696) set them. The server crate is not
+/// a dependency here: when those change, change these.
+const SERVER_INPUT_MAX_HZ: u32 = 20;
+const SERVER_INPUT_BURST: u32 = 16;
+
+/// The server's input bucket: refilled in whole steps of 1000 / `SERVER_INPUT_MAX_HZ` ms
+/// (`GameplayRateLimiter` in the same file).
 struct ServerInputBucket {
     tokens: u32,
     refilled_at_ms: u32,
 }
 
 impl ServerInputBucket {
+    fn new(now_ms: u32) -> Self {
+        Self {
+            tokens: SERVER_INPUT_BURST,
+            refilled_at_ms: now_ms,
+        }
+    }
+
     fn accepts(&mut self, now_ms: u32) -> bool {
-        let refills = (now_ms - self.refilled_at_ms) / 50;
+        let interval = 1000 / SERVER_INPUT_MAX_HZ;
+        let refills = (now_ms - self.refilled_at_ms) / interval;
         if refills > 0 {
-            self.tokens = (self.tokens + refills).min(16);
-            self.refilled_at_ms += refills * 50;
+            self.tokens = (self.tokens + refills).min(SERVER_INPUT_BURST);
+            self.refilled_at_ms += refills * interval;
         }
         if self.tokens == 0 {
             return false;
@@ -165,10 +179,7 @@ fn the_server_accepts_every_send_of_a_storm_and_of_mixed_movement() {
         }
     }] {
         let mut pacer = MovementPacer::default();
-        let mut server = ServerInputBucket {
-            tokens: 16,
-            refilled_at_ms: 1,
-        };
+        let mut server = ServerInputBucket::new(1000);
         let mut now = 1.0;
         for frame in 0..1200 {
             if ask(&mut pacer, now, change_of(frame)) {
@@ -176,6 +187,34 @@ fn the_server_accepts_every_send_of_a_storm_and_of_mixed_movement() {
             }
             now += 1.0 / 120.0;
         }
+    }
+}
+
+#[test]
+fn the_client_budget_stays_under_the_servers_limits() {
+    assert!(MOVEMENT_REFILL_PER_SECOND < SERVER_INPUT_MAX_HZ as f64);
+    assert!(MOVEMENT_BURST < SERVER_INPUT_BURST as f64);
+    assert!(MOVEMENT_MAX_SENDS_PER_SECOND < SERVER_INPUT_BURST);
+}
+
+#[test]
+fn the_server_accepts_a_stall_of_a_second_delivered_at_once() {
+    // An edge on every 60 Hz frame; the network holds every send of a window and delivers the lot
+    // in one millisecond, to a server whose bucket is full.
+    let mut pacer = MovementPacer::default();
+    let mut sends = Vec::new();
+    let mut now = 10.0;
+    for _ in 0..600 {
+        if ask(&mut pacer, now, Change::Edge) {
+            sends.push(now);
+        }
+        now += 1.0 / 60.0;
+    }
+    for &end in &sends {
+        let held = sends.iter().filter(|&&t| t > end - 1.0 && t <= end).count();
+        let mut server = ServerInputBucket::new(0);
+        let accepted = (0..held).filter(|_| server.accepts(5000)).count();
+        assert_eq!(accepted, held, "a stall ending at {end}");
     }
 }
 

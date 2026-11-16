@@ -123,10 +123,10 @@ fn broadcast_position(
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
     let anim_changed = current_hashes != last_anim.hashes;
-    // Toggling either enabled flag, or a yaw/pitch delta past the threshold, also
-    // breaks the keepalive — same shape as anim_changed. Sub-threshold drift just
-    // rides the 1Hz keepalive.
     let grounded = dynamics.ground_height < 0.2;
+    // Toggling either enabled flag, or a yaw/pitch delta past the threshold, breaks the
+    // keepalive and goes out at the next regular slot. Sub-threshold drift just rides the
+    // 1Hz keepalive.
     let head_changed = head_sync.yaw_enabled != last_head_sync.yaw_enabled
         || head_sync.pitch_enabled != last_head_sync.pitch_enabled
         || head_turned(last_head_sync.yaw_deg, head_sync.yaw_deg)

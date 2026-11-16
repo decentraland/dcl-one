@@ -10,8 +10,11 @@
 //! `DEFAULT_INPUT_MAX_HZ` and `DEFAULT_INPUT_BURST`; the rejection is `InputRateExceeded` in
 //! `server/mod.rs`). The bucket here refills [`MOVEMENT_REFILL_PER_SECOND`] tokens a second, holds
 //! [`MOVEMENT_BURST`], and every send costs one. Any window of one second therefore holds at most
-//! [`MOVEMENT_MAX_SENDS_PER_SECOND`] sends, under the server's 20 and its burst of 16, which leaves
-//! room for frames that bunch up in transit.
+//! [`MOVEMENT_MAX_SENDS_PER_SECOND`] sends, under the server's 20 and its burst of 16. The margin
+//! covers frames that bunch up in transit: a stall of `T` seconds delivered at once puts
+//! `MOVEMENT_BURST + 10 T` inputs in front of the server, which stays under its 16 for `T` up to
+//! about 1.3 s. A deployment that lowers `PULSE_INPUT_MAX_HZ` or `PULSE_INPUT_BURST` below these
+//! numbers would disconnect clients, as it would for any sender.
 //!
 //! A bucket rather than a sliding window of sends, because a window lets a storm of edges (a grounded
 //! flag flickering at its threshold, a scene swapping clips every frame) spend a whole second of
@@ -37,7 +40,8 @@ pub const IDLE_KEEPALIVE_SECONDS: f64 = 1.0;
 /// A head turn beyond this many degrees sends at the next slot instead of waiting for the keepalive.
 ///
 /// The wire carries head yaw and pitch in 7 bits over 0..360, a step of 360 / 127 = 2.8 degrees
-/// (`pulse_shared.proto`), so a turn under one step cannot change what the server sends on.
+/// (`pulse_shared.proto`). The threshold is roughly one wire step: a smaller drift mostly does not
+/// change the value on the wire, so it rides the keepalive.
 pub const HEAD_EPSILON_DEGREES: f32 = 3.0;
 
 /// What changed since the last send.
