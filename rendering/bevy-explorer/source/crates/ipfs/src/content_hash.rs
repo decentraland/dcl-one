@@ -4,7 +4,8 @@
 //! Covers the hashes decentraland deployments use (`@dcl/hashing`):
 //! - `Qm…`: the sha-256 of the bytes in a CIDv0 wrapper (decentraland's own scheme, not an ipfs
 //!   file hash).
-//! - `bafkrei…`: CIDv1 of the raw bytes, for files of up to one chunk.
+//! - `bafkrei…`: CIDv1 of the raw bytes. Deployments use it for files of up to one chunk; a raw
+//!   CID names the sha-256 of all the bytes whatever their size.
 //! - `bafybei…`: CIDv1 of the unixfs file node over 256KiB raw chunks, at most 174 links per
 //!   node. Ipfs allows other chunkings, which give other hashes for the same bytes: those are
 //!   reported as not matching.
@@ -21,11 +22,25 @@ pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
         let mut multihash = vec![0x12, 0x20];
         multihash.extend(sha256(bytes));
         hash == base58(&multihash)
+    } else if hash.starts_with("bafkrei") {
+        hash == format!("b{}", base32(&cid(RAW, bytes)))
     } else if hash.starts_with("baf") {
         hash == format!("b{}", base32(&file_cid(bytes)))
     } else {
         false
     }
+}
+
+/// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
+#[cfg(test)]
+pub(crate) fn raw_cid(bytes: &[u8]) -> String {
+    format!("b{}", base32(&cid(RAW, bytes)))
+}
+
+/// A cache name for bytes known only by the url they were fetched from: a digest of the url,
+/// lower-case base32, safe as a file name.
+pub(crate) fn url_cache_name(url: &str) -> String {
+    format!("u{}", base32(&sha256(url.as_bytes())))
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {
@@ -222,6 +237,17 @@ mod tests {
             let bytes = content(len);
             assert!(matches_content_hash(v1, &bytes), "{len} {v1}");
             assert!(matches_content_hash(v0, &bytes), "{len} {v0}");
+        }
+    }
+
+    #[test]
+    fn a_raw_cid_names_all_the_bytes_whatever_their_size() {
+        for len in [CHUNK_SIZE + 1, 3 * CHUNK_SIZE] {
+            let bytes = content(len);
+            let raw = raw_cid(&bytes);
+            assert!(raw.starts_with("bafkrei"));
+            assert!(matches_content_hash(&raw, &bytes));
+            assert!(!matches_content_hash(&raw, &bytes[1..]));
         }
     }
 

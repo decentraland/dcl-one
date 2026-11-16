@@ -80,11 +80,11 @@ pub fn retain_non_denylisted(docs: &mut Vec<EntityDoc>, denylist: &super::Denyli
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct ActiveEntityRow {
+struct ActiveEntityRow<M = Value> {
     entity_id: String,
     entity_type: String,
     entity_pointers: Vec<String>,
-    entity_metadata: Option<Value>,
+    entity_metadata: Option<M>,
     entity_timestamp: f64,
     version: String,
     content_json: Value,
@@ -129,7 +129,7 @@ pub(crate) fn js_truthy(value: &Value) -> bool {
 /// (`decentraland/catalyst:src/logic/entities/component.ts:125-135`). A struct
 /// keeps its field order where a `Map` would sort the keys.
 #[derive(serde::Serialize)]
-struct ActiveEntityJson {
+struct ActiveEntityJson<M = Value> {
     id: String,
     #[serde(rename = "type")]
     entity_type: String,
@@ -138,7 +138,7 @@ struct ActiveEntityJson {
     version: String,
     timestamp: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<Value>,
+    metadata: Option<M>,
 }
 
 /// A `date_part('epoch', ..) * 1000` double as upstream sends it, a JS number:
@@ -154,12 +154,20 @@ pub(crate) fn js_millis(ms: f64) -> Value {
 }
 
 fn row_to_doc(row: ActiveEntityRow) -> EntityDoc {
+    let metadata = unwrap_metadata(row.entity_metadata.as_ref());
+    serialize_row(row, metadata).expect("JSON values serialize")
+}
+
+fn serialize_row<M, S: serde::Serialize>(
+    row: ActiveEntityRow<M>,
+    metadata: Option<S>,
+) -> Result<EntityDoc, sqlx::Error> {
     let content: Vec<Value> = parse_content_json(&row.content_json)
         .into_iter()
         .map(|(key, hash)| json!({"file": key, "hash": hash}))
         .collect();
     let doc = ActiveEntityJson {
-        metadata: unwrap_metadata(row.entity_metadata.as_ref()),
+        metadata,
         id: row.entity_id,
         entity_type: row.entity_type,
         pointers: row.entity_pointers,
@@ -167,10 +175,10 @@ fn row_to_doc(row: ActiveEntityRow) -> EntityDoc {
         version: row.version,
         timestamp: js_millis(row.entity_timestamp),
     };
-    EntityDoc {
-        json: Bytes::from(serde_json::to_vec(&doc).unwrap_or_default()),
+    Ok(EntityDoc {
+        json: Bytes::from(serde_json::to_vec(&doc).map_err(|e| sqlx::Error::Decode(Box::new(e)))?),
         id: doc.id,
-    }
+    })
 }
 
 // Content lists sort by file name under upstream's collation: upstream reads
@@ -179,18 +187,40 @@ fn row_to_doc(row: ActiveEntityRow) -> EntityDoc {
 // cache in the entity's own order until evicted). The heap (ctid) order this
 // used to follow is the entity's order only until a prune leaves holes.
 const CONTENT_ORDER: &str = r#"ORDER BY cf.key COLLATE "en_US.utf8""#;
-const ACTIVE_ENTITY_PROJECTION: &str = r#"
+#[derive(Clone, Copy)]
+enum MetadataProjection {
+    Json,
+    #[cfg(any(test, feature = "test-support"))]
+    Text,
+    TextThumbnail,
+}
+
+fn active_entity_projection(mode: MetadataProjection) -> String {
+    let metadata = match mode {
+        MetadataProjection::Json => "dep.entity_metadata",
+        _ => "dep.entity_metadata::text AS entity_metadata",
+    };
+    let files = match mode {
+        MetadataProjection::TextThumbnail => {
+            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> '' AND cf.key NOT LIKE 'http%'"
+        }
+        _ => "",
+    };
+    format!(
+        r#"
     dep.entity_id,
     dep.entity_type,
     dep.entity_pointers,
-    dep.entity_metadata,
+    {metadata},
     date_part('epoch', dep.entity_timestamp) * 1000 AS entity_timestamp,
     dep.version,
     COALESCE(
         (SELECT json_agg(json_build_object('key', cf.key, 'hash', cf.content_hash) ORDER BY cf.key COLLATE "en_US.utf8")
-         FROM content.content_files cf WHERE cf.deployment = dep.id),
+         FROM content.content_files cf WHERE cf.deployment = dep.id {files}),
         '[]'::json
-    ) AS content_json"#;
+    ) AS content_json"#
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaskedColumns {
@@ -201,7 +231,7 @@ pub struct MaskedColumns {
 impl MaskedColumns {
     pub(super) fn projection(self) -> String {
         if self.content {
-            return ACTIVE_ENTITY_PROJECTION.to_string();
+            return active_entity_projection(MetadataProjection::Json);
         }
         let metadata = if self.metadata {
             "dep.entity_metadata"
@@ -226,6 +256,21 @@ async fn entity_docs_by_pointers(
     pointers: &[String],
     projection: &str,
 ) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    Ok(entity_rows_by_pointers::<Value>(pool, pointers, projection)
+        .await?
+        .into_iter()
+        .map(row_to_doc)
+        .collect())
+}
+
+async fn entity_rows_by_pointers<M>(
+    pool: &PgPool,
+    pointers: &[String],
+    projection: &str,
+) -> Result<Vec<ActiveEntityRow<M>>, sqlx::Error>
+where
+    M: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Send + Unpin,
+{
     if pointers.is_empty() {
         return Ok(vec![]);
     }
@@ -236,7 +281,7 @@ async fn entity_docs_by_pointers(
     // deduplicated here. Ordered by each entity's smallest matching pointer
     // in byte order, so the answer does not depend on the plan or the
     // cluster's collation.
-    let rows: Vec<ActiveEntityRow> = sqlx::query_as(AssertSqlSafe(format!(
+    let rows: Vec<ActiveEntityRow<M>> = sqlx::query_as(AssertSqlSafe(format!(
         "WITH keys AS (
              SELECT ap.entity_id, min(ap.pointer COLLATE \"C\") AS first_pointer
              FROM content.active_pointers ap
@@ -252,7 +297,7 @@ async fn entity_docs_by_pointers(
     .bind(&lower)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_doc).collect())
+    Ok(rows)
 }
 
 async fn entity_docs_by_ids(
@@ -279,14 +324,65 @@ pub async fn active_entity_docs_by_pointers(
     pool: &PgPool,
     pointers: &[String],
 ) -> Result<Vec<EntityDoc>, sqlx::Error> {
-    entity_docs_by_pointers(pool, pointers, ACTIVE_ENTITY_PROJECTION).await
+    entity_docs_by_pointers(
+        pool,
+        pointers,
+        &active_entity_projection(MetadataProjection::Json),
+    )
+    .await
+}
+
+/// Active selection with the metadata order retained by the stored JSON text.
+/// Ordinary content reads keep their existing JSON value projection.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn active_entity_docs_with_ordered_metadata_by_pointers(
+    pool: &PgPool,
+    pointers: &[String],
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    ordered_entity_docs_by_pointers(pool, pointers, MetadataProjection::Text).await
+}
+
+/// The same selected documents and metadata, with only the referenced thumbnail file.
+/// Statistics never consume the other content files; (deployment, key) is unique.
+pub async fn active_entity_docs_with_ordered_metadata_and_thumbnail_by_pointers(
+    pool: &PgPool,
+    pointers: &[String],
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    ordered_entity_docs_by_pointers(pool, pointers, MetadataProjection::TextThumbnail).await
+}
+
+async fn ordered_entity_docs_by_pointers(
+    pool: &PgPool,
+    pointers: &[String],
+    mode: MetadataProjection,
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    let projection = active_entity_projection(mode);
+    entity_rows_by_pointers::<String>(pool, pointers, &projection)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let wrapper = row
+                .entity_metadata
+                .as_deref()
+                .map(serde_json::from_str::<crate::OrderedJson>)
+                .transpose()
+                .map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+            let metadata = wrapper.as_ref().and_then(|m| m.get("v"));
+            serialize_row(row, metadata)
+        })
+        .collect()
 }
 
 pub async fn active_entity_docs_by_ids(
     pool: &PgPool,
     ids: &[String],
 ) -> Result<Vec<EntityDoc>, sqlx::Error> {
-    entity_docs_by_ids(pool, ids, ACTIVE_ENTITY_PROJECTION).await
+    entity_docs_by_ids(
+        pool,
+        ids,
+        &active_entity_projection(MetadataProjection::Json),
+    )
+    .await
 }
 
 pub async fn masked_entity_docs_by_pointers(
@@ -326,6 +422,7 @@ pub async fn active_entity_docs_by_prefix(
     limit: i64,
 ) -> Result<PrefixDocsResult, sqlx::Error> {
     let pattern = format!("{}%", escape_like(prefix));
+    let projection = active_entity_projection(MetadataProjection::Json);
     let total: i64 = sqlx::query_scalar(
         r"SELECT count(*) FROM content.active_pointers p WHERE p.pointer LIKE $1 ESCAPE '\'",
     )
@@ -337,7 +434,7 @@ pub async fn active_entity_docs_by_prefix(
               SELECT p.entity_id, row_number() OVER (ORDER BY p.pointer) AS ord
               FROM content.active_pointers p WHERE p.pointer LIKE $1 ESCAPE '\'
           )
-          SELECT {ACTIVE_ENTITY_PROJECTION}
+          SELECT {projection}
           FROM ids
           INNER JOIN content.deployments dep ON dep.entity_id = ids.entity_id
           WHERE ids.ord > $2 AND ids.ord <= $2 + $3

@@ -11,8 +11,8 @@ use crate::checkout::calls::{
     parse_wei, parse_wei_allow_zero,
 };
 use crate::checkout::trade::{
-    ASSET_TYPE_USD_PEGGED_MANA, TradeDelivery, TradeExpectations, TradeIn, ValidatedTrade,
-    build_trade_accept, transferred_token_id_from_logs, validate_trade,
+    TradeDelivery, TradeExpectations, TradeIn, ValidatedTrade, build_trade_accept,
+    transferred_token_id_from_logs, validate_trade,
 };
 use crate::evm::SharedState;
 use crate::evm::contracts_addrs::DclContracts;
@@ -21,6 +21,7 @@ use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::oracle::{UsdPeggedExpectation, fetch_mana_usd_rate};
 use crate::evm::signer::{DirectSigner, ReceiptOutcome};
+use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,7 +140,7 @@ pub async fn buy(
                 ApiError::InvalidTransaction(format!("malformed trade payload: {e}"))
             })?;
             let is_usd_pegged = parsed.received.len() == 1
-                && parsed.received[0].asset_type == ASSET_TYPE_USD_PEGGED_MANA;
+                && parsed.received[0].asset_type == i64::from(ASSET_TYPE_USD_PEGGED_MANA);
             if !is_usd_pegged && body.quote_mana_wei.is_some() {
                 return Err(ApiError::InvalidTransaction(
                     "`quoteManaWei` was sent but the trade is not USD-pegged (assetType 2); \
@@ -544,12 +545,17 @@ fn trade_delivered_token_id(
     trade: Option<&ValidatedTrade>,
     expected_token: Option<U256>,
 ) -> Result<U256, ApiError> {
-    let trade = trade.ok_or_else(|| {
-        ApiError::Internal("trade buy confirmed without the validated trade context".into())
-    })?;
-    let from = match trade.delivery {
-        TradeDelivery::Nft { .. } => trade.signer,
-        TradeDelivery::Item { .. } => Address::ZERO,
+    // Resumed from the recorded row alone, the trade is known by what the
+    // row kept: an NFT trade recorded the token it delivers, taken on the
+    // confirmed receipt as a secondary buy's is; an item trade recorded none
+    // and mints.
+    let from = match (trade, expected_token) {
+        (Some(trade), _) => match trade.delivery {
+            TradeDelivery::Nft { .. } => trade.signer,
+            TradeDelivery::Item { .. } => Address::ZERO,
+        },
+        (None, Some(expected)) => return Ok(expected),
+        (None, None) => Address::ZERO,
     };
     let delivered =
         transferred_token_id_from_logs(logs, collection, from, relayer).ok_or_else(|| {
@@ -567,6 +573,48 @@ fn trade_delivered_token_id(
         )));
     }
     Ok(delivered)
+}
+
+/// Drives the buy already claimed under `key` from its recorded row alone,
+/// with no request body and no catalogue, trade or price re-check: the buy
+/// may already have mined, closing the trade or using up the item's supply,
+/// so a fresh validation would refuse a purchase that has spent MANA. `Ok` is
+/// the forward transaction hash once the token is in escrow custody; the
+/// row's status decides the rest exactly as a repeated [`buy`] does.
+pub async fn resume(state: &SharedState, key: &str) -> Result<String, ApiError> {
+    require_broadcast_enabled(state, "broker buys")?;
+    let Some(signer) = state.transaction.direct_signer() else {
+        return Err(ApiError::RelayerUnavailable(
+            "resuming a broker buy requires the direct JSON-RPC signer".into(),
+        ));
+    };
+    let signer: &DirectSigner = signer.as_ref();
+    let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT mode, collection, escrow_address, buyer_address \
+         FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((mode, collection, escrow, buyer)) = row else {
+        return Err(ApiError::NotFound(format!(
+            "no broker buy was claimed under {key:?}"
+        )));
+    };
+    let buyer = buyer
+        .ok_or_else(|| ApiError::Internal(format!("broker buy {key:?} has no buyer_address")))?;
+    let ctx = BuyContext {
+        state,
+        signer,
+        key,
+        mode: PurchaseMode::parse_wearable(&mode)?,
+        collection: parse_address("collection", &collection)?,
+        escrow: parse_address("escrowAddress", &escrow)?,
+        buyer: parse_address("buyerAddress", &buyer)?,
+        relayer: signer.relayer_address(),
+        trade: None,
+    };
+    Ok(resume_existing(ctx).await?.forward_tx_hash)
 }
 
 async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
@@ -845,8 +893,47 @@ pub(crate) async fn mark_error(state: &SharedState, key: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::collections_spender;
+    use super::{collections_spender, trade_delivered_token_id};
     use crate::evm::contracts_addrs::DclContracts;
+    use crate::evm::signer::ReceiptLog;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+
+    fn transfer(collection: Address, from: Address, to: Address, token: u64) -> ReceiptLog {
+        let word = |a: Address| B256::left_padding_from(a.as_slice());
+        ReceiptLog {
+            address: collection,
+            topics: vec![
+                B256::from(crate::evm::abi::ERC721_TRANSFER_TOPIC0),
+                word(from),
+                word(to),
+                B256::from(U256::from(token)),
+            ],
+            data: Bytes::new(),
+        }
+    }
+
+    #[test]
+    fn a_trade_resumed_without_its_payload_takes_the_token_the_row_recorded() {
+        let collection = Address::repeat_byte(0xc0);
+        let relayer = Address::repeat_byte(0x11);
+        let seller = Address::repeat_byte(0x22);
+        let nft = [transfer(collection, seller, relayer, 7)];
+        assert_eq!(
+            trade_delivered_token_id(&nft, collection, relayer, None, Some(U256::from(7))).unwrap(),
+            U256::from(7),
+            "an NFT trade forwards the token its row recorded"
+        );
+        let minted = [transfer(collection, Address::ZERO, relayer, 9)];
+        assert_eq!(
+            trade_delivered_token_id(&minted, collection, relayer, None, None).unwrap(),
+            U256::from(9),
+            "an item trade with no recorded token forwards the one it minted"
+        );
+        assert!(
+            trade_delivered_token_id(&nft, collection, relayer, None, None).is_err(),
+            "an item trade whose receipt shows no mint to the relayer forwards nothing"
+        );
+    }
 
     #[test]
     fn collections_spender_resolves_store_and_marketplace_only() {

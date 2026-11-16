@@ -1,0 +1,40 @@
+/* TODO(figma-ds): provisional dialog chrome, until the design system ships a Dialog. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-24);
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent);
+}
+
+.drawerBackdrop {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+  background: var(--dcl-bg-backdrop);
+}
+
+.panel {
+  position: relative;
+  color: var(--dcl-text-primary);
+  outline: none;
+}
+
+.modal {
+  width: min(880px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  width: min(360px, 85vw);
+  padding: var(--dcl-space-24);
+  background: var(--dcl-neutrals-shadow);
+}

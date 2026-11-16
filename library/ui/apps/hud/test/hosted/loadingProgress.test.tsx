@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { SceneLoadingOverlay } from '../../features/session/SceneLoadingOverlay'
 import { createLoadingProgress, type LoadingInput } from '@explorer-core/features/session/loadingProgress'
-import { enterAsGuest, renderSession } from '../harness'
+import { enterAsGuest, FakeDriver, renderSession } from '../harness'
 
 const scene = (pendingAssets: number | null, visible = true, realmConnected = true) => ({ visible, realmConnected, title: '', pendingAssets })
 const input = (over: Partial<LoadingInput>): LoadingInput => ({ scene: scene(null), playerReady: false, revealing: false, travelling: false, ...over })
@@ -57,5 +57,28 @@ describe('loading progress', () => {
     expect(screen.getByRole('status')).toHaveTextContent('LOADING 63%')
     rerender(<SceneLoadingOverlay scene={scene(null, true, false)} progress={63} />)
     expect(screen.getByRole('status')).toHaveTextContent('RECONNECTING…')
+  })
+})
+
+// An engine that can take commands from the start: the boot bar then waits on the lobby's stage.
+class BootedEngine extends FakeDriver {
+  engineReady(): boolean {
+    return true
+  }
+}
+
+// Reported: the boot bar stayed up in the world when the lobby was left before its stage reported
+// (most often with a stored session, whose stage is only built after its sign-in).
+describe('boot bar', () => {
+  it('ends when a destination is picked before the lobby stage reported', async () => {
+    const h = renderSession(undefined, new BootedEngine())
+    await waitFor(() => expect(h.session().login.status).not.toBe('loading'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    // no lobbyStageReady yet: the bar holds short of done
+    expect(h.session().login.avatarLoaded).toBe(false)
+    act(() => h.session().pickDestination(null))
+    await waitFor(() => expect(h.session().login.avatarLoaded).toBe(true))
   })
 })

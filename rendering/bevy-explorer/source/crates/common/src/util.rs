@@ -598,7 +598,10 @@ impl SceneSpawnerPlus<'_, '_> {
         }
 
         for scene_ent in self.scene_spawner.iter_instance_entities(instance) {
-            let (maybe_h_mat, maybe_h_mesh) = self.query.get(scene_ent).unwrap();
+            // an entity of the instance may be gone: glTF processing despawns directional lights
+            let Ok((maybe_h_mat, maybe_h_mesh)) = self.query.get(scene_ent) else {
+                continue;
+            };
             if maybe_h_mat.is_some_and(|h| !check_handle(&self.asset_server, h.as_asset_id())) {
                 return false;
             }

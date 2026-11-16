@@ -87,7 +87,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 
 | Trigger | Status | Body | Headers | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|---|---|
-| OK, marketplace API answers (primary) | 200 | `{"elements":[{"name":"alice","contractAddress":"0x00000000000000000000000000000000000000aa","tokenId":"123","price":"1000000000000000000"}],"totalAmount":1,"pageNum":1,"pageSize":100}`. `price` is a string, or absent when there is no order. Page and total come from the API (`limit`/`offset`). | JSON | `names-handler.ts:13-31`, `marketplace-api-fetcher.ts:474-512` | `user_items.rs:364-379` (subgraph only) | DIVERGENT in source: dcl-one never calls the marketplace API. For one address holding 16 names, the API, lamb2 and the subgraph's `id asc` gave the same order; the API's `total` (16) equalled the count; the API's `price: null` reached the client as an absent key, as dcl-one's `OwnedName` does (`captures/lambdas-land/LL-7-*.json`). |
+| OK, marketplace API answers (primary) | 200 | `{"elements":[{"name":"alice","contractAddress":"0x00000000000000000000000000000000000000aa","tokenId":"123","price":"1000000000000000000"}],"totalAmount":1,"pageNum":1,"pageSize":100}`. `price` is a string, or absent when there is no order. Page and total come from the API (`limit`/`offset`). | JSON | `names-handler.ts:13-31`, `marketplace-api-fetcher.ts:474-512` | `user_items.rs:364-404` (subgraph only) | MATCH (LL-7): the API reads the squid's `nft` table `ORDER BY nft.id ASC`, `price` from the active order, `total` a `COUNT(*)` (`decentraland/marketplace-server@9c3683cb:src/ports/user-assets/queries.ts:211-249`), and the squid ids a name `ens-<registrar>-<tokenId>` (`decentraland/marketplace-squid@91dc7533:src/eth/handlers/ens.ts:30`, `src/common/utils/nft.ts:48-56`), the subgraph's id. dcl-one walks the subgraph's `id asc` with `activeOrder { price }` and slices it. The capture agrees (`captures/lambdas-land/LL-7-*.json`). |
 | OK, marketplace API failed, subgraph fallback | 200 | Same fields, but `elements` is **every** name: the handler does not slice, because `fetchNames` ignores `pagination` on the graph leg (`fetch-names.ts:58-72`). `totalAmount` = count. `pageNum` and `pageSize` are echoed. | JSON | `fetch-names.ts:58`, `names-handler.ts:13` | `user_items.rs:371-378` slices JS-style | DIVERGENT (upstream quirk; dcl-one slices) |
 | `pageSize` > 1000 | 400 | `{"error":"Bad request","message":"max allowed pageSize is 1000"}` | | `pagination.ts:12` | The same 400 (`user_items.rs:355`; fixture `shop/src/market/fixtures/users-names-400-pagesize-over-1000.json`) | MATCH |
 | `pageSize=abc` | 200 | `elements: []` (slice NaN), `"pageSize": null` | | `pagination.ts:5` | 200 with default 100 | DIVERGENT (P2) |
@@ -102,7 +102,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 
 Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts:11`); dcl-one on `owner: $owner` (`services/catalyst/chain-index/src/graph.rs:458`). Account ids are addresses in the marketplace subgraph, so these are equivalent (read, not confirmed by capture).
 
-**Data dependency:** marketplace subgraph (`MARKETPLACE_SUBGRAPH_URL`). Upstream also reads the marketplace-server API (`MARKETPLACE_API_URL`). dcl-one has its own DCLRegistrar index (`shop.nft`), but this route does not use it. The `services/catalyst/config/src/shop.rs:19` doc ("unset answers empty names") disagrees with the code, which answers 503.
+**Data dependency:** marketplace subgraph (`MARKETPLACE_SUBGRAPH_URL`). Upstream also reads the marketplace-server API (`MARKETPLACE_API_URL`). dcl-one has its own DCLRegistrar index (`shop.nft`), but this route does not use it; the subgraph gives the API's order (LL-7). The `services/catalyst/config/src/shop.rs:19` doc ("unset answers empty names") disagrees with the code, which answers 503.
 
 ---
 
@@ -166,7 +166,7 @@ Undefined keys are omitted. `x` and `y` are present only when `category == "parc
 | Indexes not ready, no subgraph | n/a | | 503 envelope `source:"land-authz-index"` or `"nft-index"` (`lambdas_land.rs:186-192`) | DIVERGENT |
 | DB error | n/a | | 500 | n/a |
 
-Estate vs parcel: in both trees a parcel inside an estate belongs on chain to the Estate registry, so the user sees the estate and not its parcels. In dcl-one, an estate with no parcels (`x`/`y` NULL) is still listed. The index path binds `LAND_REGISTRY_MAINNET` and `ESTATE_REGISTRY_MAINNET`, and `land_ready` checks `NETWORK_MAINNET` (`lambdas_land.rs:198`, `services/catalyst/shop/src/market/nft_reads.rs:107`), so a sepolia node never answers from its index.
+Estate vs parcel: in both trees a parcel inside an estate belongs on chain to the Estate registry, so the user sees the estate and not its parcels. In dcl-one, an estate with no parcels (`x`/`y` NULL) is still listed. The index path reads the registries and the cursor of `ETH_NETWORK` (`land_network`, `services/catalyst/chain-index/src/registries.rs`; LL-15); a network other than `mainnet` or `sepolia` has no index path.
 
 **Data dependency:** land-authz index (RPC logs) plus the nft index (`land_data`, `nft_order`), or the marketplace subgraph.
 
@@ -280,12 +280,12 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
    - dcl-one: `JsPagination` (`services/catalyst/shared/src/query_params.rs`) on `/lands` (`services/catalyst/shop/src/market/lambdas_land.rs`, both paths; the index path counts first when a bound is negative) and `/lands-permissions` (`services/catalyst/land-authz/src/routes.rs`, both paths). Pinned by `js_pagination_slices_as_javascript_does` and the index-path cases in `land-authz/src/tests.rs`.
    - Left open (needs capture): names. lamb2 hands `limit`/`offset` to the marketplace API, whose answer to a zero, negative or `NaN` value is not vendored, and its subgraph fallback returns every name unsliced (LL-7). `/users/:a/names` keeps the clamp to 1 and the default 100 for a value that does not parse.
    - Severity: P2 (names only).
-7. **LL-7: Names come from the subgraph only.** Endpoint: `/users/:a/names`.
-   - Gap: no marketplace API leg, and the order is subgraph id order.
+7. **LL-7: Names come from the subgraph only.** Endpoint: `/users/:a/names`. Status: MATCH, no work.
    - Expected: page, order and total as the marketplace-server `/v1/users/:a/names` returns them (`decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:474`).
-   - Capture: for one address with 16 names, the API order equals the subgraph's `id asc`, `total` equals the count and a null `price` is dropped by lamb2 (`captures/lambdas-land/LL-7-marketplace-api-names.json`, `LL-7-lambdas-names.json`, `LL-7-subgraph-names.json`). dcl-one's subgraph answer matches that sample. One sample does not establish the API's ordering rule.
-   - Change: serve from dcl-one's own `/v1/users/{address}/names` logic (`services/catalyst/shop/src/market/mod.rs:1048`) or from the `shop.nft` index, with the marketplace API's ordering, in `user_items.rs:364`.
-   - Severity: P1.
+   - Upstream rule: the API selects the owner's `category = 'ens'` rows of the squid's `nft` table `ORDER BY nft.id ASC` with `LIMIT`/`OFFSET`, `price` from the row's active order, and `total` is a `COUNT(*)` of the same rows (`decentraland/marketplace-server@9c3683cb:src/ports/user-assets/queries.ts:211-249`). The squid ids a name `ens-<DCLRegistrar>-<tokenId>` (`decentraland/marketplace-squid@91dc7533:src/eth/handlers/ens.ts:30`, `src/common/utils/nft.ts:48-56`), the marketplace subgraph's id for the same NFT.
+   - dcl-one: walks the subgraph's `nfts(category: ens)` in `id asc` with `activeOrder { price }` (`services/catalyst/chain-index/src/graph.rs`, `QUERY_NAMES`) and slices the page; `totalAmount` is the count. Every id of one owner's names shares the registrar prefix, so text order is the order of the token ids' decimal strings in both stores. dcl-one's own `/v1/users/{address}/names` reads the same reader.
+   - Capture: for one address with 16 names, the API order equals the subgraph's `id asc`, `total` equals the count and a null `price` is dropped by lamb2 (`captures/lambdas-land/LL-7-marketplace-api-names.json`, `LL-7-lambdas-names.json`, `LL-7-subgraph-names.json`).
+   - Severity: none (closed).
 8. **LL-8: Names rejects invalid addresses.** Endpoint: `/users/:a/names`. Status: MATCH, no work.
    - Expected: 200 with an empty page (`decentraland/lamb2:src/logic/api-with-fallback.ts:28-45`).
    - dcl-one: a string that is not an address answers an empty page, `pageNum`/`pageSize` echoed, without a reader call (`services/catalyst/shop/src/market/user_items.rs`, `user_names`); pinned by `user_item_routes_reject_a_malformed_address_before_any_reader_call` (`shop/src/market/tests.rs`). The `pageSize` 400 still comes first, as upstream.
@@ -322,11 +322,11 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
    - dcl-one: the reader keeps a null description as `null` (`OwnedLand.description: Option<Option<String>>`, `services/catalyst/chain-index/src/graph.rs`, `parse_owned_lands`; pinned by `owned_lands_carry_the_old_row_columns`).
    - Left open: the index path answers `""` for a data record without a description. `parse_land_data` (`services/catalyst/shop/src/market/nft_index.rs:320`) stores an empty field and a missing one alike (NULL), and which of the two the marketplace subgraph stores as `null` is not vendored. Telling them apart needs `shop.land_data` to keep the difference (a schema step and a re-fold of the `land_data` events) once a capture shows the subgraph's rule.
    - Severity: P2 (index path).
-15. **LL-15: The `/lands` index path is mainnet-only.**
-    - Gap: `LAND_REGISTRY_MAINNET`, `ESTATE_REGISTRY_MAINNET` and `NETWORK_MAINNET` are hard-coded, so a sepolia node never answers from its index.
+15. **LL-15: The `/lands` index path reads the registries of `ETH_NETWORK`.** Status: MATCH, no work.
     - Expected: the registries of `ETH_NETWORK` (`decentraland/lamb2:src/ports/the-graph.ts:38`).
-    - Change: `services/catalyst/shop/src/market/lambdas_land.rs:198`, `lambdas_land.rs:283`, `services/catalyst/shop/src/market/nft_reads.rs:107`.
-    - Severity: P1.
+    - dcl-one: `/lands` and `/genesis-parcels` open the land snapshot and bind the registries of `land_network(ETH_NETWORK)` (`services/catalyst/shop/src/market/lambdas_land.rs`; `land_snapshot`, `services/catalyst/shop/src/market/nft_reads.rs`). Pinned by `user_lands_read_the_registries_of_the_configured_network` (`services/catalyst/shop/src/market/lambdas_tests.rs`).
+    - Not covered: the marketplace `/v1/nfts` reads and the MANA facts still name the mainnet registries (`LAND_MAINNET`); they are not lamb2 routes.
+    - Severity: none (closed).
 16. **LL-16: Reader page caps.** Endpoints: names and lands (reader path), operators and lands-permissions (subgraph path). Status: MATCH, no work (`FULL_WALK_PAGES`, a 1,000-page runaway guard; one sequential GraphQL request per 1000 rows per uncached key).
     - Gap: 10 or 20 pages at most, which truncates large holders.
     - Expected: walk every page (`decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:23-44`, `fetch-permissions.ts:45`).
@@ -378,7 +378,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 - `GET /lambdas/users/{address}/genesis-parcels` (`services/catalyst/shop/src/market/lambdas_land.rs:268`).
   - Answers parcels owned directly or through an owned estate: `{elements:[{tokenId,x,y,viaEstate}],totalAmount,pageNum,pageSize}`, ordered by `x, y`.
   - Invalid address → 400. Land index not ready → 503. DB error → 500 with an **empty body** (`lambdas_land.rs:293`).
-  - Reads the land-authz index only, with mainnet registries hard-coded.
+  - Reads the land-authz index only, for the registries of `ETH_NETWORK`.
 - `POST /lambdas/users/{address}/parcels/permissions` (`services/catalyst/land-authz/src/routes.rs:370`).
   - Batch permissions for up to 100 `"x,y"` entries, 64 KiB body.
   - Answers `{elements:[{x,y,permissions|null}]}` with the `x-land-authz-source` header. Before the index is ready it keeps the marketplace subgraph's owner-only fallback: the four operator legs are `null` (`routes.rs:252-265`).

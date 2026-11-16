@@ -143,21 +143,10 @@ pub fn extract_auth_chain_from_fields(
         return Ok(Some(chain));
     }
 
-    let mut biggest_index: i64 = -1;
-    for key in fields.keys() {
-        if let Some(rest) = key.strip_prefix("authChain[")
-            && let Some(idx_str) = rest.split(']').next()
-            && let Ok(idx) = idx_str.parse::<i64>()
-            && idx > biggest_index
-        {
-            biggest_index = idx;
-        }
-    }
-
-    if biggest_index == -1 {
+    let Some(biggest_index) = auth_chain_field_max_index(fields.keys()) else {
         return Ok(None);
-    }
-    if biggest_index >= MAX_AUTH_CHAIN_LINKS as i64 {
+    };
+    if biggest_index >= MAX_AUTH_CHAIN_LINKS as u64 {
         return Err(too_long_message());
     }
 
@@ -175,9 +164,28 @@ pub fn extract_auth_chain_from_fields(
     Ok(Some(Value::Array(chain)))
 }
 
+/// The largest link index the indexed form fields name: the first
+/// `authChain[<digits>]` in each field name (`/authChain\[(\d+)\]/`),
+/// saturating; `None` when no name carries one.
+pub fn auth_chain_field_max_index<'a>(keys: impl IntoIterator<Item = &'a String>) -> Option<u64> {
+    keys.into_iter()
+        .filter_map(|key| auth_chain_field_index(key))
+        .max()
+}
+
+fn auth_chain_field_index(key: &str) -> Option<u64> {
+    const OPEN: &str = "authChain[";
+    key.match_indices(OPEN).find_map(|(at, _)| {
+        let rest = &key[at + OPEN.len()..];
+        let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
+        (!digits.is_empty() && rest[digits.len()..].starts_with(']'))
+            .then(|| digits.parse::<u64>().unwrap_or(u64::MAX))
+    })
+}
+
 fn indexed_field<'a>(
     fields: &'a BTreeMap<String, String>,
-    i: i64,
+    i: u64,
     part: &str,
 ) -> Result<&'a String, String> {
     fields
@@ -351,18 +359,117 @@ async fn read_form(
 /// `entity_id`), for the unsynced copy's per-type gate; the deployer checks
 /// the same file in full.
 fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
+    entity_file_of(files, entity_id).and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
+fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
     files
         .iter()
         .filter(|f| f.first() == Some(&b'{'))
         .find(|f| crate::auth::verify_hash(f, entity_id))
         .and_then(|f| serde_json::from_slice::<Value>(f).ok())
-        .and_then(|v| v.get("type")?.as_str().map(str::to_string))
+}
+
+/// Whether an undecided deploy's quota charge is given back: only when its
+/// access check fits one Checker batch and asks only Decentraland's own
+/// contracts (LAND, estates, the NAME registrar). A larger request, or a
+/// contract the entity names (a collection, a worn item's NFT), can drive the
+/// check past its deadline or into a non-revert failure.
+fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
+    entity_file_of(files, entity_id).is_some_and(|entity| {
+        !has_nul(&entity)
+            && !asks_named_contracts(&entity)
+            && access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
+    })
+}
+
+/// Whether a string or key holds a NUL, which the metadata column refuses at the
+/// write: that 503 is the request's own.
+fn has_nul(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(items) => items.iter().any(has_nul),
+        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
+        _ => false,
+    }
+}
+
+/// Whether the access check calls contracts the entity names: a wearable's or
+/// emote's collection, or an on-chain item a profile or outfit wears.
+fn asks_named_contracts(entity: &Value) -> bool {
+    if matches!(
+        entity.get("type").and_then(Value::as_str),
+        Some("wearable" | "emote")
+    ) {
+        return true;
+    }
+    let on_chain = |urn: &Value| {
+        let urn = urn.as_str().or_else(|| urn.get("urn")?.as_str());
+        urn.is_some_and(|u| {
+            crate::validator::onchain::items::item_ref(u)
+                .on_l1()
+                .is_some()
+        })
+    };
+    let worn = |list: Option<&Value>| {
+        list.and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(on_chain))
+    };
+    let Some(metadata) = entity.get("metadata") else {
+        return false;
+    };
+    let avatars = metadata.get("avatars").and_then(Value::as_array);
+    let outfits = metadata.get("outfits").and_then(Value::as_array);
+    avatars.into_iter().flatten().any(|a| {
+        let a = a.get("avatar");
+        worn(a.and_then(|a| a.get("wearables"))) || worn(a.and_then(|a| a.get("emotes")))
+    }) || outfits
+        .into_iter()
+        .flatten()
+        .any(|o| worn(o.get("outfit").and_then(|o| o.get("wearables"))))
+}
+
+/// An upper bound on the on-chain sub-calls the access check asks for `entity`:
+/// its pointers (LAND parcels), a wearable's or emote's content hashes, and the
+/// names and items its profiles and outfits claim.
+fn access_calls_of(entity: &Value) -> usize {
+    let len = |v: Option<&Value>| v.and_then(Value::as_array).map_or(0, Vec::len);
+    let mut calls = len(entity.get("pointers"));
+    if matches!(
+        entity.get("type").and_then(Value::as_str),
+        Some("wearable" | "emote")
+    ) {
+        calls += len(entity.get("content"));
+    }
+    let Some(metadata) = entity.get("metadata") else {
+        return calls;
+    };
+    for avatar in metadata
+        .get("avatars")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        calls += usize::from(avatar.get("hasClaimedName") == Some(&Value::Bool(true)));
+        let worn = avatar.get("avatar");
+        calls += len(worn.and_then(|a| a.get("wearables")));
+        calls += len(worn.and_then(|a| a.get("emotes")));
+    }
+    for outfit in metadata
+        .get("outfits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        calls += len(outfit.get("outfit").and_then(|o| o.get("wearables")));
+    }
+    calls + len(metadata.get("namesForExtraSlots"))
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
-    let unavailable = !matches!(failure, DeployFailure::Rejected(_));
+    let unavailable = !matches!(failure, DeployFailure::Rejected(_, _));
     let (status, errors) = match failure {
-        DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
+        DeployFailure::Rejected(_, errors) => (StatusCode::BAD_REQUEST, errors),
         DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
             (StatusCode::SERVICE_UNAVAILABLE, errors)
         }
@@ -467,22 +574,11 @@ fn deploy_client(
 /// A direct client on a public address, or a local one sending no header, is
 /// not one.
 fn looks_like_an_untrusted_proxy(headers: &HeaderMap, peer: std::net::IpAddr) -> bool {
-    use std::net::IpAddr;
-    let internal = match peer.to_canonical() {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            // RFC 6598 shared space (100.64.0.0/10) is also used inside clusters.
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || (a == 100 && b & 0xc0 == 64)
-        }
-        IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            v6.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
-        }
-    };
-    internal && headers.contains_key("x-real-ip")
+    use crate::shared::client_ip::{is_internal, single_real_ip};
+    // A header equal to the peer is the server's own pin, not a proxy's.
+    is_internal(peer)
+        && headers.contains_key("x-real-ip")
+        && single_real_ip(headers) != Some(peer.to_canonical())
 }
 
 /// Once per process: a node without the setting cannot tell its proxy from a
@@ -651,7 +747,8 @@ struct Request<'a> {
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
-/// 503 for this node's own state, which the client's quota gets back.
+/// 503 for this node's own state on a request small enough not to have
+/// caused it, which the client's quota gets back.
 enum Answer {
     Decided(Response),
     Undecided(Response),
@@ -769,10 +866,13 @@ async fn deploy_regular(
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
             return Ok(Answer::Decided(deployment_failure_response(
-                DeployFailure::Rejected(vec![
-                    "The entity file was not part of the uploaded files or has no type."
-                        .to_string(),
-                ]),
+                DeployFailure::Rejected(
+                    crate::write_deployer::RejectionKind::Validation,
+                    vec![
+                        "The entity file was not part of the uploaded files or has no type."
+                            .to_string(),
+                    ],
+                ),
             )));
         };
         if !state.sync.takes_deploys_of(&entity_type) {
@@ -791,6 +891,7 @@ async fn deploy_regular(
         "POST /entities - Deploying entity (multipart)"
     );
 
+    let refundable = is_refundable(&files, &entity_id);
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
@@ -812,7 +913,7 @@ async fn deploy_regular(
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            let undecided = matches!(failure, DeployFailure::Unavailable(_));
+            let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
             let response = deployment_failure_response(failure);
             Ok(if undecided {
                 Answer::Undecided(response)
@@ -936,6 +1037,69 @@ mod tests {
             let peer = peer.parse().unwrap();
             assert!(!looks_like_an_untrusted_proxy(&forwarded, peer), "{peer}");
         }
+        let mut pinned = HeaderMap::new();
+        pinned.insert("x-real-ip", header::HeaderValue::from_static("172.18.0.4"));
+        assert!(
+            !looks_like_an_untrusted_proxy(&pinned, "172.18.0.4".parse().unwrap()),
+            "the server's own pin"
+        );
+    }
+
+    #[test]
+    fn access_calls_count_parcels_names_and_items() {
+        let scene = serde_json::json!({"type": "scene", "pointers": ["0,0", "0,1"]});
+        assert_eq!(access_calls_of(&scene), 2);
+        let profile = serde_json::json!({
+            "type": "profile",
+            "pointers": ["0xabc"],
+            "metadata": {"avatars": [
+                {"hasClaimedName": true, "avatar": {"wearables": ["a", "b"], "emotes": [{"urn": "c"}]}},
+                {"hasClaimedName": false, "avatar": {"wearables": []}}
+            ]}
+        });
+        assert_eq!(access_calls_of(&profile), 5);
+        let outfits = serde_json::json!({
+            "type": "outfits",
+            "pointers": ["0xabc:outfits"],
+            "metadata": {"outfits": [{"outfit": {"wearables": ["a", "b"]}}], "namesForExtraSlots": ["n"]}
+        });
+        assert_eq!(access_calls_of(&outfits), 4);
+        let wearable =
+            serde_json::json!({"type": "wearable", "pointers": ["urn"], "content": [{}, {}]});
+        assert_eq!(access_calls_of(&wearable), 3);
+    }
+
+    #[test]
+    fn metadata_the_write_refuses_is_never_refunded() {
+        let with = |description: &str| {
+            serde_json::json!({"type": "scene", "pointers": ["0,0"],
+                "metadata": {"avatars": [{"description": description}]}})
+        };
+        assert!(has_nul(&with("escaped \0 is invalid")));
+        assert!(!has_nul(&with(r"literal \u0000 is valid")));
+        let key = serde_json::json!({"metadata": {"a\u{0}b": 1}});
+        assert!(has_nul(&key));
+    }
+
+    #[test]
+    fn checks_on_contracts_the_entity_names_are_never_refunded() {
+        let wearing = |urn: &str| {
+            serde_json::json!({
+                "type": "profile",
+                "pointers": ["0xabc"],
+                "metadata": {"avatars": [{"avatar": {"wearables": [urn], "emotes": []}}]}
+            })
+        };
+        assert!(!asks_named_contracts(&wearing(
+            "urn:decentraland:off-chain:base-avatars:eyebrows_00"
+        )));
+        assert!(asks_named_contracts(&wearing(
+            "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1"
+        )));
+        let emote = serde_json::json!({"type": "emote", "pointers": ["urn"]});
+        assert!(asks_named_contracts(&emote));
+        let scene = serde_json::json!({"type": "scene", "pointers": ["0,0"]});
+        assert!(!asks_named_contracts(&scene));
     }
 
     #[test]
@@ -983,6 +1147,39 @@ mod tests {
         assert!(
             err.to_lowercase().contains("missing auth chain element"),
             "unexpected error message: {err}"
+        );
+    }
+
+    /// `/authChain\[(\d+)\]/` anywhere in a field name, digits only.
+    #[test]
+    fn indexed_auth_chain_keys_are_scanned_as_upstream() {
+        let mut f = link_fields(1);
+        f.insert("authChain[+1][type]".into(), "SIGNER".into());
+        let chain = extract_auth_chain_from_fields(&f).unwrap().unwrap();
+        assert_eq!(chain.as_array().unwrap().len(), 1);
+
+        let mut f = link_fields(1);
+        f.insert("xauthChain[2][payload]".into(), "0x".into());
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            "Missing auth chain element at index 1"
+        );
+
+        let mut f = link_fields(1);
+        f.insert("authChain[x]authChain[1][type]".into(), "SIGNER".into());
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            "Missing auth chain element at index 1"
+        );
+
+        let mut f = link_fields(1);
+        f.insert(
+            "authChain[99999999999999999999][type]".into(),
+            "SIGNER".into(),
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&f).unwrap_err(),
+            too_long_message()
         );
     }
 
@@ -1092,16 +1289,25 @@ mod tests {
 
     #[tokio::test]
     async fn a_failure_keeps_its_kind_and_an_undecidable_one_carries_retry_after() {
-        let rejected = deployment_failure_response(DeployFailure::Rejected(vec!["no".into()]));
-        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
-        assert!(rejected.headers().get(header::RETRY_AFTER).is_none());
-        let body = axum::body::to_bytes(rejected.into_body(), 4096)
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({ "errors": ["no"] })
-        );
+        use crate::write_deployer::RejectionKind;
+        for kind in [
+            RejectionKind::Validation,
+            RejectionKind::PointerContention,
+            RejectionKind::RateLimited,
+            RejectionKind::Superseded,
+        ] {
+            let rejected =
+                deployment_failure_response(DeployFailure::Rejected(kind, vec!["no".into()]));
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+            assert!(rejected.headers().get(header::RETRY_AFTER).is_none());
+            let body = axum::body::to_bytes(rejected.into_body(), 4096)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                json!({ "errors": ["no"] })
+            );
+        }
         let unavailable =
             deployment_failure_response(DeployFailure::Unavailable(vec!["down".into()]));
         assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);

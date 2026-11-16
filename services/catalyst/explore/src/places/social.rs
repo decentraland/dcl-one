@@ -664,7 +664,7 @@ mod tests {
             let (link, html) = get(uri.clone()).await;
             assert!(
                 html.contains(
-                    "<title data-react-helmet=\"true\">Plaza &amp;lt;b&amp;gt; | Decentraland Place</title>"
+                    "<title data-react-helmet=\"true\">Plaza | Decentraland Place</title>"
                 ),
                 "{uri}: {html}"
             );

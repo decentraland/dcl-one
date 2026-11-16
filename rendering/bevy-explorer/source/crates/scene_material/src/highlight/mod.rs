@@ -100,12 +100,9 @@ impl Plugin for HighlightPlugin {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
-
     use bevy::{
         asset::{RenderAssetTransferPriority, RenderAssetUsages},
         core_pipeline::prepass::{DepthPrepass, NormalPrepass},
-        log::LogPlugin,
         render::{
             camera::RenderTarget,
             mesh::{
@@ -113,17 +110,13 @@ mod test {
                 skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
                 VertexAttributeValues,
             },
-            pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
-                CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor,
-                RenderPipelineDescriptor, ShaderDefVal, TextureDimension, TextureFormat,
-                TextureUsages,
+                PipelineCache, PipelineDescriptor, RenderPipelineDescriptor, ShaderDefVal,
             },
             storage::ShaderStorageBuffer,
         },
-        window::ExitCondition,
-        winit::WinitPlugin,
     };
+    use pipeline_test::{compile_pipelines, headless_app, render_target};
 
     use super::*;
     use crate::{SceneBound, SceneMaterial, EMPTY_SCENE_CELLS};
@@ -131,7 +124,8 @@ mod test {
     /// The highlight pipelines compile on this machine's adapter, and the node draws with them, in
     /// a renderer with no window: a plain cube in the scene material, a skinned cube and a
     /// morph-target cube, each highlighted, in front of a camera with the depth and normal
-    /// prepasses the app's cameras carry. Needs a GPU, so `#[ignore]`d and skipped by CI:
+    /// prepasses the player's camera carries while the avatar outline is on. Needs a GPU, so
+    /// `#[ignore]`d and skipped by CI:
     ///
     /// ```text
     /// cargo test -p scene_material highlight_pipelines_compile -- --ignored --nocapture
@@ -139,7 +133,14 @@ mod test {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn highlight_pipelines_compile_with_prepasses() {
-        highlight_pipelines_compile(true);
+        highlight_pipelines_compile(true, true);
+    }
+
+    /// As above, for the depth prepass alone, as the player's camera carries it by default.
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn highlight_pipelines_compile_with_depth_prepass() {
+        highlight_pipelines_compile(true, false);
     }
 
     /// As above, for a camera with no prepass: the mask pipelines follow the view's bind group
@@ -147,51 +148,22 @@ mod test {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn highlight_pipelines_compile_without_prepasses() {
-        highlight_pipelines_compile(false);
+        highlight_pipelines_compile(false, false);
     }
 
-    fn highlight_pipelines_compile(prepasses: bool) {
-        let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .build()
-                .disable::<LogPlugin>()
-                .disable::<WinitPlugin>()
-                // keeps the render app in this app, so the pipeline cache is readable
-                .disable::<PipelinedRenderingPlugin>()
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    close_when_requested: false,
-                }),
-        );
-        app.add_plugins((
-            assets::EmbedAssetsPlugin,
-            MaterialPlugin::<SceneMaterial>::default(),
-            HighlightPlugin,
-        ));
+    fn highlight_pipelines_compile(depth: bool, normal: bool) {
+        let mut app = headless_app();
+        app.add_plugins((MaterialPlugin::<SceneMaterial>::default(), HighlightPlugin));
         app.finish();
         app.cleanup();
 
+        let target = render_target(&mut app);
         let world = app.world_mut();
         // the unbounded scene's cell table, as SceneBoundPlugin inserts it
         world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
             EMPTY_SCENE_CELLS.id(),
             ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
         );
-        let mut target = Image::new_fill(
-            Extent3d {
-                width: 64,
-                height: 64,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            &[0, 0, 0, 0],
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-        let target = world.resource_mut::<Assets<Image>>().add(target);
 
         let cube = Mesh::from(Cuboid::new(0.5, 0.5, 0.5));
         let vertex_count = cube.count_vertices();
@@ -248,10 +220,11 @@ mod test {
                 Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
             ))
             .id();
-        if prepasses {
-            world
-                .entity_mut(camera)
-                .insert((DepthPrepass, NormalPrepass));
+        if depth {
+            world.entity_mut(camera).insert(DepthPrepass);
+        }
+        if normal {
+            world.entity_mut(camera).insert(NormalPrepass);
         }
         world.spawn((
             Mesh3d(cube),
@@ -280,44 +253,11 @@ mod test {
             highlight,
         ));
 
-        // a few frames queue every pipeline; then they compile in the background, and once they
-        // are ready a few more frames draw the glow with them
-        for _ in 0..10 {
-            app.update();
-        }
-        let started = Instant::now();
-        let mut ok;
-        let mut errors = Vec::new();
-        loop {
-            app.update();
-            let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-            ok = 0;
-            errors.clear();
-            let mut pending = 0;
-            for pipeline in cache.pipelines() {
-                match &pipeline.state {
-                    CachedPipelineState::Ok(_) => ok += 1,
-                    CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                    _ => pending += 1,
-                }
-            }
-            if pending == 0 {
-                break;
-            }
-            assert!(
-                started.elapsed() < Duration::from_secs(60),
-                "{pending} pipelines still compiling"
-            );
-        }
+        // once the pipelines are ready, a few more frames draw the glow with them
+        compile_pipelines(&mut app);
         for _ in 0..5 {
             app.update();
         }
-        println!("{ok} pipelines compiled");
-        assert!(
-            errors.is_empty(),
-            "pipeline errors:\n{}",
-            errors.join("\n\n")
-        );
 
         let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
         let labelled = |label: &str| -> Vec<RenderPipelineDescriptor> {

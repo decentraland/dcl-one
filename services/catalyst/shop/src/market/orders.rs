@@ -91,6 +91,9 @@ pub struct Order {
     pub issued_id: Option<String>,
     #[serde(rename = "tradeId")]
     pub trade_id: Option<String>,
+    /// Who a v3 listing pays (its received asset's beneficiary); not on the wire.
+    #[serde(skip)]
+    pub payee: Option<String>,
 }
 
 /// The sort keys both legs carry so one comparison orders the merged list.
@@ -177,20 +180,10 @@ pub(crate) fn parse_open_by_items(
     }
     let mut items = Vec::with_capacity(raw.len());
     for entry in &raw {
-        let Some((contract, item_id)) = entry.trim().split_once('-') else {
+        let Some(item) = super::wire::split_item_wire_id(entry) else {
             return Err(InvalidParameterError::new("item", entry.clone()));
         };
-        let contract = contract.to_ascii_lowercase();
-        let is_addr = contract
-            .strip_prefix("0x")
-            .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
-        let is_item = !item_id.is_empty()
-            && item_id.len() <= 77
-            && item_id.bytes().all(|b| b.is_ascii_digit());
-        if !is_addr || !is_item {
-            return Err(InvalidParameterError::new("item", entry.clone()));
-        }
-        items.push((contract, item_id.to_string()));
+        items.push(item);
     }
     let per_contract = p
         .get_number("perContract", None)
@@ -203,7 +196,7 @@ pub(crate) fn parse_open_by_items(
 /// Open `public_nft_order` trades with the item they sell (when the mirror
 /// has it) and the filters that apply to the leg; `$1` binds `now`.
 const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
-        u.amount_received::text AS price, u.signer AS owner, \
+        u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
         upper(u.network) AS network, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id, i.urn \
  FROM unified_trades u \
@@ -242,6 +235,7 @@ fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
         network,
         chain_id,
         issued_id: r.get("issued_id"),
+        payee: r.get("payee"),
     }
 }
 
@@ -470,6 +464,7 @@ pub fn order_from_graph(o: &Value, network: Network) -> Order {
                 .or_else(|| v.as_i64().map(|n| n.to_string()))
         }),
         trade_id: Some(String::new()),
+        payee: None,
     }
 }
 
@@ -734,6 +729,26 @@ mod tests {
             );
         }
         assert!(parse_open_by_items(&[]).is_err());
+        let max_id = alloy_primitives::U256::MAX.to_string();
+        let (items, _) = parse_open_by_items(&pairs(&[(
+            "item",
+            &format!("0x016A61FEB6377239E34425B82E5C4B367E52457F-{max_id}"),
+        )]))
+        .unwrap();
+        assert_eq!(
+            items,
+            vec![(
+                "0x016a61feb6377239e34425b82e5c4b367e52457f".to_string(),
+                max_id.clone()
+            )]
+        );
+        assert!(
+            parse_open_by_items(&pairs(&[(
+                "item",
+                &format!("0x016a61feb6377239e34425b82e5c4b367e52457f-{max_id}0"),
+            )]))
+            .is_err()
+        );
     }
 
     #[test]

@@ -15,6 +15,8 @@ const siteUrl = (path: string): string => `https://${BASE_DOMAIN}${path}`
 const ownShopItemUrl = (_contract: string, _item: string): string | null => null
 /** The Shop opens the web Shop: this HUD's in-world Shop page is the catalogue (ShopPage). */
 const IN_WORLD_SHOP = false
+/** No Donate: this HUD's page holds no wallet that can sign a tip. */
+const donations: HudHost['donations'] = null
 /** The benchmark autopilot (?autopilot, where lib/bootMode.ts honours it): it signs in with the
  *  machine's local guest and nothing else, lands at Genesis 0,0, and a sign-in that fails ends the
  *  run through the engine (non-zero, no CSV). */
@@ -39,7 +41,7 @@ const hostEntryParams = (): string[] => (benchmarkSwitchesHonoured() ? BENCHMARK
 /** The gate's Exit leaves for decentraland.org, whatever `?baseDomain=` the link carries. */
 const exitUrl = (): string => 'https://decentraland.org'
 
-export { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

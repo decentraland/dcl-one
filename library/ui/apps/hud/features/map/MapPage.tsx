@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { serviceUrl } from '@hud-host'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { Button } from '../../design'
+import { useDonate } from '../donate/useDonate'
 import { CAT_ICONS, CAT_PINS, WORLD_ICON } from './mapArt'
 import { GRID, ORIGIN_X, ORIGIN_Y, PARCELS_PER_TILE, SIZE, SPAN, tileUrl } from '@explorer-core/features/map/atlas'
 import type { MapState, ProfileState } from '../session/useEngineSession'
@@ -97,6 +99,8 @@ interface World {
 
 function PlacePanel({ place, onClose, onJump }: { place: Place; onClose: () => void; onJump: () => void }): React.JSX.Element {
   const [bx, by] = place.base_position.split(',')
+  // Donate to the place's creator, shown where the host can sign a tip and the place has a creator.
+  const donate = useDonate(Number.isInteger(Number(bx)) && Number.isInteger(Number(by)) ? { parcel: { x: Number(bx), y: Number(by) } } : null)
   return (
     <aside className={styles.place}>
       <button type="button" className={styles.placeClose} aria-label="Back" onClick={onClose}>‹</button>
@@ -109,6 +113,11 @@ function PlacePanel({ place, onClose, onJump }: { place: Place; onClose: () => v
           {place.like_rate != null && <span>👍 {Math.round(place.like_rate * 100)}%</span>}
         </div>
         <button type="button" className={styles.jumpBtn} onClick={onJump}>JUMP IN</button>
+        {donate.visible && (
+          <Button variant="outline" size="sm" onClick={(e) => donate.open(e.detail === 0 ? 'keyboard' : 'pointer')}>
+            DONATE
+          </Button>
+        )}
         <div className={styles.placeMetaRow}>
           <div>
             <div className={styles.placeMetaLabel}>LOCATION</div>
