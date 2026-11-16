@@ -58,7 +58,7 @@ function PanelTabs(props: PanelTabsProps) {
   )
 }
 
-type NavigationTabsProps = Omit<
+export type TabsNavigationProps = Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
   'children' | 'aria-current' | 'dangerouslySetInnerHTML' | 'role'
 > & {
@@ -70,8 +70,8 @@ type NavigationTabsProps = Omit<
   device?: never
 }
 /** Panel tabs remain the default; route navigation must declare its distinct intent. */
-export type TabsProps = (PanelTabsProps & { mode?: 'panel' }) | NavigationTabsProps
-export function Tabs(props: TabsProps) {
+export type TabsProps = PanelTabsProps
+export function Tabs(props: (TabsProps & { mode?: 'panel' }) | TabsNavigationProps) {
   if (props.mode === 'navigation') {
     const { mode, label, selected = false, className, target, rel, ...anchor } = props
     return (
