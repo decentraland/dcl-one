@@ -53,6 +53,8 @@ beforeAll(async () => {
   )
 }, 30_000)
 
+// Turning touch emulation off gives the open document the host's own hover and pointer media; only the next
+// document gets the capture browser's desktop defaults. Tests reset input here, before navigating, never after.
 beforeEach(async () => {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width: 1440,
@@ -128,10 +130,6 @@ describe('when Events cards reveal their controls', () => {
         deviceScaleFactor: 1,
         mobile: false
       })
-      await session.send('Emulation.setTouchEmulationEnabled', {
-        enabled: false,
-        configuration: 'desktop'
-      })
       await evaluate(`document.activeElement?.blur()`)
       expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)
       await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
@@ -149,9 +147,10 @@ describe('when Events cards reveal their controls', () => {
       await evaluate(
         `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`
       )
+      // Leaving the card starts the fade-out; focus reverses it from wherever it is, so read it once it ends.
       expect(
         await evaluate(
-          `getComputedStyle(document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]')).opacity`
+          `(async()=>{const actions=document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]');await Promise.all(actions.getAnimations().map(a=>a.finished));return getComputedStyle(actions).opacity})()`
         )
       ).toBe('1')
       expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
@@ -166,10 +165,11 @@ describe('when Events cards reveal their controls', () => {
         deviceScaleFactor: 1,
         mobile: width === 390
       })
-      await session.send('Emulation.setTouchEmulationEnabled', {
-        enabled: width === 390,
-        maxTouchPoints: 1
-      })
+      if (width === 390)
+        await session.send('Emulation.setTouchEmulationEnabled', {
+          enabled: true,
+          maxTouchPoints: 1
+        })
       const titles = await evaluate<
         { height: number; lineHeight: number; footerInside: boolean; clamp: string }[]
       >(
@@ -189,10 +189,6 @@ describe('when Events cards reveal their controls', () => {
       height: 1000,
       deviceScaleFactor: 1,
       mobile: false
-    })
-    await session.send('Emulation.setTouchEmulationEnabled', {
-      enabled: false,
-      configuration: 'desktop'
     })
     await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
     await evaluate(`document.activeElement?.blur()`)
