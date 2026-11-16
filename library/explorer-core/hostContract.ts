@@ -112,6 +112,8 @@ export interface HudHost {
   IN_WORLD_SHOP: boolean
   /** Donate, where this host can sign a tip; null where it can't (the Explorer's own HUD). */
   donations: HostDonations | null
+  /** The Sites build revision serving this page ('' when Sites reports none), or null where no Sites serves the HUD. */
+  siteRevision(): string | null
   /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went
    *  with it, so its silence is no fault. */
   engineExited(): boolean

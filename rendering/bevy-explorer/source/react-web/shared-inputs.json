@@ -824,6 +824,10 @@
           "kind": "directory"
         },
         {
+          "name": "content.helpers.ts",
+          "kind": "regular"
+        },
+        {
           "name": "css-modules.d.ts",
           "kind": "regular"
         },
@@ -5206,7 +5210,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "7146d796e9c00ad43c38feb9ecee2d5ff646b9f1ec489975f7acbb2671a2facf"
+      "sha256": "23c3f6beec165b9455a8b80314780db93811c542307c1d3b0109de8d8819b5c9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
@@ -5863,7 +5867,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "49d1e977afcb5fba567212a97e8c975062afa32dc2c5ac27f69eff801cbb3bce"
+      "sha256": "791fb5a923422f30d18d26ede2bfcbb2d1229506fdfd78fe94cb1eb22d755bed"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -7995,7 +7999,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "3e8e43438ae96e06e6c122ff1787693d2a7a281834e356a7536d26122750f212"
+      "sha256": "6d2d10beb71af6080807349dfe0866faee76d562bf45f5ebe35f37e5c61d30fd"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
@@ -8007,7 +8011,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "954c7a9c4795903a16a547a678598d25e2dcc0395cec3f69c029589839039c0d"
+      "sha256": "578048ea90c89e982fbecf5972b33581201a0320aeb3e48c2c9b88cb7e4706ac"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -8927,7 +8931,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "4fc5c3f2752f35d9f9e6e98c96ca6711a9d80693f805ac17cd4d1aa0d046cdee"
+      "sha256": "7250233499473766bcd14dcbca8a447b5dd1a3e45be26d0aff2a2768877695e1"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -9043,7 +9047,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "083aac570174c4f37facebad291a038fe729a1a824aa5e572c0b93100332c753"
+      "sha256": "cb5fd91c7a19bd88e9d7bdec197e45fad563acf717c1ad712696692809e22ae0"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/dm.render.test.tsx",

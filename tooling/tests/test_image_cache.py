@@ -275,6 +275,8 @@ class WorkflowSetupTest(unittest.TestCase):
 
         for path in ('library/ui/index.ts',
                      'library/ui/css-modules.d.ts',
+                     'library/ui/content.helpers.ts',
+                     'library/ui/link.helpers.ts',
                      'library/ui/components/NavBar/NavBar.tsx',
                      'library/ui/components/NavBar/NavBar.module.css',
                      'library/ui/components/Button/Button.tsx',
