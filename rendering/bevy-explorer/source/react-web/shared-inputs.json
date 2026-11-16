@@ -4730,7 +4730,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/package.json",
-      "sha256": "7acb4a897352e6553cdce621613901a76638ad6c2f2ed210a85c23afd01e4b79"
+      "sha256": "9e140fa4fd45bd3275facf829056074d58fdd427121a35e2d0877c2d503b894e"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/preview_realm.js",
