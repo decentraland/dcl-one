@@ -1,6 +1,16 @@
 //! Credits fulfillment claims outbox work, buys through the broker and
 //! compensates undelivered units after terminal failure. Each pass retains
 //! its fleet lease, per-line transactions and chain-time expiry bounds.
+//!
+//! A line's broker buy is claimed in `shop.broker_purchases` under
+//! `checkout:{checkout_id}:{outbox_id}` before anything is broadcast. Once
+//! the claim records a buy transaction (`sent`, `bought`, `forwarding`,
+//! `confirmed`), later attempts resume it instead of re-checking the
+//! catalogue or the trade (our own buy may have closed it), a retryable
+//! answer does not count toward `max_attempts`, and compensation waits for the
+//! buy to settle and refunds the line only when no MANA left the treasury. A
+//! claim with no transaction recorded (`pending`, `error`) is attempted,
+//! counted and refunded as if absent.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,7 +76,8 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 /// chain: `usage::expiry_bound_sql`), purge one batch of old captcha
 /// challenges (`expires_at < $3`, the `captcha_challenges_expires_idx`
 /// statement), list the checkouts awaiting compensation and the outbox lines
-/// awaiting a broker attempt, all in one statement; the clock is a bind.
+/// awaiting a broker attempt (a frozen checkout's lines only while their buy
+/// is unsettled), all in one statement; the clock is a bind.
 pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
          UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
          WHERE status IN ('authorized', 'retired') AND expires_at <= LEAST($2, CASE WHEN $5::bigint IS NULL THEN $2 ELSE \
@@ -83,7 +94,11 @@ pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
          SELECT o.id \
          FROM credits.fulfillment_outbox o \
          JOIN credits.checkouts c ON c.id = o.checkout_id \
-         WHERE o.status = 'pending' AND o.attempts < $1 AND c.status = 'fulfilling' \
+         WHERE o.status = 'pending' AND o.attempts < $1 \
+           AND (c.status = 'fulfilling' OR (c.status = 'reversing' AND EXISTS ( \
+               SELECT 1 FROM shop.broker_purchases b \
+               WHERE b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+                 AND b.status IN ('sent', 'bought', 'forwarding', 'confirmed')))) \
          ORDER BY o.id LIMIT 50 \
      ) \
      SELECT 'expired' AS kind, count(*)::bigint AS id, NULL::text AS address FROM expired \
@@ -205,7 +220,11 @@ impl OutboxWorker {
                     c.address AS buyer \
              FROM credits.fulfillment_outbox o \
              JOIN credits.checkouts c ON c.id = o.checkout_id \
-             WHERE o.id = $1 AND o.status = 'pending' AND c.status = 'fulfilling' \
+             WHERE o.id = $1 AND o.status = 'pending' \
+               AND (c.status = 'fulfilling' OR (c.status = 'reversing' AND EXISTS ( \
+                   SELECT 1 FROM shop.broker_purchases b \
+                   WHERE b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+                     AND b.status IN ('sent', 'bought', 'forwarding', 'confirmed')))) \
              FOR UPDATE OF o SKIP LOCKED",
         )
         .bind(id)
@@ -277,7 +296,23 @@ impl OutboxWorker {
                     .await;
             }
             BrokerResult::Retryable(err) => {
-                let new_attempts = row.attempts + 1;
+                let claim = broker_claim(&mut *tx, &broker_key(&row)).await?;
+                let new_attempts = if let Some(claim) = claim.filter(|c| buy_unsettled(&c.status)) {
+                    // A transaction was sent: the line waits for it however
+                    // long it takes, and is never refunded meanwhile.
+                    if claim.stale {
+                        tracing::error!(
+                            checkout_id = row.checkout_id,
+                            outbox_id = row.id,
+                            broker_status = %claim.status,
+                            error = %err,
+                            "fulfilment line's broker buy has not moved for over an hour; it keeps retrying uncounted and needs broker reconciliation"
+                        );
+                    }
+                    row.attempts
+                } else {
+                    row.attempts + 1
+                };
                 if new_attempts >= self.max_attempts {
                     self.fail_and_freeze(&mut tx, row.id, row.checkout_id, &err)
                         .await?;
@@ -343,21 +378,46 @@ impl OutboxWorker {
 
     /// Refunds the undelivered portion of a frozen checkout (one idempotent
     /// refund per checkout) and resolves it to `reversed` (nothing delivered)
-    /// or `failed` (partial).
+    /// or `failed` (partial). A line is refunded only when its buy spent no
+    /// MANA: never claimed, no transaction recorded (`pending`, `error`), or
+    /// reverted on the buy leg. While a pending line's buy is unsettled the checkout stays
+    /// `reversing` (the tick resumes that line); a line whose buy spent MANA
+    /// without reaching escrow is held out of the refund for reconciliation.
     #[tracing::instrument(skip(self, buyer))]
     pub async fn compensate(&self, checkout_id: i64, buyer: &str) -> Result<(), ApiError> {
         let agg = sqlx::query(
-            "SELECT COALESCE(SUM(unit_price_credits) FILTER (WHERE status <> 'confirmed'), 0)::text AS refund_amt, \
-                    COALESCE(SUM(unit_price_credits) FILTER (WHERE status <> 'confirmed'), 0) > 0 AS has_refund, \
-                    bool_or(status = 'confirmed') AS any_confirmed \
-             FROM credits.fulfillment_outbox WHERE checkout_id = $1",
+            "SELECT COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0)::text AS refund_amt, \
+                    COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0) > 0 AS has_refund, \
+                    bool_or(status = 'confirmed') AS any_confirmed, \
+                    count(*) FILTER (WHERE awaiting) AS awaiting, \
+                    count(*) FILTER (WHERE status <> 'confirmed' AND NOT refundable AND NOT awaiting) AS held \
+             FROM ( \
+                 SELECT o.status, o.unit_price_credits, \
+                        o.status <> 'confirmed' AND (b.status IS NULL OR b.status IN ('pending', 'error') \
+                            OR (b.status = 'reverted' AND b.forward_tx_hash IS NULL)) AS refundable, \
+                        o.status = 'pending' AND COALESCE(b.status IN \
+                            ('sent', 'bought', 'forwarding', 'confirmed'), false) AS awaiting \
+                 FROM credits.fulfillment_outbox o \
+                 LEFT JOIN shop.broker_purchases b \
+                   ON b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+                 WHERE o.checkout_id = $1) lines",
         )
         .bind(checkout_id)
         .fetch_one(&self.credits.pool)
         .await?;
+        let awaiting: i64 = agg.get("awaiting");
+        if awaiting > 0 {
+            tracing::info!(
+                checkout_id,
+                awaiting,
+                "compensation waits: a line's broker buy may have broadcast and has not settled"
+            );
+            return Ok(());
+        }
         let refund_amt: String = agg.get("refund_amt");
         let has_refund: bool = agg.get("has_refund");
         let any_confirmed: bool = agg.get::<Option<bool>, _>("any_confirmed").unwrap_or(false);
+        let held: i64 = agg.get("held");
 
         if has_refund {
             let idem = format!("reversal:{}", checkout_id);
@@ -367,7 +427,11 @@ impl OutboxWorker {
                 .await?;
         }
 
-        let new_status = if any_confirmed { "failed" } else { "reversed" };
+        let new_status = if any_confirmed || held > 0 {
+            "failed"
+        } else {
+            "reversed"
+        };
         sqlx::query(
             "UPDATE credits.checkouts SET status = $2, updated_at = timezone('UTC', now()) \
              WHERE id = $1 AND status = 'reversing'",
@@ -377,6 +441,14 @@ impl OutboxWorker {
         .execute(&self.credits.pool)
         .await?;
 
+        if held > 0 {
+            tracing::error!(
+                checkout_id,
+                held,
+                refund_credits = %refund_amt,
+                "HELD fulfilment lines: a broker buy was broadcast for them and ended neither in a buy-leg revert nor in a confirmed line (a forward-leg revert leaves the token with the relayer after spending treasury MANA); they were not refunded and need broker reconciliation"
+            );
+        }
         if any_confirmed {
             tracing::error!(
                 checkout_id,
@@ -390,6 +462,15 @@ impl OutboxWorker {
     }
 
     async fn attempt_broker_buy(&self, row: &OutboxRow) -> BrokerResult {
+        let key = broker_key(row);
+        match broker_claim(&self.credits.pool, &key).await {
+            Ok(Some(claim)) if claim.status != "pending" && claim.status != "error" => {
+                return self.resume_broker_buy(row, &key).await;
+            }
+            Ok(_) => {}
+            Err(e) => return BrokerResult::Retryable(format!("broker claim read failed: {e}")),
+        }
+
         let info = match self.pricing.fetch_item(&row.collection, &row.item_id).await {
             Ok(i) => i,
             Err(ApiError::NotFound(m)) | Err(ApiError::BadRequest(m)) => {
@@ -549,7 +630,7 @@ impl OutboxWorker {
             mode: row.mode.clone(),
             buyer: row.buyer.clone(),
             trade: trade_payload,
-            idempotency_key: format!("checkout:{}:{}", row.checkout_id, row.id),
+            idempotency_key: key,
             charge_cents: crate::guards::charge_cents(&row.unit_price_credits).map(|c| c.get()),
         };
         match self.broker.buy(&req).await {
@@ -562,6 +643,63 @@ impl OutboxWorker {
             Err(BrokerError::Terminal(m)) => BrokerResult::Terminal(m),
         }
     }
+
+    /// A line whose buy was already claimed (and so may have broadcast):
+    /// the broker drives the claim from its recorded state. The catalogue,
+    /// trade and mintability checks are not repeated, since the buy may
+    /// already have closed the trade or taken the item's last unit; the
+    /// catalogue read only names the usage grant's category.
+    async fn resume_broker_buy(&self, row: &OutboxRow, key: &str) -> BrokerResult {
+        let info = match self.pricing.fetch_item(&row.collection, &row.item_id).await {
+            Ok(i) => i,
+            Err(e) => return BrokerResult::Retryable(format!("catalog fetch failed: {e}")),
+        };
+        match self.broker.resume(key).await {
+            Ok(tx_hash) => BrokerResult::Confirmed {
+                tx_hash,
+                category: info.category,
+                collection: info.contract_address,
+            },
+            Err(BrokerError::Retryable(m)) => BrokerResult::Retryable(m),
+            Err(BrokerError::Terminal(m)) => BrokerResult::Terminal(m),
+        }
+    }
+}
+
+/// The idempotency key a line's broker buy is claimed under.
+fn broker_key(row: &OutboxRow) -> String {
+    format!("checkout:{}:{}", row.checkout_id, row.id)
+}
+
+/// The broker buy claimed under a line's key.
+#[derive(sqlx::FromRow)]
+struct BrokerClaim {
+    status: String,
+    /// Unchanged for over an hour: the reconciler settles a sent buy within
+    /// minutes, so such a claim needs someone to look at it.
+    stale: bool,
+}
+
+/// The broker buy claimed under `key`, if one was claimed.
+async fn broker_claim<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    key: &str,
+) -> Result<Option<BrokerClaim>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT status, updated_at < timezone('UTC', now()) - interval '1 hour' AS stale \
+         FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(db)
+    .await
+}
+
+/// A claimed buy that recorded a transaction and has not reverted. A
+/// `pending` claim records none: it is either re-armed after failing before
+/// broadcast or left by a crash before the hash was written, and is treated
+/// as unsent, as an `error` claim is.
+fn buy_unsettled(status: &str) -> bool {
+    matches!(status, "sent" | "bought" | "forwarding" | "confirmed")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

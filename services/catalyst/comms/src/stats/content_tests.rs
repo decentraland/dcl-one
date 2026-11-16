@@ -318,3 +318,50 @@ fn parse_int_uses_ecmascript_whitespace_and_decimal_prefixes() {
         r#"[{"baseCoords":[null,2,0,1,0,9007199254740992],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
+
+#[test]
+fn selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields() {
+    let scenes = serde_json::from_str::<Vec<crate::content::OrderedJson>>(
+        r#"[{"id":"ordered","metadata":{"scene":{"base":"-1,0","parcels":["-1,0"]},"display":{"title":{"10":10,"2":2,"01":1,"4294967295":5,"0":0,"z":9007199254740993},"description":null},"contact":{"name":""},"source":{"projectId":false}}},{"id":"empty","metadata":{"scene":{"base":"0,0","parcels":[]},"display":{"navmapThumbnail":false}}}]"#,
+    ).unwrap();
+    assert_eq!(
+        content::hot_scenes(
+            &scenes,
+            &[("-1,0".into(), 1)],
+            "https://content.example/content/"
+        )
+        .unwrap(),
+        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[],"thumbnail":false}]"#
+    );
+}
+
+struct CountingSource {
+    calls: std::sync::Mutex<Vec<Vec<String>>>,
+}
+#[async_trait::async_trait]
+impl content::Source for CountingSource {
+    async fn fetch(
+        &self,
+        pointers: &[String],
+    ) -> Result<Vec<crate::content::OrderedJson>, content::Error> {
+        self.calls.lock().unwrap().push(pointers.to_vec());
+        Ok(vec![json!({"id":"scene"})])
+    }
+}
+#[tokio::test]
+async fn tile_documents_skips_fetch_for_empty_tiles_and_fetches_once_in_tile_order() {
+    let source = CountingSource {
+        calls: Default::default(),
+    };
+    let docs = content::tile_documents(&source, &[]).await.unwrap();
+    assert!(docs.is_empty());
+    assert!(source.calls.lock().unwrap().is_empty());
+
+    let tiles = [("3,4".to_string(), 2), ("1,2".to_string(), 5)];
+    let docs = content::tile_documents(&source, &tiles).await.unwrap();
+    assert_eq!(docs, vec![json!({"id":"scene"})]);
+    assert_eq!(
+        *source.calls.lock().unwrap(),
+        vec![vec!["3,4".to_string(), "1,2".to_string()]]
+    );
+}
