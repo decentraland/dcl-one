@@ -368,6 +368,7 @@ impl ReplayJournalFile {
         progress: tokio::sync::watch::Sender<JournalProgress>,
         gate: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
     ) {
+        let _panic = ReportPanic(&progress);
         let mut durable_through = 0u64;
         while let Ok(first) = jobs.recv() {
             let gated = match gate.as_ref().map(std::sync::mpsc::Receiver::recv) {
@@ -394,6 +395,18 @@ impl ReplayJournalFile {
                     return;
                 }
             }
+        }
+    }
+}
+
+/// Reports the journal failed if the writer panics, so the event loop wakes and refuses the
+/// handshakes it holds instead of leaving them to the authentication timeout.
+struct ReportPanic<'a>(&'a tokio::sync::watch::Sender<JournalProgress>);
+
+impl Drop for ReportPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.send_modify(|progress| progress.failed = true);
         }
     }
 }
@@ -1511,6 +1524,21 @@ mod tests {
         .await
         .expect("the failure wakes the event loop so held handshakes are refused");
         assert!(policy.journal_progress().failed);
+    }
+
+    #[tokio::test]
+    async fn a_writer_panic_is_reported_as_a_failure() {
+        let (sender, mut progress) = tokio::sync::watch::channel(JournalProgress::default());
+        let writer = std::thread::spawn(move || {
+            let _panic = ReportPanic(&sender);
+            panic!("injected writer panic");
+        });
+        assert!(writer.join().is_err());
+        assert!(
+            progress.changed().await.is_ok(),
+            "the panic still wakes the event loop once"
+        );
+        assert!(progress.borrow().failed);
     }
 
     #[tokio::test]
