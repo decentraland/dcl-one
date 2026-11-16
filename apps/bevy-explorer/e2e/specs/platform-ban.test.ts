@@ -7,12 +7,12 @@
 // | a refresh re-checks                                  | New              |
 // | a banned answer is reported                          | New, native only |
 // | a failing gatekeeper fails open                      | New, native only |
-// | not banned: the realm entry is open                  | New              |
+// | not banned: the realm is entered                     | New              |
 // | banned: a realm change is refused                    | New, native only |
 // | a failed check: a realm change enters                | New, native only |
-// | banned at sign-in: the entry is closed before a pick | New, native only |
+// | banned at sign-in: a pick is refused                 | New, native only |
 //
-// Asserts the entry gate refuses every realm change while a ban is known.
+// Asserts every realm change is refused while a ban is known.
 //
 // Zone's live accounts cannot be banned by a test, so the stub scenarios start their own
 // standalone pointed at a loopback gatekeeper stub (`--comms-gatekeeper`). On the web a service
@@ -97,22 +97,18 @@ scenario(
   native ? stubSession : webOnly
 )
 
-/** Waits for the gate to read `gate` after a fresh check. */
-async function gateAfterRefresh(explorer: Explorer, gate: BanBlockState['entryGate'], ready: (s: BanBlockState) => boolean): Promise<BanBlockState> {
+/** Waits for a fresh check's answer to satisfy `ready`. */
+async function stateAfterRefresh(explorer: Explorer, ready: (s: BanBlockState) => boolean, what: string): Promise<BanBlockState> {
   await explorer.run('/ban_block_refresh')
-  return until(() => explorer.banBlockState(), (s) => s.entryGate === gate && ready(s), {
-    timeoutMs: 15_000,
-    what: `the realm entry to be ${gate}`
-  })
+  return until(() => explorer.banBlockState(), ready, { timeoutMs: 15_000, what })
 }
 
-scenario('not banned: the realm entry is open', async ({ explorer }) => {
+scenario('not banned: the realm is entered', async ({ explorer }) => {
   const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.state === 'checked', {
     timeoutMs: CHECK_TIMEOUT_MS,
     what: 'the platform ban to be checked'
   })
   assert.equal(state.platformBan.isBanned, false)
-  assert.equal(state.entryGate, 'open')
   assert.equal((await explorer.worldState()).inWorld, true)
 })
 
@@ -122,7 +118,7 @@ scenario(
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e', 'a test ban'))
     try {
-      await gateAfterRefresh(explorer, 'closed', (s) => s.platformBan.isBanned === true)
+      await stateAfterRefresh(explorer, (s) => s.platformBan.isBanned === true, 'the ban to be known')
       const before = await explorer.worldState()
       await assert.rejects(explorer.run(`/changerealm ${target.realm}`), BANNED_REFUSAL)
       const after = await explorer.worldState()
@@ -130,7 +126,7 @@ scenario(
       assert.equal(after.arrivals, before.arrivals)
     } finally {
       stub.banStatus(NOT_BANNED)
-      await gateAfterRefresh(explorer, 'open', (s) => s.platformBan.isBanned === false)
+      await stateAfterRefresh(explorer, (s) => s.platformBan.isBanned === false, 'the ban to be lifted')
     }
   },
   native ? stubSession : webOnly
@@ -142,7 +138,7 @@ scenario(
     assert.ok(stub)
     stub.banStatus(refusal(500, 'stub failure'))
     try {
-      await gateAfterRefresh(explorer, 'open', (s) => s.platformBan.state === 'failed')
+      await stateAfterRefresh(explorer, (s) => s.platformBan.state === 'failed', 'the check to fail')
       const state = await explorer.changeRealm(target.realm)
       assert.equal(state.inWorld, true)
     } finally {
@@ -153,17 +149,17 @@ scenario(
 )
 
 scenario(
-  'banned at sign-in: the entry is closed before a pick',
+  'banned at sign-in: a pick is refused',
   async ({ explorer }) => {
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e'))
     try {
-      // the new wallet's gate reads closed before any realm change is asked for
+      // the new wallet's ban is known before any realm change is asked for
       await explorer.logout()
       await explorer.loginGuest()
-      const state = await until(() => explorer.banBlockState(), (s) => s.entryGate === 'closed', {
+      const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.isBanned === true, {
         timeoutMs: 15_000,
-        what: 'the realm entry to close for the new sign-in'
+        what: 'the ban to be known for the new sign-in'
       })
       assert.equal(state.platformBan.source, 'ban_status_endpoint')
       await assert.rejects(explorer.run(`/changerealm ${target.realm}`), BANNED_REFUSAL)

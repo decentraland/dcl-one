@@ -6,8 +6,8 @@
 //! system parameter. There are no events of its own: every fact it answers from is a resource
 //! or a component.
 
+mod ban_stream;
 mod debug;
-mod entry_gate;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
@@ -20,15 +20,17 @@ use serde::Serialize;
 use social::SocialClient;
 use wallet::Wallet;
 
+pub use common::platform_ban::{
+    PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus,
+};
 pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
-pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
 pub struct BanBlockPlugin;
 
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(platform_ban::PlatformBanPlugin);
-        app.add_plugins(entry_gate::EntryGatePlugin);
+        app.add_plugins(ban_stream::PlatformBanStreamPlugin);
         app.add_plugins(debug::BanBlockDebugPlugin);
     }
 }

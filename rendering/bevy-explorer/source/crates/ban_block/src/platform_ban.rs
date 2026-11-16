@@ -1,6 +1,5 @@
-//! The platform ban: an account-level ban of the local user's wallet from all of Decentraland,
-//! read from the comms gatekeeper's public `GET /users/{address}/bans`. The one fact this crate
-//! owns rather than reads from another crate.
+//! Checks the local user's platform ban against the comms gatekeeper's public
+//! `GET /users/{address}/bans` and records the answer in `PlatformBanStatus`.
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -8,7 +7,6 @@ use bevy::{
     ecs::{
         change_detection::DetectChanges,
         event::{Event, EventReader, EventWriter},
-        resource::Resource,
         schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
         system::{Local, Res, ResMut},
     },
@@ -19,11 +17,12 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use common::{
     base_domain::{self, Service},
+    platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanStatus},
     structs::CurrentRealm,
     util::{TaskCompat, TaskExt},
 };
 use console::DoAddConsoleCommand;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use wallet::Wallet;
 
 use crate::{AdmissionView, BanScope, SceneAdmission};
@@ -33,55 +32,6 @@ pub const RECHECK_SECS: f64 = 300.0;
 /// The least a server's `Retry-After` is honoured as.
 pub const MIN_RETRY_SECS: f64 = 5.0;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
-
-#[derive(Resource)]
-pub struct PlatformBanStatus {
-    state: PlatformBanState,
-    source: Option<PlatformBanSource>,
-    http: reqwest::Client,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PlatformBanState {
-    Unknown,
-    Checked {
-        ban: Option<PlatformBanInfo>,
-        checked_at: f64,
-    },
-    Failed {
-        error: String,
-        checked_at: f64,
-    },
-}
-
-/// The gatekeeper's `ban` object, as served; dates stay ISO strings.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlatformBanInfo {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub reason: String,
-    #[serde(default)]
-    pub custom_message: Option<String>,
-    #[serde(default)]
-    pub banned_at: String,
-    #[serde(default)]
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub banned_by: String,
-    /// What a withheld record matched (`device`); `None` for a record as served.
-    #[serde(default)]
-    pub matched_on: Option<String>,
-}
-
-/// How the platform ban became known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlatformBanSource {
-    BanStatusEndpoint,
-    SceneAdmissionRefusal,
-}
 
 /// `GET /users/{address}/bans`: `{"data":{"isBanned":bool,"ban":{..}?,"matchedOn":"device"?}}`.
 #[derive(Deserialize)]
@@ -99,110 +49,22 @@ struct BanStatusBody {
     matched_on: Option<String>,
 }
 
-impl PlatformBanInfo {
-    /// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
-    /// without its record is a ban whose record was withheld.
-    #[cfg(test)]
-    pub fn from_json(body: &[u8]) -> Result<Option<Self>, String> {
-        let envelope: BanStatusEnvelope =
-            serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
-        Ok(Self::from_body(envelope.data))
-    }
-
-    fn from_body(body: BanStatusBody) -> Option<Self> {
-        if !body.is_banned {
-            return None;
-        }
-        Some(body.ban.unwrap_or_else(|| {
-            Self::withheld(body.matched_on.as_deref().unwrap_or("another match"))
-        }))
-    }
-
-    /// A ban with no record; `matched_on` is what it matched.
-    pub fn withheld(matched_on: &str) -> Self {
-        Self {
-            id: String::new(),
-            reason: String::new(),
-            custom_message: None,
-            banned_at: String::new(),
-            expires_at: None,
-            banned_by: String::new(),
-            matched_on: Some(matched_on.to_owned()),
-        }
-    }
-
-    /// A ban known only from a scene-admission refusal: the message is all there is.
-    pub fn from_refusal(message: &str) -> Self {
-        Self {
-            id: String::new(),
-            reason: message.to_owned(),
-            custom_message: None,
-            banned_at: String::new(),
-            expires_at: None,
-            banned_by: String::new(),
-            matched_on: None,
-        }
-    }
+/// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
+/// without its record is a ban whose record was withheld.
+#[cfg(test)]
+fn ban_from_json(body: &[u8]) -> Result<Option<PlatformBanInfo>, String> {
+    let envelope: BanStatusEnvelope =
+        serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
+    Ok(ban_from_body(envelope.data))
 }
 
-impl PlatformBanStatus {
-    pub fn new() -> Self {
-        Self {
-            state: PlatformBanState::Unknown,
-            source: None,
-            http: platform::http_client_builder()
-                .build()
-                .expect("reqwest client"),
-        }
+fn ban_from_body(body: BanStatusBody) -> Option<PlatformBanInfo> {
+    if !body.is_banned {
+        return None;
     }
-
-    pub fn state(&self) -> &PlatformBanState {
-        &self.state
-    }
-
-    /// `Some` only while a ban is known.
-    pub fn source(&self) -> Option<PlatformBanSource> {
-        match &self.state {
-            PlatformBanState::Checked { ban: Some(_), .. } => self.source,
-            _ => None,
-        }
-    }
-
-    /// `Some` only for a checked ban; unknown and failed are `None`.
-    pub fn ban(&self) -> Option<&PlatformBanInfo> {
-        match &self.state {
-            PlatformBanState::Checked { ban, .. } => ban.as_ref(),
-            _ => None,
-        }
-    }
-
-    /// Records an answer; the same answer again only moves `checked_at`.
-    pub fn apply_platform_ban(
-        &mut self,
-        ban: Option<PlatformBanInfo>,
-        source: PlatformBanSource,
-        checked_at: f64,
-    ) {
-        self.source = ban.is_some().then_some(source);
-        self.state = PlatformBanState::Checked { ban, checked_at };
-    }
-
-    /// Records a failed check. A ban learnt from a scene-admission refusal is kept: a failed poll
-    /// is no evidence against it.
-    pub fn platform_ban_check_failed(&mut self, error: String, checked_at: f64) {
-        if self.source() == Some(PlatformBanSource::SceneAdmissionRefusal) {
-            warn!("[ban_block] platform ban check failed, keeping the refusal: {error}");
-            return;
-        }
-        self.state = PlatformBanState::Failed { error, checked_at };
-        self.source = None;
-    }
-
-    /// Forgets the answer.
-    pub fn reset_platform_ban(&mut self) {
-        self.state = PlatformBanState::Unknown;
-        self.source = None;
-    }
+    Some(body.ban.unwrap_or_else(|| {
+        PlatformBanInfo::withheld(body.matched_on.as_deref().unwrap_or("another match"))
+    }))
 }
 
 /// True while the known ban came from a scene-admission refusal and the admission still shows
@@ -243,12 +105,6 @@ fn cross_feed_admission_refusal(
         PlatformBanSource::SceneAdmissionRefusal,
         time.elapsed_secs_f64(),
     );
-}
-
-impl Default for PlatformBanStatus {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// `/ban_block_refresh` asks for the platform ban to be checked again now.
@@ -298,6 +154,19 @@ impl Plugin for PlatformBanPlugin {
 pub struct CheckFailure {
     pub error: String,
     pub retry_after_secs: Option<f64>,
+}
+
+/// The client ban-status requests are sent with.
+struct BanCheckClient(reqwest::Client);
+
+impl Default for BanCheckClient {
+    fn default() -> Self {
+        Self(
+            platform::http_client_builder()
+                .build()
+                .expect("reqwest client"),
+        )
+    }
 }
 
 /// One ban-status request on its way, for the address it was sent for.
@@ -363,6 +232,7 @@ pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> boo
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
 /// wallet's, and starts the next one when a check is due. A trigger that lands while a request
 /// is in flight starts another as soon as it completes.
+#[allow(clippy::too_many_arguments)]
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,
@@ -371,6 +241,7 @@ fn check_platform_ban(
     time: Res<Time>,
     mut refresh: EventReader<PlatformBanRefreshRequested>,
     mut schedule: Local<BanCheckSchedule>,
+    client: Local<BanCheckClient>,
 ) {
     let now = time.elapsed_secs_f64();
     if schedule.follow(wallet.address()) {
@@ -422,8 +293,8 @@ fn check_platform_ban(
         Service::CommsGatekeeper,
         &format!("/users/{address:#x}/bans"),
     );
-    let request = status
-        .http
+    let request = client
+        .0
         .get(url)
         .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS));
     schedule.in_flight = Some(InFlightBanCheck {
@@ -449,7 +320,7 @@ async fn fetch_ban_status(
         return response
             .json::<BanStatusEnvelope>()
             .await
-            .map(|envelope| PlatformBanInfo::from_body(envelope.data))
+            .map(|envelope| ban_from_body(envelope.data))
             .map_err(|e| failed(format!("bad ban status body: {e}")));
     }
     let retry_after_secs = response
@@ -476,6 +347,7 @@ fn retry_after_secs(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::platform_ban::PlatformBanState;
 
     fn address(n: u8) -> Address {
         Address::from_slice(&[n; 20])
@@ -484,33 +356,31 @@ mod tests {
     #[test]
     fn the_ban_status_body_decodes_as_served() {
         let banned = br#"{"data":{"isBanned":true,"ban":{"id":"b1","bannedAddress":"0xab","bannedBy":"0xcd","reason":"spam","customMessage":"go away","bannedAt":"2026-01-01T00:00:00.000Z","expiresAt":null,"liftedAt":null,"liftedBy":null,"createdAt":"2026-01-01T00:00:00.000Z"}}}"#;
-        let ban = PlatformBanInfo::from_json(banned).unwrap().unwrap();
+        let ban = ban_from_json(banned).unwrap().unwrap();
         assert_eq!(ban.reason, "spam");
         assert_eq!(ban.matched_on, None);
         assert_eq!(ban.custom_message.as_deref(), Some("go away"));
         assert_eq!(ban.expires_at, None);
         assert_eq!(
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false}}"#).unwrap(),
+            ban_from_json(br#"{"data":{"isBanned":false}}"#).unwrap(),
             None
         );
         assert_eq!(
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#)
-                .unwrap(),
+            ban_from_json(br#"{"data":{"isBanned":false,"ban":{"reason":"stale"}}}"#).unwrap(),
             None
         );
-        assert!(PlatformBanInfo::from_json(b"not json").is_err());
+        assert!(ban_from_json(b"not json").is_err());
     }
 
     #[test]
     fn a_device_matched_ban_is_a_ban_with_its_record_withheld() {
-        let withheld =
-            PlatformBanInfo::from_json(br#"{"data":{"isBanned":true,"matchedOn":"device"}}"#)
-                .unwrap()
-                .unwrap();
+        let withheld = ban_from_json(br#"{"data":{"isBanned":true,"matchedOn":"device"}}"#)
+            .unwrap()
+            .unwrap();
         assert_eq!(withheld, PlatformBanInfo::withheld("device"));
         assert_eq!(withheld.matched_on.as_deref(), Some("device"));
         assert_eq!(withheld.reason, "");
-        let unexplained = PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#)
+        let unexplained = ban_from_json(br#"{"data":{"isBanned":true}}"#)
             .unwrap()
             .unwrap();
         assert_eq!(unexplained, PlatformBanInfo::withheld("another match"));

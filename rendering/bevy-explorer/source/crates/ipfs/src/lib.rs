@@ -67,11 +67,12 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    platform_ban::{PlatformBanStatus, PLATFORM_BANNED},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
-        server_mode, AppConfig, CommsConfig, CurrentRealm, PlatformBanEntryGate, PreviewMode,
-        ServerConfiguration, WorldHold, PLATFORM_BANNED,
+        server_mode, AppConfig, CommsConfig, CurrentRealm, PreviewMode, ServerConfiguration,
+        WorldHold,
     },
     util::TaskCompat,
 };
@@ -787,7 +788,7 @@ pub fn change_realm(
     wallet: Option<Res<Wallet>>,
     prompter: Option<Res<WorldPasswordPrompter>>,
     mut world_secret: ResMut<WorldCommsSecret>,
-    ban_gate: Option<Res<PlatformBanEntryGate>>,
+    platform_ban: Option<Res<PlatformBanStatus>>,
     mut commands: Commands,
 ) {
     // Polled before the realm watch: a change's result is sent after its realm config, so a
@@ -916,7 +917,7 @@ pub fn change_realm(
                 .and_then(|_| world_secret.0.clone());
             let prompter = prompter.as_deref().cloned();
             let client = ipfs.client();
-            let banned = ban_gate.is_some_and(|gate| gate.banned);
+            let banned = platform_ban.is_some_and(|status| status.ban().is_some());
             IoTaskPool::get()
                 .spawn_compat(async move {
                     let mut superseded = superseded;

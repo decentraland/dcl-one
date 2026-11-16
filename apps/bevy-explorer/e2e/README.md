@@ -182,9 +182,8 @@ gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, o
 every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
 `session.nativeArgs` is what starts that client, on an automation port of its own. On the web
 a service override stops the boot at the launch gate, so those scenarios are todos there. The
-same file checks the realm entry the ban closes (`entryGate`): open when not banned or when the
-check fails, and, against the stub, a `/changerealm` refused while banned and a new sign-in's
-gate closed before it asks to enter.
+same file checks realm entry: entered when not banned or when the check fails, and, against the
+stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
 adapter reported as a scene ban.

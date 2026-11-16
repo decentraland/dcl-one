@@ -327,8 +327,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
-- **One entry gate for a platform ban.** While a platform ban is known, the realm change refuses
-  every request ("You are banned from Decentraland"), so the lobby's pick, a link held for the
+- **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
+  (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
+  banned from Decentraland"), so the lobby's pick, a link held for the
   terms and an in-world realm change all stay where they are and nothing loads or connects. The
   HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
   picker or loader with a blocking notice that only a sign-out leaves (B1); a refused in-world
@@ -336,11 +337,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
   Exit and Support:
   - Entering does not wait for the first check: an unknown or failed check lets the player in,
-    and a ban answered later closes the gate from then on. unity-explorer awaits the request.
+    and a ban answered later refuses realm changes from then on. unity-explorer awaits the request.
     The check starts at sign-in, before the lobby shows, so a ban is normally known before the
     pick; a launch straight to a link's destination can enter first and the gatekeeper's own
     refusal of the scene adapter then applies.
-  - The gate also refuses in-world realm changes, which unity-explorer does not check.
+  - In-world realm changes are refused too, which unity-explorer does not check.
   - Sign Out instead of Exit: the web has no application to exit.
   - The notice words the period as unity-explorer does (hours under a day, else days, rounded
     up) and adds the ban's custom message.

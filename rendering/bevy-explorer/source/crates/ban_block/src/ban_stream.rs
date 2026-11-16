@@ -1,18 +1,14 @@
-//! The platform ban as an entry gate: `PlatformBanEntryGate` is set while a ban is known, and
-//! `GetPlatformBanStream` streams the ban now and on every change. An unknown or failed check
-//! leaves the gate open.
+//! `GetPlatformBanStream`: the platform ban as a `PlatformBanNotice`, now and on every change.
 
 use bevy::{
-    app::{App, Plugin, PostUpdate, Update},
+    app::{App, Plugin, Update},
     ecs::{
-        change_detection::DetectChangesMut,
         event::EventReader,
         resource::Resource,
-        schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
         system::{Res, ResMut},
     },
 };
-use common::{rpc::RpcStreamSender, structs::PlatformBanEntryGate};
+use common::rpc::RpcStreamSender;
 use system_bridge::{PlatformBanNotice, SystemApi};
 
 use crate::PlatformBanStatus;
@@ -28,12 +24,6 @@ pub fn notice(status: &PlatformBanStatus) -> PlatformBanNotice {
             expires_at: ban.expires_at.clone(),
         },
     }
-}
-
-fn sync_entry_gate(status: Res<PlatformBanStatus>, mut gate: ResMut<PlatformBanEntryGate>) {
-    gate.set_if_neq(PlatformBanEntryGate {
-        banned: status.ban().is_some(),
-    });
 }
 
 /// The open streams and the notice they last got.
@@ -65,17 +55,12 @@ fn publish_platform_ban(
     }
 }
 
-pub(crate) struct EntryGatePlugin;
+pub(crate) struct PlatformBanStreamPlugin;
 
-impl Plugin for EntryGatePlugin {
+impl Plugin for PlatformBanStreamPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlatformBanEntryGate>()
-            .init_resource::<PlatformBanStreams>()
-            .add_systems(Update, publish_platform_ban)
-            .add_systems(
-                PostUpdate,
-                sync_entry_gate.run_if(resource_changed::<PlatformBanStatus>),
-            );
+        app.init_resource::<PlatformBanStreams>()
+            .add_systems(Update, publish_platform_ban);
     }
 }
 
@@ -84,11 +69,11 @@ mod tests {
     use super::*;
     use crate::{PlatformBanInfo, PlatformBanSource};
 
-    fn gate_app() -> App {
+    fn stream_app() -> App {
         let mut app = App::new();
         app.add_event::<SystemApi>()
             .insert_resource(PlatformBanStatus::new());
-        app.add_plugins(EntryGatePlugin);
+        app.add_plugins(PlatformBanStreamPlugin);
         app
     }
 
@@ -105,51 +90,9 @@ mod tests {
         app.update();
     }
 
-    fn gate(app: &App) -> bool {
-        app.world().resource::<PlatformBanEntryGate>().banned
-    }
-
-    #[test]
-    fn the_gate_closes_only_on_a_known_ban() {
-        let mut app = gate_app();
-        app.update();
-        assert!(!gate(&app), "unknown is open");
-
-        set(&mut app, |s| {
-            s.platform_ban_check_failed("status 500".into(), 1.0)
-        });
-        assert!(!gate(&app), "a failed check is open");
-
-        set(&mut app, |s| {
-            s.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, 2.0)
-        });
-        assert!(!gate(&app), "not banned is open");
-
-        set(&mut app, |s| {
-            s.apply_platform_ban(Some(ban("spam")), PlatformBanSource::BanStatusEndpoint, 3.0)
-        });
-        assert!(gate(&app));
-
-        // a failed check after a refusal-learnt ban: the gate stays closed
-        set(&mut app, |s| {
-            s.apply_platform_ban(
-                Some(PlatformBanInfo::from_refusal("banned")),
-                PlatformBanSource::SceneAdmissionRefusal,
-                4.0,
-            )
-        });
-        set(&mut app, |s| {
-            s.platform_ban_check_failed("status 500".into(), 5.0)
-        });
-        assert!(gate(&app));
-
-        set(&mut app, PlatformBanStatus::reset_platform_ban);
-        assert!(!gate(&app), "a wallet change reopens it");
-    }
-
     #[test]
     fn a_stream_gets_the_notice_now_and_on_every_change() {
-        let mut app = gate_app();
+        let mut app = stream_app();
         let (sender, mut receiver) = RpcStreamSender::channel();
         app.world_mut()
             .send_event(SystemApi::GetPlatformBanStream(sender));
