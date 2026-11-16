@@ -426,8 +426,17 @@ def run_external(executable, name, *, show_output=False):
     if show_output:
         command.append("--show-output")
     print("provisioned Archipelago test: " + " ".join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=210)
+    try:
+        result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=210)
+    except subprocess.TimeoutExpired as error:
+        # Timeout output can be bytes even with text=True, including a partial
+        # multibyte character when the process is killed.
+        output = error.output
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        print(output or "", flush=True)
+        raise
     print(result.stdout, flush=True)
     require(result.returncode == 0, f"provisioned test failed ({result.returncode}): {name}")
     verify_external_result(name, result.stdout)

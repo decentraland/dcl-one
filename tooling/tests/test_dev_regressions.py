@@ -15,6 +15,25 @@ spec.loader.exec_module(guard)
 
 
 class AuthStressTests(unittest.TestCase):
+    def test_external_timeout_preserves_partial_diagnostics_and_failure(self):
+        for output in (b'RPC_WORKLOAD_latest\nFD count=42\n\xff',
+                       'RPC_WORKLOAD_latest\nFD count=42\n', None):
+            for show_output in (False, True):
+                with self.subTest(output=output, show_output=show_output):
+                    error = subprocess.TimeoutExpired(['fixture'], 210, output=output)
+                    with mock.patch.object(guard, 'external_inventory'), \
+                            mock.patch.object(guard.subprocess, 'run', side_effect=error) as execute, \
+                            mock.patch('builtins.print') as printed, \
+                            mock.patch.object(guard, 'verify_external_result') as verify, \
+                            self.assertRaises(subprocess.TimeoutExpired) as raised:
+                        guard.run_external('fixture', 'required', show_output=show_output)
+                    self.assertIs(raised.exception, error)
+                    expected = output.decode(errors='replace') if isinstance(output, bytes) else output or ''
+                    printed.assert_any_call(expected, flush=True)
+                    self.assertEqual(execute.call_args.kwargs['timeout'], 210)
+                    self.assertEqual(execute.call_args.kwargs['stderr'], subprocess.STDOUT)
+                    verify.assert_not_called()
+
     def test_auth_stress_workflow_requires_one_prepared_run_per_platform(self):
         workflow = (ROOT / '.github/workflows/development.yml').read_text()
         guard.validate_auth_stress_workflow(workflow)
