@@ -5,7 +5,8 @@
 //! this process answers, and the core status is the clustering engine's last
 //! `engine.discovery` heartbeat (`catalyst pulse`, over NATS). The block is
 //! advertised when `COMMS_FIXED_ADAPTER` is set (the old deployment set it
-//! beside the two probe URLs on every node).
+//! beside the two probe URLs on every node), in lamb2's archipelago form when
+//! that adapter is archipelago ([`build_comms_config`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -210,11 +211,24 @@ impl AboutCommsState {
     }
 }
 
+/// The block for `probe` and `settings`. An archipelago adapter is
+/// advertised as lamb2 advertises its archipelago
+/// (`adapter: "archipelago:archipelago:<ws url>"`, no `fixedAdapter`); any
+/// other adapter, and `offline:offline` while the SFU is unreachable, as
+/// `adapter: "fixed-adapter:<x>"` plus `fixedAdapter: "<x>"`, which lamb2
+/// has no form for.
 pub fn build_comms_config(probe: CommsProbe, settings: &Settings, online: bool) -> AboutComms {
     let adapter = if online {
         settings.fixed_adapter.clone()
     } else {
         OFFLINE_ADAPTER.to_string()
+    };
+    let (adapter, fixed_adapter) = if adapter.is_empty() {
+        (None, None)
+    } else if adapter.starts_with(ARCHIPELAGO_PREFIX) {
+        (Some(format!("archipelago:{adapter}")), None)
+    } else {
+        (Some(format!("fixed-adapter:{adapter}")), Some(adapter))
     };
     AboutComms {
         healthy: probe.healthy,
@@ -222,20 +236,15 @@ pub fn build_comms_config(probe: CommsProbe, settings: &Settings, online: bool) 
         version: settings.version.clone(),
         commit_hash: settings.commit_hash.clone(),
         users_count: Some(probe.user_count),
-        adapter: if adapter.is_empty() {
-            None
-        } else {
-            Some(format!("fixed-adapter:{adapter}"))
-        },
-        fixed_adapter: if adapter.is_empty() {
-            None
-        } else {
-            Some(adapter)
-        },
+        adapter,
+        fixed_adapter,
         // Also suppress explicitly constructed settings at the response boundary.
         v4: None,
     }
 }
+
+/// The scheme of an archipelago adapter (`archipelago:<ws url>`).
+const ARCHIPELAGO_PREFIX: &str = "archipelago:";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -540,7 +549,11 @@ mod tests {
                 .as_deref()
                 .and_then(|adapter| adapter.split_once(':').map(|(_, transport)| transport));
             assert_eq!(selected, expected);
-            assert_eq!(response.fixed_adapter.as_deref(), expected);
+            let archipelago = expected.is_some_and(|a| a.starts_with(ARCHIPELAGO_PREFIX));
+            assert_eq!(
+                response.fixed_adapter.as_deref(),
+                expected.filter(|_| !archipelago)
+            );
         }
     }
 
@@ -561,7 +574,11 @@ mod tests {
         };
         let online = serde_json::to_value(build_comms_config(probe, &s, true)).unwrap();
         assert_eq!(online["protocol"], "v3");
-        assert_eq!(online["fixedAdapter"], "archipelago:wss://realm.example/ws");
+        assert_eq!(
+            online["adapter"],
+            "archipelago:archipelago:wss://realm.example/ws"
+        );
+        assert!(online.get("fixedAdapter").is_none());
         assert!(online.get("v4").is_none());
         let offline = serde_json::to_value(build_comms_config(probe, &s, false)).unwrap();
         assert!(offline.get("v4").is_none());
@@ -609,12 +626,36 @@ mod tests {
         assert_eq!(response["healthy"], true);
         assert_eq!(response["usersCount"], 17);
         assert_eq!(
-            response["adapter"],
-            "fixed-adapter:archipelago:wss://realm.example/ws"
+            response
+                .as_object()
+                .map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            Some(
+                ["healthy", "protocol", "usersCount", "adapter"]
+                    .map(String::from)
+                    .to_vec()
+            ),
+            "lamb2's archipelago block: no fixedAdapter"
         );
         assert_eq!(
-            response["fixedAdapter"],
-            "archipelago:wss://realm.example/ws"
+            response["adapter"],
+            "archipelago:archipelago:wss://realm.example/ws"
+        );
+        let livekit = serde_json::to_value(build_comms_config(
+            CommsProbe {
+                healthy: true,
+                user_count: 0,
+            },
+            &settings("livekit:wss://realm.example?token=test"),
+            true,
+        ))
+        .unwrap();
+        assert_eq!(
+            livekit["adapter"],
+            "fixed-adapter:livekit:wss://realm.example?token=test"
+        );
+        assert_eq!(
+            livekit["fixedAdapter"],
+            "livekit:wss://realm.example?token=test"
         );
     }
 
