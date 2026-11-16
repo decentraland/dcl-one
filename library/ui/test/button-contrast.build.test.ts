@@ -123,9 +123,9 @@ afterEach(async () => {
     }
   }
 })
-describe('when the shared primary button uses its actual font metrics', () => {
+describe('when the shared primary button preserves its design foreground', () => {
   it.each(contexts)(
-    'should retain readable normal, hover and pressed text for $size $viewport',
+    'should retain white normal, hover and pressed text for $size $viewport',
     async (context) => {
       await ready('?size=' + context.size + '&viewport=' + context.viewport)
       const normal = await nativeState({
@@ -147,14 +147,16 @@ describe('when the shared primary button uses its actual font metrics', () => {
         await pointer('mouseReleased', normal)
       }
       for (const m of [normal, hover, pressed]) {
-        expect(contrast(m)).toBeGreaterThanOrEqual(requiredTextContrast(m.fontSize, m.fontWeight))
+        expect(m.color).toBe('rgb(255, 255, 255)')
+        if (m.background === 'rgb(216, 0, 41)')
+          expect(contrast(m)).toBeGreaterThanOrEqual(requiredTextContrast(m.fontSize, m.fontWeight))
         expect([m.width, m.height]).toEqual([normal.width, normal.height])
       }
       expect(await actionCount()).toBe('1')
     }
   )
   it.each(sizes)(
-    'should preserve readable actual coarse input and a real native action for %s',
+    'should preserve design-white coarse input and a real native action for %s',
     async (size) => {
       await browser.session.send('Emulation.setDeviceMetricsOverride', {
         width: 390,
@@ -193,9 +195,30 @@ describe('when the shared primary button uses its actual font metrics', () => {
             touchPoints: []
           })
       }
-      for (const m of [normal, pressed])
-        expect(contrast(m)).toBeGreaterThanOrEqual(requiredTextContrast(m.fontSize, m.fontWeight))
+      for (const m of [normal, pressed]) expect(m.color).toBe('rgb(255, 255, 255)')
       expect(await actionCount()).toBe('1')
+    }
+  )
+  it('should record the normal-text contrast limitation of design-white primary paint', async () => {
+    await ready('?size=md')
+    const normal = await metrics()
+    expect(normal.color).toBe('rgb(255, 255, 255)')
+    expect(requiredTextContrast(normal.fontSize, normal.fontWeight)).toBe(4.5)
+    expect(contrast(normal)).toBeCloseTo(3.6467641009, 9)
+    expect(contrast(normal)).toBeLessThan(4.5)
+    await pointer('mouseMoved', normal)
+    const hover = await nativeState({ background: 'rgb(255, 74, 108)', hovered: true })
+    expect(hover.color).toBe('rgb(255, 255, 255)')
+    expect(contrast(hover)).toBeLessThan(4.5)
+  })
+  it.each(['', 'hover', 'pressed'])(
+    'should preserve a caller-owned currentColor icon in the %s design state',
+    async (state) => {
+      await ready('?icon&force=' + state)
+      expect((await metrics()).color).toBe('rgb(255, 255, 255)')
+      expect(
+        await browser.evaluate("getComputedStyle(document.querySelector('#target svg path')).fill")
+      ).toBe('rgb(255, 255, 255)')
     }
   )
   it.each(['dark', 'light'])(
@@ -221,9 +244,7 @@ describe('when the shared primary button uses its actual font metrics', () => {
           colorContrast(rgb(pixels[1]!), rgb(pixels[2]!))
         )
       ).toBeGreaterThanOrEqual(3)
-      expect(contrast(focused)).toBeGreaterThanOrEqual(
-        requiredTextContrast(focused.fontSize, focused.fontWeight)
-      )
+      expect(focused.color).toBe('rgb(255, 255, 255)')
       await key('Enter')
       expect(await actionCount()).toBe('1')
     }
@@ -263,7 +284,7 @@ describe('when the shared primary button uses its actual font metrics', () => {
   )
 })
 
-describe('when the primary paint correction shares the native Button root', () => {
+describe('when the primary design foreground shares the native Button root', () => {
   it.each([
     ['secondary', 'rgb(252, 252, 252)'],
     ['dark', 'rgb(255, 255, 255)'],
@@ -282,11 +303,11 @@ describe('when the primary paint correction shares the native Button root', () =
     expect(m.background).toBe('rgba(0, 0, 0, 0)')
   })
   it.each(['hover', 'pressed', 'focus'])(
-    'should also retain readable authored %s state previews',
+    'should retain design-white authored %s state previews',
     async (force) => {
       await ready('?force=' + force)
       const m = await metrics()
-      expect(contrast(m)).toBeGreaterThanOrEqual(requiredTextContrast(m.fontSize, m.fontWeight))
+      expect(m.color).toBe('rgb(255, 255, 255)')
     }
   )
 })
