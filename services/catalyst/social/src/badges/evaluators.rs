@@ -367,14 +367,19 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
 
 /// A creator list item id as `<contract>-<item>` lowercased, from that form
 /// or a collections URN (`urn:decentraland:<network>:collections-v2:<contract>:<item>`).
-fn item_key(id: &str) -> String {
+pub(crate) fn item_key(id: &str) -> String {
     let id = id.to_ascii_lowercase();
     let urn = id
         .strip_prefix("urn:decentraland:")
         .and_then(|rest| rest.split_once(':'))
         .and_then(|(_, rest)| rest.strip_prefix("collections-v2:"))
         .and_then(|rest| rest.split_once(':'))
-        .map(|(contract, rest)| format!("{contract}-{}", rest.split(':').next().unwrap_or(rest)));
+        .map(|(contract, rest)| {
+            format!(
+                "{contract}-{}",
+                rest.split_once(':').map_or(rest, |(item, _)| item)
+            )
+        });
     urn.unwrap_or(id)
 }
 
