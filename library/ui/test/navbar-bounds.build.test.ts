@@ -89,7 +89,7 @@ async function openCase(id: string, width: number) {
   })
   await session.navigate(`${origin}${page}?case=${encodeURIComponent(id)}`)
   await evaluate(
-    `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
+    `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>div>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
   )
 }
 async function click(selector: string) {
@@ -135,7 +135,7 @@ describe('native public NavBar bounds, independently of captured Review selectio
       '$id keeps closed-header descendants inside their root at ' + width + 'px',
       async (example) => {
         await openCase(example.id, width)
-        const result = await bounds('#native-bounds-root>nav')
+        const result = await bounds('#native-bounds-root>div>nav')
         expect(result.width).toBeGreaterThan(0)
         expect(result.height).toBeGreaterThan(0)
         expect(result.overflow).toEqual([])
