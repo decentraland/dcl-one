@@ -34,6 +34,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
+import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '@hud-host'
@@ -355,6 +356,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PointerRight' }, ['GamepadRight Right']],
   ...Array.from({ length: 10 }, (_, slot): BindingEntry => [{ System: `QuickEmote${slot}` }, [`Numpad${slot}`]]),
   [{ System: 'Places' }, ['KeyZ']],
+  [{ System: 'Events' }, ['KeyX']],
   [{ System: 'Communities' }, ['KeyO']],
   [{ System: 'Backpack' }, ['KeyI']],
   [{ System: 'Gallery' }, ['KeyG']],
@@ -1153,6 +1155,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         realm: 'https://realm-provider.decentraland.org/main',
         rules: { scene: [{ ty: 'MovePlayer', allow: 'Allow' }], realm: [], global: [{ ty: 'OpenUrl', allow: 'Deny' }] }
       })
+      return
+    }
+    if (msg.kind === 'getEvents') {
+      // `?mockEvents=error` fails every read, to show the error state and its Retry
+      const failed = new URLSearchParams(location.search).get('mockEvents') === 'error'
+      setTimeout(() => {
+        if (failed) reply({ kind: 'events', request: msg.request, events: [], failed: true })
+        else reply({ kind: 'events', request: msg.request, events: mockEventList(msg) })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'setEventAttending') {
+      setMockReminder(msg.eventId, msg.attending)
+      setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getEventPlaces') {
+      reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return
     }
     if (msg.kind === 'getCommunities') {

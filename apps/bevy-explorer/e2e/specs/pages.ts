@@ -36,7 +36,7 @@ export const PAGES: Record<PageName, Page> = {
   gallery: { key: 'KeyG', rail: 'Gallery', tab: 'Gallery [ G ]', marker: { name: 'Gallery', role: 'heading' } },
   settings: { key: 'KeyP', rail: 'Settings', tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
   places: { key: 'KeyZ', rail: 'Places', tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
-  events: { rail: 'Events', tab: 'Events', marker: { name: 'Events sections', role: 'tablist' } },
+  events: { key: 'KeyX', rail: 'Events', tab: 'Events [ X ]', marker: { name: 'Events', role: 'heading' } },
   map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search places & worlds', role: 'textbox' } }
 }
 

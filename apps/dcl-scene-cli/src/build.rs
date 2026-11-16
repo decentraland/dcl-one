@@ -101,6 +101,7 @@ pub struct Staged {
 /// Generate the entrypoint and the runtime-chunk entry under `.dcl-one/`, and
 /// resolve where every artifact lands under `art_root`.
 pub fn stage(project: &Project, opts: &BuildOptions, art_root: &Path) -> Result<Staged> {
+    crate::init::restore_missing_node_modules(&project.root)?;
     let main = project.main_output()?;
     let tsconfig = project.tsconfig()?;
     let paths = split::ChunkPaths::of(&main);
@@ -133,6 +134,7 @@ pub fn stage(project: &Project, opts: &BuildOptions, art_root: &Path) -> Result<
         smart_installed: false,
         max_composite_entity: generated.max_composite_entity,
         mp: entrypoint::authoritative_multiplayer(project),
+        compact: opts.production,
     };
     Ok(Staged {
         generated,
@@ -158,7 +160,20 @@ pub async fn emit_chunks(
             tracing::info!("prebuilt sdk chunk installed {}", paths.sdk);
             steps.done(format!("SDK chunk installed {} (prebuilt)", paths.sdk));
         }
-        None => bundle_step("SDK chunk", project, &staged.sdk_opts, steps).await?,
+        None => {
+            let started = Instant::now();
+            let opts = &staged.sdk_opts;
+            let outcome = crate::sdk_cache::bundle(project, opts).await?;
+            tracing::info!("sdk chunk {outcome:?} {}", opts.outfile.display());
+            steps.done(match outcome {
+                crate::sdk_cache::Outcome::Built => {
+                    saved("SDK chunk", &project.root, &opts.outfile, started)
+                }
+                crate::sdk_cache::Outcome::Reused | crate::sdk_cache::Outcome::Restored => {
+                    format!("SDK chunk reused {} (SDK unchanged)", paths.sdk)
+                }
+            });
+        }
     }
     bundle_step("Scene chunk", project, &staged.scene_opts, steps).await?;
     install_smart_chunk(
@@ -518,11 +533,14 @@ pub fn install_smart_chunk(
 
 /// A type check that runs beside the watch loop rather than in front of it, so
 /// a save reloads immediately. Only the newest edit matters, so starting one
-/// aborts any still running; `type_check` uses `kill_on_drop`, so the abort
-/// reaches the tsc process rather than orphaning it.
+/// aborts any still waiting. The checks go to one long-lived tsc
+/// ([`crate::check_server`]), which lives as long as this does; where that
+/// cannot serve, each check spawns tsc with `kill_on_drop`, so the abort
+/// reaches the process rather than orphaning it.
 #[derive(Default)]
 pub struct BackgroundCheck {
     running: Option<tokio::task::JoinHandle<()>>,
+    checker: crate::check_server::Checker,
     /// Did the last COMPLETED check report errors? An aborted one proves
     /// nothing about the newer edit, so only a completed one writes it.
     failing: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -532,12 +550,14 @@ impl BackgroundCheck {
     pub fn restart(&mut self, project: Project) {
         self.abort();
         let failing = self.failing.clone();
+        let checker = self.checker.clone();
         self.running = Some(tokio::spawn(async move {
             use std::sync::atomic::Ordering;
             let started = Instant::now();
-            match type_check(&project, Reloaded::Yes).await {
+            match type_check_with(&project, Reloaded::Yes, false, Some(&checker)).await {
                 Ok(_) => {
                     let was_failing = failing.swap(false, Ordering::Relaxed);
+                    ux::resolve(ux::Topic::Types);
                     if let Some(line) = pass_note(was_failing, started.elapsed()) {
                         match was_failing {
                             true => ux::note_good(line),
@@ -547,7 +567,7 @@ impl BackgroundCheck {
                 }
                 Err(e) => {
                     failing.store(true, Ordering::Relaxed);
-                    ux::report_watch(&e);
+                    ux::report_types(&e);
                 }
             }
         }));
@@ -639,8 +659,26 @@ pub async fn type_check_mode(
     reloaded: Reloaded,
     emit_declaration: bool,
 ) -> Result<Checked> {
+    type_check_with(project, reloaded, emit_declaration, None).await
+}
+
+/// One tsc run: did it pass, and its report.
+struct TscRun {
+    passed: bool,
+    report: String,
+}
+
+/// `checker` is a watcher's long-lived tsc ([`crate::check_server`]); without
+/// one, or when it cannot serve, each run spawns node and tsc.
+async fn type_check_with(
+    project: &Project,
+    reloaded: Reloaded,
+    emit_declaration: bool,
+    checker: Option<&crate::check_server::Checker>,
+) -> Result<Checked> {
     let compiler = crate::typescript::locate(project)?;
-    if !emit_declaration && crate::check_stamp::unchanged(project, &compiler.tsc) {
+    let unchanged = !emit_declaration && crate::check_stamp::unchanged(project, &compiler.tsc);
+    if unchanged && checker.is_none() {
         tracing::info!("type check skipped: nothing changed since the last pass");
         return Ok(Checked::Unchanged);
     }
@@ -655,45 +693,89 @@ pub async fn type_check_mode(
     if emit_declaration {
         let _ = std::fs::remove_file(&buildinfo);
     }
-    let tsc = |extra: &[&str]| {
-        let mut cmd = tokio::process::Command::new(&node);
-        cmd.arg(&compiler.tsc)
-            .args(["-p", "tsconfig.json"])
-            .args(match emit_declaration {
-                true => &["--declaration", "--emitDeclarationOnly"][..],
-                false => &["--noEmit"][..],
+    let args = |extra: &[&str]| {
+        let mut args: Vec<String> = ["-p", "tsconfig.json"]
+            .into_iter()
+            .chain(match emit_declaration {
+                true => ["--declaration", "--emitDeclarationOnly"].iter().copied(),
+                false => ["--noEmit"].iter().copied(),
             })
-            .args(["--incremental", "--tsBuildInfoFile"])
-            .arg(&buildinfo)
-            .args(if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-                &[] as &[&str]
-            } else {
-                &["--pretty", "false"]
-            })
-            .args(extra)
+            .chain(["--incremental", "--tsBuildInfoFile"])
+            .map(str::to_string)
+            .collect();
+        args.push(buildinfo.to_string_lossy().into_owned());
+        if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            args.extend(["--pretty", "false"].map(str::to_string));
+        }
+        args.extend(extra.iter().map(|s| s.to_string()));
+        args
+    };
+    // A tsconfig TypeScript 6.x is known to deprecate options of gets the
+    // flag at once: the run that only fails to say so costs as much as the
+    // check itself.
+    let known = crate::check_stamp::known_deprecations(project, &compiler);
+    let first = match &known {
+        Some(_) => args(&crate::typescript::IGNORE_DEPRECATIONS_6),
+        None => args(&[]),
+    };
+    if unchanged {
+        if let Some(checker) = checker {
+            checker.prime(&node, &compiler.tsc, &project.root, first);
+        }
+        tracing::info!("type check skipped: nothing changed since the last pass");
+        return Ok(Checked::Unchanged);
+    }
+    let run = async |args: Vec<String>| -> Result<TscRun> {
+        if let Some(checker) = checker
+            && let Some(run) = checker
+                .check(&node, &compiler.tsc, &project.root, args.clone())
+                .await
+        {
+            return Ok(TscRun {
+                passed: run.code == 0,
+                report: tsc_report(&run.out, ""),
+            });
+        }
+        let out = tokio::process::Command::new(&node)
+            .arg(&compiler.tsc)
+            .args(&args)
             .current_dir(&project.root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        cmd
-    };
-    let mut out = tsc(&[]).output().await.map_err(tsc_start_error)?;
-    if !out.status.success()
-        && crate::typescript::retry_ignoring_deprecations(&compiler, &tsc_report(&out))
-    {
-        if let Some(note) = deprecation_note(&compiler, &tsc_report(&out)) {
-            ux::note_stderr(note);
-        }
-        out = tsc(&crate::typescript::IGNORE_DEPRECATIONS_6)
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(tsc_start_error)?;
+        Ok(TscRun {
+            passed: out.status.success(),
+            report: tsc_report(
+                &String::from_utf8_lossy(&out.stdout),
+                &String::from_utf8_lossy(&out.stderr),
+            ),
+        })
+    };
+    let say = |names: &[String]| {
+        if let Some(note) = deprecation_note(&compiler, names) {
+            ux::note_stderr(note);
+        }
+    };
+    if let Some(names) = &known {
+        say(names);
     }
-    if !out.status.success() {
+    let mut out = run(first).await?;
+    if known.is_none()
+        && !out.passed
+        && crate::typescript::retry_ignoring_deprecations(&compiler, &out.report)
+    {
+        let names = crate::typescript::deprecated_options(&out.report);
+        say(&names);
+        crate::check_stamp::remember_deprecations(project, &compiler, &names);
+        out = run(args(&crate::typescript::IGNORE_DEPRECATIONS_6)).await?;
+    }
+    if !out.passed {
         crate::check_stamp::forget(&project.root);
-        let body = tsc_report(&out);
-        let body = body.trim();
+        let body = out.report.trim();
         let count = ts_error_count(body);
         let what = match count {
             0 => "type check failed".to_string(),
@@ -725,21 +807,16 @@ fn tsc_start_error(e: std::io::Error) -> anyhow::Error {
 }
 
 /// stdout then stderr, with tsc's inverse-video highlight turned grey.
-fn tsc_report(out: &std::process::Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    )
-    .replace("\x1b[7m", "\x1b[90m")
+fn tsc_report(stdout: &str, stderr: &str) -> String {
+    format!("{stdout}{stderr}").replace("\x1b[7m", "\x1b[90m")
 }
 
 /// Said once per process: under `start` every save would repeat it.
-fn deprecation_note(compiler: &crate::typescript::Compiler, report: &str) -> Option<String> {
+fn deprecation_note(compiler: &crate::typescript::Compiler, names: &[String]) -> Option<String> {
     static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     match NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         true => None,
-        false => Some(crate::typescript::deprecation_message(compiler, report)),
+        false => Some(crate::typescript::deprecation_message(compiler, names)),
     }
 }
 

@@ -16,7 +16,13 @@ pub const API_KEY: &str = "dcl-scene-cli";
 /// PATH, when this build embeds none).
 pub const BIN_ENV: &str = "LIVEKIT_SERVER_BIN";
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
-const READY_POLL: Duration = Duration::from_millis(200);
+/// The wait between readiness probes while the server is expected any
+/// moment. It answers within a few tens of milliseconds and the preview
+/// serves nothing until it does, so the wait that overshoots is startup time.
+const READY_POLL: Duration = Duration::from_millis(2);
+/// After this long the server is slow rather than starting, and the wait
+/// doubles up to a second.
+const READY_EAGER: Duration = Duration::from_millis(250);
 /// How far past `DEFAULT_PORT` a busy machine is searched for a free trio.
 const PORT_SEARCH: u16 = 200;
 
@@ -182,7 +188,8 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let began = Instant::now();
+    let deadline = began + READY_TIMEOUT;
     let mut delay = READY_POLL;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
@@ -207,7 +214,9 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
             return None;
         }
         tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
-        delay = delay.saturating_mul(2).min(Duration::from_secs(1));
+        if began.elapsed() > READY_EAGER {
+            delay = delay.saturating_mul(2).min(Duration::from_secs(1));
+        }
     }
     Some(Running {
         bin,
