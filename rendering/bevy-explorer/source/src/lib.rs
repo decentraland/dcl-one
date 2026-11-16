@@ -776,17 +776,17 @@ impl DecentralandApp {
         app.add_plugins(GpuTimePlugin);
 
         // what the explorer measures about itself: the sampler, the frame-time breakdown, the scope
-        // profiler; with the `profiler` feature, Bevy's per-pass render timings (not in a `tracy`
+        // profiler; with the `performance-profiler` feature, Bevy's per-pass render timings (not in a `tracy`
         // build, whose GPU context they would double) and its system information on Windows and
         // Linux
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(all(
-            feature = "profiler",
+            feature = "performance-profiler",
             not(feature = "tracy"),
             not(target_arch = "wasm32")
         ))]
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-        #[cfg(all(feature = "profiler", any(windows, target_os = "linux")))]
+        #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
         app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
 
         // Systems

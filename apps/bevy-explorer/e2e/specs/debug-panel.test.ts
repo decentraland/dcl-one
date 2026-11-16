@@ -84,17 +84,20 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
       timeoutMs: 10_000, what: 'the profiler to report itself enabled'
     })
-    // Bevy's spans exist in a `profiler` build: every native build, and the web build as CI
-    // builds it
     const enabled = await until(() => explorer.json<ProfileTop>('/profile_top 5'), (reading) => reading.enabled,
       { timeoutMs: 10_000, what: 'the profiler to report itself enabled' })
-    assert.ok(enabled.profilerBuild, 'the build carries the profiler feature')
-    const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
-      (reading) => reading.scopeSummaries.length === 5,
-      { timeoutMs: 10_000, what: 'five profiled scopes' })
-    for (const row of top.scopeSummaries) {
-      assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
-      assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+    // Bevy's spans exist only in a `performance-profiler` build, which release builds (CI's
+    // among them) leave out
+    if (enabled.profilerBuild) {
+      const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+        (reading) => reading.scopeSummaries.length === 5,
+        { timeoutMs: 10_000, what: 'five profiled scopes' })
+      for (const row of top.scopeSummaries) {
+        assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+        assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+      }
+    } else {
+      assert.match(String(enabled.unavailable.allocations), /performance-profiler/)
     }
     await explorer.hud.click(button('Disable profiler'))
     await explorer.hud.wait(button('Enable profiler'))
@@ -137,7 +140,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
 
 type ProfileTop = {
   enabled: boolean
-  /** The build has Bevy's spans and the allocation counter (the `profiler` cargo feature). */
+  /** The build has Bevy's spans and the allocation counter (the `performance-profiler` cargo feature). */
   profilerBuild: boolean
   scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
   unavailable: Record<string, string>

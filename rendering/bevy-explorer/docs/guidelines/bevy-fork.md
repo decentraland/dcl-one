@@ -237,7 +237,7 @@ across workers:
   nothing clears, so with `trace` on it grows without bound. The explorer writes the console
   lines with its own layer (`source/src/web.rs`).
 - `bevy_internal/trace` no longer enables `bevy_log/trace` (`tracing-error`'s `ErrorLayer` and
-  the span-trace panic hook): the explorer's `profiler` feature wants the spans only.
+  the span-trace panic hook): the explorer's `performance-profiler` feature wants the spans only.
 
 ## Changing bevy
 

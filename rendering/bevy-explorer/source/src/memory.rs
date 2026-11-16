@@ -112,7 +112,7 @@ fn process_rss(system: &mut sysinfo::System) -> Option<u64> {
 
 // Count live engine allocations so frees lower pressure even though WASM pages never shrink.
 // With the profiler, every allocation and its bytes are counted too.
-#[cfg(all(target_arch = "wasm32", feature = "profiler"))]
+#[cfg(all(target_arch = "wasm32", feature = "performance-profiler"))]
 #[global_allocator]
 static ENGINE_HEAP: cap::Cap<
     crate::perf::allocation_counter::CountingAllocator<std::alloc::System>,
@@ -120,7 +120,7 @@ static ENGINE_HEAP: cap::Cap<
     crate::perf::allocation_counter::CountingAllocator(std::alloc::System),
     usize::MAX,
 );
-#[cfg(all(target_arch = "wasm32", not(feature = "profiler")))]
+#[cfg(all(target_arch = "wasm32", not(feature = "performance-profiler")))]
 #[global_allocator]
 static ENGINE_HEAP: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::System, usize::MAX);
 

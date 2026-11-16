@@ -11,11 +11,10 @@
 //! - [`benchmark_summary`]: the autopilot run's `perf_summary` log lines, from the same inputs;
 //! - [`allocation_counter`]: allocations per frame.
 //!
-//! Bevy's spans and the allocation counter exist only under the `profiler` cargo feature (every
-//! native build, and the web build as `build-web.py` builds it); the rest measures in every
-//! build.
+//! Bevy's spans and the allocation counter exist only under the `performance-profiler` cargo
+//! feature, which release builds leave out; the rest measures in every build.
 
-#[cfg(feature = "profiler")]
+#[cfg(feature = "performance-profiler")]
 pub mod allocation_counter;
 pub mod benchmark_summary;
 pub mod frame_inputs;
@@ -92,7 +91,7 @@ impl Plugin for PerformanceMonitoringPlugin {
                 )
                     .chain(),
             );
-        #[cfg(feature = "profiler")]
+        #[cfg(feature = "performance-profiler")]
         app.add_systems(Last, allocation_counter::publish_frame_allocations_system);
         // publishes the `pipelined/*` timings, among them the render worker's wait for the next
         // animation frame

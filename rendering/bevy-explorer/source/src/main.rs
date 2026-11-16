@@ -28,11 +28,11 @@ use webgpu_build::{
 };
 
 // mimalloc; with the profiler, wrapped to count every allocation and its bytes
-#[cfg(feature = "profiler")]
+#[cfg(feature = "performance-profiler")]
 #[global_allocator]
 static GLOBAL: webgpu_build::perf::allocation_counter::CountingAllocator<MiMalloc> =
     webgpu_build::perf::allocation_counter::CountingAllocator(MiMalloc);
-#[cfg(not(feature = "profiler"))]
+#[cfg(not(feature = "performance-profiler"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 static SESSION_LOG: OnceLock<String> = OnceLock::new();

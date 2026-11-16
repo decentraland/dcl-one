@@ -45,12 +45,12 @@ def run(*args, cwd=SOURCE, env=None, **options):
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
-def compile_wasm(no_opt, env):
+def compile_wasm(no_opt, features, env):
     if no_opt:
         env = {**env, 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '16'}
     run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
         '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
-        '--features=decentra-bevy/livekit,decentra-bevy/social,decentra-bevy/profiler', env=env)
+        '--features=' + ','.join(f'decentra-bevy/{feature}' for feature in features), env=env)
     target = Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
     for name, directory in (('webgpu_build', 'pkg'), ('dcl_scene_wasm', 'pkg-scene')):
         output = SOURCE / 'deploy/web/engine' / directory
@@ -63,7 +63,7 @@ def compile_wasm(no_opt, env):
             optimized.replace(wasm)
 
 
-def prepare_engine(no_opt, engine_cache, shared_build, env):
+def prepare_engine(no_opt, engine_cache, shared_build, features, env):
     flags = ['--no-opt'] if no_opt else []
     # WASM_PACK_MODE=no-install needs the Cargo.lock's wasm-bindgen-cli installed (see ENVIRONMENT).
     if mode := os.environ.get('WASM_PACK_MODE'):
@@ -82,10 +82,10 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
         # that are missing or stale.
         run(sys.executable, str(ROOT / 'tooling/patched-sources.py'), 'materialise', '--quiet', cwd=ROOT, env=env)
         if shared_build:
-            compile_wasm(no_opt, env)
+            compile_wasm(no_opt, features, env)
         else:
             run('wasm-pack', 'build', '--target', 'web', *flags, '--out-dir', './deploy/web/engine/pkg',
-                '--no-default-features', '--features=livekit,social,profiler', env=env)
+                '--no-default-features', '--features=' + ','.join(features), env=env)
             run('wasm-pack', 'build', 'crates/dcl_scene_wasm', '--target', 'web', *flags,
                 '--out-dir', '../../deploy/web/engine/pkg-scene', '--no-default-features', env=env)
         pkg = SOURCE / 'deploy/web/engine/pkg'
@@ -99,7 +99,10 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
     return engine
 
 
-def web(no_opt=False, engine_cache=None, shared_build=False):
+def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False):
+    # the release engine leaves out `performance-profiler`: its spans and allocation counter cost
+    # every frame even while the profiler records nothing
+    features = ['livekit', 'social', *(['performance-profiler'] if performance_profiler else [])]
     env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
     revision = os.environ.get('GITHUB_SHA', 'local')
@@ -110,7 +113,7 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
             pool.submit(run, 'corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
         ]
-        engine = prepare_engine(no_opt, engine_cache, shared_build, env)
+        engine = prepare_engine(no_opt, engine_cache, shared_build, features, env)
         for installation in installations:
             installation.result()
     run('node', './react-web/scripts/shared-inputs.mjs', '--check', env=env)
@@ -158,8 +161,13 @@ def main():
                         help='CI-only compiled WASM cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
+    parser.add_argument('--performance-profiler', action='store_true',
+                        help="Compile in the Profiler section's spans and allocation counter (off in release builds)")
     args = parser.parse_args()
-    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build)
+    if args.performance_profiler and args.engine_cache:
+        parser.error('--performance-profiler builds a different engine than the cache holds')
+    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build,
+        args.performance_profiler)
 
 
 if __name__ == '__main__':

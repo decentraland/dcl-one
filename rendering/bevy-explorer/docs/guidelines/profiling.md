@@ -88,8 +88,8 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 
 ### Profiler (`/profile_top [count] [--sort <metric>]`, `/profile_enable on|off|reset`)
 
-The in-app scope profiler. A `profiler` build (the cargo feature, in `default`, so every native
-build, and the web build as `build-web.py` and `just wasm` build it) carries Bevy's tracing spans (Bevy's `trace` feature): one
+The in-app scope profiler. A `performance-profiler` build carries Bevy's tracing spans (Bevy's
+`trace` feature): one
 per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule run
 and per render-graph node, plus the explorer's own in-process spans (`av-thread`), which every
 build has. Scene JavaScript runs in its own process on native (`dcl_deno_ipc`), so its
@@ -99,8 +99,15 @@ section, `/profile_enable on` in the console, or the benchmark autopilot for its
 Enabled, it costs two clock reads per span and an update of the thread's own map per exit (the
 fold merges the threads' maps once a frame, so no exit waits on another thread), tens of
 microseconds a frame on native. A span that lives across frames is one call, recorded when it
-ends. `/profile_top` reports `profilerBuild`; a build without the feature
-(`--no-default-features` without `profiler`) says so in its empty table, and its rows are the
+ends.
+
+The cargo feature is off in `default` and in the web build, so release builds leave it out: the
+spans pass through every tracing layer on each enter and exit, and the counting allocator adds
+atomics to every allocation, even while the table records nothing. Turn it on with
+`--features performance-profiler` natively (`tracy` turns it on too), `python3
+apps/bevy-explorer/build-web.py --performance-profiler` or
+`WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web. `/profile_top` reports
+`profilerBuild`; a build without the feature says so in its empty table, and its rows are the
 explorer's own spans and Bevy's unconditional ones (`present_frames`, `entity_sync`). On the web
 the engine's log reaches the browser console through the explorer's own layer, not Bevy's
 `tracing-wasm` layer, which would mark and measure every span on the page's performance
@@ -117,7 +124,7 @@ on the task pool keeps their time, since the systems are not its children on tha
 `self-time` (default), `inclusive-time`, `max-single-call` or `call-count`.
 
 The section also shows the allocations per frame, count and bytes, from the counting allocator a
-`profiler` build wraps its allocator in (`perf/allocation_count_per_frame`,
+`performance-profiler` build wraps its allocator in (`perf/allocation_count_per_frame`,
 `perf/allocated_bytes_per_frame`; a reallocation counts once, with the bytes it grew by): the
 first place to look for per-frame churn. The wrapper costs two shared atomic adds per
 allocation on every thread, which a build without the feature does not pay.

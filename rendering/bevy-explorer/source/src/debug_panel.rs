@@ -440,11 +440,11 @@ fn profile_top(
                     .map(f64::round),
             ]
         });
-    let profiler_build = cfg!(feature = "profiler");
+    let profiler_build = cfg!(feature = "performance-profiler");
     input.reply_ok(
         json!({
             "enabled": table.recording_enabled(),
-            // Bevy's spans and the allocation counts exist only in a `profiler` build
+            // Bevy's spans and the allocation counts exist only in a `performance-profiler` build
             "profilerBuild": profiler_build,
             "sort": format!("{sort:?}"),
             "scopeSummaries": rows.iter().map(|row| json!({
@@ -461,12 +461,12 @@ fn profile_top(
                 } else if profiler_build {
                     "No scope has been recorded yet."
                 } else {
-                    "This build has no system, schedule or render-node spans (the `profiler` cargo feature is off): only the explorer's own spans and Bevy's unconditional ones are recorded."
+                    "This build has no system, schedule or render-node spans (the `performance-profiler` cargo feature is off): only the explorer's own spans and Bevy's unconditional ones are recorded."
                 },
                 "allocations": if profiler_build {
                     "Waiting for the first frame's allocation counts."
                 } else {
-                    "This build has no allocation counter (the `profiler` cargo feature is off)."
+                    "This build has no allocation counter (the `performance-profiler` cargo feature is off)."
                 },
             },
         })
