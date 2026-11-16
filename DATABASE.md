@@ -1630,12 +1630,16 @@ know (a redeploy since) is looked up by `entity_id` in the webhook that carries
 it, under the webhook's lock stripes, and dropped
 only when it is deployed off every badge parcel; one the node has not synced
 is kept for the engine, which leaves it queued (and the wallet's later events
-behind it) until the scene syncs, matching no parcel only after an hour.
+behind it) until the scene syncs, trying it again after 5 s, doubling up to
+5 minutes, and matching no parcel after an hour or at once while 1,000
+events already wait (so made-up scene ids bound the retry work). Waiting
+events are counted once (`scene_not_synced`), gauged as
+`badges_presence_waiting_events` and left out of the oldest-age gauge.
 Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
 not counted, and the player's next join is. Expected volume is every
 join and leave of the scene and world rooms of active presence badges
-(unmeasured); rows live only
+(unmeasured); rows other than waiting ones live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
 up to 500 in `seq` order, one transaction per event that deletes it, so the
 queue is its own cursor and a row committed behind a later `seq` is still

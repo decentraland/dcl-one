@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use super::sink::{self, PresenceEvent};
-use super::{Flow, Occupancy, Settings, SweepSummary, apply_pending, drain, sweep};
+use super::{Flow, Occupancy, Retries, Settings, SweepSummary, apply_pending, drain, sweep};
 use crate::comms::gatekeeper::events::RoomEventStore;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 
@@ -136,7 +136,7 @@ impl T {
             &self.settings,
             CDN,
             &|| self.now,
-            &mut HashMap::new(),
+            &mut Retries::default(),
         )
         .await
         .unwrap();
@@ -429,7 +429,7 @@ async fn a_long_drain_reads_the_clock_per_event() {
     // a slow backlog: the clock moves two minutes per event, past the skew bound
     let ticks = AtomicI64::new(0);
     let clock = || T0 + ticks.fetch_add(1, Ordering::Relaxed) * 2 * min;
-    drain(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+    drain(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
         .await
         .unwrap();
     assert_eq!(ticks.load(Ordering::Relaxed), 6, "one reading per event");
@@ -548,22 +548,22 @@ async fn an_event_failing_transiently_past_the_grace_is_dropped_and_the_queue_mo
     )
     .await
     .unwrap();
-    let mut failures = HashMap::new();
+    let mut retries = Retries::default();
     let clock = move || now;
     for _ in 0..5 {
-        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
         assert!(pass.is_err(), "a fresh event waits out the timeout");
     }
-    assert!(failures.is_empty());
+    assert!(retries.failures.is_empty());
     sqlx::query("UPDATE social.presence_events SET received_at = received_at - interval '2 hours'")
         .execute(&t.pool)
         .await
         .unwrap();
     for _ in 0..2 {
-        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
         assert!(pass.is_err());
     }
-    let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+    let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
     assert_eq!(
         pass.unwrap(),
         1,
@@ -695,11 +695,12 @@ async fn an_unsynced_scene_waits_for_its_sync_and_holds_only_its_wallet() {
         t.event(true, BOB, "s1", T0, At::Scene(unsynced)),
         t.event(true, ALICE, "s2", T0, At::Scene(SCENE)),
         t.event(false, BOB, "s1", T0 + 60_000, At::Scene(unsynced)),
+        t.event(true, BOB, "s9", T0 + 120_000, At::World(None)),
     ];
     sink::insert(&t.pool, &events).await.unwrap();
     let clock = || t.now;
     assert_eq!(
-        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
             .await
             .unwrap(),
         1,
@@ -711,7 +712,11 @@ async fn an_unsynced_scene_waits_for_its_sync_and_holds_only_its_wallet() {
             .fetch_all(&t.pool)
             .await
             .unwrap();
-    assert_eq!(queued, [BOB, BOB], "the wallet keeps its order");
+    assert_eq!(
+        queued,
+        [BOB, BOB, BOB],
+        "the wallet's leave and world join keep their order"
+    );
 
     // synced on the badge parcel: the join is a visit
     sqlx::query(
@@ -725,12 +730,89 @@ async fn an_unsynced_scene_waits_for_its_sync_and_holds_only_its_wallet() {
     .await
     .unwrap();
     assert_eq!(
-        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
             .await
             .unwrap(),
-        2
+        3
     );
     assert!(t.progress("scene_visit", BOB).await.is_some());
+}
+
+#[tokio::test]
+async fn a_waiting_event_is_tried_again_with_backoff() {
+    let Some(mut t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let unsynced = "bafkreibackoffsceneeeeeeeeeeeeeeeeee";
+    let events = [t.event(true, BOB, "s1", T0, At::Scene(unsynced))];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let mut retries = Retries::default();
+    let start = t.now;
+    let clock = || start;
+    drain(&t.pool, &t.settings, CDN, &clock, &mut retries)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, \
+           entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'scene', $2, '{}', now(), ARRAY['10,20'], now(), '[]')",
+    )
+    .bind(ALICE)
+    .bind(unsynced)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    // synced, but not tried again before its backoff
+    drain(&t.pool, &t.settings, CDN, &clock, &mut retries)
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", BOB).await.is_none());
+    t.now = start + 5_000;
+    let later = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| later, &mut retries)
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", BOB).await.is_some());
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn waiting_events_filling_a_batch_do_not_hold_the_next_one() {
+    let Some(mut t) = T::new().await else { return };
+    t.settings.event_batch = 2;
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let wallets = [
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+        "0x00000000000000000000000000000000000000c3",
+    ];
+    let mut events: Vec<_> = wallets
+        .iter()
+        .map(|w| {
+            t.event(
+                true,
+                w,
+                "s",
+                T0,
+                At::Scene("bafkreinotsyncedfullbatchfffffffff"),
+            )
+        })
+        .collect();
+    events.push(t.event(true, ALICE, "a", T0, At::Scene(SCENE)));
+    sink::insert(&t.pool, &events).await.unwrap();
+    let now = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut Retries::default())
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", ALICE).await.is_some());
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 3, "the three waiting joins stay queued");
 }
 
 #[tokio::test]
@@ -741,7 +823,7 @@ async fn a_scene_never_synced_matches_nothing_after_the_grace() {
     sink::insert(&t.pool, &events).await.unwrap();
     let clock = || t.now;
     assert_eq!(
-        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
             .await
             .unwrap(),
         0
@@ -751,7 +833,7 @@ async fn a_scene_never_synced_matches_nothing_after_the_grace() {
         .await
         .unwrap();
     assert_eq!(
-        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
             .await
             .unwrap(),
         1
