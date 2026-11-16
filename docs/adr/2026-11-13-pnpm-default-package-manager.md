@@ -34,8 +34,10 @@ decisions; the rest of both stands.
   `overrides`, `nodeLinker`, `minimumReleaseAge`). pnpm 11 does not read `ignore-scripts`,
   `save-exact` or a manifest's `overrides`.
 - No dependency runs an install script unless `allowBuilds` names it with the reason.
-- Tools run from the lockfile (`pnpm exec`), never through `npx`, which fetches a release when it
-  runs.
+- Tools a project depends on run from its lockfile (`pnpm exec`), never through `npx`, which
+  fetches a release when it runs. A tool in no lockfile runs through `pnpm dlx` (the Creator Hub's
+  `skills@1.7.0` and `@dcl/cdn-uploader@next`), which keeps pnpm's release wait unless the project
+  exempts the package.
 - Script arguments follow the script name with no separator (`pnpm run e2e --inworld`). pnpm
   hands a `--` to the script as an argument, where npm removes it.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
@@ -53,7 +55,8 @@ Where the layout differs from pnpm's default:
 - `library/js-sdk-toolchain` is one pnpm workspace with a single lockfile, `library/hashing`
   included.
 - `apps/creator-hub` holds, through overrides, the versions its packaged app shipped under npm
-  where pnpm would deduplicate them to another locked version, and keeps `@dcl/quests-client`'s
+  where pnpm would deduplicate them to another locked version, each until its dependent's next
+  upgrade, and keeps `@dcl/quests-client`'s
   request for the `latest` `@dcl/sdk` on the SDK it pins. Its `electron-builder.cjs` makes
   electron-builder collect dependencies by walking `node_modules`, since the pnpm collector picks
   registry copies of workspace packages.
