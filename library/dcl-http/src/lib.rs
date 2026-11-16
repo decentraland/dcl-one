@@ -341,12 +341,15 @@ pub async fn resolve_and_pin(url: &reqwest::Url) -> Option<SocketAddr> {
 /// `0.0.0.0/8`, IETF protocol assignments (`192.0.0.0/24`), the 6to4 relay
 /// anycast (`192.88.99.0/24`), benchmarking and reserved IPv4; loopback,
 /// unspecified, multicast, unique-local, link-local, site-local, discard-only
-/// (`100::/64`), IETF protocol assignments (`2001::/23`, which holds Teredo,
-/// benchmarking and ORCHID, apart from its globally reachable assignments),
+/// (`100::/64`), the dummy prefix (`100:0:0:1::/64`), IETF protocol
+/// assignments (`2001::/23`, which holds Teredo, benchmarking and ORCHID,
+/// apart from its globally reachable assignments),
 /// documentation (`2001:db8::/32`, `3fff::/20`), SRv6 SIDs (`5f00::/16`) and
 /// local-use NAT64 IPv6. An IPv6 address that embeds an IPv4 one (IPv4-mapped,
 /// IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4) is judged by the embedded
-/// address. These are the ranges `std`'s unstable `is_global` excludes.
+/// address. The IPv4 checks are deliberately stricter than `std`'s unstable
+/// `is_global`, which exempts `192.0.0.9` and `192.0.0.10` and allows most of
+/// `192.88.99.0/24`.
 pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -366,10 +369,10 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
                         || o[0] >= 240
                         // IETF protocol assignments 192.0.0.0/24 and the
                         // deprecated 6to4 relay anycast 192.88.99.0/24. Both
-                        // are refused whole on purpose, as `std`'s `is_global`
-                        // does, although IANA lists the PCP and TURN anycast
-                        // 192.0.0.9 and 192.0.0.10 and the 6a44 relay
-                        // 192.88.99.2 as globally reachable.
+                        // are refused whole on purpose, more strictly than
+                        // `std`'s `is_global`, although IANA lists the PCP and
+                        // TURN anycast 192.0.0.9 and 192.0.0.10 and the 6a44
+                        // relay 192.88.99.2 as globally reachable.
                         || (o[0] == 192 && o[1] == 0 && o[2] == 0)
                         || (o[0] == 192 && o[1] == 88 && o[2] == 99)
                 }
@@ -404,8 +407,8 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
                 || (s[0] == 0x3fff && s[1] < 0x1000)
                 // SRv6 segment identifiers 5f00::/16.
                 || s[0] == 0x5f00
-                // Discard-only 100::/64.
-                || (s[0] == 0x100 && s[1] == 0 && s[2] == 0 && s[3] == 0)
+                // Discard-only 100::/64 and the dummy prefix 100:0:0:1::/64.
+                || (s[0] == 0x100 && s[1] == 0 && s[2] == 0 && s[3] <= 1)
         }
     }
 }
@@ -1220,6 +1223,7 @@ mod tests {
             "2001:db8::1",
             "2001:0:ffff:ffff::1",
             "100::ffff:ffff:ffff:ffff",
+            "100:0:0:1::1",
             "192.0.0.255",
             "192.0.0.0",
             "192.88.99.255",
@@ -1291,7 +1295,7 @@ mod tests {
             "2001:200::1",
             "2001:db7:ffff::1",
             "2001:db9::1",
-            "100:0:0:1::1",
+            "100:0:0:2::1",
             "192.0.1.0",
             "192.88.98.255",
             "3ffe:ffff::1",
