@@ -143,6 +143,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(JumpMarkerPlugin);
+        app.add_plugins(spring_bones::SpringBonesPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
         app.add_systems(
@@ -1242,7 +1243,15 @@ fn process_avatar(
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+    (
+        name_and_parent,
+        previous_avatar,
+        scene_ent,
+        previous_animator,
+        mut contexts,
+        timestamp,
+        transforms,
+    ): (
         Query<(&Name, &ChildOf)>,
         Query<&PreviousAvatar>,
         Query<&SceneEntity>,
@@ -1257,6 +1266,7 @@ fn process_avatar(
         >,
         Query<&mut RendererSceneContext>,
         Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+        Query<&Transform>,
     ),
 ) {
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
@@ -1637,6 +1647,7 @@ fn process_avatar(
         // color the components of wearables
         // wearable_instances is built from the wearables with models, in order
         let wearable_models = def.wearables.iter().filter_map(|(_, w)| w.model.as_ref());
+        let mut spring_chains = Vec::new();
         for (instance, model) in loaded_avatar.wearable_instances.iter().zip(wearable_models) {
             let Some(instance) = instance else {
                 warn!("failed to load instance for wearable");
@@ -1733,6 +1744,20 @@ fn process_avatar(
                 }
             }
 
+            // the wearable's first skin says which of its bones swing, in the order it lists them
+            if let Some(skin) = scene_spawner
+                .iter_instance_entities(*instance)
+                .find_map(|scene_ent| skins.get(scene_ent).ok())
+            {
+                spring_chains.extend(spring_bones::wearable_chains(
+                    &skin.joints,
+                    &name_and_parent,
+                    &transforms,
+                    |joint| armature_map.get(&joint).map(|target| **target),
+                    model.spring_bones.as_deref(),
+                ));
+            }
+
             // remap bones
             for scene_ent in scene_spawner.iter_instance_entities(*instance) {
                 if let Ok(mut skin) = skins.get_mut(scene_ent) {
@@ -1741,24 +1766,34 @@ fn process_avatar(
                         .iter()
                         .map(|joint| {
                             *armature_map.get(joint).unwrap_or_else(|| {
-                                let original_name = named_ents.get(*joint);
-                                warn!(
-                                    "missing armature node in wearable mapping: {original_name:?}"
-                                );
-
-                                // try and reparent the node to an armature parent
-                                if let Some(armature_entity) = name_and_parent
-                                    .get(*joint)
-                                    .and_then(|(_, parent)| named_ents.get(parent.parent()))
-                                    .ok()
-                                    .and_then(|parent_name| {
-                                        target_armature_entities
-                                            .get(&parent_name.as_str().to_ascii_lowercase())
-                                    })
-                                {
-                                    commands
-                                        .entity(*joint)
-                                        .try_insert(ChildOf(*armature_entity));
+                                // a bone of the wearable's own. Keep the branch it is on by
+                                // moving the branch under the body bone it hangs off.
+                                let mut top = *joint;
+                                for _ in 0..spring_bones::MAX_BRANCH_DEPTH {
+                                    let Ok((name, parent)) = name_and_parent.get(top) else {
+                                        break;
+                                    };
+                                    let Ok(parent_name) = named_ents.get(parent.parent()) else {
+                                        break;
+                                    };
+                                    let parent_name = parent_name.to_lowercase();
+                                    if let Some(body_bone) =
+                                        target_armature_entities.get(&parent_name)
+                                    {
+                                        commands.entity(top).try_insert(ChildOf(*body_bone));
+                                        break;
+                                    }
+                                    if parent_name.starts_with("avatar_") {
+                                        warn!(
+                                            "wearable bone {name:?} hangs off {parent_name:?}, which the body lacks"
+                                        );
+                                        break;
+                                    }
+                                    // nodes under the armature itself moved to the body's above
+                                    if parent_name == "armature" {
+                                        break;
+                                    }
+                                    top = parent.parent();
                                 }
 
                                 &joint
@@ -1775,6 +1810,9 @@ fn process_avatar(
                 commands.entity(scene_ent).despawn();
             }
         }
+        commands
+            .entity(avatar_ent)
+            .try_insert(spring_bones::SpringChains(spring_chains));
 
         let wearable_models = def
             .wearables
