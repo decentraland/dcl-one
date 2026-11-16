@@ -1104,6 +1104,19 @@ pub async fn sync_range(
     let network = &state.settings.network;
     // Two calls are the smallest useful range: getLogs plus omitted timestamps.
     let request_budget = request_budget.max(2);
+    // The hash the block before `from` was committed with: each range
+    // checks that it still builds on it.
+    let mut committed: Option<String> = sqlx::query_scalar(
+        "SELECT last_block_hash FROM land_authz.index_cursor \
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 AND last_block = $4",
+    )
+    .bind(&state.settings.network)
+    .bind(&state.settings.land_registry)
+    .bind(&state.settings.estate_registry)
+    .bind(from as i64 - 1)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
     let mut next = from;
     while next <= to {
         if ctx.is_some_and(|c| c.is_cancelled()) || outcome.requests >= request_budget {
@@ -1130,6 +1143,19 @@ pub async fn sync_range(
             }
             Err(error) => return Err(error.into()),
         };
+        // Inside the bracket, the block before the range must still have
+        // the hash it was committed with: a reorg between two ranges (or
+        // after the pass checked the cursor) would otherwise leave the
+        // committed tail of the abandoned fork under a canonical hash.
+        if let Some(committed) = committed.as_deref() {
+            let previous = rpc.block_header(next - 1).await?;
+            if !previous.hash.eq_ignore_ascii_case(committed) {
+                return Err(IndexError::Rpc(format!(
+                    "block {} changed since it was indexed",
+                    next - 1
+                )));
+            }
+        }
         let (mut logs, mut reached, used) = match rpc
             .get_logs_bounded(
                 next,
@@ -1233,6 +1259,7 @@ pub async fn sync_range(
             ));
         }
         state.retry_upper.store(u64::MAX, Ordering::SeqCst);
+        committed = Some(header.hash);
         next = reached + 1;
     }
     Ok(())
@@ -1357,7 +1384,10 @@ async fn check_cursor_block(
 /// `social.land_transfer_cursor` is not moved: the `land_transfer_received`
 /// producer has already handled positions up to it, so it neither retracts
 /// a notice for an abandoned transfer nor announces a canonical transfer
-/// re-indexed at or below it.
+/// re-indexed at or below it. Social owns that cursor, and its notification
+/// ids key on (block, log index), the only identity `authz_event` keeps (no
+/// transaction hash), so moving the cursor back would still skip a canonical
+/// transfer at an abandoned one's position.
 pub async fn rewind_reorg(
     pool: &PgPool,
     settings: &Settings,

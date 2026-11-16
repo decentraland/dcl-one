@@ -1605,6 +1605,9 @@ struct FakeChain {
     /// A reorg ([`reorg_from`]) applied right after the next `eth_getLogs`
     /// answer whose range reaches its block: the chain moves under a read.
     reorg_after_logs: Mutex<Option<(u64, Vec<Log>)>>,
+    /// `(block, fork, logs)`: a reorg from `fork` applied just before the
+    /// first single header request for `block` is answered.
+    reorg_on_header: Mutex<Option<(u64, u64, Vec<Log>)>>,
     header_started: tokio::sync::Notify,
     header_release: tokio::sync::Notify,
 }
@@ -1630,6 +1633,7 @@ impl FakeChain {
             header_block_until: AtomicU64::new(u64::MAX),
             fork_from: AtomicU64::new(u64::MAX),
             reorg_after_logs: Mutex::new(None),
+            reorg_on_header: Mutex::new(None),
             header_started: tokio::sync::Notify::new(),
             header_release: tokio::sync::Notify::new(),
         })
@@ -1714,6 +1718,20 @@ async fn rpc(
                 return reply(Value::Null).into_response();
             }
             let number = hex_to_i64(body["params"][0].as_str().unwrap()).unwrap();
+            let pending = {
+                let mut pending = chain.reorg_on_header.lock();
+                if pending
+                    .as_ref()
+                    .is_some_and(|(block, _, _)| *block == number as u64)
+                {
+                    pending.take()
+                } else {
+                    None
+                }
+            };
+            if let Some((_, fork, logs)) = pending {
+                reorg_from(&chain, fork, logs);
+            }
             if chain.header_gated(number as u64) {
                 chain.header_started.notify_one();
                 chain.header_release.notified().await;
@@ -2532,6 +2550,78 @@ async fn cursor_hashes(pool: &PgPool) -> (Option<String>, Option<i64>, Option<St
     .fetch_one(pool)
     .await
     .unwrap()
+}
+
+#[tokio::test]
+async fn a_range_refuses_to_build_on_a_committed_block_the_chain_replaced() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 200,
+        vec![
+            transfer(s + 10, 0, LAND, ZERO_ADDR, ALICE, TOKEN_37_55),
+            account_grant(s + 160, 0, LAND, TOPIC_APPROVAL_FOR_ALL, BOB, DANA, true),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        vec![DANA]
+    );
+
+    // The chain replaces the committed tail after this pass found the
+    // cursor hash on it and before the next range's first read: the new
+    // range's own bracket sees one fork throughout.
+    chain.head.store(s + 300, Ordering::SeqCst);
+    *chain.reorg_on_header.lock() = Some((s + 300, s + 150, vec![]));
+    let error = indexer::run_pass(&state, &ctx).await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("changed since it was indexed"),
+        "{error:#}"
+    );
+    let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        row.last_block,
+        (s + 200) as i64,
+        "nothing is committed on top"
+    );
+
+    // The next pass finds the cursor hash gone, rewinds to the checkpoint
+    // below the fork point and drops the abandoned grant.
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert_eq!(
+        out.reorg_rewound_to,
+        Some((s + 200 - indexer::CHECKPOINT_DEPTH_BLOCKS) as i64),
+        "{out:?}"
+    );
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published && out.reorg_rewound_to.is_none(), "{out:?}");
+    assert_eq!(out.indexed_to, (s + 300) as i64);
+    assert_eq!(
+        account_leg(&db.pool, BOB, "approved_for_all").await,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        token_leg(&db.pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    db.drop().await;
 }
 
 #[tokio::test]
