@@ -55,10 +55,8 @@ async fn credits_gate(
     {
         return Err(token_missing("credits"));
     }
-    if crate::shop::credits::writes::is_gated(&Method::POST, path)
-        && let Some(r) = crate::shared::writes::ops_refusal(cs.settings.writes_enabled)
-    {
-        return Err(refused(crate::shop::credits::writes::refused_response(&r)).await);
+    if !cs.settings.writes_enabled && crate::shop::credits::writes::is_gated(&Method::POST, path) {
+        return Err(refused(crate::shop::credits::writes::disabled_response()).await);
     }
     Ok(cs)
 }
@@ -203,10 +201,8 @@ async fn price_for(
     let Some(ps) = state.domains.price.clone() else {
         return Err(not_configured("price"));
     };
-    if DataWrites::is_gated(&method, path)
-        && let Some(r) = crate::shared::writes::refusal(ps.settings.writes_enabled)
-    {
-        return Err(refused(DataWrites::refused_response(&r)).await);
+    if !ps.settings.writes_enabled && DataWrites::is_gated(&method, path) {
+        return Err(refused(DataWrites::disabled_response()).await);
     }
     let Some(token) = configured(ps.settings.admin_token.as_deref()) else {
         return Err(token_missing("price"));

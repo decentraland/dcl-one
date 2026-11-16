@@ -247,8 +247,9 @@ enum TimestampWindow {
     /// MAX_FUTURE_SKEW_SECS)` ahead; an absent or empty header reads as 0 and
     /// expires ([`check_timestamp_window`]).
     AroundNow { secs: i64 },
-    /// Required, an unsigned integer, and no more than this many milliseconds
-    /// old; any future timestamp is fresh ([`crate::auth::signed_fetch::check_past_window`]).
+    /// Required, an unsigned integer, no more than this many milliseconds old
+    /// and at most `MAX_FUTURE_SKEW_SECS` ahead
+    /// ([`crate::auth::signed_fetch::check_past_window`]).
     PastOnly { max_age_ms: u64 },
 }
 
@@ -323,7 +324,7 @@ impl VerificationProfile {
 
     /// camera-reel-service's dcl-crypto-middleware-rs 0.3.0
     /// (`VerificationOptions::default().accept_legacy_payload(&[])`) for its
-    /// reads: a signature at most 60 s old and never too new, the metadata
+    /// reads: a signature at most 60 s old and at most 60 s ahead, the metadata
     /// header required but unread, the legacy payload unguarded, and a
     /// scene's request served as its signer, as upstream serves it.
     pub const fn camera_reel_read() -> Self {
@@ -890,7 +891,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_camera_reel_window_bounds_only_the_age() {
+    async fn the_camera_reel_window_bounds_the_age_and_caps_the_future() {
         let at = |offset_ms| async move {
             let headers = signed_headers_at("get", PATH, "{}", true, &ms_from_now(offset_ms)).await;
             (
@@ -906,8 +907,13 @@ mod tests {
             "{reel:?}"
         );
         assert!(node.is_ok(), "the node window is still five minutes");
+        let (reel, _) = at(30_000).await;
+        assert!(reel.is_ok(), "within the future skew: {reel:?}");
         let (reel, node) = at(3_600_000).await;
-        assert!(reel.is_ok(), "a future signature is fresh: {reel:?}");
+        assert!(
+            matches!(reel, Err(SignedFetchError::Expired { .. })),
+            "an hour ahead is past the future skew: {reel:?}"
+        );
         assert!(
             matches!(node, Err(SignedFetchError::Expired { .. })),
             "the node window still bounds the future: {node:?}"

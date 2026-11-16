@@ -240,7 +240,7 @@ pub async fn progress(
     let (season, current_week) = if let Some(s) = season {
         let (week, _, end) = s.week(now);
         // Reads initialize only registered identities; unregistered users get the same definition as a default.
-        if crate::shared::writes::ops_refusal(state.settings.writes_enabled).is_none() {
+        if state.settings.writes_enabled {
             initialize(&mut tx, address, s.id, week).await?;
         }
         let rows = sqlx::query("SELECT d.goal_id,COALESCE(p.title,d.title) AS title,CASE WHEN p.address IS NULL THEN d.description ELSE p.description END AS description,COALESCE(p.thumbnail,d.thumbnail) AS thumbnail,COALESCE(p.total_steps,d.total_steps) AS total_steps,COALESCE(p.reward_wei,d.reward_wei)::text AS reward,COALESCE(p.completed_steps,0) AS completed_steps,p.completed_at,g.claimed_at FROM credits.season_goals d LEFT JOIN credits.goal_progress p ON p.address=$1 AND p.season_id=d.season_id AND p.week_id=$3 AND p.goal_id=d.goal_id LEFT JOIN credits.goal_grants g ON g.address=p.address AND g.season_id=p.season_id AND g.week_id=p.week_id AND g.goal_id=p.goal_id WHERE d.season_id=$2 AND (p.address IS NOT NULL OR $3 BETWEEN d.start_week AND d.end_week) ORDER BY d.position")

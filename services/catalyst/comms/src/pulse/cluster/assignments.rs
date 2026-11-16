@@ -118,6 +118,16 @@ fn unix_seconds() -> u64 {
 }
 
 impl CurrentAssignments {
+    pub fn with_source(source_incarnation: String) -> Self {
+        Self {
+            incarnation: source_incarnation,
+            ..Self::default()
+        }
+    }
+    pub fn source_incarnation(&self) -> &str {
+        &self.incarnation
+    }
+
     pub(crate) fn native_current(&self) -> crate::pulse::snapshot::NativeCurrent {
         self.native.clone()
     }
@@ -365,6 +375,109 @@ impl CurrentAssignments {
         (snapshot.session == session).then_some(snapshot)
     }
 
+    pub(crate) fn selection_view_checked(
+        &self,
+        generation: &crate::interfaces::PulseGenerationBinding,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Option<crate::protocol::bus::selection_view::SelectionView> {
+        use crate::protocol::bus::selection_view::{
+            MAX_VIEW_ENTRIES, SelectionTarget, SelectionView,
+        };
+        const _: () =
+            assert!(RECOVERY_WALLETS <= crate::protocol::bus::selection_view::MAX_VIEW_ENTRIES);
+        if !generation.valid() || generation.source_incarnation != self.incarnation {
+            return None;
+        }
+        let _native = self.native.lock().ok()?;
+        let _control = match control {
+            Some(control) => Some(control.lock().ok()?),
+            None => None,
+        };
+        let view = self.view.lock().ok()?;
+        if view.pass == 0
+            || view.observed.elapsed() >= view.valid_for
+            || view.records.len() > MAX_VIEW_ENTRIES
+        {
+            return None;
+        }
+        let targets = view
+            .records
+            .iter()
+            .filter_map(|(wallet, record)| {
+                let (assignment, version) = record.current.as_ref().or_else(|| {
+                    (!record.pending.is_empty() || record.blocked)
+                        .then_some(record.retained.as_ref())
+                        .flatten()
+                })?;
+                Some(SelectionTarget {
+                    wallet: wallet.clone(),
+                    session: assignment.session.clone(),
+                    assignment_version: *version,
+                })
+            })
+            .collect();
+        SelectionView::new(generation.clone(), view.pass, targets)
+    }
+
+    pub fn lookup_retirement(
+        &self,
+        lookup: &crate::protocol::bus::cluster::SelectionRetirementLookup,
+    ) -> Option<crate::protocol::bus::cluster::SelectionRetirementReply> {
+        self.lookup_retirement_checked(lookup, None)
+    }
+
+    pub(crate) fn lookup_retirement_checked(
+        &self,
+        lookup: &crate::protocol::bus::cluster::SelectionRetirementLookup,
+        control: Option<&Mutex<super::control::ControlPositions>>,
+    ) -> Option<crate::protocol::bus::cluster::SelectionRetirementReply> {
+        if !lookup.valid() || lookup.source_incarnation != self.incarnation {
+            return None;
+        }
+        // Same order as complete-pass replacement. Never infer absence from
+        // snapshot(None), which also hides stale and invalidated current owners.
+        let native = self.native.lock().ok()?;
+        let control = match control {
+            Some(control) => Some(control.lock().ok()?),
+            None => None,
+        };
+        let view = self.view.lock().ok()?;
+        if view.pass == 0
+            || view.observed.elapsed() >= view.valid_for
+            || lookup.assignment_version > view.next_version
+            || native.contains_key(&lookup.wallet)
+            || control
+                .as_ref()
+                .is_some_and(|c| c.has_candidate(&lookup.wallet))
+        {
+            return None;
+        }
+        if let Some(record) = view.records.get(&lookup.wallet) {
+            if record.current.is_some() || record.blocked || !record.pending.is_empty() {
+                return None;
+            }
+            if let Some((retained, version)) = &record.retained {
+                if *version != lookup.assignment_version
+                    || retained.session != lookup.session
+                    || lookup.selected.as_ref().is_some_and(|selected| {
+                        selected.origin != retained.selected_origin
+                            || selected.identity != retained.owner_epoch
+                    })
+                {
+                    return None;
+                }
+            }
+        }
+        // Record reclamation retains every current, blocked and pending record.
+        // A missing record therefore cannot hide selected work in this complete
+        // view. Its GC age, control TTL and SQL lease are not retirement proofs.
+        Some(crate::protocol::bus::cluster::SelectionRetirementReply {
+            lookup: lookup.clone(),
+            pass: view.pass,
+            assignment_high_water: view.next_version,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn retained_hints(&self, budget: usize) -> Vec<PeerClusterSnapshot> {
         self.retained_hints_checked(budget, None)
@@ -482,6 +595,151 @@ fn selection_live(
 #[cfg(test)]
 mod current_tests {
     use super::*;
+    use crate::protocol::bus::cluster::{SelectedIdentity, SelectionRetirementLookup};
+    #[tokio::test(start_paused = true)]
+    async fn retirement_requires_complete_absence_and_survives_record_and_control_gc() {
+        use super::super::control::ControlPositions;
+        use crate::protocol::bus::control_position::ControlPosition;
+        let current = std::sync::Arc::new(CurrentAssignments::default());
+        let mut identity = crate::pulse::snapshot::IdentityBoard::new(2);
+        identity.attach_assignments(current.clone());
+        let wallet = "0x1111111111111111111111111111111111111111";
+        let session = "0x2222222222222222222222222222222222222222";
+        let controls = Mutex::new(ControlPositions::new(2, Duration::ZERO, Duration::ZERO));
+        controls.lock().unwrap().enable("retirement").unwrap();
+        // No control source is bound for this synthetic selected legacy pass.
+        let mut a = assignment(session, 9);
+        a.wallet = wallet.into();
+        a.selected_origin = 3;
+        current.replace(1, Duration::from_secs(2), vec![a.clone()]);
+        let positive = current.lookup(wallet, session).unwrap();
+        let mut request = SelectionRetirementLookup {
+            wallet: wallet.into(),
+            session: session.into(),
+            source_incarnation: positive.source_incarnation.clone(),
+            assignment_version: positive.assignment_version,
+            selected: Some(SelectedIdentity {
+                origin: 3,
+                identity: 9,
+            }),
+        };
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "current is not absence"
+        );
+        current
+            .view
+            .lock()
+            .unwrap()
+            .records
+            .get_mut(wallet)
+            .unwrap()
+            .legacy_invalidated = true;
+        assert!(current.lookup(wallet, session).is_none());
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "hidden current is unknown"
+        );
+        current.replace(2, Duration::from_secs(2), vec![]);
+        assert!(current.lookup_retirement(&request).is_some());
+        identity.set_with_session(0, wallet.into(), session.into());
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "reservation blocks retirement before its next pass"
+        );
+        identity.remove(0);
+        let update = ControlPosition {
+            audience: "retirement".into(),
+            wallet: wallet.into(),
+            session: session.into(),
+            epoch: 10,
+            sequence: 1,
+            realm: "r".into(),
+            position: Some([1.0, 0.0, 1.0]),
+        };
+        assert!(controls.lock().unwrap().ingest(update.clone()));
+        assert!(
+            current
+                .lookup_retirement_checked(&request, Some(&controls))
+                .is_none(),
+            "new candidate blocks retirement before its next pass"
+        );
+        assert!(controls.lock().unwrap().ingest(ControlPosition {
+            sequence: 2,
+            position: None,
+            ..update
+        }));
+        controls.lock().unwrap().snapshot();
+        assert!(
+            controls.lock().unwrap().snapshot().owners.is_empty(),
+            "fixture GC actually removed the terminal head"
+        );
+        current.replace(1000, Duration::from_secs(2), vec![]);
+        assert!(current.view.lock().unwrap().records.is_empty());
+        assert!(
+            current
+                .lookup_retirement_checked(&request, Some(&controls))
+                .is_some(),
+            "complete authority still proves absence after both ledgers reclaimed departures"
+        );
+        request.source_incarnation = "different-process".into();
+        assert!(current.lookup_retirement(&request).is_none());
+        request.source_incarnation = positive.source_incarnation;
+        request.assignment_version += 1;
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "future source version is unknown"
+        );
+        request.assignment_version -= 1;
+        tokio::time::advance(Duration::from_secs(3)).await;
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "a stale view is unknown even without records"
+        );
+    }
+
+    #[test]
+    fn retirement_withholds_blocked_pending_and_successor_current_evidence() {
+        let current = CurrentAssignments::default();
+        let wallet = "0x1111111111111111111111111111111111111111";
+        let session = "0x2222222222222222222222222222222222222222";
+        let mut a = assignment(session, 1);
+        a.wallet = wallet.into();
+        current.replace(1, Duration::from_secs(2), vec![a]);
+        let positive = current.lookup(wallet, session).unwrap();
+        let request = SelectionRetirementLookup {
+            wallet: wallet.into(),
+            session: session.into(),
+            source_incarnation: positive.source_incarnation,
+            assignment_version: positive.assignment_version,
+            selected: Some(SelectedIdentity {
+                origin: 2,
+                identity: 1,
+            }),
+        };
+        let mut successor = assignment("0x3333333333333333333333333333333333333333", 2);
+        successor.wallet = wallet.into();
+        current.replace(2, Duration::from_secs(2), vec![successor]);
+        assert!(current.lookup_retirement(&request).is_none());
+        current.replace(3, Duration::from_secs(2), vec![]);
+        assert!(
+            !current.view.lock().unwrap().records[wallet]
+                .pending
+                .is_empty()
+        );
+        assert!(
+            current.lookup_retirement(&request).is_none(),
+            "retained cleanup cannot disappear from a negative reply"
+        );
+        {
+            let mut view = current.view.lock().unwrap();
+            let record = view.records.get_mut(wallet).unwrap();
+            record.pending.clear();
+            record.blocked = true;
+        }
+        assert!(current.lookup_retirement(&request).is_none());
+    }
+
     #[test]
     fn native_arrival_departure_without_pass_or_lookup_invalidates_all_legacy_variants() {
         for origin in [2, 3] {
