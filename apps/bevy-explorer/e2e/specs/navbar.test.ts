@@ -74,6 +74,8 @@ const NOTIFICATIONS_PANEL: Selector = { name: 'Close notifications', role: 'butt
 const NO_SIGN_OUT = target.transport === 'native' ? 'the standalone: its Me panel has no Sign Out row' : undefined
 /** The confirmed sign-out ends its session, so it has one of its own. */
 const SIGN_OUT_SESSION: OpenOptions = { signIn: 'fresh', firstLogin: { name: 'E2eSignOut' } }
+/** The start screen's guest button: shown only where the page opens on sign-in, not on a stored one. */
+const START_SCREEN: Selector = { name: 'Play as guest', role: 'button' }
 /** The page loads again and the engine starts again before it can answer. */
 const SIGNED_OUT_TIMEOUT_MS = 180_000
 
@@ -165,6 +167,9 @@ scenario(
       (state) => !state.signedIn,
       { timeoutMs: SIGNED_OUT_TIMEOUT_MS, what: 'the start screen’s engine to answer signed out after the page loaded again' }
     )
+    // signed out answers too in the moment before a kept sign-in signs in again: the start screen
+    // proves the page found none to start with
+    await explorer.hud.wait(START_SCREEN, { timeoutMs: SIGNED_OUT_TIMEOUT_MS })
   },
   { session: SIGN_OUT_SESSION, skip: NO_SIGN_OUT, timeoutMs: 300_000, closeSession: true }
 )

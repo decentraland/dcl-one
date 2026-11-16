@@ -950,8 +950,9 @@ export interface LoginFlow {
   status: LoginStatus
   /** Root wallet address of the stored SSO identity (shown on the "welcome back" screen). */
   account: string | null
-  /** The kind of the sign-in that landed: null before one, after a sign-out, and for a sign-in the
-   *  scene owns. */
+  /** The kind of the sign-in that landed, for the player to end with Sign Out: null before one,
+   *  after a sign-out, for a sign-in the scene owns, and for one the boot made (?guest=1, an
+   *  unattended run), which a reload would only make again. */
   signedInAs: LoginType | null
   busy: boolean
   error: string | null
@@ -3380,7 +3381,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         if (type != null) {
           lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
-          setSignedInAs(lastLoginType.current)
+          if (boot.current.autoLogin == null) setSignedInAs(lastLoginType.current)
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
         welcomeLink.current = urlDestination.current

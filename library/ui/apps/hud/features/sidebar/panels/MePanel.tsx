@@ -24,7 +24,7 @@ export interface MePanelProps {
   onProfile: () => void
   /** Open the player's own passport on its badges. */
   onBadges?: () => void
-  /** Leave the world for the start screen, signed out; the row asks first. The bar passes it for an account on the web only. */
+  /** Leave the world for the start screen, signed out; the row asks first. The bar passes it for a sign-in on the web the player made, a guest's included. */
   onSignOut?: () => void
   /** Leave the application. */
   onExit?: () => void

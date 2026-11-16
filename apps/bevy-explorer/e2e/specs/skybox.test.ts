@@ -6,10 +6,10 @@
 //
 // Partial:
 // - TestSkyboxWidgetPresence expects the title "Night/day"; the panel's title is "NIGHT/DAY" (the
-//   start of its text; the dialog's name is "Skybox"). The `Auto` switch and the time slider have
-//   no accessible name (hud-accessible-names, "Controls without a name") and the time label is a
-//   span with no role, so the switch and slider are addressed by role alone (each is the only one
-//   on screen with the panel open) and the time is read from the panel's text, which reads
+//   start of its text; the dialog's name is "Skybox"). The switch is named `Auto` by the label it
+//   sits in. The time slider has no accessible name (hud-accessible-names, "Controls without a
+//   name"), so it is addressed by role alone (the only one on screen with the panel open), and the
+//   time label is a span with no role, so the time is read from the panel's text, which reads
 //   `NIGHT/DAY Auto Custom HH:mm`.
 // - TestModifySkyboxTime writes the slider's value; the slider has no name and where a click lands
 //   on it depends on its thumb, so the engine's `/time 18 0` stops the clock at 18:00 instead (the
@@ -28,7 +28,7 @@ const TEXT_TIMEOUT_MS = 10_000
 
 const SKYBOX_BUTTON: Selector = { name: 'Skybox', role: 'button' }
 const PANEL: Selector = { name: 'Skybox', role: 'dialog' }
-const AUTO: Selector = { role: 'switch' }
+const AUTO: Selector = { name: 'Auto', role: 'switch' }
 const SLIDER: Selector = { role: 'slider' }
 
 const TARGET_HOURS = 18

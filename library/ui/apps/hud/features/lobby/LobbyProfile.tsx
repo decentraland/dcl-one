@@ -79,7 +79,7 @@ export function LobbyProfile({
   claimed?: boolean
   onViewProfile: () => void
   onSettings: () => void
-  /** The startup lobby signs out from here; in world the lobby passes none: there the bar's Me panel has the Sign Out row, for an account on the web. */
+  /** The startup lobby signs out from here; in world the lobby passes none: there the bar's Me panel has the Sign Out row, for a sign-in on the web the player made. */
   onSignOut?: () => void
   /** In world: leave the lobby. */
   onExit?: () => void

@@ -5308,7 +5308,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "325946e1110b2758f2d172f0c6676117458b965f9f22ce09907d9f50e8d27ef8"
+      "sha256": "ae8d148aea46d368ad94603ba434f8177c7ae8679575bbf6d2923c145e2887dd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -8731,7 +8731,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
-      "sha256": "9b2a47fe9abdb85e575a89c077de0a52cfb2b8e922e126cd2806faad1553890f"
+      "sha256": "0a9ba46a7f738952c24e64023007c8531fdb532fd7829307719d6673e868a8fb"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useAvatarTurn.ts",
@@ -9079,7 +9079,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "9864af10a6b80256f8f43e3ecc6da8f58528e1676fb4db8048d3f9a1f3bb63b4"
+      "sha256": "45197a89c7c39b81789a4f77fb21ea9b35e4598f038dbb9e2df2d18c6b7ed1bb"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9131,7 +9131,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
-      "sha256": "2ef58bb741a12d9dcd1fb6d59d0361fcfd8d372da7f4fda5817cdb399151db0b"
+      "sha256": "d024f8b36724ac30794ef85cecb2d54d0b32951b30ccaca0263105e777133f26"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/ShopPanel.module.css",

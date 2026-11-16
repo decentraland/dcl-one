@@ -369,6 +369,18 @@ describe('embedded auto-boot (?guest=1 / ?systemScene=)', () => {
     await waitFor(() => expect(h.session().phase).toBe('lobby'))
   })
 
+  it('offers the boot guest no Sign Out: a reload would only sign it in again', async () => {
+    window.history.replaceState(null, '', '/?guest=1')
+    const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    // once the sign-in has landed (its promise chain settled), it still offers none
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(h.session().login.signedInAs).toBeNull()
+  })
+
   it('with a ?position, drives a guest straight into the world', async () => {
     window.history.replaceState(null, '', '/?guest=1&position=10,20')
     const h = renderSession({ userId: null })
