@@ -279,7 +279,7 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
 }
 
 /// react HUD builds default to the bundled bridge-scene static export (a file realm, loaded with
-/// no server; `npm run bundle:native` in react-web generates it). Checked against the cwd
+/// no server; `pnpm run bundle:native` in react-web generates it). Checked against the cwd
 /// (packaged runs) and the compile-time checkout dir (dev `cargo run` from any directory). If
 /// absent there is NO ui scene — the react HUD's built-in fallback relay covers login/chat/loading.
 fn default_ui_scene() -> Option<String> {
