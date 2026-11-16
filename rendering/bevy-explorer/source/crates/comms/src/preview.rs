@@ -12,9 +12,7 @@ use common::{
     util::TaskExt,
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
-use dcl_component::proto_components::sdk::development::{
-    texture_optimization, ws_scene_message, TextureOptimization, WsSceneMessage,
-};
+use dcl_component::proto_components::sdk::development::WsSceneMessage;
 use platform::IntoClientRequest;
 use prost::Message;
 use serde_json::json;
@@ -178,24 +176,56 @@ fn texture_status_json(last: &LastTextureOptimization, is_preview: bool) -> serd
     }
 }
 
-/// The status the HUD sees for a `TextureOptimization` message.
-pub fn texture_optimization_status(message: &TextureOptimization) -> TextureOptimizationStatus {
-    TextureOptimizationStatus {
-        scene_id: message.scene_id.clone(),
-        state: match message.state() {
-            texture_optimization::State::TosRunning => TextureOptimizationState::Running,
-            texture_optimization::State::TosReady => TextureOptimizationState::Ready,
-            texture_optimization::State::TosFailed => TextureOptimizationState::Failed,
-        },
-        done: message.done,
-        total: message.total,
-        failed: message.failed,
-        bytes_before: message.bytes_before as f64,
-        bytes_after: message.bytes_after as f64,
-        enabled: message.enabled,
-        // set by the preview server on the last status it sends a client as it connects
-        replay: message.replay,
+/// The payload of the preview server's `TEXTURE_OPTIMIZATION` text frame.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TextureOptimizationWire {
+    scene_id: String,
+    state: String,
+    done: u32,
+    total: u32,
+    failed: u32,
+    bytes_before: u64,
+    bytes_after: u64,
+    enabled: bool,
+    // set by the preview server on the last status it sends a client as it connects
+    #[serde(default)]
+    replay: bool,
+}
+
+/// The status the HUD sees for a preview text frame, when it is the texture import's
+/// `{"type":"TEXTURE_OPTIMIZATION","payload":{...}}`; `None` for any other text frame. The status
+/// is never a binary `WsSceneMessage`: the Unity explorer reads every binary frame it can't name
+/// as a scene update.
+pub fn texture_optimization_status(text: &str) -> Option<TextureOptimizationStatus> {
+    #[derive(serde::Deserialize)]
+    struct Frame {
+        #[serde(rename = "type")]
+        kind: String,
+        payload: Option<serde_json::Value>,
     }
+    let frame: Frame = serde_json::from_str(text).ok()?;
+    if frame.kind != "TEXTURE_OPTIMIZATION" {
+        return None;
+    }
+    let wire: TextureOptimizationWire = serde_json::from_value(frame.payload?).ok()?;
+    let state = match wire.state.as_str() {
+        "RUNNING" => TextureOptimizationState::Running,
+        "READY" => TextureOptimizationState::Ready,
+        "FAILED" => TextureOptimizationState::Failed,
+        _ => return None,
+    };
+    Some(TextureOptimizationStatus {
+        scene_id: wire.scene_id,
+        state,
+        done: wire.done,
+        total: wire.total,
+        failed: wire.failed,
+        bytes_before: wire.bytes_before as f64,
+        bytes_after: wire.bytes_after as f64,
+        enabled: wire.enabled,
+        replay: wire.replay,
+    })
 }
 
 /// Runs the preview socket until it closes, then backs off. Reloads go to `sender`; texture import
@@ -238,6 +268,16 @@ async fn preview_socket(
     while let Some(msg) = read.next().await {
         let msg = msg?;
         info!("preview server message: {msg}");
+        // text frames are the JSON twins of the scene updates, and the texture import's status,
+        // which comes as text alone
+        if msg.is_text() {
+            if let (Some(textures), Some(status)) =
+                (&textures, texture_optimization_status(msg.to_text()?))
+            {
+                textures.send(status)?;
+            }
+            continue;
+        }
         let data = msg.into_data();
         let Ok(ws_scene_message) = WsSceneMessage::decode(data.as_slice()) else {
             debug!("Not a prost message.");
@@ -248,16 +288,7 @@ async fn preview_socket(
             continue;
         };
 
-        if let ws_scene_message::Message::TextureOptimization(t) = &message {
-            if let Some(textures) = &textures {
-                textures.send(texture_optimization_status(t))?;
-            }
-            continue;
-        }
-
-        if let Some(command) = PreviewCommand::from_message(message) {
-            sender.send(command)?;
-        }
+        sender.send(message.into())?;
     }
 
     warn!("preview socket disconnected, waiting 5 secs to attempt reconnect");
@@ -268,38 +299,29 @@ async fn preview_socket(
 mod tests {
     use super::*;
 
-    fn message(state: texture_optimization::State) -> TextureOptimization {
-        TextureOptimization {
-            scene_id: "scene-1".into(),
-            state: state as i32,
-            done: 2,
-            total: 3,
-            failed: 1,
-            bytes_before: 300,
-            bytes_after: 200,
-            enabled: true,
-            replay: false,
-        }
+    fn frame(state: &str, replay: bool) -> String {
+        json!({
+            "type": "TEXTURE_OPTIMIZATION",
+            "payload": {
+                "sceneId": "scene-1",
+                "state": state,
+                "done": 2,
+                "total": 3,
+                "failed": 1,
+                "bytesBefore": 300,
+                "bytesAfter": 200,
+                "enabled": true,
+                "replay": replay,
+            }
+        })
+        .to_string()
     }
 
     #[test]
-    fn a_texture_status_is_routed_and_never_reloads() {
-        let msg = message(texture_optimization::State::TosReady);
-        let wire = WsSceneMessage {
-            message: Some(ws_scene_message::Message::TextureOptimization(msg.clone())),
-        }
-        .encode_to_vec();
-        let decoded = WsSceneMessage::decode(wire.as_slice())
-            .unwrap()
-            .message
-            .unwrap();
-        assert!(PreviewCommand::from_message(decoded.clone()).is_none());
-        let ws_scene_message::Message::TextureOptimization(t) = decoded else {
-            panic!("not a texture status");
-        };
+    fn a_texture_status_text_frame_maps_to_the_hud_status() {
         assert_eq!(
-            texture_optimization_status(&t),
-            TextureOptimizationStatus {
+            texture_optimization_status(&frame("READY", false)),
+            Some(TextureOptimizationStatus {
                 scene_id: "scene-1".into(),
                 state: TextureOptimizationState::Ready,
                 done: 2,
@@ -309,36 +331,46 @@ mod tests {
                 bytes_after: 200.0,
                 enabled: true,
                 replay: false,
-            }
+            })
         );
     }
 
     #[test]
     fn every_wire_state_maps() {
         for (wire, state) in [
-            (
-                texture_optimization::State::TosRunning,
-                TextureOptimizationState::Running,
-            ),
-            (
-                texture_optimization::State::TosReady,
-                TextureOptimizationState::Ready,
-            ),
-            (
-                texture_optimization::State::TosFailed,
-                TextureOptimizationState::Failed,
-            ),
+            ("RUNNING", TextureOptimizationState::Running),
+            ("READY", TextureOptimizationState::Ready),
+            ("FAILED", TextureOptimizationState::Failed),
         ] {
-            assert_eq!(texture_optimization_status(&message(wire)).state, state);
+            assert_eq!(
+                texture_optimization_status(&frame(wire, false))
+                    .unwrap()
+                    .state,
+                state
+            );
         }
+        assert_eq!(texture_optimization_status(&frame("DONE", false)), None);
+    }
+
+    #[test]
+    fn other_text_frames_are_not_a_status() {
+        let scene_update =
+            json!({"type": "SCENE_UPDATE", "payload": {"sceneId": "s", "sceneType": "scene"}});
+        assert_eq!(texture_optimization_status(&scene_update.to_string()), None);
+        assert_eq!(texture_optimization_status("not json"), None);
+        // a server that predates `replay` sends none: not a replay
+        let mut old: serde_json::Value = serde_json::from_str(&frame("READY", true)).unwrap();
+        old["payload"].as_object_mut().unwrap().remove("replay");
+        assert!(
+            !texture_optimization_status(&old.to_string())
+                .unwrap()
+                .replay
+        );
     }
 
     #[test]
     fn the_status_reaches_the_hud_as_camel_case_json() {
-        let status = texture_optimization_status(&TextureOptimization {
-            replay: true,
-            ..message(texture_optimization::State::TosRunning)
-        });
+        let status = texture_optimization_status(&frame("RUNNING", true)).unwrap();
         assert_eq!(
             serde_json::to_value(&status).unwrap(),
             json!({
@@ -362,9 +394,7 @@ mod tests {
         assert_eq!(v["received"], 0);
         assert_eq!(v["unavailable"][""], "Not connected to a preview server.");
         let filled = LastTextureOptimization {
-            last: Some(texture_optimization_status(&message(
-                texture_optimization::State::TosFailed,
-            ))),
+            last: texture_optimization_status(&frame("FAILED", false)),
             received: 4,
         };
         let v = texture_status_json(&filled, true);

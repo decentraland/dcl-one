@@ -581,7 +581,7 @@ pub enum TextureOptimizationState {
 }
 
 /// The preview server's texture import status for one scene, as the preview socket delivered it
-/// (`TextureOptimization` of `WsSceneMessage`). `done`, `total` and `failed` count this run's
+/// (its `TEXTURE_OPTIMIZATION` text frame). `done`, `total` and `failed` count this run's
 /// textures; `bytesBefore` and `bytesAfter` are the converted images' source and KTX2 sizes;
 /// `enabled` is whether the project serves the optimized files. `replay` marks the server's last
 /// status, sent again as the socket (re)connected, not news.

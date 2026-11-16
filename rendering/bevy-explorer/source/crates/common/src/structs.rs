@@ -1578,11 +1578,9 @@ pub enum PreviewCommand {
     },
 }
 
-impl PreviewCommand {
-    /// The reload a preview server message asks for; `None` for a status
-    /// message (`TextureOptimization`), which reloads nothing.
-    pub fn from_message(value: ws_scene_message::Message) -> Option<Self> {
-        Some(match value {
+impl From<ws_scene_message::Message> for PreviewCommand {
+    fn from(value: ws_scene_message::Message) -> Self {
+        match value {
             ws_scene_message::Message::UpdateScene(update_scene) => Self::ReloadScene {
                 hash: update_scene.scene_id.to_owned(),
             },
@@ -1598,8 +1596,7 @@ impl PreviewCommand {
                     scene_id: update_model.scene_id.to_owned(),
                 },
             },
-            ws_scene_message::Message::TextureOptimization(_) => return None,
-        })
+        }
     }
 }
 
