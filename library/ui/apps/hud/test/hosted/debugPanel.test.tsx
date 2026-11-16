@@ -281,7 +281,8 @@ it('shows the Catalyst commit and no Sites row where no Sites serves the HUD', a
 
 it.each([
   ['abc123', 'abc123'],
-  ['', 'not reported by Sites']
+  ['', 'not reported by Sites'],
+  ['unversioned', 'unversioned build']
 ])('shows the Sites build serving the page (%j)', async (revision, shown) => {
   site.revision = revision
   vi.stubGlobal('fetch', committed())
@@ -310,12 +311,32 @@ it('reads the Catalyst again when the section is expanded again', async () => {
 })
 
 it.each([
-  ['no answer from the node', () => Promise.reject(new TypeError('Failed to fetch'))],
-  ['status 502', async () => ({ ok: false, status: 502, json: async () => ({}) })],
-  ['answered without a status', async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('HTML') } })],
-  ['not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'Unknown' }) })]
-])('explains a Catalyst commit it cannot read: %s', async (reason, reply) => {
+  ['a refused request', 'no answer from the node', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['a failed status', 'status 502', async () => ({ ok: false, status: 502, json: async () => ({}) })],
+  ['an HTML page', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('HTML') } })],
+  ['a JSON null', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => null })],
+  ['no commitHash', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({}) })],
+  ['an Unknown commit', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'Unknown' }) })],
+  ['an unversioned build', 'unversioned build', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'unversioned' }) })],
+  ['a reset mid-body', 'no answer from the node', async () => ({ ok: true, status: 200, json: async () => { throw new TypeError('terminated') } })]
+])('explains a Catalyst commit it cannot read: %s', async (_case, reason, reply) => {
   vi.stubGlobal('fetch', statusReply(reply))
   const panel = await openDeployment()
   expect(panel.getByText(reason)).toBeInTheDocument()
+})
+
+it('releases the body of a failed status', async () => {
+  const cancel = vi.fn(async () => { throw new TypeError('locked') })
+  vi.stubGlobal('fetch', statusReply(async () => ({ ok: false, status: 502, body: { cancel }, json: async () => ({}) })))
+  const panel = await openDeployment()
+  expect(panel.getByText('status 502')).toBeInTheDocument()
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('reports a status read that times out as no answer', async () => {
+  vi.stubGlobal('fetch', statusReply(async () => ({
+    ok: true, status: 200, json: async () => { throw new DOMException('The operation timed out.', 'TimeoutError') }
+  })))
+  const panel = await openDeployment()
+  expect(panel.getByText('no answer from the node')).toBeInTheDocument()
 })

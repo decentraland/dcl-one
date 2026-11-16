@@ -17,28 +17,38 @@ const deploymentSection = (): DebugSection => ({
   ]
 })
 
+const unreported = (revision: string, by: string): string | undefined =>
+  revision === '' || revision.toLowerCase() === 'unknown' ? `not reported ${by}`
+    : revision === 'unversioned' ? 'unversioned build' : undefined
+
 async function catalystRevision(): Promise<{ revision: string } | { reason: string }> {
-  let response: Response
+  let body: unknown
   try {
-    response = await fetch(`${serviceUrl('catalyst')}/content/status`, { signal: AbortSignal.timeout(5000) })
-  } catch {
-    return { reason: 'no answer from the node' }
+    const response = await fetch(`${serviceUrl('catalyst')}/content/status`, { signal: AbortSignal.timeout(5000) })
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {})
+      return { reason: `status ${response.status}` }
+    }
+    body = await response.json()
+  } catch (error) {
+    const unreadable = (error as { name?: unknown } | null)?.name === 'SyntaxError'
+    return { reason: unreadable ? 'answered without a status' : 'no answer from the node' }
   }
-  if (!response.ok) return { reason: `status ${response.status}` }
-  const body: unknown = await response.json().catch(() => null)
   if (!body || typeof body !== 'object') return { reason: 'answered without a status' }
   const revision = (body as { commitHash?: unknown }).commitHash
-  return typeof revision === 'string' && revision !== '' && revision.toLowerCase() !== 'unknown'
-    ? { revision } : { reason: 'not reported by the node' }
+  if (typeof revision !== 'string') return { reason: 'not reported by the node' }
+  const reason = unreported(revision, 'by the node')
+  return reason ? { reason } : { revision }
 }
 
 async function readDeployment(): Promise<string> {
   const unavailable: Record<string, string> = {}
-  const revision = siteRevision()
-  if (revision === '') unavailable.sites = 'not reported by Sites'
+  const site = siteRevision()
+  const siteReason = site === null ? undefined : unreported(site, 'by Sites')
+  if (siteReason) unavailable.sites = siteReason
   const catalyst = await catalystRevision()
   if ('reason' in catalyst) unavailable.catalyst = catalyst.reason
-  return JSON.stringify({ sites: revision || null, catalyst: 'revision' in catalyst ? catalyst.revision : null, unavailable })
+  return JSON.stringify({ sites: siteReason ? null : site, catalyst: 'revision' in catalyst ? catalyst.revision : null, unavailable })
 }
 
 const REQUEST = 'dcl-debug-panel'

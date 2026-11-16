@@ -6800,7 +6800,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "d31210d385903efff0f191c5a41a61864ecba1d41b7625cf0e223dc9b89ac6ad"
+      "sha256": "578048ea90c89e982fbecf5972b33581201a0320aeb3e48c2c9b88cb7e4706ac"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -7664,7 +7664,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "cc05a11b9849d7f0e1686c562f308e2fa820980c8a0547e138f41422dfa76cf7"
+      "sha256": "cb5fd91c7a19bd88e9d7bdec197e45fad563acf717c1ad712696692809e22ae0"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/dm.render.test.tsx",
