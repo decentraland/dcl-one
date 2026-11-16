@@ -239,9 +239,12 @@ async fn apply_from(
     .fetch_all(pool)
     .await?;
     if pass.after == 0 {
-        let oldest = oldest_not_waiting_ms(pool, retries).await?;
-        metrics::gauge!("badges_presence_queue_oldest_seconds")
-            .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0);
+        match oldest_not_waiting_ms(pool, retries).await {
+            Ok(oldest) => metrics::gauge!("badges_presence_queue_oldest_seconds")
+                .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0),
+            // keep the last reading; 0 would report an empty queue
+            Err(error) => tracing::warn!(%error, "presence queue age read failed"),
+        }
     }
     let read = queued.len();
     for (seq, queued_ms, wallet) in queued {
