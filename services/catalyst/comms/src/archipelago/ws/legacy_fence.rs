@@ -1,5 +1,6 @@
 use super::*;
 use crate::archipelago::control_v4::{AssignmentPayload, LaneKey, V4Error, V4Owner};
+use crate::protocol::archipelago::archipelago::IslandChangedMessage;
 
 pub(super) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
