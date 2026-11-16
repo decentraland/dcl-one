@@ -51,8 +51,7 @@ export const shopBusy = (): ShellError => new ShellError(SHOP_BUSY, LEGACY_SHOP_
 /** The message the shell posts as an operation moves on. */
 export const SHOP_EVENT = 'bevy-shell:shop'
 
-/** The web Shop's own wallet kinds: a browser wallet, or an in-app (managed) one. */
-/** How the buyer signed in, as the web Shop's wallet session names it. */
+/** The web Shop's own wallet kinds: a browser wallet, or an in-app (managed) one (its host checks they match). */
 export type ShopWalletKind = 'web3' | 'managed'
 
 /**

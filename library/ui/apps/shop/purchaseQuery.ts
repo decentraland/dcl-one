@@ -1,4 +1,4 @@
-// The in-world Shop's purchases, through the web shell that holds the buyer's wallet (lib/shopProtocol):
+// The in-world Shop's purchases, through the web shell that holds the buyer's wallet (./shopProtocol):
 // what the session can pay with, its Credits balance, and buying an item, the cart's items or a NAME. The
 // HUD only asks: the shell reads the terms, shows the purchase dialog over the app, signs and settles, and
 // tells the HUD how it went, so the balance and the listings are read again once something is bought,

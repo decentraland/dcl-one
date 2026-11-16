@@ -1,7 +1,7 @@
 // The in-world Shop's own UI: presentational components and their styles, with no data (queries,
 // fetchers) and nothing of the HUD's runtime (session, engine, menu). The page (../InWorldShop) reads the
-// data and wires them to the HUD. When library/ui exists this folder is library/ui/apps/shop/
-// (docs/ui-standards.md, App-specific UI); test/shopUiBoundary.test.ts keeps it movable.
+// data and wires them to the HUD (docs/ui-standards.md, App-specific UI). What it may import is checked by
+// apps/ui3/src/play/test/shopUiBoundary.test.ts, with the tests of /play, its host.
 
 export { AvatarNametag, NAMETAG_PLACEHOLDER } from './AvatarNametag'
 export { EmoteControls } from './EmoteControls'

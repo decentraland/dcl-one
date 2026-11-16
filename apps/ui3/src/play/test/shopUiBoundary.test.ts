@@ -35,8 +35,16 @@ describe('the in-world Shop UI', () => {
   })
 
   it.each(files)('%s takes only the credits mark from its host', (file) => {
-    const names = [...readFileSync(join(UI, file), 'utf8').matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]@shop-host['"]/g)].flatMap((m) => m[1].split(',').map((n) => n.trim()).filter(Boolean))
-    expect(names.filter((n) => n !== 'CreditMark')).toEqual([])
+    const source = readFileSync(join(UI, file), 'utf8')
+    // Every clause that names @shop-host: a named import of CreditMark alone passes; a namespace or default
+    // import, a re-export or any other name does not.
+    const clauses = [...source.matchAll(/^\s*(import|export)\s+([^'";]*?)\s+from\s+['"]@shop-host['"]/gm)].map((m) => ({ kind: m[1], what: m[2].trim() }))
+    for (const { kind, what } of clauses) {
+      expect(kind).toBe('import')
+      expect(what).toMatch(/^(type\s+)?\{[^}]*\}$/)
+      const names = what.replace(/^type\s+/, '').slice(1, -1).split(',').map((n) => n.trim()).filter(Boolean)
+      expect(names).toEqual(['CreditMark'])
+    }
   })
 
   it.each(files)('%s imports no data and nothing of the HUD runtime', (file) => {
