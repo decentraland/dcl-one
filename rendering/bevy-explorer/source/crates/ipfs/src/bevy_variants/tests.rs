@@ -147,8 +147,8 @@ fn selects_the_first_variant_this_client_takes() {
         Some(served_path(OTHER_CID))
     );
 
-    // `glb` (its embedded images BC KTX2, rewritten to DDS) is taken for a `.glb`, on a GPU
-    // with BC textures
+    // `glb` (its embedded images BC KTX2, unwrapped by the glTF loader) is taken for a `.glb`,
+    // on a GPU with BC textures
     let glb = [variant(VARIANT_CID, "model", "glb")];
     assert!(supported_format(&glb[0]).is_some());
     assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_some());
@@ -164,7 +164,7 @@ fn selects_the_first_variant_this_client_takes() {
     assert_eq!(
         taken_formats(),
         "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders), \
-         glb (embedded BC1/BC5/BC7, rewritten to DDS for the glTF loader); not glb-br"
+         glb (embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader); not glb-br"
     );
     assert!(could_have_variant("a.glb"));
     // the earlier mesh format is not in the schema any more
@@ -587,19 +587,20 @@ async fn a_missing_variant_falls_back_to_the_original() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A `g` variant: a GLB whose embedded image is a BC KTX2, served at its own path (native has
-/// no Brotli decoder).
-fn glb_variant(image: &[u8]) -> (Vec<u8>, String) {
-    let file = super::glb::tests::with_one_ktx2(image);
+/// A `g` variant: a GLB (its embedded images BC KTX2), served at its own path (native has no
+/// Brotli decoder). The reader checks only the GLB magic; the glTF loader decodes the images.
+fn glb_variant() -> (Vec<u8>, String) {
+    let mut file = b"glTF".to_vec();
+    file.extend_from_slice(&2u32.to_le_bytes());
+    file.extend_from_slice(&12u32.to_le_bytes());
     let cid = crate::content_hash::raw_cid(&file);
     (file, cid)
 }
 
 #[tokio::test]
-async fn a_glb_variant_is_cached_as_served_and_read_with_its_images_as_dds() {
+async fn a_glb_variant_is_read_as_served() {
     let (io, dir) = io_with_cache("glb");
-    let (bc7, _, _) = super::ktx2::tests::bc7_two_levels();
-    let (served, cid) = glb_variant(&bc7);
+    let (served, cid) = glb_variant();
     let variant_route = format!("/{}", served_path_of("glb", &cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
@@ -610,40 +611,29 @@ async fn a_glb_variant_is_cached_as_served_and_read_with_its_images_as_dds() {
     scene_with_variant_of(&io, &base, "models/a.glb", "model", "glb", &cid).await;
     let path = content_path("models/a.glb");
 
-    // the loader reads the GLB with its KTX2 unwrapped to DDS
-    let (rewritten, _) = super::glb::bc_glb_dds(&served).unwrap();
-    assert_ne!(rewritten, served);
-    assert_eq!(read_all(&io, &path).await, rewritten);
+    // the loader reads the GLB as served, and the cache holds it under a digest of its url
+    assert_eq!(read_all(&io, &path).await, served);
     assert!(io.served_bevy_variant(&path));
-    // the cache holds the variant as served, under a digest of its url, and is rewritten on
-    // every read
     let name = cache_name(&base, &served_path_of("glb", &cid));
     assert_eq!(std::fs::read(dir.join(&name)).unwrap(), served);
     assert!(!dir.join(ORIGINAL_CID).exists());
-    assert_eq!(read_all(&io, &path).await, rewritten);
+    assert_eq!(read_all(&io, &path).await, served);
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
     let session = io.bevy_variants.session.lock().unwrap();
     assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
-    assert_eq!(
-        session.glb_images,
-        super::glb::EmbeddedImages {
-            bc7: 2,
-            ..Default::default()
-        }
-    );
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A `g` variant whose KTX2 does not unwrap (here sRGB BC7) cannot be loaded at all: the
+/// A `g` variant that is not a binary glTF at all falls back before the loader sees it: the
 /// original is read instead, the copy dropped and the variant not asked for again.
 #[tokio::test]
-async fn a_glb_variant_whose_ktx2_does_not_unwrap_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("glb-not-bc");
-    let (_, level0, level1) = super::ktx2::tests::bc7_two_levels();
-    let (served, cid) = glb_variant(&super::ktx2::tests::ktx2(146, 8, 4, &[level0, level1]));
+async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
+    let (io, dir) = io_with_cache("glb-not-glb");
+    let served = b"<html>not found</html>".to_vec();
+    let cid = crate::content_hash::raw_cid(&served);
     let variant_route = format!("/{}", served_path_of("glb", &cid));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
@@ -661,7 +651,6 @@ async fn a_glb_variant_whose_ktx2_does_not_unwrap_falls_back_to_the_original() {
     {
         let session = io.bevy_variants.session.lock().unwrap();
         assert!(session.recent[0].reason.starts_with("invalid glb variant"));
-        assert!(session.recent[0].reason.contains("vkFormat 146"));
         assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
         assert!(session.bad.contains(&served_path_of("glb", &cid)));
     }
@@ -669,6 +658,48 @@ async fn a_glb_variant_whose_ktx2_does_not_unwrap_falls_back_to_the_original() {
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 2);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `glb` variant whose embedded KTX2 does not unwrap fails the `Gltf` load, not the read: the
+/// `Gltf` fallback marks the variant bad and hands back its cached copy to drop, so the model
+/// reloads from its original.
+#[test]
+fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
+    let variants = BevyVariants::default();
+    let path = content_path("models/a.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "models/a.glb".to_owned(),
+            variant: served_path_of("glb", VARIANT_CID),
+            format: "glb".to_owned(),
+            url: "https://abgen.example/bevy/g4/variant".to_owned(),
+        },
+        false,
+    );
+    // an image fallback does not take a model
+    assert!(variants
+        .decode_failed(&path, "x", <Image as VariantAsset>::FORMATS)
+        .is_none());
+    assert!(variants.is_served(&path));
+    assert_eq!(
+        variants
+            .decode_failed(
+                &path,
+                "unsupported texture format",
+                <Gltf as VariantAsset>::FORMATS
+            )
+            .as_deref(),
+        Some("https://abgen.example/bevy/g4/variant")
+    );
+    assert!(!variants.is_served(&path));
+    assert!(variants.is_bad(&served_path_of("glb", VARIANT_CID)));
+    let session = variants.session.lock().unwrap();
+    assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
+    assert!(session.recent[0]
+        .reason
+        .starts_with("glb variant failed to load"));
 }
 
 #[test]
@@ -751,13 +782,14 @@ fn the_debug_snapshot_reports_state_and_fallbacks() {
     variants.fail(
         SCENE,
         "tex.png",
-        Some(VARIANT_CID),
+        Some(&variant(VARIANT_CID, "texture", "ktx2-bc")),
         "fetch: refused".to_owned(),
     );
     let snapshot = snapshot_of(&variants);
     assert_eq!(snapshot["base"], "http://localhost:5147");
     assert_eq!(snapshot["state"], "on");
     assert_eq!(snapshot["fallbacks"], 1);
+    assert_eq!(snapshot["fallbacksByFormat"], "ktx2-bc: 1");
     assert!(snapshot["recentFallbacks"]
         .as_str()
         .unwrap()

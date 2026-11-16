@@ -25,10 +25,6 @@ impl Plugin for BevyVariantsDebugPanelPlugin {
                     ("Scene manifests", "manifests"),
                     ("Variants served (downloaded / from cache)", "served"),
                     ("Variants served by format", "servedByFormat"),
-                    (
-                        "Embedded images in glb variants read (BC1 / BC5 / BC7 / left as they were)",
-                        "glbImages",
-                    ),
                     ("Fallbacks to the original", "fallbacks"),
                     (
                         "Fallbacks from a chosen variant, by format",
@@ -125,12 +121,6 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                 .collect::<Vec<_>>()
                 .join("\n")
         }),
-        "glbImages": [
-            session.glb_images.bc1,
-            session.glb_images.bc5,
-            session.glb_images.bc7,
-            session.glb_images.kept,
-        ],
         "fallbacks": session.fallbacks,
         "fallbacksByFormat": (!session.fallbacks_by_format.is_empty()).then(|| {
             session

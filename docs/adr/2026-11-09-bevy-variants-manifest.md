@@ -66,7 +66,11 @@ from the configured service, rejecting only what fails to decode.
   other than `manifest`, and a name of ASCII letters, digits and `_`. The
   prefix's first letter is the variant's class: `t` a BC KTX2 texture, `m` a
   `glb-br` model, `g` a GLB; the rest names the generation and build options
-  (`g4`, `t4z9`). A reader drops a path of any other shape or class.
+  (`g4`, `t4z9`). A reader drops a path of any other shape or class. A reader
+  maps every prefix of a class to the same format whatever its generation, so a
+  change to what a class holds that an existing reader cannot load (a `g`
+  variant with embedded images other than BC1, BC5 or BC7, say) takes a new
+  class letter, not a new generation.
 - `lanes` records which generation each variant class was built from; it is for
   abgen, and a reader only shows it.
 - A reader takes only `v: 3`. Earlier versions listed a CID, format and size for
@@ -88,7 +92,8 @@ Classes:
   pixel-identical to the Explorer's own transcode; no variant when a level
   cannot be block-transcoded. A variant larger than its original is kept: the
   Explorer holds a PNG or JPEG as RGBA, so the BC copy still saves memory.
-- `g`, a GLB: a GLB with Draco decoded, `KHR_texture_basisu`
+- `g`, a GLB: a GLB with Draco decoded (a model whose Draco does not decode
+  gets no variant, so a `g` variant never needs Draco), `KHR_texture_basisu`
   resolved to a core `source`, external buffers inlined, and each embedded image
   replaced by a KTX2 of the `t` class's format (`mimeType: "image/ktx2"`, in a
   buffer view of the GLB's binary chunk). Every KTX2 in it is BC: a GLB whose
@@ -149,15 +154,15 @@ Excluded from variants: source maps, audio, video and scene code.
 - The table also holds `glb`, on a GPU with BC textures, for `.glb` files. It
   is fetched at its own path on every platform, since its Brotli copy may not
   exist; a browser that accepts `br` gets the copy and decodes it. The cache
-  keeps it as served. The
-  glTF loader decodes embedded images itself and reads DDS but not KTX2, so on
-  every read the reader rewrites the GLB before the loader sees it: each
-  embedded KTX2 is unwrapped to its DDS, appended to the binary chunk, its
-  buffer view pointed there and its `mimeType` set to `image/vnd-ms.dds`; every
-  other byte keeps its offset. The loader picks sRGB or linear for each image
-  from how the materials use it. A KTX2 that does not unwrap fails the variant
-  before the loader sees it, and a GLB that then fails to load is reloaded from
-  the original. The asset keeps the original path, so every user of the model
+  keeps it as served, and the reader hands it to the glTF loader as it is,
+  after checking only that it starts with the GLB magic. The glTF loader
+  decodes each embedded image itself and recognises a KTX2 by its leading
+  bytes; it goes through the same host KTX2 transcoder as a texture variant,
+  which unwraps BC1, BC5 or BC7 to the DDS it decodes, so the textures stay BC
+  in memory. The loader picks sRGB or linear for each image from how the
+  materials use it. An embedded KTX2 that does not unwrap fails the GLB's load,
+  and a GLB that fails to load from a `glb` variant is reloaded from the
+  original. The asset keeps the original path, so every user of the model
   shares one loaded copy. Image processing skips a GLB read from a variant.
 
 ## Consequences

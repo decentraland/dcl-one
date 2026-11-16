@@ -14,13 +14,14 @@
 //! manifest names no hash for them, so a variant is trusted by its path and rejected only by
 //! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
 //! to the image loaders as it is; they unwrap it to the DDS they decode (`ktx2`), inside the
-//! asset load. A `g` model variant is cached as it is served and rewritten on every read
-//! (`glb`): each embedded BC KTX2 image becomes the DDS the glTF loader decodes, so its
-//! textures stay BC in memory. Anything else, at any step, reads the original. A variant that
-//! fails to decode is marked bad for the session, its cached copy dropped, and its asset (a
-//! texture or a GLB) reloaded from the original. Manifests and variants are fetched in a
-//! single attempt with short timeouts: the original is their retry. An entity's files wait for
-//! its manifest for at most [`MANIFEST_DEADLINE`] from the request, then read their originals.
+//! asset load. A `g` model variant is a GLB whose embedded images are BC KTX2, handed to the
+//! glTF loader as it is served: the loader decodes each embedded image through the same host
+//! KTX2 transcoder, which unwraps BC to DDS, so its textures stay BC in memory. Anything else,
+//! at any step, reads the original. A variant that fails to decode is marked bad for the
+//! session, its cached copy dropped, and its asset (a texture or a GLB) reloaded from the
+//! original. Manifests and variants are fetched in a single attempt with short timeouts: the
+//! original is their retry. An entity's files wait for its manifest for at most
+//! [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
 //! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has: BC
@@ -36,7 +37,6 @@
 //! preview always shows the deployed files.
 
 mod debug_panel;
-pub mod glb;
 pub mod ktx2;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
@@ -88,8 +88,9 @@ pub enum Decoded {
     /// decodes, handed to the glTF loader of the original path. Web only.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     BrotliGlb,
-    /// A `glb` model: the original GLB with its embedded images as BC KTX2, which the reader
-    /// rewrites to DDS (`glb::bc_glb_dds`) before the glTF loader of the original path reads it.
+    /// A `glb` model: a GLB with its embedded images as BC KTX2, handed to the glTF loader of
+    /// the original path as it is; the loader decodes each image through the host KTX2
+    /// transcoder, which unwraps it to DDS (`ktx2::bc_ktx2_dds`).
     BcGlb,
 }
 
@@ -170,7 +171,7 @@ pub fn taken_formats() -> String {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
-            Decoded::BcGlb => "embedded BC1/BC5/BC7, rewritten to DDS for the glTF loader",
+            Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
             Some((formats, _)) => formats.push(row.format),
@@ -415,8 +416,6 @@ struct Session {
     cached: u64,
     /// [downloaded, from cache] by variant format.
     served_by_format: BTreeMap<String, [u64; 2]>,
-    /// The embedded images of the `glb` variants read, by what the rewrite made of them.
-    glb_images: glb::EmbeddedImages,
     fallbacks: u64,
     /// Fallbacks from a variant that was chosen, by its format.
     fallbacks_by_format: BTreeMap<String, u64>,
@@ -529,15 +528,12 @@ impl BevyVariants {
         self.session.lock().unwrap().bad.contains(variant)
     }
 
-    fn fail(&self, scene: &str, file: &str, variant: Option<&str>, reason: String) {
+    fn fail(&self, scene: &str, file: &str, variant: Option<&Variant>, reason: String) {
         let mut session = self.session.lock().unwrap();
-        let format = variant
-            .and_then(Variant::from_path)
-            .map(|variant| variant.format);
         if let Some(variant) = variant {
-            session.bad.insert(variant.to_owned());
+            session.bad.insert(variant.path.clone());
         }
-        session.fallback(scene, file, format.as_deref(), reason);
+        session.fallback(scene, file, variant.map(|v| v.format.as_str()), reason);
     }
 
     fn served(&self, path: &Path, served: ServedVariant, cached: bool) {
@@ -583,8 +579,8 @@ impl BevyVariants {
     }
 }
 
-/// What the loader reads for a variant (a BC texture's KTX2, a `glb` model rewritten with DDS
-/// images, a `glb-br` model's own bytes), and whether it came from the cache.
+/// What the loader reads for a variant (a BC texture's KTX2, a `glb` model or a `glb-br`
+/// model as served), and whether it came from the cache.
 pub(crate) struct VariantRead {
     pub(crate) bytes: Vec<u8>,
     pub(crate) cached: bool,
@@ -830,7 +826,7 @@ impl IpfsIo {
                     Some(Err(e)) => {
                         let reason = e.to_string();
                         variants.transport_failed(&reason);
-                        variants.fail(scene, file, Some(&variant.path), format!("fetch: {reason}"));
+                        variants.fail(scene, file, Some(&variant), format!("fetch: {reason}"));
                         return None;
                     }
                     None => return None,
@@ -838,9 +834,8 @@ impl IpfsIo {
             }
         };
 
-        // checks that need no decoding (and a `glb`'s rewrite); a copy that fails them is
-        // dropped from the cache too, so a later session does not read it again
-        let mut rewritten = None;
+        // checks that need no decoding; a copy that fails them is dropped from the cache too,
+        // so a later session does not read it again
         let rejected = match decoded {
             // the loaders unwrap the KTX2 (`ktx2::bc_ktx2_dds`), inside the asset load; here
             // only its header is read, so a file that is not a BC KTX2 at all falls back
@@ -860,29 +855,19 @@ impl IpfsIo {
                     )
                 })
             }
-            // the glTF loader decodes embedded DDS but not KTX2: the cached copy is the variant
-            // as served, and every read unwraps its KTX2 images here. One that does not unwrap
-            // fails the variant before the loader sees it
-            Decoded::BcGlb => match glb::bc_glb_dds(&fetched) {
-                Ok(glb) => {
-                    rewritten = Some(glb);
-                    None
-                }
-                Err(reason) => Some(format!("invalid glb variant: {reason}")),
-            },
+            // the glTF loader decodes each embedded KTX2 through the host transcoder, which
+            // unwraps BC to DDS inside the asset load; here only the GLB magic is read. An image
+            // that does not unwrap fails the `Gltf` load, which reloads the original
+            // (`fall_back_from_failed_variants::<Gltf>`)
+            Decoded::BcGlb => (!fetched.starts_with(b"glTF"))
+                .then(|| "invalid glb variant: not a binary glTF".to_owned()),
         };
         if let Some(reason) = rejected {
             self.forget_variant(&served.url).await;
-            variants.fail(scene, file, Some(&variant.path), reason);
+            variants.fail(scene, file, Some(&variant), reason);
             return None;
         }
-        let bytes = match rewritten {
-            Some((bytes, images)) => {
-                variants.session.lock().unwrap().glb_images.merge(images);
-                bytes
-            }
-            None => Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone()),
-        };
+        let bytes = Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone());
         variants.served(path, served, from_cache);
         Some(VariantRead {
             bytes,
