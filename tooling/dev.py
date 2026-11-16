@@ -662,7 +662,9 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/about'},
+    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
+    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
