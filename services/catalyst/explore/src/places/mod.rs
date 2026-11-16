@@ -663,7 +663,7 @@ impl PlacesComponent {
                 );
             }
             if row.contact_name.is_none() {
-                row.contact_name = text("contact_name");
+                row.contact_name = crate::sanitize::strip_all_markup_opt(text("contact_name"));
             }
             if row.contact_email.is_none() {
                 row.contact_email = text("contact_email");
@@ -1134,6 +1134,42 @@ mod list_sql_tests {
             sql.contains(") AS total_count") && sql.contains("LIMIT $4 OFFSET $5"),
             "{sql}"
         );
+    }
+}
+
+#[cfg(test)]
+mod world_fallback_tests {
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn the_world_contact_fallback_carries_no_rich_text_tags() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let world = format!(
+            "fb{}.dcl.eth",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '0,0', 'Scene', $2)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(json!({ "world": true, "world_name": world, "contact_name": "<size=200>Builder</size>" }))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = crate::ExploreState::new(pool, crate::Settings::for_tests(), None);
+        let mut row = super::rows::sample_row();
+        row.id = world.clone();
+        row.world = true;
+        row.scene_place = false;
+        row.world_name = Some(world.clone());
+        row.contact_name = None;
+        assert!(row.is_world_catalogue_row());
+        state
+            .places
+            .fill_world_place_fields(std::slice::from_mut(&mut row))
+            .await
+            .unwrap();
+        assert_eq!(row.contact_name.as_deref(), Some("Builder"));
     }
 }
 

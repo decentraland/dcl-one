@@ -46,6 +46,12 @@ const STOP_POLL_MS: u32 = 200;
 /// connect.
 const CONNECT_TIMEOUT_MS: u32 = 10_000;
 
+/// How many inbound datagrams the browser may queue before `read_datagrams` reads them. The
+/// browser default is 1 and silently drops datagrams beyond it, so a burst of deltas sent in one
+/// server tick would lose all but one, each loss costing a resync. Matches the inbound channel's
+/// capacity.
+const INCOMING_DATAGRAM_QUEUE: f64 = 1024.0;
+
 pub(super) fn spawn(
     config: PulseTransportConfig,
     channels: PulseDriverChannels,
@@ -116,6 +122,7 @@ async fn run(config: PulseTransportConfig, channels: PulseDriverChannels, stop: 
         .unchecked_into::<ReadableStreamDefaultReader>();
 
     let datagrams = transport.datagrams();
+    datagrams.set_incoming_high_water_mark(INCOMING_DATAGRAM_QUEUE);
     let datagram_writer = match datagrams.writable().get_writer() {
         Ok(writer) => writer,
         Err(err) => {

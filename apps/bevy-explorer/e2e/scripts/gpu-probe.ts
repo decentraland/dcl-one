@@ -13,7 +13,7 @@
 // (Windows), and prints `adapter-luid: <high>,<low>` for the caller to pass the same way. A VM
 // whose display adapter is a paravirtual one keeps its real GPU as a second adapter, and the
 // browser starts on the first.
-//   npm run gpu-probe [-- --adapter nvidia] [-- <more browser flags>...]
+//   pnpm run gpu-probe [--adapter nvidia] [<more browser flags>...]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

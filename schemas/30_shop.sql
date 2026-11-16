@@ -16172,7 +16172,7 @@ CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WH
 -- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
 -- the rows of the producers that read that index back, never below their
 -- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay
--- idempotent. Workload: seven rows, one update per producer page.
+-- idempotent. Workload: ten rows, one update per producer page.
 CREATE TABLE shop.notification_cursor (
     producer text PRIMARY KEY,
     end_time bigint,
@@ -16184,7 +16184,8 @@ CREATE TABLE shop.notification_cursor (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     -- Exactly notice_cursor::PRODUCERS (a test compares them).
     CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
-        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic')),
+        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic',
+        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic')),
     CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
     CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
 );
@@ -16578,6 +16579,10 @@ CREATE TABLE shop.item_notify_requests (
 -- availability watcher's distinct pending items.
 CREATE INDEX item_notify_requests_pending_idx ON shop.item_notify_requests (contract_address, item_id, id) WHERE status = 'pending';
 
+-- The per-mailbox cap on new requests (case and +tag folded):
+-- WHERE regexp_replace(lower(email), '\+[^@]*@', '@') = $1 AND status = 'pending'.
+CREATE INDEX item_notify_requests_pending_email_idx ON shop.item_notify_requests (regexp_replace(lower(email), '\+[^@]*@', '@')) WHERE status = 'pending';
+
 -- The delivery outbox of the waitlist (the SQS hop of shop-server as a
 -- local transactional row): an item's on-sale transition inserts one row
 -- per pending subscriber in the transaction that records the transition;
@@ -16780,8 +16785,9 @@ CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 -- The sales log on Polygon (the `sales` chain index,
 -- src/shop/market/sales_index.rs): a primary mint through the
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
--- the store; `buyer` the beneficiary, `item_id` the item sold at the item's
--- price, `shop.items`) and the ERC721BidV2 lifecycle (`bid_created` with the
+-- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
+-- the store's `Bought` in the same transaction charged for it, NULL on rows
+-- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
 -- bidder in `buyer`, the price and the expiry in unix seconds;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row

@@ -1410,6 +1410,17 @@ impl Policy {
                 out.extend(self.stored_owner(world, row.as_ref()));
             }
         }
+        out.extend(self.world_grantees(world, parcels).await?);
+        Ok(out)
+    }
+
+    /// The deployment/streaming grantees of `world` whose grant is
+    /// world-wide or touches `parcels`, without the owner.
+    pub async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
         let grantees: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT wp.address FROM worlds.world_permissions wp \
              WHERE wp.world_name = $1 AND wp.permission IN ('deployment', 'streaming') \
@@ -1424,8 +1435,10 @@ impl Policy {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| store_unavailable("worlds.world_permissions", &e))?;
-        out.extend(grantees.iter().filter_map(|a| Address::parse(a).ok()));
-        Ok(out)
+        Ok(grantees
+            .iter()
+            .filter_map(|a| Address::parse(a).ok())
+            .collect())
     }
 }
 
@@ -1521,6 +1534,14 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
         parcels: &ParcelSet,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
         Policy::protected_addresses(self, world, parcels).await
+    }
+
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        Policy::world_grantees(self, world, parcels).await
     }
 }
 
@@ -2113,6 +2134,13 @@ mod tests {
                 .unwrap()
                 .contains(&owner),
             "no ban or kick of the stored owner on a fault"
+        );
+        assert!(
+            !p.world_grantees(&listed_world, &parcels(&["0,0"]))
+                .await
+                .unwrap()
+                .contains(&owner),
+            "the grantee set never falls back to the stored owner"
         );
     }
 
@@ -2899,5 +2927,14 @@ mod tests {
             .await
             .unwrap();
         assert!(protected.contains(&deployer));
+        assert_eq!(
+            p.world_grantees(&world, &parcels(&["0,0"])).await.unwrap(),
+            BTreeSet::from([streamer.clone()]),
+            "grantees only, never the owner"
+        );
+        assert_eq!(
+            p.world_grantees(&world, &parcels(&["3,3"])).await.unwrap(),
+            BTreeSet::from([streamer, deployer])
+        );
     }
 }
