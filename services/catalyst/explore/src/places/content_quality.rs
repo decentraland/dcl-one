@@ -42,6 +42,50 @@ pub(super) fn placeholder_image_patterns() -> Vec<String> {
 
 pub(super) const ROAD_POSITIONS_TABLE: &str = "explore.road_positions";
 
+const TAG_RE: &str =
+    "</?[a-zA-Z\\\\][^<>]*>|<#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})>";
+
+/// `title` with the bracket escapes the client decodes turned into brackets.
+fn decoded_sql(expr: &str) -> String {
+    format!(
+        "REGEXP_REPLACE(REGEXP_REPLACE({expr}, '\\\\u003[cC]|\\\\U0000003[cC]', '<', 'g'), \
+         '\\\\u003[eE]|\\\\U0000003[eE]', '>', 'g')"
+    )
+}
+
+/// The title as `sanitize::strip_all_markup` serves it, for the checks that
+/// decide on it: escapes decoded and tags dropped in each of the same number
+/// of passes, brackets dropped when tags remain, and the same fallback for
+/// text that was only tags (empty) or that the client shows literally (its
+/// words). Whitespace is left as is; the checks trim it.
+pub(super) fn plain_title_sql() -> &'static str {
+    static SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut passes = "title".to_string();
+        for _ in 0..crate::sanitize::MAX_SANITIZE_PASSES {
+            passes = format!(
+                "REGEXP_REPLACE({}, '{TAG_RE}', '', 'g')",
+                decoded_sql(&passes)
+            );
+        }
+        let settled = format!(
+            "CASE WHEN {d} ~ '{TAG_RE}' THEN REGEXP_REPLACE({d}, '[<>\\\\]', '', 'g') ELSE {passes} END",
+            d = decoded_sql(&passes)
+        );
+        let known = crate::sanitize::RICH_TEXT_TAG_NAMES.join("|");
+        let literal = format!("<(?!/?(?:{known})[ =/>])/?[a-z][^<>]*>");
+        // Whitespace collapses as the served name collapses around a tag.
+        format!(
+            "REGEXP_REPLACE((CASE WHEN strpos(title, '<') = 0 AND strpos(title, '\\') = 0 THEN title \
+             ELSE (SELECT CASE WHEN p = title OR p ~ '[[:alnum:]]' THEN p \
+               WHEN title ~ '[[:alnum:]]' AND {d} ~* '{literal}' \
+                 THEN REGEXP_REPLACE(REGEXP_REPLACE({d}, '[<>]', ' ', 'g'), '\\\\', '', 'g') \
+               ELSE '' END FROM (SELECT {settled} AS p) plain) END), '\\s+', ' ', 'g')",
+            d = decoded_sql("title"),
+        )
+    });
+    &SQL
+}
+
 pub(super) fn build_content_quality_condition(
     f: &PlaceListFilters,
     road_positions: bool,
@@ -65,13 +109,14 @@ pub(super) fn build_content_quality_condition(
     } else {
         String::new()
     };
+    let plain = plain_title_sql();
     let checks = format!(
         "raw->>'image' IS NOT NULL \
          AND TRIM(raw->>'image') <> '' \
          AND NOT (raw->>'image' LIKE ANY (${images}::text[])) \
-         AND TRIM(COALESCE(title, '')) <> '' \
-         AND title !~ ${test_word} \
-         AND LOWER(TRIM(REGEXP_REPLACE(title, ${suffix}, ''))) <> ALL (${titles}::text[]) \
+         AND TRIM(COALESCE({plain}, '')) <> '' \
+         AND {plain} !~ ${test_word} \
+         AND LOWER(TRIM(REGEXP_REPLACE({plain}, ${suffix}, ''))) <> ALL (${titles}::text[]) \
          AND (TRIM(COALESCE(raw->>'owner', '')) <> '' \
            OR (world IS TRUE AND TRIM(COALESCE(raw->>'creator_address', '')) <> '') \
            OR (TRIM(COALESCE(raw->>'contact_name', '')) <> '' \
@@ -193,6 +238,55 @@ mod tests {
         }
     }
 
+    /// The gate's SQL reads a title as the sanitizer serves it.
+    #[tokio::test]
+    async fn the_gate_reads_titles_as_the_sanitizer_serves_them() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        for title in [
+            "Plain title",
+            "<b>Untitled</b>",
+            "<<b>b>Untitled",
+            "<Untitled>",
+            "<<Best Party>>",
+            "<size=1> </size>",
+            "<size=300><b>",
+            "<#ff0000>Red <link=\"x\">Garden</link>",
+            "I <3 it",
+            "issue <#12 b>",
+            "Club <VIP> Night",
+            "\\u003Cb\\u003EUntitled",
+            "\\u<b>003Csize=300\\u<b>003EBig",
+            "<<<<<<<<b>b>b>b>b>b>b>b>Untitled",
+            "a \\u0041 b",
+            "<\\u0073ize=300>BIG",
+            "</\\u006Cink><b>x",
+            "<<b>foo>",
+            "<br/>",
+            "<3 :)",
+            "\\ <> /",
+            "new <b> scene",
+            "<Untitled\\x>",
+            "<<<<<<<b>b>b>b>b>b>b>\\u003\\u003<CC",
+        ] {
+            let got: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT {} FROM (SELECT $1::text AS title) t",
+                plain_title_sql()
+            )))
+            .bind(title)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert_eq!(
+                words(&got),
+                words(&crate::sanitize::strip_all_markup(title)),
+                "{title:?}"
+            );
+        }
+    }
+
     #[test]
     fn both_branches_share_one_gate_with_curation_first() {
         assert!(build_content_quality_condition(&feed(false, false), true, 1).is_none());
@@ -202,9 +296,12 @@ mod tests {
             clause.contains("raw->>'image' LIKE ANY ($3::text[])"),
             "{clause}"
         );
-        assert!(clause.contains("title !~ $4"), "{clause}");
+        let plain = plain_title_sql();
+        assert!(clause.contains(&format!("{plain} !~ $4")), "{clause}");
         assert!(
-            clause.contains("LOWER(TRIM(REGEXP_REPLACE(title, $5, ''))) <> ALL ($6::text[])"),
+            clause.contains(&format!(
+                "LOWER(TRIM(REGEXP_REPLACE({plain}, $5, ''))) <> ALL ($6::text[])"
+            )),
             "{clause}"
         );
         assert!(

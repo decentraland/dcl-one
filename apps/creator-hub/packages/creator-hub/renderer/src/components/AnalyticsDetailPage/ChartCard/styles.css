@@ -1,0 +1,38 @@
+.ChartCard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXLarge);
+  background-color: var(--palette-whiteTransparent-faint);
+}
+
+.ChartCard .ChartCardHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ChartCard .ChartCardHeader .MuiTypography-h6 {
+  color: var(--palette-neutral-softWhite);
+  font-size: var(--type-h5-semi-size);
+  font-weight: var(--type-h5-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-semi-letter-spacing);
+}
+
+.ChartCard .Description {
+  color: var(--dcl-silver);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.ChartCard .ChartCardBody {
+  padding: 20px;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusLarge);
+  background-color: var(--palette-blackTransparent-blurry);
+}

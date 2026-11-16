@@ -29,6 +29,66 @@ const AUDIENCE: &str = "comms-v4-assignment-fence-test";
 const WALLET: &str = "0x00000000000000000000000000000000000000f1";
 const SESSION: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+#[tokio::test]
+async fn selected_identity_domains_survive_production_assignment_json_postgres_roundtrip() {
+    use catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp;
+    use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+    use prost::Message;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    seed_realm(&fixture.pool, WALLET, SESSION, 7, 1, 11, None).await;
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/pulse_selected_recovery.json")).unwrap();
+    for vector in vectors["identity_boundary_vectors"].as_array().unwrap() {
+        let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+        let mut snapshot = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
+        snapshot.wallet = WALLET.into();
+        snapshot.session = SESSION.into();
+        snapshot.cluster_id = "selected".into();
+        let stamp = PulseAdmissionStamp::from_snapshot(&snapshot, 0);
+        if !vector["expected_selection_evidence_valid"]
+            .as_bool()
+            .unwrap()
+        {
+            assert!(stamp.is_none());
+            continue;
+        }
+        let mut document = assignment(&fixture.pool, "island-selected", None).await;
+        let safety = document.pulse_admission.as_ref().unwrap().clone();
+        let mut stamp = stamp.unwrap();
+        stamp.safety_generation = safety.safety_generation;
+        stamp.safety_token_floor = safety.safety_token_floor;
+        document.pulse_admission = Some(stamp.clone());
+        let fence = fixture.fence().await;
+        fence
+            .lock_realm(WALLET, SESSION)
+            .await
+            .unwrap()
+            .commit(document)
+            .await
+            .unwrap();
+        let restored = fence
+            .current_realm_assignment(WALLET, SESSION)
+            .await
+            .unwrap()
+            .pulse_admission
+            .unwrap();
+        assert_eq!(restored, stamp, "{}", vector["id"]);
+        assert_eq!(
+            restored.selected_identity.to_string(),
+            vector["identity_decimal"].as_str().unwrap()
+        );
+        assert!(restored.matches_snapshot(&snapshot));
+        let (_, _, json) = row_state(&fixture.pool).await;
+        assert_eq!(
+            json.unwrap()["pulseAdmission"]["selectedIdentity"].as_u64(),
+            Some(restored.selected_identity)
+        );
+    }
+    fixture.finish().await;
+}
+
 struct Fixture {
     db: Option<ScratchDb>,
     pool: PgPool,
@@ -94,6 +154,9 @@ async fn assignment(
     let mut stamp =
         catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(
             &catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: WALLET.into(),
                 session: SESSION.into(),
                 cluster_id: island_id
