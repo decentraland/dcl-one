@@ -847,8 +847,25 @@ jobs:
       - name: Install the pinned WASM binding generator and optimizer
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 ../../../apps/bevy-explorer/install-web-tools.py ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
+      # The pnpm store is kept between runs, keyed on the two lockfiles; only main saves it.
+      - name: Restore the pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rendering/bevy-explorer/source/react-web/pnpm-lock.yaml', 'rendering/bevy-explorer/source/react-web/bridge-scene/pnpm-lock.yaml') }}
+          restore-keys: |
+            bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Build and test the local web app
+        env:
+          pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
+      - name: Save the pnpm store from main
+        if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - name: Test the checked shared-input generator
         run: cd react-web && pnpm run test:shared-inputs
       - name: Record the rebuilt Bevy tree's file times for the cache
@@ -916,11 +933,27 @@ jobs:
           rm -rf deploy/web/engine/pkg deploy/web/engine/pkg-scene "$bindings"
           cp -R "$RUNNER_TEMP/web-app/engine/pkg" "$RUNNER_TEMP/web-app/engine/pkg-scene" deploy/web/engine/
           cp -R "$RUNNER_TEMP/web-app/bindings" "$bindings"
+      - name: Restore the pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rendering/bevy-explorer/source/react-web/pnpm-lock.yaml', 'rendering/bevy-explorer/source/react-web/bridge-scene/pnpm-lock.yaml') }}
+          restore-keys: |
+            bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Install the HUD and bridge scene dependencies
+        env:
+          pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: |
           corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
           corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
           corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+      - name: Save the pnpm store from main
+        if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
       # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
