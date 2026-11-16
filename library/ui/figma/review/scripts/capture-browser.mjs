@@ -171,6 +171,9 @@ async function openSession(executable, { signal } = {}) {
     }
     pollingEndedAt = performance.now()
     signal?.throwIfAborted()
+    if (startupError) throw startupError
+    if (browser.exitCode !== null || browser.signalCode !== null)
+      throw new Error('Capture browser exited during startup')
     if (!validPortObserved) {
       const error = new Error('Capture browser did not start')
       if (

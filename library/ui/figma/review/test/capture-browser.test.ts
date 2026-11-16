@@ -354,6 +354,8 @@ async function stubbedOpenSession(): Promise<typeof openSession> {
   }
 }
 
+const startupBuiltins = { readFile: fs.readFile, setTimeout: timers.setTimeout, error: console.error }
+
 describe('when capture startup waits for a usable port record', () => {
   class StartupBrowser extends EventEmitter {
     pid = 12345
@@ -382,14 +384,14 @@ describe('when capture startup waits for a usable port record', () => {
       profile = args.find((arg) => arg.startsWith('--user-data-dir='))!.slice(16)
       return browser
     }) as unknown as typeof childProcess.spawn)
-    t.mock.method(fs, 'readFile', (async (file: string) => {
+    const readFile = t.mock.method(fs, 'readFile', (async (file: string) => {
       assert.equal(file, path.join(profile, 'DevToolsActivePort'))
       return records[Math.min(reads++, records.length - 1)]
     }) as unknown as typeof fs.readFile)
-    t.mock.method(timers, 'setTimeout', (async (ms: number) => {
+    const setTimeout = t.mock.method(timers, 'setTimeout', (async (ms: number) => {
       delays.push(ms)
     }) as typeof timers.setTimeout)
-    t.mock.method(console, 'error', (...args: unknown[]) => diagnostics.push(args))
+    const error = t.mock.method(console, 'error', (...args: unknown[]) => diagnostics.push(args))
     syncBuiltinESMExports()
     t.after(async () => {
       t.mock.restoreAll()
@@ -412,6 +414,9 @@ describe('when capture startup waits for a usable port record', () => {
     }
     return {
       open,
+      readFile,
+      setTimeout,
+      error,
       browser,
       profile: () => profile,
       reads: () => reads,
@@ -473,12 +478,12 @@ describe('when capture startup waits for a usable port record', () => {
     t.mock.method(performance, 'now', () => now)
     const fixture = await startup(t, [])
     let polls = 0
-    t.mock.method(fs, 'readFile', (async () => {
+    fixture.readFile.mock.mockImplementation((async () => {
       now += 2
       if (++polls === 1) fixture.browser.stderr.write('launch warning\n')
       throw Object.assign(new Error('absent'), { code: 'ENOENT' })
     }) as unknown as typeof fs.readFile)
-    t.mock.method(timers, 'setTimeout', (async (ms: number) => {
+    fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
       fixture.delays.push(ms)
       now += ms
     }) as typeof timers.setTimeout)
@@ -515,10 +520,10 @@ describe('when capture startup waits for a usable port record', () => {
       const fixture = await startup(t, [])
       const controller = new AbortController()
       const reason = Object.freeze(new Error('original startup failure'))
-      t.mock.method(fs, 'readFile', (async () => {
+      fixture.readFile.mock.mockImplementation((async () => {
         throw Object.assign(new Error('absent'), { code: 'ENOENT' })
       }) as unknown as typeof fs.readFile)
-      t.mock.method(timers, 'setTimeout', (async () => {
+      fixture.setTimeout.mock.mockImplementation((async () => {
         if (failure === 'abort') controller.abort(reason)
         else fixture.browser.emit('error', reason)
       }) as typeof timers.setTimeout)
@@ -534,19 +539,31 @@ describe('when capture startup waits for a usable port record', () => {
 
   it('should leave a final-delay child exit untagged even when the port file is missing', async (t) => {
     const fixture = await startup(t, [])
-    t.mock.method(fs, 'readFile', (async () => {
+    fixture.readFile.mock.mockImplementation((async () => {
       throw Object.assign(new Error('absent'), { code: 'ENOENT' })
     }) as unknown as typeof fs.readFile)
-    t.mock.method(timers, 'setTimeout', (async (ms: number) => {
+    fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
       fixture.delays.push(ms)
       if (fixture.delays.length === 100) fixture.browser.exitCode = 7
     }) as typeof timers.setTimeout)
     syncBuiltinESMExports()
     await assert.rejects(fixture.open('capture-fixture'), (error: NodeJS.ErrnoException) => {
-      assert.equal(error.message, 'Capture browser did not start')
+      assert.equal(error.message, 'Capture browser exited during startup')
       assert.equal(error.code, undefined)
       return true
     })
+    await cleaned(fixture)
+  })
+
+  it('should preserve a spawn error during the final polling delay', async (t) => {
+    const fixture = await startup(t, [''])
+    const reason = Object.freeze(new Error('final startup failure'))
+    fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
+      fixture.delays.push(ms)
+      if (fixture.delays.length === 100) fixture.browser.emit('error', reason)
+    }) as typeof timers.setTimeout)
+    syncBuiltinESMExports()
+    await assert.rejects(fixture.open('capture-fixture'), (error) => error === reason)
     await cleaned(fixture)
   })
 
@@ -555,7 +572,7 @@ describe('when capture startup waits for a usable port record', () => {
       const fixture = await startup(t, [record])
       const controller = new AbortController()
       const reason = Object.freeze(new Error('cancelled final startup delay'))
-      t.mock.method(timers, 'setTimeout', (async (ms: number) => {
+      fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
         fixture.delays.push(ms)
         if (fixture.delays.length === 100) controller.abort(reason)
       }) as typeof timers.setTimeout)
@@ -574,10 +591,10 @@ describe('when capture startup waits for a usable port record', () => {
     const fixture = await startup(t, ['1'])
     const controller = new AbortController()
     const reason = Object.freeze(new Error('cancelled fixture startup'))
-    t.mock.method(timers, 'setTimeout', (async () => {
+    fixture.setTimeout.mock.mockImplementation((async () => {
       controller.abort(reason)
     }) as typeof timers.setTimeout)
-    t.mock.method(console, 'error', () => {
+    fixture.error.mock.mockImplementation(() => {
       throw new Error('logger unavailable')
     })
     syncBuiltinESMExports()
@@ -589,6 +606,12 @@ describe('when capture startup waits for a usable port record', () => {
     await cleaned(fixture)
   })
 })
+it('should restore startup fixture builtins before later sessions', () => {
+  assert.equal(fs.readFile, startupBuiltins.readFile)
+  assert.equal(timers.setTimeout, startupBuiltins.setTimeout)
+  assert.equal(console.error, startupBuiltins.error)
+})
+
 // A browser that publishes a DevTools port in its profile and then stays up until it is stopped.
 const PORT_BROWSER =
   'const dir = process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16); require("node:fs").writeFileSync(dir + "/DevToolsActivePort", "1\\n"); setInterval(()=>{},1000)'
