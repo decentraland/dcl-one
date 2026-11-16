@@ -2,16 +2,22 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
-use common::structs::{AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
+use common::structs::{AppConfig, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
 use comms::profile::{ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use rand::{seq::IteratorRandom, Rng};
 use serde_json::json;
 
-use crate::{AvatarSelection, AvatarShape};
+use crate::{AvatarProcessed, AvatarSelection, AvatarShape};
 
-const MAX_DEMOS: usize = 128;
+/// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
+const MAX_DEMOS: usize = 1024;
+/// The highest session cap `/avatar_demo cap` takes: every demo avatar and the player.
+const MAX_CAP: usize = MAX_DEMOS + 1;
+/// Demo avatars stand in a square grid in front of the player, this many to a row.
+const GRID_COLUMNS: u64 = 32;
+const GRID_SPACING: f32 = 1.6;
 const BASE_AVATARS: &str = "urn:decentraland:off-chain:base-avatars:";
 const CREATOR_EMOTES: &[(&str, &str)] = &[
     ("None", "none"),
@@ -55,7 +61,11 @@ impl Plugin for DebugAvatarsPlugin {
             .add_debug_section(DebugSection {
                 title: "Avatar debug",
                 query: "/avatar_demo",
-                fields: &[("Spawned demo avatars", "count")],
+                fields: &[
+                    ("Spawned demo avatars", "count"),
+                    ("Built demo avatars", "built"),
+                    ("Max avatars this session", "cap"),
+                ],
                 actions: &[
                     ("Destroy demo avatars", "/avatar_demo clear"),
                     ("Destroy random number", "/avatar_demo remove-random"),
@@ -67,6 +77,16 @@ impl Plugin for DebugAvatarsPlugin {
                         field: "maleOnly",
                         command: "/avatar_demo male-only {value}",
                         kind: DebugInputKind::Toggle,
+                    },
+                    DebugInput {
+                        label: "Max avatars this session (not saved)",
+                        field: "cap",
+                        command: "/avatar_demo cap {value}",
+                        kind: DebugInputKind::Number {
+                            min: 1.0,
+                            max: MAX_CAP as f64,
+                            step: 1.0,
+                        },
                     },
                     DebugInput {
                         label: "Spawn random avatars",
@@ -174,6 +194,10 @@ enum DemoAction {
     Emote {
         name: String,
     },
+    /// Set Max Avatars for this session only, past the setting's range, to measure crowds.
+    Cap {
+        max: usize,
+    },
     Male,
     Female,
     Clear,
@@ -187,6 +211,9 @@ fn demo_command(
     mut creator: ResMut<Creator>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
+    mut config: ResMut<AppConfig>,
+    children: Query<&Children>,
+    processed: Query<(), With<AvatarProcessed>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     let mut count = demos.iter().len();
@@ -200,6 +227,14 @@ fn demo_command(
                 return;
             }
             creator.wearables = wearables;
+        }
+        Some(DemoAction::Cap { max }) => {
+            if !(1..=MAX_CAP).contains(&max) {
+                cmd.reply_failed(format!("choose a cap from 1 to {MAX_CAP}"));
+                return;
+            }
+            // not through the setting, so nothing writes it to the stored config
+            config.max_avatars = max;
         }
         Some(DemoAction::Emote { name }) => {
             if !CREATOR_EMOTES.iter().any(|(_, value)| *value == name) {
@@ -218,6 +253,10 @@ fn demo_command(
                 commands.entity(entity).despawn();
             }
             count -= n;
+            if count == 0 {
+                // a population spawned after a clear stands where the first one stood
+                creator.next = 0;
+            }
         }
         Some(DemoAction::Randomize) => {
             let catalog = base_wearables::base_wearable_urns();
@@ -267,9 +306,9 @@ fn demo_command(
                 creator.next += 1;
                 let slot = index % MAX_DEMOS as u64;
                 let offset = Vec3::new(
-                    (slot % 12) as f32 * 1.6 - 3.2,
+                    ((slot % GRID_COLUMNS) as f32 - (GRID_COLUMNS - 1) as f32 / 2.0) * GRID_SPACING,
                     0.0,
-                    -((slot / 12) as f32) * 1.6 - 2.0,
+                    -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
                 );
                 let shape = AvatarShape(PbAvatarShape {
                     id: format!("debug-avatar-{index}"),
@@ -305,7 +344,16 @@ fn demo_command(
         }
         None => {}
     }
-    cmd.reply_ok(json!({"count":count, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    // demo avatars with a finished build: a measurement waits for these to reach the count
+    let built = demos
+        .iter()
+        .filter(|(entity, _)| {
+            children
+                .get(*entity)
+                .is_ok_and(|children| children.iter().any(|child| processed.contains(child)))
+        })
+        .count();
+    cmd.reply_ok(json!({"count":count, "built":built, "cap":config.max_avatars, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.

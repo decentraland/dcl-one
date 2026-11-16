@@ -33,6 +33,7 @@ pnpm run e2e --visual                  # the Visual suite (build the scenes firs
 pnpm run e2e --filter 'opens the Backpack'              # a scenario-name pattern, not a file name
 pnpm run gpu-probe                     # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
+pnpm run avatar-sweep                  # frame time by avatar count, one JSON line per step (see below)
 ```
 
 The app uses the browser origin `http://localhost:<port>` over an IPv4 loopback listener.
@@ -100,6 +101,41 @@ console's coming or on the way into the world, leaves `boot-failures/boot-<n>.co
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
 as it happens.
+
+## Avatar sweep
+
+`scripts/avatar-sweep.ts` measures how frame time grows with the number of avatars, to choose the
+Max Avatars cap. It is a measurement, not a scenario: it serves the web app as the suite does,
+opens it in scene preview as an automatic guest (`?preview&guest=1&realm=<realm>`, preview being
+what enables `/avatar_demo`), waits for `/world_state` `inWorld`, and then, for every condition,
+clears the demo avatars, spawns each count in `--counts`, waits until `/avatar_demo` reports that
+many `built`, waits `--settle` seconds and samples `/performance_state` every 250 ms for
+`--window` seconds.
+
+```sh
+pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
+pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
+pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`, not saved); `all` shows every avatar |
+| `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
+| `--nametags` | `on` | `on`, `off` or both (`/nametags`) |
+| `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
+| `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
+| `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
+
+Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
+within `--load-timeout`), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
+`emote`, `nametags`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
+`cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
+the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
+the machine's GPU (`pnpm run gpu-probe`) with the results. At the end the demo avatars are
+cleared, the session's Max Avatars restored and nametags turned back on.
 
 ## How a spec is written
 

@@ -228,6 +228,11 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/avatar_demo [spawn <n>|clear|cap <n>|emote <name>|...]` (scene preview only): local demo
+  avatars with random base wearables, up to 1024, in a 32-wide grid in front of the player.
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range and
+  never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `cap`,
+  `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
