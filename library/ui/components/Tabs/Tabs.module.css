@@ -124,7 +124,7 @@
       --tab-underline: var(--dcl-transparencies-white-10);
     }
   }
-  @media (max-width: 767px) {
+  @media (width < 768px) {
     .routeRoot {
       min-height: 44px;
       --tab-underline-offset: 9px;
@@ -178,7 +178,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  @media (max-width: 767px) {
+  @media (width < 768px) {
     .routeRoot::before,
     .routeRoot::after {
       font-size: var(--dcl-font-size-label-xs-caps);

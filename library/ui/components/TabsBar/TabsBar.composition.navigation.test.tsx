@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { TabsBar, type TabsBarProps } from './TabsBar'
+import { TabsBar, type TabsBarNavigationProps } from './TabsBar'
 const items = [
   { id: 'overview', label: 'Overview', href: '#overview' },
   {
@@ -52,7 +52,7 @@ describe('when a captured page composition owns route and control placement', ()
     { id: 'bad', label: 'Named', href: undefined },
     { id: 'bad', label: 'Named', href: 12 }
   ])('should reject untyped malformed route data with its public configuration error', (item) => {
-    const invalid = [item] as unknown as Extract<TabsBarProps, { mode: 'navigation' }>['items']
+    const invalid = [item] as unknown as TabsBarNavigationProps['items']
     expect(() => render(<TabsBar mode="navigation" items={invalid} activeId="bad" />)).toThrow(
       'TabsBar routes require a non-empty label and href'
     )

@@ -76,7 +76,7 @@ type SharedProps = {
   LinkComponent?: ComponentType<TabsBarLinkProps>
   className?: string
 }
-type NavigationTabsBarProps = SharedProps & {
+export type TabsBarNavigationProps = SharedProps & {
   mode: 'navigation'
   children?: never
   variant?: never
@@ -101,7 +101,7 @@ function NavigationTabsBar({
   className,
   search,
   actions
-}: NavigationTabsBarProps) {
+}: TabsBarNavigationProps) {
   if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
   const ids = new Set<string>()
   for (const item of items) {
@@ -215,8 +215,9 @@ function NavigationTabsBar({
   )
 }
 
-export type TabsBarProps =
-  | (PanelTabsBarProps & {
+export type TabsBarProps = PanelTabsBarProps
+type TabsBarComponentProps =
+  | (TabsBarProps & {
       mode?: 'panel'
       items?: never
       activeId?: never
@@ -225,9 +226,9 @@ export type TabsBarProps =
       actions?: never
       LinkComponent?: never
     })
-  | NavigationTabsBarProps
+  | TabsBarNavigationProps
 /** Choose panel-tab behavior or explicitly controlled route navigation. */
-export function TabsBar(props: TabsBarProps) {
+export function TabsBar(props: TabsBarComponentProps) {
   if (props.mode === 'navigation') return <NavigationTabsBar {...props} />
   const { mode, ...panel } = props
   return <PanelTabsBar {...panel} data-mode={mode} />

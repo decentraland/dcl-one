@@ -36,3 +36,7 @@ Import shared public contracts from `@dcl/one-ui`. Do not import components from
 ## Recording adoption
 
 The author of each new public component or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and its tests, and against the applicable port verification record.
+
+Panel tabs use the default `Tabs` and `TabsBar` contracts. Route links use `Tabs mode="navigation"` inside a native `<nav>` container, not inside a panel tablist. `TabsProps` retains the panel-tab shape; `TabsNavigationProps` names the explicit route-link shape. Destinations are trusted caller configuration, following the existing native link boundary.
+
+The route parent `TabsBar mode="navigation"` supports route links and caller-owned controls. `TabsBarProps` keeps the existing panel shape; `TabsBarNavigationProps` names route-parent props. Panel `onSelect` retains its native event meaning, while navigation `onSelect` reports the selected route id.

@@ -95,7 +95,7 @@
       width: 364px;
     }
   }
-  @media (max-width: 767px) {
+  @media (width < 768px) {
     .routeRoot {
       flex-direction: column;
       gap: var(--dcl-space-12);

@@ -1,5 +1,6 @@
-import { Tabs, type TabsProps } from '../components/Tabs/Tabs'
-import { TabsBar, type TabsBarProps } from '../components/TabsBar/TabsBar'
+import type { ComponentProps } from 'react'
+import { Tabs, type TabsNavigationProps } from '../components/Tabs/Tabs'
+import { TabsBar, type TabsBarNavigationProps } from '../components/TabsBar/TabsBar'
 const items = [{ id: 'a', label: 'A', href: '/a' }]
 export const mainPanel = (
   <TabsBar label="Panels">
@@ -19,24 +20,25 @@ export const routeBar = (
   />
 )
 // @ts-expect-error Navigation tabs require native destinations.
-const missingHref: TabsProps = { mode: 'navigation', label: 'A' }
-// @ts-expect-error Panel bars cannot silently accept route data.
-const implicitRoutes: TabsBarProps = { items, activeId: 'a' }
-// @ts-expect-error A route bar cannot mix opaque panel children.
-const mixed: TabsBarProps = {
+const missingHref: TabsNavigationProps = { mode: 'navigation', label: 'A' }
+const implicitRouteCandidate = { label: 'Tabs', children: null, items, activeId: 'a' }
+// @ts-expect-error Complete panel props still cannot silently accept route data.
+const implicitRoutes: ComponentProps<typeof TabsBar> = implicitRouteCandidate
+const mixed: TabsBarNavigationProps = {
   mode: 'navigation',
   items,
   activeId: 'a',
+  // @ts-expect-error A route bar cannot mix opaque panel children.
   children: 'tabs'
 }
 // @ts-expect-error Shop parent requires caller-owned search and actions.
-const missingControls: TabsBarProps = {
+const missingControls: TabsBarNavigationProps = {
   mode: 'navigation',
   items,
   activeId: 'a',
   page: 'shop'
 }
-const mixedTab: TabsProps = {
+const mixedTab: TabsNavigationProps = {
   mode: 'navigation',
   href: '/a',
   label: 'A',

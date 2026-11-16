@@ -1,6 +1,11 @@
-import { TabsBar, type TabsBarItem, type TabsBarProps, type TabsBarLinkProps } from '@dcl/one-ui'
+import {
+  TabsBar,
+  type TabsBarItem,
+  type TabsBarNavigationProps,
+  type TabsBarLinkProps
+} from '@dcl/one-ui'
 const items: readonly TabsBarItem[] = [{ id: 'news', label: 'News', href: '/news' }] as const
-const complete: TabsBarProps = {
+const complete: TabsBarNavigationProps = {
   mode: 'navigation',
   items,
   activeId: 'news',
@@ -11,21 +16,21 @@ const complete: TabsBarProps = {
     <a {...props} data-prefetch={prefetch} />
   )
 }
-const missingHref: TabsBarProps = {
+const missingHref: TabsBarNavigationProps = {
   mode: 'navigation',
   // @ts-expect-error Routes require hrefs instead of activation-only button content.
   items: [{ id: 'news', label: 'News' }],
   activeId: 'news'
 }
 // @ts-expect-error The current route is explicitly controlled.
-const missingActive: TabsBarProps = { mode: 'navigation', items }
-const invalidHref: TabsBarProps = {
+const missingActive: TabsBarNavigationProps = { mode: 'navigation', items }
+const invalidHref: TabsBarNavigationProps = {
   mode: 'navigation',
   // @ts-expect-error Route destinations must be strings.
   items: [{ id: 'news', label: 'News', href: 1 }],
   activeId: 'news'
 }
-const invalidSelection: TabsBarProps = {
+const invalidSelection: TabsBarNavigationProps = {
   mode: 'navigation',
   items,
   activeId: 'news',
@@ -42,7 +47,7 @@ export const fixtures = {
   invalidSelection
 }
 export const rendered = <TabsBar {...complete} />
-const shop: TabsBarProps = {
+const shop: TabsBarNavigationProps = {
   mode: 'navigation',
   page: 'shop',
   items,
@@ -51,25 +56,30 @@ const shop: TabsBarProps = {
   actions: <button>Cart</button>
 }
 // @ts-expect-error Shop requires explicit keys; their contents may be empty or loading.
-const missingShopControls: TabsBarProps = {
+const missingShopControls: TabsBarNavigationProps = {
   mode: 'navigation',
   page: 'shop',
   items,
   activeId: 'news'
 }
 // @ts-expect-error Create does not have a captured search/actions row.
-const unexpectedCreateControl: TabsBarProps = {
+const unexpectedCreateControl: TabsBarNavigationProps = {
   mode: 'navigation',
   page: 'create',
   items,
   activeId: 'news',
   search: <input />
 }
-// @ts-expect-error Source page choices are explicit.
-const inventedPage: TabsBarProps = { mode: 'navigation', page: 'profile', items, activeId: 'news' }
+const inventedPage: TabsBarNavigationProps = {
+  mode: 'navigation',
+  // @ts-expect-error Only supported parent pages are accepted.
+  page: 'profile',
+  items,
+  activeId: 'news'
+}
 export const pageFixtures = { shop, missingShopControls, unexpectedCreateControl, inventedPage }
 
-export const emptyShop: TabsBarProps = {
+export const emptyShop: TabsBarNavigationProps = {
   mode: 'navigation',
   page: 'shop',
   items,
