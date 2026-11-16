@@ -75,7 +75,7 @@ class ConfigurationTest(unittest.TestCase):
         text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
                               cfg, "/mime.types")
         self.assertIn("geo $sync_peer { default 0; 203.0.113.7/32 1; 2001:db8::1/128 1; }", text)
-        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=100r/s;", text)
         self.assertIn("limit_req_zone $content_limit_key zone=content:10m rate=100r/s;", text)
         key_map = re.search(r'map "\$sync_peer:\$request_method:\$uri" \$content_limit_key \{(.*?)\}', text, re.S)[1]
         exempt = re.search(r'"(~[^"]+)" ""', key_map)[1][1:]
@@ -108,6 +108,15 @@ class ConfigurationTest(unittest.TestCase):
             table = {"sites": [name], "internal": ["/metrics", "/internal/pulse"]}
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "reserved"):
                 gateway.render(table, cfg, "/mime.types")
+
+    def test_cast_page_is_exact_and_leaves_the_cast_api_prefix(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["cast._index.tsx"], "internal": ["/metrics"], "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /cast/", "to": "/comms-gatekeeper$uri"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        self.assertIn("location = /cast {", text)
+        self.assertEqual(text.count("location ^~ /cast/ {"), 1)
+        self.assertNotIn("location /cast/ {", text)
 
     def test_worlds_host_deploys_get_the_deploy_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -269,6 +278,31 @@ class ConfigurationTest(unittest.TestCase):
                       "$upstream_http_access_control_expose_headers always;", body)
         # Ranges the app does not answer itself get the whole file, as upstream.
         self.assertIn("max_ranges 0;", body)
+
+    def test_report_evidence_cap_matches_the_route_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "comms/src/gatekeeper/reports.rs").read_text()
+        expr = re.search(r"const MAX_FILE_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.REPORT_EVIDENCE_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        text, regexes = self.worlds_locations()
+        report = "6f1b4f8a-6a1e-4c2f-9b3d-0d9a2c7b1e55"
+        for path in [f"/report-user/api/reports/players/{report}/evidence/0-shot.png",
+                     f"/report-user/api/reports/{report}/evidence/0-shot.data"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("proxy_pass http://apis;", body)
+                self.assertIn(f"client_max_body_size {gateway.REPORT_EVIDENCE_CAP};", body)
+                self.assertIn("limit_conn deploy_uploads", body)
+        for path in ["/report-user/api/reports/players", "/report-user/api/reports/players/presign",
+                     f"/report-user/api/reports/players/{report}/evidence/0-shot.png/more",
+                     f"/report-user/api/reports/{report}/evidence/",
+                     f"/comms-gatekeeper/reports/players/{report}/evidence/0-shot.png",
+                     f"/x/report-user/api/reports/players/{report}/evidence/0-shot.png"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(gateway.REPORT_EVIDENCE_CAP in body
+                                     for regex, body in regexes if regex.search(path)))
+        self.assertNotIn("location /report-user", text)
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})

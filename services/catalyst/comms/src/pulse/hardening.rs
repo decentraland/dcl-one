@@ -58,7 +58,10 @@ impl BanList {
 
     fn normalize(wallet: &str) -> String {
         let trimmed = wallet.trim();
-        let with_prefix = if trimmed.len() >= 2 && trimmed[..2].eq_ignore_ascii_case("0x") {
+        let with_prefix = if trimmed
+            .get(..2)
+            .is_some_and(|p| p.eq_ignore_ascii_case("0x"))
+        {
             trimmed.to_string()
         } else {
             format!("0x{trimmed}")
@@ -145,11 +148,43 @@ pub enum ReplayRejection {
     Duplicate,
     Forgotten,
     Capacity,
+    SourceQuota,
     FutureDated,
     Storage,
 }
 
-type ReplayEntries = std::collections::HashMap<(String, String), i64>;
+/// A live `(wallet, timestamp)` pair: its signed time and, when this process admitted it, the
+/// sources ([`replay_sources`]) it counts against. Pairs read back from the journal have none.
+struct ReplayEntry {
+    signed_ms: i64,
+    sources: Vec<String>,
+}
+
+type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
+
+/// Live replay entries one source may hold. Each lives at most two freshness windows, so this is
+/// far above what the clients behind one address sign, and one source can take only a small part
+/// of the table.
+pub const DEFAULT_REPLAY_ENTRIES_PER_SOURCE: usize = 256;
+
+/// Prefix of the IPv6 site a peer is also counted against, so addresses spread over the /64s of
+/// one allocation share one quota, as the clients behind one IPv4 address do. A provider that
+/// places many subscribers in one /48 therefore shares one quota, like an IPv4 carrier NAT.
+pub const IPV6_REPLAY_SITE_PREFIX_BITS: u32 = 48;
+
+/// The sources a peer address counts against: its `client_ip::source_key` (the IPv4 address, or
+/// the IPv6 /64) and, for IPv6, its /48 site.
+fn replay_sources(ip: &str) -> Vec<String> {
+    let mut sources = vec![crate::shared::client_ip::source_key(ip)];
+    if let Ok(std::net::IpAddr::V6(v6)) = ip.parse::<std::net::IpAddr>()
+        && v6.to_ipv4_mapped().is_none()
+    {
+        let mask = u128::MAX << (128 - IPV6_REPLAY_SITE_PREFIX_BITS);
+        let site = std::net::Ipv6Addr::from(u128::from(v6) & mask);
+        sources.push(format!("{site}/{IPV6_REPLAY_SITE_PREFIX_BITS}"));
+    }
+    sources
+}
 
 struct ReplayJournal {
     path: std::path::PathBuf,
@@ -235,7 +270,13 @@ impl ReplayJournal {
                             "inconsistent replay-journal timestamp",
                         ));
                     }
-                    seen.insert((wallet.to_string(), timestamp.to_string()), signed_ms);
+                    seen.insert(
+                        (wallet.to_string(), timestamp.to_string()),
+                        ReplayEntry {
+                            signed_ms,
+                            sources: Vec::new(),
+                        },
+                    );
                 }
                 _ => {
                     return Err(std::io::Error::new(
@@ -284,11 +325,7 @@ impl ReplayJournal {
         Ok(())
     }
 
-    fn compact(
-        &mut self,
-        seen: &std::collections::HashMap<(String, String), i64>,
-        forgotten_through_ms: i64,
-    ) -> std::io::Result<()> {
+    fn compact(&mut self, seen: &ReplayEntries, forgotten_through_ms: i64) -> std::io::Result<()> {
         use std::io::Write as _;
 
         let temporary = self.path.with_extension("replay-journal.tmp");
@@ -300,8 +337,8 @@ impl ReplayJournal {
         writeln!(file, "F\t{forgotten_through_ms}")?;
         let mut entries: Vec<_> = seen.iter().collect();
         entries.sort_by(|left, right| left.0.cmp(right.0));
-        for ((wallet, timestamp), signed_ms) in entries {
-            writeln!(file, "S\t{signed_ms}\t{wallet}\t{timestamp}")?;
+        for ((wallet, timestamp), entry) in entries {
+            writeln!(file, "S\t{}\t{wallet}\t{timestamp}", entry.signed_ms)?;
         }
         file.sync_all()?;
         std::fs::rename(&temporary, &self.path)?;
@@ -322,12 +359,18 @@ impl ReplayJournal {
 /// `forgotten_through_ms`, at or below which nothing is admitted. A stepped-back wall clock
 /// therefore cannot make a dropped timestamp fresh again, and `forget_before` puts everything
 /// signed before this process started under the same floor.
+///
+/// The table is bounded overall by `max_entries` and per source by `max_entries_per_source`: a
+/// source at its quota is refused a new pair, which is then neither recorded nor answered, and
+/// no existing entry is dropped early.
 pub struct HandshakeReplayPolicy {
     enabled: bool,
     skew_ms: i64,
     max_entries: usize,
+    max_entries_per_source: usize,
     forgotten_through_ms: i64,
     seen: ReplayEntries,
+    entries_by_source: std::collections::HashMap<String, usize>,
     journal: Option<ReplayJournal>,
     storage_failed: bool,
 }
@@ -338,8 +381,10 @@ impl HandshakeReplayPolicy {
             enabled,
             skew_ms,
             max_entries,
+            max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
             forgotten_through_ms: i64::MIN,
             seen: std::collections::HashMap::new(),
+            entries_by_source: std::collections::HashMap::new(),
             journal: None,
             storage_failed: false,
         }
@@ -357,8 +402,10 @@ impl HandshakeReplayPolicy {
             enabled,
             skew_ms,
             max_entries,
+            max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
             forgotten_through_ms,
             seen,
+            entries_by_source: std::collections::HashMap::new(),
             journal: Some(journal),
             storage_failed: false,
         };
@@ -399,6 +446,11 @@ impl HandshakeReplayPolicy {
         self.enabled
     }
 
+    /// Live entries one source may hold; 0 removes the per-source bound.
+    pub fn set_max_entries_per_source(&mut self, max: usize) {
+        self.max_entries_per_source = max;
+    }
+
     pub fn forget_before(&mut self, wall_ms: i64) {
         let next = self.forgotten_through_ms.max(wall_ms.saturating_sub(1));
         if next == self.forgotten_through_ms {
@@ -413,9 +465,12 @@ impl HandshakeReplayPolicy {
         }
     }
 
+    /// Records a fresh pair from the peer address `ip` before it is answered; `None` is not
+    /// counted per source.
     pub fn try_admit(
         &mut self,
         now_ms: i64,
+        ip: Option<&str>,
         wallet: &str,
         timestamp: &str,
     ) -> Result<(), ReplayRejection> {
@@ -434,10 +489,23 @@ impl HandshakeReplayPolicy {
             return Err(ReplayRejection::Duplicate);
         }
 
-        if self.seen.len() >= self.max_entries / 2 {
+        let sources = match ip {
+            Some(ip) if self.max_entries_per_source > 0 => replay_sources(ip),
+            _ => Vec::new(),
+        };
+        let source_full = |policy: &Self| {
+            sources.iter().any(|source| {
+                policy.entries_by_source.get(source).copied().unwrap_or(0)
+                    >= policy.max_entries_per_source
+            })
+        };
+        if self.seen.len() >= self.max_entries / 2 || source_full(self) {
             self.sweep_expired(now_ms)?;
         }
 
+        if source_full(self) {
+            return Err(ReplayRejection::SourceQuota);
+        }
         if self.seen.len() >= self.max_entries {
             return Err(ReplayRejection::Capacity);
         }
@@ -449,7 +517,10 @@ impl HandshakeReplayPolicy {
             tracing::error!("Pulse replay journal write failed; admission is closed");
             return Err(ReplayRejection::Storage);
         }
-        self.seen.insert(key, signed_ms);
+        for source in &sources {
+            *self.entries_by_source.entry(source.clone()).or_default() += 1;
+        }
+        self.seen.insert(key, ReplayEntry { signed_ms, sources });
         if self
             .journal
             .as_ref()
@@ -484,11 +555,21 @@ impl HandshakeReplayPolicy {
     fn sweep_expired_in_memory(&mut self, now_ms: i64) {
         let oldest_fresh_ms = now_ms.saturating_sub(self.skew_ms);
         let mut forgotten_through_ms = self.forgotten_through_ms;
-        self.seen.retain(|_, &mut signed_ms| {
-            if signed_ms < oldest_fresh_ms {
-                forgotten_through_ms = forgotten_through_ms.max(signed_ms);
+        let entries_by_source = &mut self.entries_by_source;
+        self.seen.retain(|_, entry| {
+            if entry.signed_ms >= oldest_fresh_ms {
+                return true;
             }
-            signed_ms >= oldest_fresh_ms
+            forgotten_through_ms = forgotten_through_ms.max(entry.signed_ms);
+            for source in &entry.sources {
+                if let Some(count) = entries_by_source.get_mut(source) {
+                    *count -= 1;
+                    if *count == 0 {
+                        entries_by_source.remove(source);
+                    }
+                }
+            }
+            false
         });
         self.forgotten_through_ms = forgotten_through_ms;
     }
@@ -906,6 +987,14 @@ mod tests {
     }
 
     #[test]
+    fn a_ban_entry_starting_with_a_multibyte_character_is_kept_as_is() {
+        let mut bans = BanList::new();
+        bans.replace(["€abc"]);
+        assert!(bans.is_banned("0x€abc"));
+        assert!(!bans.is_banned("0xabc"));
+    }
+
+    #[test]
     fn ban_list_replace_returns_newly_banned() {
         let mut bans = BanList::new();
         assert_eq!(bans.replace(["0x1"]), vec!["0x1".to_string()]);
@@ -993,15 +1082,15 @@ mod tests {
     #[test]
     fn replay_first_admit_succeeds_then_dup_rejected() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
-        assert_eq!(p.try_admit(SIGNED, "0xabc", "1700000000000"), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, None, "0xabc", "1700000000000"), Ok(()));
 
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", "1700000000000"),
+            p.try_admit(SIGNED, None, "0xabc", "1700000000000"),
             Err(ReplayRejection::Duplicate)
         );
 
         assert_eq!(
-            p.try_admit(SIGNED, "0xABC", "1700000000000"),
+            p.try_admit(SIGNED, None, "0xABC", "1700000000000"),
             Err(ReplayRejection::Duplicate)
         );
     }
@@ -1010,14 +1099,17 @@ mod tests {
     fn replay_same_pair_is_never_admitted_again_after_its_entry_is_dropped() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
         let used = SIGNED.to_string();
-        assert_eq!(p.try_admit(SIGNED + SKEW, "0xabc", &used), Ok(()));
+        assert_eq!(p.try_admit(SIGNED + SKEW, None, "0xabc", &used), Ok(()));
 
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "0xdef", &later.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(later, None, "0xdef", &later.to_string()),
+            Ok(())
+        );
         assert_eq!(p.seen.len(), 1, "the expired entry was dropped");
         for stepped_back in [later, SIGNED + SKEW, SIGNED, SIGNED - SKEW] {
             assert_eq!(
-                p.try_admit(stepped_back, "0xabc", &used),
+                p.try_admit(stepped_back, None, "0xabc", &used),
                 Err(ReplayRejection::Forgotten)
             );
         }
@@ -1028,14 +1120,14 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
         let future_dated = (SIGNED + SKEW).to_string();
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", &future_dated),
+            p.try_admit(SIGNED, None, "0xabc", &future_dated),
             Err(ReplayRejection::FutureDated)
         );
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "0x1", &later.to_string()), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x1", &later.to_string()), Ok(()));
         assert_eq!(p.seen.len(), 1);
         let slowest_fresh = (later - SKEW).to_string();
-        assert_eq!(p.try_admit(later, "0x2", &slowest_fresh), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x2", &slowest_fresh), Ok(()));
     }
 
     #[test]
@@ -1043,18 +1135,21 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
         p.forget_before(SIGNED);
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", &(SIGNED - 1).to_string()),
+            p.try_admit(SIGNED, None, "0xabc", &(SIGNED - 1).to_string()),
             Err(ReplayRejection::Forgotten)
         );
-        assert_eq!(p.try_admit(SIGNED, "0xabc", &SIGNED.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xabc", &SIGNED.to_string()),
+            Ok(())
+        );
         p.forget_before(SIGNED - SKEW);
         assert_eq!(
-            p.try_admit(SIGNED, "0xdef", &(SIGNED - 1).to_string()),
+            p.try_admit(SIGNED, None, "0xdef", &(SIGNED - 1).to_string()),
             Err(ReplayRejection::Forgotten),
             "the floor never moves back"
         );
         assert_eq!(
-            p.try_admit(SIGNED, "0xdef", "not-a-number"),
+            p.try_admit(SIGNED, None, "0xdef", "not-a-number"),
             Err(ReplayRejection::Forgotten)
         );
     }
@@ -1062,13 +1157,18 @@ mod tests {
     #[test]
     fn replay_different_timestamp_or_wallet_accepted() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
-        assert_eq!(p.try_admit(SIGNED + 2, "0xabc", "1700000000001"), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED + 2, None, "0xabc", "1700000000001"),
+            Ok(())
+        );
         assert!(
-            p.try_admit(SIGNED + 2, "0xabc", "1700000000002").is_ok(),
+            p.try_admit(SIGNED + 2, None, "0xabc", "1700000000002")
+                .is_ok(),
             "fresh timestamp = legit reconnect"
         );
         assert!(
-            p.try_admit(SIGNED + 2, "0xdef", "1700000000001").is_ok(),
+            p.try_admit(SIGNED + 2, None, "0xdef", "1700000000001")
+                .is_ok(),
             "different wallet, same ts"
         );
     }
@@ -1077,25 +1177,31 @@ mod tests {
     fn replay_disabled_admits_everything() {
         let mut p = HandshakeReplayPolicy::new(false, SKEW, 4096);
         for _ in 0..100 {
-            assert_eq!(p.try_admit(SIGNED, "0xabc", "ts"), Ok(()));
+            assert_eq!(p.try_admit(SIGNED, None, "0xabc", "ts"), Ok(()));
         }
     }
 
     #[test]
     fn replay_capacity_rejects_new_admission_without_forgetting_live_entries() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
-        assert_eq!(p.try_admit(SIGNED + 3, "0x1", "1700000000001"), Ok(()));
-        assert_eq!(p.try_admit(SIGNED + 3, "0x2", "1700000000002"), Ok(()));
         assert_eq!(
-            p.try_admit(SIGNED + 3, "0x3", "1700000000003"),
+            p.try_admit(SIGNED + 3, None, "0x1", "1700000000001"),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + 3, None, "0x2", "1700000000002"),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + 3, None, "0x3", "1700000000003"),
             Err(ReplayRejection::Capacity)
         );
         assert_eq!(
-            p.try_admit(SIGNED + 1, "0x1", "1700000000001"),
+            p.try_admit(SIGNED + 1, None, "0x1", "1700000000001"),
             Err(ReplayRejection::Duplicate)
         );
         let later = SIGNED + SKEW + 3;
-        assert_eq!(p.try_admit(later, "0x3", &later.to_string()), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x3", &later.to_string()), Ok(()));
         assert_eq!(p.seen.len(), 1);
     }
 
@@ -1104,21 +1210,24 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 1);
         let future_dated = (SIGNED + SKEW).to_string();
         assert_eq!(
-            p.try_admit(SIGNED, "wallet", &future_dated),
+            p.try_admit(SIGNED, None, "wallet", &future_dated),
             Err(ReplayRejection::FutureDated)
         );
         for delta in [7_000, 31_000, 60_000, 120_000] {
             assert_eq!(
-                p.try_admit(SIGNED + delta, "wallet", &future_dated),
+                p.try_admit(SIGNED + delta, None, "wallet", &future_dated),
                 Err(ReplayRejection::Duplicate)
             );
             assert_eq!(
-                p.try_admit(SIGNED + delta, "other", &(SIGNED + delta).to_string()),
+                p.try_admit(SIGNED + delta, None, "other", &(SIGNED + delta).to_string()),
                 Err(ReplayRejection::Capacity)
             );
         }
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "other", &later.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(later, None, "other", &later.to_string()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1128,7 +1237,7 @@ mod tests {
         {
             let mut first = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
             assert_eq!(
-                first.try_admit(SIGNED, "0xabc", &future.to_string()),
+                first.try_admit(SIGNED, None, "0xabc", &future.to_string()),
                 Err(ReplayRejection::FutureDated)
             );
         }
@@ -1137,7 +1246,7 @@ mod tests {
                 .unwrap();
         restarted.forget_before(SIGNED + 1);
         assert_eq!(
-            restarted.try_admit(future, "0xabc", &future.to_string()),
+            restarted.try_admit(future, None, "0xabc", &future.to_string()),
             Err(ReplayRejection::Duplicate)
         );
     }
@@ -1171,7 +1280,7 @@ mod tests {
         // A real write error, without relying on platform-dependent chmod or disk exhaustion.
         policy.journal.as_mut().unwrap().file = std::fs::File::open(&path.0).unwrap();
         assert_eq!(
-            policy.try_admit(SIGNED, "wallet", &SIGNED.to_string()),
+            policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
             Err(ReplayRejection::Storage)
         );
         assert!(
@@ -1184,7 +1293,7 @@ mod tests {
             .open(&path.0)
             .unwrap();
         assert_eq!(
-            policy.try_admit(SIGNED + 1, "other", &(SIGNED + 1).to_string()),
+            policy.try_admit(SIGNED + 1, None, "other", &(SIGNED + 1).to_string()),
             Err(ReplayRejection::Storage)
         );
     }
@@ -1193,10 +1302,112 @@ mod tests {
     fn zero_capacity_fails_closed() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 0);
         assert_eq!(
-            p.try_admit(SIGNED, "wallet", "1700000000000"),
+            p.try_admit(SIGNED, None, "wallet", "1700000000000"),
             Err(ReplayRejection::Capacity)
         );
         assert!(p.seen.is_empty());
+    }
+
+    #[test]
+    fn source_quota_refuses_only_that_source_and_keeps_its_entries() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_source(2);
+        let ts = SIGNED.to_string();
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.1"), "0x2", &ts), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED, Some("192.0.2.1"), "0x3", &ts),
+            Err(ReplayRejection::SourceQuota)
+        );
+        // The refused pair was not recorded, and the source's entries were not dropped.
+        assert_eq!(p.seen.len(), 2);
+        assert_eq!(
+            p.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Another source, and a pair with no source, still have room.
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.2"), "0x3", &ts), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, None, "0x4", &ts), Ok(()));
+        // Once the source's entries leave the freshness window, its quota is free again.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, Some("192.0.2.1"), "0x5", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("192.0.2.1"), Some(&1));
+        assert_eq!(
+            p.try_admit(later, Some("192.0.2.1"), "0x1", &ts),
+            Err(ReplayRejection::Forgotten)
+        );
+    }
+
+    #[test]
+    fn ipv6_peers_share_the_quota_of_their_slash_48_site() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_source(2);
+        let ts = SIGNED.to_string();
+        // Two /64s of one /48 site take its whole quota.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:1::1"), "0x1", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:2::1"), "0x2", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:3::1"), "0x3", &ts),
+            Err(ReplayRejection::SourceQuota)
+        );
+        // Another /48 has its own quota, and IPv4 (also v4-mapped) is counted by address only.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:2:1::1"), "0x3", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("::ffff:192.0.2.1"), "0x4", &ts),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("192.0.2.1"), Some(&1));
+        // Expiry releases both the /64 and the /48 counts.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, Some("2001:db8:1:3::1"), "0x5", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("2001:db8:1::/48"), Some(&1));
+        assert_eq!(p.entries_by_source.get("2001:db8:1:1::/64"), None);
+    }
+
+    #[test]
+    fn source_quota_refusal_journals_nothing_and_admitted_pairs_survive_restart() {
+        let path = ReplayPath::new("source-quota");
+        let ts = SIGNED.to_string();
+        {
+            let mut first = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
+            first.set_max_entries_per_source(1);
+            assert_eq!(
+                first.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts),
+                Ok(())
+            );
+            assert_eq!(
+                first.try_admit(SIGNED, Some("192.0.2.1"), "0x2", &ts),
+                Err(ReplayRejection::SourceQuota)
+            );
+        }
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 4, &path.0, SIGNED + 1)
+                .unwrap();
+        restarted.set_max_entries_per_source(1);
+        assert_eq!(
+            restarted.try_admit(SIGNED + 1, Some("192.0.2.2"), "0x1", &ts),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Restored pairs carry no source, so they do not count against one after restart.
+        assert_eq!(
+            restarted.try_admit(SIGNED + 1, Some("192.0.2.1"), "0x2", &ts),
+            Ok(())
+        );
     }
 
     #[test]
