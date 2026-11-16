@@ -1611,9 +1611,9 @@ one long before), and a cursor on it would skip every profile stored after
 one signed later and every tie past a page edge. Its first pass starts at the
 head. A batch seeds baselines and claims first wears (`social.worn_history`)
 in the transaction that advances the cursor, and notifies after it commits,
-so a restart never re-notifies a claim. It uses the id cursor's default
-batch (200 rows) and gap grace (600 s), not the `BADGES_PROCESSOR_*` knobs,
-and publishes the same lag and gap gauges under its source. A profile the
+so a restart never re-notifies a claim. Its batch is
+`BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
+(600 s), and it publishes the same lag and gap gauges under its source. A profile the
 node stored more than 24 hours after its entity timestamp is history a
 syncing node caught up on and is passed without effect; the lag is measured
 at storage, so a stalled producer still works through its backlog.

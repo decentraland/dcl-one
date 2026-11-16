@@ -195,6 +195,9 @@ pub struct FirstWearSettings {
     pub shop_item_base_url: String,
     /// `FIRST_WEAR_IMAGE_BASE`: optional catalyst base the item image is repointed at.
     pub image_base: Option<String>,
+    /// `BADGES_PROCESSOR_BATCH_SIZE`: deployments per transaction, as for
+    /// the badge processor's id cursors.
+    pub batch_size: i64,
 }
 
 impl Default for FirstWearSettings {
@@ -202,6 +205,7 @@ impl Default for FirstWearSettings {
         Self {
             shop_item_base_url: "https://decentraland.org/marketplace/".to_string(),
             image_base: None,
+            batch_size: ProcessorSettings::default().batch_size,
         }
     }
 }
@@ -223,10 +227,9 @@ pub const CURSOR_SOURCE: &str = "friend_first_wear";
 /// stalls still works through its backlog.
 const MAX_STORAGE_LAG_HOURS: i64 = 24;
 
-/// Batches one pass drains at most before yielding. The batch size and gap
-/// grace are the id cursor's defaults (200 rows, 600 s), independent of the
-/// badge processor's `BADGES_PROCESSOR_*` knobs, which configure the badge
-/// jobs only.
+/// Batches one pass drains at most before yielding. A batch is
+/// [`FirstWearSettings::batch_size`] deployments (`BADGES_PROCESSOR_BATCH_SIZE`,
+/// as for the badge processor's id cursors), with the id cursor's gap grace.
 const MAX_BATCHES_PER_PASS: usize = 50;
 
 /// Every deployment by `id`, the profile metadata only: reading only the
@@ -279,7 +282,10 @@ pub async fn run_once(
     let pass = Pass {
         pool: pool.clone(),
         asset_base: String::new(),
-        settings: ProcessorSettings::default(),
+        settings: ProcessorSettings {
+            batch_size: settings.batch_size,
+            ..ProcessorSettings::default()
+        },
         pinned_xmin: None,
     };
     let mut emitted = 0u64;
@@ -1012,6 +1018,63 @@ mod pg_tests {
             has_baseline(&pool, &backlog).await,
             "a profile stored when it was signed is read however late the pass"
         );
+    }
+
+    /// One pass drains batch after batch of the configured size, and a wear
+    /// whose item cannot be resolved is logged without failing the pass or
+    /// the wears after it.
+    #[tokio::test]
+    async fn a_pass_drains_small_batches_and_survives_a_failed_resolution() {
+        let Some(pool) = private_pool("ffw_batches").await else {
+            return;
+        };
+        let settings = FirstWearSettings {
+            batch_size: 1,
+            ..FirstWearSettings::default()
+        };
+        run_once(&pool, None, &settings).await.unwrap();
+
+        let wearers: Vec<Address> = (0..3).map(|_| fresh_address()).collect();
+        for wearer in &wearers {
+            sqlx::query(
+                "INSERT INTO social.first_wear_baseline (address, seeded_at) VALUES ($1, $2)",
+            )
+            .bind(wearer)
+            .bind(now_utc())
+            .execute(&pool)
+            .await
+            .unwrap();
+            deploy_profile(
+                &pool,
+                wearer,
+                now_utc(),
+                &[
+                    "urn:decentraland:matic:collections-v2:0xEEE:1:1",
+                    "urn:decentraland:matic:collections-v2:0xFFF:2:2",
+                ],
+            )
+            .await;
+        }
+        // A subgraph URL the reader refuses: every resolution errors.
+        let market = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::chain_index::IndexSettings {
+                matic_collections_subgraph_url: Some("http://127.0.0.1:9/graph".to_string()),
+                ..crate::chain_index::IndexSettings::for_tests()
+            },
+        );
+        assert_eq!(
+            run_once(&pool, Some(&market), &settings).await.unwrap(),
+            0,
+            "a failed resolution is logged, not returned"
+        );
+        for wearer in &wearers {
+            assert_eq!(
+                worn(&pool, wearer).await.len(),
+                2,
+                "every batch of one deployment was read and claimed in one pass"
+            );
+        }
     }
 
     /// The rate-limit and online-bypass gates of every friend come back from
