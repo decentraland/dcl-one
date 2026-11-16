@@ -89,11 +89,19 @@ function createInitDiagnostics(write = console.error, now = () => performance.no
     wrapSpawn(spawn) {
       return (...args) => {
         let tail = ''
-        // Retain at most 4096 characters. Emit only recognized npm error codes, never raw output.
-        const codes = () => {
-          const matches = [...tail.matchAll(/npm (?:ERR!|error) code ([A-Z0-9_]+)\b/g)]
-          return { npmCodes: [...new Set(matches.map((match) => match[1]).filter((code) => safeCodes.has(code)))] }
+        const observedCodes = new Set()
+        // Receipts contain only recognized codes; exec separately forwards raw child output.
+        const collectCodes = (text) => {
+          for (let offset = 0; offset < text.length; offset += 1024) {
+            const window = tail + text.slice(offset, offset + 1024)
+            for (const match of window.matchAll(/npm (?:ERR!|error) code ([A-Z0-9_]+)(?=[^A-Z0-9_])/g)) {
+              if (safeCodes.has(match[1])) observedCodes.add(match[1])
+            }
+            // Enough overlap for the longest recognized receipt, including split chunks.
+            tail = window.slice(-64)
+          }
         }
+        const codes = () => ({ npmCodes: [...observedCodes] })
         const finish = begin('dependency-child', codes)
         let child
         try {
@@ -103,11 +111,12 @@ function createInitDiagnostics(write = console.error, now = () => performance.no
           throw error
         }
         const collect = (data) => {
-          tail = (tail + data.toString()).slice(-4096)
+          collectCodes(data.toString())
         }
         child.stderr?.on('data', collect)
         child.once('close', (code, signal) => {
           child.stderr?.off('data', collect)
+          collectCodes('\n')
           finish('close', {
             exitCode: Number.isInteger(code) ? code : null,
             signal: Object.hasOwn(constants.signals, signal) ? signal : null,

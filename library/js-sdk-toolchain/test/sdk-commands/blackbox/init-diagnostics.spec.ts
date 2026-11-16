@@ -96,7 +96,7 @@ describe('blackbox init diagnostics', () => {
     assert.deepEqual(receipts.map((receipt) => JSON.parse(receipt).state), ['start', 'complete'])
   })
 
-  test('observes child exit and a bounded safe error-code tail and detaches stream observers', () => {
+  test('retains early safe error codes after long output and detaches stream observers', () => {
     const receipts = []
     const diagnostics = createInitDiagnostics((receipt) => receipts.push(receipt), () => 0)
     const child = Object.assign(new EventEmitter(), { stderr: new PassThrough() })
@@ -115,7 +115,7 @@ describe('blackbox init diagnostics', () => {
     child.emit('close', 1, null)
     assert.equal(child.stderr.listenerCount('data'), 0)
     assert.deepEqual(JSON.parse(receipts.at(-1)), {
-      stage: 'dependency-child', state: 'close', elapsedMs: 0, exitCode: 1, signal: null, npmCodes: ['ECONNRESET']
+      stage: 'dependency-child', state: 'close', elapsedMs: 0, exitCode: 1, signal: null, npmCodes: ['E401', 'ECONNRESET']
     })
     assert.doesNotMatch(receipts.join('\n'), /private|secret|Bearer|https:/)
     assert.ok(receipts.join('\n').length < 512)

@@ -11,7 +11,7 @@ describe('blackbox: init', () => {
   afterEach(() => diagnostics?.reportPending())
 
   test('init command', async () => {
-    diagnostics = createInitDiagnostics((receipt: string) => console.error(`[sdk-init] ${receipt}`))
+    diagnostics = createInitDiagnostics((receipt: string) => process.stderr.write(`[sdk-init] ${receipt}\n`))
     const components = await diagnostics.step('components', initComponents)
     components.fetch = diagnostics.wrapFetch(components.fetch)
     components.fs = diagnostics.wrapFs(components.fs)
