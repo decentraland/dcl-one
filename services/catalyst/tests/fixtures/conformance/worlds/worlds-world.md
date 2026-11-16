@@ -81,7 +81,7 @@ Common notes:
 - **Writes switch.** `PUT /world/:world_name/settings` sits behind `writes::guard`; while
   `WORLDS_WRITES_ENABLED` is off (the default) it answers 503
   `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600`
-  (`worlds/src/writes.rs:29-75`). Every other route in this area is a read and stays open (WW-27).
+  (`worlds/src/writes.rs:29-67`). Every other route in this area is a read and stays open (WW-27).
 - **Deny list.** Both trees read the DAO `banned-names` list (upstream `DCL_LISTS_URL`, one-hour cache;
   dcl-one `explore_api.lists`, one-hour cache, `worlds/src/core/names.rs:16-78`) and normalize the name the
   same way (`toLowerCase().replace('.eth','').replace('.dcl','')`, first occurrence only) for `/about`,
@@ -637,7 +637,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
 
 27. **WW-27 · `PUT /settings` · the writes switch is off by default.** Status: intended (worlds-compatibility.md).
     - dcl-one: 503 `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600` until
-      `WORLDS_WRITES_ENABLED` is on (`services/catalyst/worlds/src/writes.rs:29-75`); worlds-compatibility.md,
+      `WORLDS_WRITES_ENABLED` is on (`services/catalyst/worlds/src/writes.rs:29-67`); worlds-compatibility.md,
       "Writes switch", once for every worlds write route (WD-03 too).
     - Drop-in: a node started with defaults refuses every settings edit until the operator sets the switch.
     - Severity: none (closed).

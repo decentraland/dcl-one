@@ -12,7 +12,7 @@
     ],
     "archipelago_control_extensions_websocket": [
       "configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
-      "baseline_legacy_ws_reconnect_preserves_ownership",
+      "configured_replica_signaling_cannot_steal_a_fresh_foreign_room",
       "pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire"
     ],
     "comms_v4_assignment_fence": [

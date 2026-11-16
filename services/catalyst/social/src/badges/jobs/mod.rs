@@ -670,10 +670,6 @@ fn spawn_one(
         move |ctx| {
             let pass = pass.clone();
             async move {
-                // A restore hold keeps every social write back, these too.
-                if crate::shared::writes::refusal(true).is_some() {
-                    return Ok(());
-                }
                 let written = run(pass).await?;
                 if written > 0 {
                     ctx.progress(format!("{written} rows passed"));

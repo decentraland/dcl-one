@@ -100,9 +100,6 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
  *  deployment first. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
-  // Restores also run after a successful body already closed the page. An extra Escape
-  // reaches the world instead, and can consume the key used to reopen the page next.
-  if (!(await explorer.hud.isVisible(marker))) return
   if (page === 'backpack') await explorer.profileDeployWindow()
   try {
     if ((await explorer.worldState()).keyboardClaimed === true) {
