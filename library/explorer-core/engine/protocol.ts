@@ -235,6 +235,10 @@ export type PageToScene =
   | CancelJoinRequestRequest
   | ManageCommunityRequestRequest
   | UnbanCommunityMemberRequest
+  | GetCommunityPostsRequest
+  | CreateCommunityPostRequest
+  | DeleteCommunityPostRequest
+  | LikeCommunityPostRequest
   | GetCommunityInvitesRequest
   | GetCommunityInvitesCountRequest
   | GetCommunityMemberSectionRequest
@@ -256,6 +260,7 @@ export type PageToScene =
   | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
+  | OpenExternalUrlRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -272,6 +277,7 @@ export type PageToScene =
   | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
+  | SetGalleryPhotoPublicRequest
 
 // ---- scene -> page ---------------------------------------------------------
 
@@ -696,8 +702,6 @@ export interface Profile {
   info?: ProfileInfo
   /** Mutual-friends count shown under the name. */
   mutuals?: number
-  /** Camera-reel photo URLs (Photos tab). */
-  photos?: string[]
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */
@@ -713,8 +717,8 @@ export interface GetProfileRequest {
   kind: 'getProfile'
 }
 
-/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges,
- *  photos and equipped items come too (each a service call of its own, so only the passport asks). */
+/** Fetch a user's profile by address from the engine's cache. With `extras`, the passport's badges
+ *  and equipped items come too (each a service call of its own, so only the passport asks). */
 export interface GetUserProfileRequest {
   kind: 'getUserProfile'
   address: string
@@ -907,6 +911,20 @@ export interface AcceptWelcomeRequest {
 export interface OpenLegalRequest {
   kind: 'openLegal'
   doc: 'terms' | 'privacy'
+}
+
+/** Open an `https:` url in the user's browser (the scene's openExternalUrl, which works from the
+ *  native HUD too). Answered by an ExternalUrlOpenedMessage. */
+export interface OpenExternalUrlRequest {
+  kind: 'openExternalUrl'
+  requestId: number
+  url: string
+}
+
+export interface ExternalUrlOpenedMessage {
+  kind: 'externalUrlOpened'
+  requestId: number
+  ok: boolean
 }
 
 export interface WelcomeAcceptedMessage {
@@ -1433,6 +1451,10 @@ export type CommunityAction =
   | CommunityMemberAction
   | 'unban'
   | CommunityRequestAction
+  | 'fetchPosts'
+  | 'createPost'
+  | 'deletePost'
+  | 'likePost'
 
 /** Lift a member's ban, from the card's Banned section (page → scene → signed DELETE
  *  /v1/communities/{id}/members/{address}/bans). */
@@ -1557,6 +1579,8 @@ export interface CommunityActionFailedMessage {
   id: string
   action: CommunityAction
   message: string
+  /** The announcement a failed `deletePost` was about. */
+  postId?: string
 }
 
 /** A member of a community (Members tab). */
@@ -1595,9 +1619,77 @@ export interface CommunityPost {
   author: string
   authorAddress: string
   authorPicture?: string
+  /** The author claimed their name: a verified mark instead of the address's #tag. */
+  hasClaimedName: boolean
+  /** The social API marked the post official (its author is one of the official wallets): the official mark. */
+  official: boolean
   text: string
   timestamp: number
   likes: number
+  /** The signed-in user likes it. */
+  likedByMe: boolean
+}
+
+/** Read a page of a community's announcements (page → scene → signed GET
+ *  /v2/communities/{id}/posts, POSTS_PAGE a page). */
+export interface GetCommunityPostsRequest {
+  kind: 'getCommunityPosts'
+  id: string
+  /** 1-based. */
+  page: number
+}
+
+/** A page of a community's announcements, newest first (scene → page). A failed read arrives as
+ *  `communityActionFailed` with action `fetchPosts`. */
+export interface CommunityPostsMessage {
+  kind: 'communityPosts'
+  id: string
+  page: number
+  posts: CommunityPost[]
+  /** Every announcement the community has. */
+  total: number
+}
+
+/** Post an announcement as an owner or moderator (page → scene → signed POST
+ *  /v1/communities/{id}/posts). The first page is read again after it. */
+export interface CreateCommunityPostRequest {
+  kind: 'createCommunityPost'
+  id: string
+  content: string
+}
+
+/** How an announcement's post went (scene → page): the composer clears on `ok`, and a failure is toasted. */
+export interface CommunityPostCreatedMessage {
+  kind: 'communityPostCreated'
+  id: string
+  ok: boolean
+}
+
+/** Delete an announcement: the owner any, an author their own (page → scene → signed DELETE
+ *  /v1/communities/{id}/posts/{postId}). The first page is read again after it; a failure arrives
+ *  as `communityActionFailed` with action `deletePost`. */
+export interface DeleteCommunityPostRequest {
+  kind: 'deleteCommunityPost'
+  id: string
+  postId: string
+}
+
+/** Like or unlike an announcement (page → scene → signed POST or DELETE
+ *  /v1/communities/{id}/posts/{postId}/like). */
+export interface LikeCommunityPostRequest {
+  kind: 'likeCommunityPost'
+  id: string
+  postId: string
+  like: boolean
+}
+
+/** How a like or unlike went (scene → page); a failure is toasted and changes nothing. */
+export interface CommunityPostLikedMessage {
+  kind: 'communityPostLiked'
+  id: string
+  postId: string
+  liked: boolean
+  ok: boolean
 }
 
 /** An upcoming event (right-hand sidebar). */
@@ -1624,7 +1716,6 @@ export interface CommunityDetailMessage {
   kind: 'communityDetail'
   id: string
   members: CommunityMember[]
-  posts: CommunityPost[]
   places: CommunityPlace[]
   events: CommunityEvent[]
   photos: CommunityPhoto[]
@@ -1727,14 +1818,24 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** One page of the local player's camera reel (signed, so private photos are included), newest
+ *  first as the service orders them. `requestId` is echoed in the GalleryMessage that answers it. */
 export interface GetGalleryRequest {
   kind: 'getGallery'
+  requestId: number
+  offset: number
+  limit: number
 }
 
-/** The local player's camera-reel photos + storage usage (current/max). */
+/** A page of the local player's camera-reel photos + storage usage: `current` is the total number of
+ *  photos the player has, `max` the storage limit. `received` counts the images the service sent,
+ *  url-less ones included, which `photos` drops. */
 export interface GalleryMessage {
   kind: 'gallery'
+  requestId: number
+  ok: boolean
   photos: GalleryPhoto[]
+  received: number
   current: number
   max: number
 }
@@ -1751,10 +1852,29 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
-/** Delete one of the local player's photos (signed DELETE; re-emits the gallery). */
+/** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
+  requestId: number
   id: string
+}
+
+/** Make one of the local player's photos public or private (signed PATCH). Answered by a
+ *  GalleryWriteMessage. */
+export interface SetGalleryPhotoPublicRequest {
+  kind: 'setGalleryPhotoPublic'
+  requestId: number
+  id: string
+  isPublic: boolean
+}
+
+/** The outcome of a gallery write. A delete also reports the storage usage that follows it. */
+export interface GalleryWriteMessage {
+  kind: 'galleryWrite'
+  requestId: number
+  ok: boolean
+  current?: number
+  max?: number
 }
 
 /** An owned wearable (backpack catalog item). */
@@ -2240,6 +2360,9 @@ export type SceneToPage =
   | VoiceActivityMessage
   | NearbyMutesMessage
   | CommunityActionFailedMessage
+  | CommunityPostsMessage
+  | CommunityPostCreatedMessage
+  | CommunityPostLikedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
   | CommunityDeletedMessage
@@ -2266,6 +2389,7 @@ export type SceneToPage =
   | HomeSceneMessage
   | WelcomeMessage
   | WelcomeAcceptedMessage
+  | ExternalUrlOpenedMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage
@@ -2273,6 +2397,7 @@ export type SceneToPage =
   | LookShownMessage
   | GalleryMessage
   | GalleryPhotoMessage
+  | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage
   | PermissionUsedMessage

@@ -596,6 +596,13 @@ pub(super) async fn places_add(ctx: &Ctx<'_>, id: &str) -> Response {
         Ok(c) => c,
         Err(r) => return *r,
     };
+    if !crate::communities::places::place_ids_within_bounds(&m.place_ids) {
+        return bad(format!(
+            "place_ids must hold 1 to {} ids of at most {} characters",
+            crate::communities::places::MAX_PLACE_IDS,
+            crate::communities::places::MAX_PLACE_ID_CHARS
+        ));
+    }
     if let Err(r) = require_permission(
         ctx.state,
         community,

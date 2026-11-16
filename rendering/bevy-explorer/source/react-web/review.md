@@ -17,21 +17,21 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
-npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
+pnpm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
+pnpm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
-npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
-(cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
+pnpm run test:visual        # tier 1.5 — visual regression (headless, no engine)
+(cd bridge-scene && pnpm run build && pnpm run lint)   # the SDK's type check + eslint (must be 0 errors)
 ```
 
 The bridge scene is type-checked by `sdk-commands build`, not bare `tsc` — its tsconfig trips
 TypeScript's deprecation errors under the installed compiler.
 
-`test:visual` reuses whatever is already serving `:5173` (and `npm run dev` reuses `:8100`), so in a
+`test:visual` reuses whatever is already serving `:5173` (and `pnpm run dev` reuses `:8100`), so in a
 worktree make sure those aren't another checkout's servers, or run your own on other ports
 (`E2E_URL=http://localhost:5174`).
 
-If `test:visual` reports diffs, open the Playwright HTML report (`npx playwright show-report`) and
+If `test:visual` reports diffs, open the Playwright HTML report (`pnpm exec playwright show-report`) and
 look at the **expected vs actual vs diff** images. Either it's a real regression (fix it) or an
 intended change (refresh the baseline — see §2).
 
@@ -55,9 +55,9 @@ room status. An initial `connecting` room stays quiet during ordinary scene cros
 
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
-| **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
-| **1.5 — visual** | `npm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
-| **2 — engine** | `npm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
+| **1 — contract** | `pnpm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
+| **1.5 — visual** | `pnpm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
+| **2 — engine** | `pnpm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
 
 Tier 1 is the contract net (every call, including ones a guest can't reach). Tier 1.5 is the
 *appearance* net (the thing humans notice). Tier 2 is the *it-actually-talks-to-the-engine* net.
@@ -103,7 +103,7 @@ it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.t
 
 **Updating baselines** (only when the change is intentional):
 ```bash
-npm run test:visual:update      # regenerates the PNGs
+pnpm run test:visual:update      # regenerates the PNGs
 git add e2e/visual.spec.ts-snapshots && git diff --cached --stat   # then EYEBALL the new PNGs
 ```
 Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
@@ -149,7 +149,7 @@ from the communities the account is a member of; `library/ui/apps/hud/test/hoste
 `apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
 and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
 that owns a LAND or a World with a deployed scene; `library/ui/apps/hud/test/hosted/communities.clicks.test.tsx` covers the
-form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; `library/ui/apps/hud/test/hosted/communities.announcements.test.tsx` covers the Announcements tab's paging, posting, deleting, liking, marks and toasts, and `src/test/bridgeCommunities.test.ts` the bridge's posts calls and the service's official mark; posting needs an owner or moderator account, and the official mark an author in the explorer feature flags' `alfa-official-wallets` list on a dcl-one node; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
@@ -212,8 +212,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       throttled, not doing work every frame for free.
 - [ ] **Tests** — tier 1 still green; **a new/changed domain has a tier-1.5 baseline**; world-space
       changes ran the §4 checklist.
-- [ ] **Both projects typecheck** (`npm run typecheck` + `cd bridge-scene && npm run build`), and the
-      bridge scene lints clean (`npm run lint` there).
+- [ ] **Both projects typecheck** (`pnpm run typecheck` + `cd bridge-scene && pnpm run build`), and the
+      bridge scene lints clean (`pnpm run lint` there).
 - [ ] **No secrets / `.env` or working reports** staged; review the staged paths under the
       repository-root `AGENTS.md` rules. Use an imperative commit subject without AI attribution.
 
@@ -233,7 +233,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 3. Add a tier-1 test for its API contract + clicks beside the shared code: `library/explorer-core/test/`
    for core code, `library/ui/apps/hud/test/hosted/` for UI and session code (`src/test/` only for this
    host's own files).
-4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
+4. Add a screenshot to `e2e/visual.spec.ts` and run `pnpm run test:visual:update`.
 5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
 6. List its expectations here.
 
@@ -376,6 +376,37 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Gallery (camera reel)
+
+The Gallery page and the passport's Photos tab (`library/ui/apps/hud/features/gallery`, bridge `domains/gallery.ts`).
+Expectations:
+
+- **Paging**: a reel is read 100 photos a page, the next page when fewer than 12 loaded photos remain
+  past the last one on screen, and paging stops once the reel's total is loaded or the service sends
+  a short page (counted before url-less images are dropped) (`useReelList`). Every Gallery open reads
+  again from the top. Your own reel goes through the bridge, signed (private photos included), its
+  replies matched by `requestId` (`bridgeCall`). The passport reads the PUBLIC reel from the HUD
+  itself, unsigned (`publicReels.ts`), since every bridge request is signed; `?mock=1` swaps in the
+  mock bridge's reels.
+- **Failures**: a failed first page shows an error with RETRY, never the empty reel; a failed later
+  page ends the grid with a RETRY row, and paging waits for it instead of asking on every scroll.
+- **The grid** (`ReelGrid`) mounts only the rows near the viewport; it reports what is on screen only
+  once it has measured it. Gallery: 6 x 306x230 with month headers; passport: 4 columns at 272:201,
+  no headers. A thumbnail is disabled until its image has loaded.
+- **The options menu** (`design/AnchoredMenu` around `ContextMenu`): Set as Public, Share on X, Copy
+  Link, Download, Delete, in that order (`reelActions.ts`, `useOwnReelActions.ts`). The passport offers
+  it only on your own passport, and making a photo private there drops it at once (back in place if
+  the write fails). It is portaled with `--ui-scale`, opens below-right of the ⋮ and flips or clamps
+  at the screen edges: check it visually near the edges. On native, Download needs the engine's CEF
+  download handler (`crates/cef_offscreen`): it saves to `Downloads` under the home folder and
+  reports how each save ended, and the toast waits for that report. That toast shows the folder,
+  which opens in the file manager on a click (once per toast); web has no such link. Share on X on native asks the
+  bridge scene to open the post in the user's browser (`openExternalUrl`, `https:` only); on web
+  it opens a tab.
+- Tests: in `library/ui/apps/hud/test/`, `hosted/gallery.test.tsx` (the session calls),
+  `hosted/gallery.page.test.tsx` (paging, failures, the menu and its actions),
+  `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu
+  placement); here, `src/test/bridgeGallery.test.ts` (the bridge's requests and replies).
 
 ## Donate
 

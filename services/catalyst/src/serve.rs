@@ -181,6 +181,7 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
+    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
     prepared.settings.content_url = stats_content_url(
         config.node.content_url.as_deref(),
         &content.settings.content_public_url,
@@ -1076,6 +1077,9 @@ pub async fn serve(
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
     social.communities.set_chain_index(market.index.clone());
+    social
+        .communities
+        .set_explorer_flags(explorer_api.flags.clone());
     social.communities.load_flags().await?;
     if let Err(error) = social.communities.refresh_flags(&explorer_api).await {
         tracing::warn!(%error,"initial DAPPS flags refresh failed; retaining the stored document");

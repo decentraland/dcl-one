@@ -738,12 +738,22 @@ fn identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
 }
 
+/// Whether a room name can classify as anything but
+/// [`RoomClassification::Unrelated`]: a world scene, world lobby, upstream
+/// `scene-` or gatekeeper `scene:` name. Island and voice chat rooms cannot.
+pub(crate) fn may_classify_relevant(room: &str) -> bool {
+    [
+        SCENE_ROOM_PREFIX,
+        "scene-",
+        WORLD_ROOM_PREFIX,
+        GATEKEEPER_SCENE_ROOM_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| room.starts_with(prefix))
+}
+
 pub(crate) fn room_scope(room: &str) -> Option<RoomScope<'_>> {
-    if room.starts_with(SCENE_ROOM_PREFIX)
-        || room.starts_with("scene-")
-        || room.starts_with(WORLD_ROOM_PREFIX)
-        || room.starts_with(GATEKEEPER_SCENE_ROOM_PREFIX)
-    {
+    if may_classify_relevant(room) {
         return Some(RoomScope::WorldScene(room));
     }
     room.strip_prefix(ISLAND_ROOM_PREFIX)

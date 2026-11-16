@@ -1,0 +1,4 @@
+# No package runs code at install time: esbuild's binary ships as an optional dependency.
+ignoreScripts: true
+allowBuilds:
+  esbuild: false
