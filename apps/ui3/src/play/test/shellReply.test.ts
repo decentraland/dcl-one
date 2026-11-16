@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { shellRequest } from '@explorer-core/lib/shell'
 import { isShellError, ShellError, shellResponse } from '@explorer-core/lib/shellReply'
-import { SHOP_BUSY, shopBusy } from '../lib/shopProtocol'
+import { SHOP_BUSY, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 
 /** The shell's side: each request the app posts runs `run`, and its response comes back as postMessage carries it. */
 function shellAnswering(run: () => Promise<unknown>): void {

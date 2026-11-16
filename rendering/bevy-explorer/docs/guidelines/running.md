@@ -26,6 +26,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
+loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
+
 ### Gateway routing
 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
@@ -265,9 +268,9 @@ State, in every build:
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
-  (the same per format: `ktx2-bc`, and `glb-br` on web), `fallbacks` (files that loaded their
-  original instead) and `recentFallbacks` (the last 20, with the file, its entity and the
-  reason).
+  (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
+  their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
+  and `recentFallbacks` (the last 20, with the file, its entity and the reason).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,

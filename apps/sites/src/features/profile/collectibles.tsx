@@ -116,6 +116,8 @@ function tryAgain<T>(query: CollectiblesQuery<T>, focus: FocusRows): ReactNode {
     <Button
       variant="secondary"
       size="md"
+      // A refetch with data already read keeps the query a success: the button shows it is working.
+      loading={query.isFetching}
       onClick={() => {
         focus.expectRowsFrom(0);
         void query.refetch();
@@ -143,9 +145,15 @@ export function unreadyState<T extends { id: string }>(
   }
   if (!query.data) return { kind: "loading", label: `Loading ${copy.noun}` };
   if (rows.length === 0 && receivedAny(query.data)) {
+    // The status line says when it is reading again and when that failed, not only the first result.
+    const message = query.isRefetching
+      ? `Reading the ${copy.noun} again.`
+      : query.isRefetchError
+        ? `${copy.unreadable} Trying again failed.`
+        : copy.unreadable;
     return {
       kind: "error",
-      message: copy.unreadable,
+      message,
       action: loadMore(query, copy.noun, () => focus.expectRowsFrom(0)) ?? tryAgain(query, focus),
     };
   }

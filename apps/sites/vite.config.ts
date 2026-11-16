@@ -14,6 +14,8 @@ const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+const shopHost = fileURLToPath(new URL("../ui3/src/play/shopHost.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
 // copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
 // to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
@@ -277,6 +279,7 @@ export default defineConfig({
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
         "@hud-host": hudHost,
+        "@shop-host": shopHost,
         "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
         "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
         "@noble/hashes/utils.js": noble("hashes/utils.js"),

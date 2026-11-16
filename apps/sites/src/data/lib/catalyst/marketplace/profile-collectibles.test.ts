@@ -271,15 +271,29 @@ describe("fetchProfileAssets", () => {
       data: [
         token({ category: "parcel", name: "Parcel", data: { parcel: { x: "162", y: "-133", description: null, estate: null } } }),
         token({ id: "e-1", category: "estate", name: "Estate", data: { estate: { size: 2, description: null, parcels: [] } } }),
-        token({ id: "n-1", category: "ens", name: "Ens", data: { ens: { subdomain: "" } } }),
         token({ id: "p-2", category: "parcel", name: "Parcel", data: { parcel: { x: null, y: null } } }),
       ],
-      total: 4,
+      total: 3,
     });
 
     const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
 
-    expect(items.map((row) => row.name)).toEqual(["Parcel 162,-133", "Estate", "Untitled", "Untitled"]);
+    expect(items.map((row) => row.name)).toEqual(["Parcel 162,-133", "Estate", "Untitled"]);
+  });
+
+  it("keeps real names that match their category, and names a NAME by its subdomain without one", async () => {
+    json.mockResolvedValue({
+      data: [
+        token({ id: "n-1", category: "ens", name: "ens.dcl.eth", data: { ens: { subdomain: "ens" } } }),
+        token({ id: "n-2", category: "ens", name: "", data: { ens: { subdomain: "brai" } } }),
+        token({ id: "w-1", category: "wearable", name: "Wearable" }),
+      ],
+      total: 3,
+    });
+
+    const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
+
+    expect(items.map((row) => row.name)).toEqual(["ens", "brai", "Wearable"]);
   });
 
   it("names a parcel without a name by its coordinates, and keeps a row whose name is null", async () => {

@@ -225,7 +225,6 @@ consumer, and verify a change to it in every app that imports it.
 - Use shared tokens rather than hardcoded values or values copied from another
   app.
 - Each app keeps its own global entry point for its resets and base rules.
-- A page that moves to `apps/<app>` before its Figma components exist may port its current UI as provisional components in `library/ui/apps/<app>/provisional/`, styled with the shared tokens. Each provisional file carries a `TODO(figma-ds)` mark, and the folder's `README.md` lists each component with its source and the Figma component that replaces it. When that component lands in `library/ui/components`, its consumers switch to it and the provisional one is deleted.
 - When a second app or the Bevy HUD needs the same component or foundation,
   move it from `library/ui/apps/<app>/` (or from the app) to the shared `components/` or `foundations/`, update its
   consumers and remove the old copy.
@@ -409,7 +408,9 @@ include the shared sources so that changes invalidate the affected artifacts.
   (`src/test/sharedUi.test.tsx` checks them).
 
 The Sites host maps `@hud`, `@explorer-core` and `@hud-host` the same way,
-with React deduplicated and both folders allowed to its dev servers:
+and also `@shop-host`, the in-world Shop's host (`library/ui/apps/shop/hostContract.ts`,
+implemented by `apps/ui3/src/play/shopHost.ts`), with React and TanStack Query
+deduplicated and both folders allowed to its dev servers:
 `apps/ui3/tsconfig.json` and `apps/ui3/vitest.config.ts` for the `/play`
 type check and tests, `apps/sites/tsconfig.json` and
 `apps/sites/vite.config.ts` for the Sites build.

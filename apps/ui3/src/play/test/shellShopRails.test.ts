@@ -8,7 +8,7 @@ import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import { BOOK, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
-import { SHOP_PROTOCOL, type ShopOperationEvent } from '../lib/shopProtocol'
+import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView } from '../shell/shop/purchase'
 
 const BUYER = BOOK.buyer.toLowerCase()

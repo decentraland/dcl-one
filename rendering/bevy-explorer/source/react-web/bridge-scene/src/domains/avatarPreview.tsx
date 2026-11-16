@@ -69,7 +69,7 @@ const THUMBNAIL_SIZE = 480
 const LOBBY_BASE = Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, 1)
 const LOBBY_BACKDROP = 'images/lobby-background.jpg'
 const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
-// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
+// The Shop's stage (library/ui/apps/shop/assets/stage.jpg, the same file): drawn behind the avatar where the page
 // says it draws it, so the avatar's window in the page shows no seam.
 const SHOP_STAGE = 'images/shop-stage.jpg'
 // The sign-in background, as the page draws it: the purple vignette, the logo pattern drifting over it

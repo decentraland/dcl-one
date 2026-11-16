@@ -270,7 +270,6 @@ windows through OTLP; receive-timed legacy observations cannot establish CPU
 utilization. Metrics serialization, execution baselines and CPU bucket tests run with:
 
 ```sh
-python3 tooling/patched-sources.py materialise # from the repository root: the trees cargo reads
 cd rendering/bevy-explorer/source
 cargo test --locked --no-default-features --features headless --lib headless::stats
 ```

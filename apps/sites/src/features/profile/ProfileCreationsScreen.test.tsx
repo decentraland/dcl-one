@@ -194,8 +194,10 @@ describe("profile creations", () => {
     expect(screen.queryByRole("link", { name: "Hat 0" })).toBeNull();
     const emotes = screen.getByRole("tab", { name: "Emotes" });
     expect(emotes.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(emotes.id);
-    expect(emotes.getAttribute("aria-controls")).toBe(screen.getByRole("tabpanel").id);
+    // The category panel, inside the profile frame's own tabpanel.
+    const panel = document.getElementById(emotes.getAttribute("aria-controls") ?? "");
+    expect(panel?.getAttribute("role")).toBe("tabpanel");
+    expect(panel?.getAttribute("aria-labelledby")).toBe(emotes.id);
   });
 
   it("moves between categories with the arrow keys, wrapping at the ends", async () => {
@@ -225,11 +227,12 @@ describe("profile creations", () => {
     net.fetchProfileCreations.mockReturnValue(new Promise((r) => (resolve = r)));
     show();
 
-    expect(screen.getByRole("tabpanel").tabIndex).toBe(0);
+    const panel = () => document.getElementById(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-controls") ?? "") as HTMLElement;
+    expect(panel().tabIndex).toBe(0);
 
     await act(async () => resolve(page([creation(0)])));
     await screen.findByRole("link", { name: "Hat 0" });
-    expect(screen.getByRole("tabpanel").tabIndex).toBe(-1);
+    expect(panel().tabIndex).toBe(-1);
   });
 
   it("tells a visitor the member has created nothing", async () => {

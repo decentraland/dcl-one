@@ -82,7 +82,7 @@ use dcl_component::{
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    EntityDefinition, IpfsAssetServer,
+    EntityDefinition, IpfsAssetServer, IpfsResource,
 };
 use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
@@ -1028,6 +1028,8 @@ fn spawn_scenes(
     scene_ents: Query<&SceneEntity>,
     mut contexts: Query<&mut RendererSceneContext>,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    // absent without the asset pipeline (tests): nothing reloads
+    ipfs: Option<Res<IpfsResource>>,
 ) {
     for (ent, def, parent) in query.iter() {
         let def = &def.render;
@@ -1053,10 +1055,18 @@ fn spawn_scenes(
             )
             .any(|model| {
                 let h_model = &model.gltf;
-                matches!(
-                    asset_server.get_load_state(h_model),
-                    Some(bevy::asset::LoadState::Loading)
-                )
+                match asset_server.get_load_state(h_model) {
+                    Some(bevy::asset::LoadState::Loading) => true,
+                    // a model whose `glb` variant failed loads again from its original: wait
+                    // for it rather than build the avatar without that piece
+                    Some(bevy::asset::LoadState::Failed(_)) => ipfs
+                        .as_ref()
+                        .zip(h_model.path())
+                        .is_some_and(|(ipfs, path)| {
+                            ipfs.bevy_variant_model_reload_pending(path.path())
+                        }),
+                    _ => false,
+                }
             });
 
         if any_loading {
