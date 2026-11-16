@@ -1,0 +1,34 @@
+/* Bottom-left of the 1920x1080 canvas: the buttons 40px up from the bottom, the version 13px up. */
+.footer {
+  position: absolute;
+  left: 20px;
+  bottom: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.buttons {
+  display: flex;
+  gap: 10px;
+}
+.button {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-xs);
+  color: var(--white-50);
+}
+.exit {
+  width: 80px;
+  gap: 6px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.version {
+  margin: 0;
+  height: 22px;
+  font-size: var(--type-14);
+  line-height: 22px;
+  color: var(--white-50);
+}

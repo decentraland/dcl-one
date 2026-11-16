@@ -329,6 +329,7 @@ mod gateway_tests {
             (Service::Autotranslate, "autotranslate-server"),
             (Service::DclLists, "dcl-lists"),
             (Service::ArchipelagoStats, "archipelago-ea-stats"),
+            (Service::BuilderApi, "builder-api"),
         ] {
             let direct_path = match service {
                 Service::Catalyst => String::new(),

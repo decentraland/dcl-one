@@ -63,6 +63,8 @@ pub enum Service {
     DclLists,
     /// Archipelago stats: where the connected players are, for the map — HUD only
     ArchipelagoStats,
+    /// Builder api: the newsletter sign-up a new account opts into — HUD only
+    BuilderApi,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
     PulseServer,
 }
@@ -110,6 +112,7 @@ impl Service {
             Service::Autotranslate => ("https", "autotranslate-server", ""),
             Service::DclLists => ("https", "dcl-lists", ""),
             Service::ArchipelagoStats => ("https", "archipelago-ea-stats", ""),
+            Service::BuilderApi => ("https", "builder-api", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
     }
@@ -143,6 +146,7 @@ impl Service {
             Service::Autotranslate => "autotranslate",
             Service::DclLists => "dcl_lists",
             Service::ArchipelagoStats => "archipelago_stats",
+            Service::BuilderApi => "builder_api",
             Service::PulseServer => "pulse_server",
         }
     }
@@ -289,6 +293,10 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub archipelago_stats: Option<String>,
 
+    /// Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub builder_api: Option<String>,
+
     /// Pulse comms server, `host` or `host:port` (no port = the platform's: 7777 ENet on native,
     /// 7743 WebTransport on web); absent = `pulse-server.<base>`
     #[arg(long, value_name = "host[:port]", help_heading = HELP_HEADING)]
@@ -323,6 +331,7 @@ impl ServiceOverrides {
             Service::Autotranslate => &self.autotranslate,
             Service::DclLists => &self.dcl_lists,
             Service::ArchipelagoStats => &self.archipelago_stats,
+            Service::BuilderApi => &self.builder_api,
             Service::PulseServer => &self.pulse_server,
         }
         .as_deref()

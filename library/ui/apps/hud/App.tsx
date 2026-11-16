@@ -25,7 +25,6 @@ import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
-import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
@@ -41,8 +40,8 @@ import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrus
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
-import { LoadingAndLogin } from './features/login/LoadingAndLogin'
-import { GuestStartPage } from './features/login/GuestStartPage'
+import { StartupFlow } from './features/startup/StartupFlow'
+import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
@@ -402,6 +401,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
   useHudInsetReport(session.setInteractableArea, session.phase === 'world' && !session.menuOpen && !pageOpen)
+  // the sign-in music, from the first screen until the player is first in the world
+  const loginMusic = useLoginMusic(useBeforeWorld(session.phase) && !HIDE_HUD)
 
   // Embedded mode: mount only the engine (+ the error surfaces so a crash isn't silently blank).
   // No sidebar / chat / pointer / panels / sign-in UI. PopupHost renders nothing while the stack is
@@ -422,13 +423,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
-      {session.phase === 'login' &&
-        (session.login.status === 'sign-in-or-guest' && !session.login.authPending ? (
-          <GuestStartPage flow={session.login} />
-        ) : (
-          <LoadingAndLogin flow={session.login} />
-        ))}
-      {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
+      {(session.phase === 'login' || session.phase === 'welcome') && <StartupFlow flow={session.login} music={loginMusic} />}
       {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>

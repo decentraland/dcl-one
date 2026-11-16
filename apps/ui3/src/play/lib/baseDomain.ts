@@ -77,7 +77,8 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   notifications: '/notifications',
   'assets-cdn': '/assets-cdn',
   'dcl-lists': '/dcl-lists',
-  'archipelago-ea-stats': '/archipelago-ea-stats'
+  'archipelago-ea-stats': '/archipelago-ea-stats',
+  'builder-api': '/builder-api'
 }
 // Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
 // CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths

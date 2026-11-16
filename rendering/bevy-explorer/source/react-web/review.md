@@ -194,6 +194,12 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
       The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
+      show its avatar on the golden podium at the right, over the sign-in background (vignette and
+      drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
+      out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
+      look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
+      Mock has no engine, so the page's background stays.
 
 ---
 
@@ -317,15 +323,22 @@ back as `analyticsSession`). Expectations:
   shell and the app take the attribution params (`utm_*`, `gad_*`, ad click ids such as `gclid`,
   the landing page's anonymous id) off the address bar (`dropAttributionParams`), so a copied link
   or a reload does not attribute again; the Google tag gets them from what the shell kept at load.
-- **Sign-in** (`useEngineSession`): with no session the guest start page (`GuestStartPage`) is
-  AVATAR_NAMING, its ACCEPT AND PLAY a LETS_GO click and CONTINUE WITH AN ACCOUNT (sign in or
-  sign up) a SIGN_IN click; the guest account is created only on that click, and the welcome page
-  it then needs is answered with the picked name instead of shown. COMEBACK (after a failed stored
-  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
-  clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
-  thirdweb guest step (`features/auth/guestWalletEvent.ts`).
-- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
-  NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
+- **Sign-in** (`useEngineSession`): with no session the first screen (`features/startup`) is
+  ACCOUNT_HOME, its PLAY AS GUEST a PLAY_GUEST click and LOGIN
+  OR SIGNUP a SIGN_IN click; the guest account is created only on that click. After any sign-in,
+  Verifying shows until the account's welcome answer (an existing account's terms are accepted for
+  it); a new account (AVATAR_NAMING) picks a starting look and a name, deploys on JUMP IN and goes
+  straight in, AUTH_DEPLOY_SUCCESS. LOGIN OR SIGNUP opens the methods screen: Google,
+  MetaMask and More options leave for the sign-in page with `?loginMethod=` (SIGN_IN, AUTH_BROWSER_OPEN
+  {method}); an email code is sent and checked in the HUD (the web shell or the bridge scene makes
+  the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored
+  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR
+  {error}. `Guest Wallet Creation` wraps the
+  thirdweb guest step (`features/auth/guestWalletEvent.ts`). A stored sign-in with a day or less
+  left is forgotten at startup (`getStoredLogin`), so the player gets the first screen and the auth
+  site asks for a new sign-in; a run already going keeps its sign-in until it expires.
+- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
+  name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
   NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen

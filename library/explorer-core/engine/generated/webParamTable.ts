@@ -165,6 +165,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Archipelago stats (connected players), used by the HUD; absent = `https://archipelago-ea-stats.<base>`"
   },
   {
+    "name": "builderApi",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`"
+  },
+  {
     "name": "pulseServer",
     "kind": "string",
     "delivery": "resolved",

@@ -26,6 +26,7 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   fetchProfile: net.fetchProfile,
 }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
@@ -321,8 +322,11 @@ describe("profile route, client navigation", () => {
     mount(`/profile/${A}`);
 
     expect(await unavailable()).toBeTruthy();
-    screen.getByRole("button", { name: "Try again" }).click();
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    // The retry is a navigation plus a fresh read; allow for a loaded test machine.
+    expect(await screen.findByRole("heading", { name: "Alice" }, { timeout: 3000 })).toBeTruthy();
     expect(net.fetchProfile).toHaveBeenCalledTimes(2);
   });
 

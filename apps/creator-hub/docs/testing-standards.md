@@ -18,7 +18,7 @@ a test that has never been red is not evidence of anything:
 
 ```bash
 git stash push -- packages/creator-hub/renderer/src/lib/land.ts
-VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 npm run test:renderer -- src/lib/land.spec.ts   # must fail here
+VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:renderer src/lib/land.spec.ts   # must fail here
 git stash pop
 ```
 
@@ -137,13 +137,13 @@ Every vitest run takes the thread cap, and only one runs at a time on the
 machine, across checkouts and worktrees: several uncapped runs at once froze a
 14-core machine, since each takes every core but one. Prefix a script or `make`
 with `VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1` (vitest 1.6 reads both variables, and
-they pass through npm and make), and give a single spec the same cap as flags:
+they pass through pnpm and make), and give a single spec the same cap as flags:
 `--pool=threads --poolOptions.threads.maxThreads=2 --poolOptions.threads.minThreads=1`.
 Set the minimum as well as the maximum.
 
 `-r` is vitest's `--root`. Creator Hub's `test:*` scripts set it to the layer
 folder, so a direct spec run needs the same root and a path relative to it:
-`npx vitest run -r renderer src/…/x.spec.tsx` plus the cap. Those scripts also
+`pnpm exec vitest run -r renderer src/…/x.spec.tsx` plus the cap. Those scripts also
 pass `--passWithNoTests`, so a run whose filter matches nothing exits 0. A gate
 reads the `Test Files … passed` line, never the exit code alone, and an exit
 code read after a pipe (`| tail`) is the pipe's.
@@ -211,8 +211,8 @@ projects in `e2e/setup/`, and all specs flat in `e2e/specs/` with the tier chose
 (`new PublishModal(page)`) rather than injecting them as fixtures — the objects are lazy, so
 per-test construction is free.
 
-Each tier maps to an npm script (all drive the packaged app, so they build/package first):
-`test:e2e` runs `@offline` + `@live` locally (`npm run compile` then Playwright); `test:e2e:ci` is
+Each tier maps to a package script (all drive the packaged app, so they build/package first):
+`test:e2e` runs `@offline` + `@live` locally (`pnpm run compile` then Playwright); `test:e2e:ci` is
 the CI form (packages with `electron-builder --dir` but skips the Vite rebuild that the
 `download-build` action already provides) and runs **`@offline` only**; `test:e2e:ci:live` runs
 `@live` against the app `test:e2e:ci` already packaged, and `e2e.yml` gates that step on

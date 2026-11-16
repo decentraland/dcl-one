@@ -83,6 +83,9 @@ export interface HudHost {
   serviceUrl(name: string): string
   /** The domain this HUD's deployment runs on. */
   BASE_DOMAIN: string
+  /** The build the sign-in screens name in their corner (the commit the page was built from), or null
+   *  when the build recorded none. */
+  BUILD_VERSION: string | null
   /** The realm a session joins when the entry url names none. */
   DEFAULT_REALM: string
   /** Whether this page is the native (CEF) HUD. */
