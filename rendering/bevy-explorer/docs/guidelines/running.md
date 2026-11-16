@@ -231,6 +231,19 @@ State, in every build:
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
+  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+  pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
+  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
+  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `mention` and message `length`; never the message).
+  `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
+  bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`
+  replaces the text of the bubble showing that message, for tests (the HUD's translations come
+  through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
+  reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
