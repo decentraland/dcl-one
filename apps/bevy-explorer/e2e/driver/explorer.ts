@@ -180,7 +180,8 @@ export interface NametagState {
   shown: number
   /** Of those shown, the tags over a scene's avatars. */
   sceneAvatars: number
-  pooled: number
+  /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
   atlas: [number, number]
   bubbles: 'All' | 'NearbyOnly' | 'None'
@@ -248,7 +249,7 @@ export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
   | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
 
 export interface VoiceState {
-  mic: { available: boolean; enabled: boolean }
+  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
   livekit: boolean
   connected: boolean | null
   rooms: { scene: boolean; state: RoomState }[] | null

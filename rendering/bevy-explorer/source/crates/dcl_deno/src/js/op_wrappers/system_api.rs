@@ -53,6 +53,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_chat_stream(),
             op_read_chat_stream(),
             op_send_chat(),
+            op_set_chat_bubble_text(),
             op_get_chat_reaction_stream(),
             op_read_chat_reaction_stream(),
             op_send_chat_reaction(),
@@ -366,6 +367,15 @@ pub fn op_send_chat(
     #[string] channel: String,
 ) {
     dcl_js::system_api::op_send_chat(state, message, channel)
+}
+
+#[op2(fast)]
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<OpState>>,
+    #[string] message_id: String,
+    #[string] message: String,
+) {
+    dcl_js::system_api::op_set_chat_bubble_text(state, message_id, message)
 }
 
 #[op2(async)]

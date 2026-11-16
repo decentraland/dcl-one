@@ -589,6 +589,21 @@ pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: St
         .unwrap();
 }
 
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<impl State>>,
+    message_id: String,
+    message: String,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        })
+        .unwrap();
+}
+
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);

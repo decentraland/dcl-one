@@ -36,10 +36,15 @@ jobs:
         with:
           python-version: '3.12'
       - name: Reserve disk space on the hosted Linux runner
+        # The delete takes one to two minutes and frees 25 GB. A hosted runner starts with more than
+        # 80 GB free, so the delete runs only when less than 40 GB is free.
         if: runner.os == 'Linux'
         working-directory: .
         run: |-
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
           df -h /
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
@@ -72,10 +77,10 @@ jobs:
         shell: bash
       - name: Bundle react HUD (page + bridge scene -> assets/)
         run: |-
-          cd react-web && npm ci
+          cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
           cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
           corepack pnpm@11.27.0 --filter @dcl/hashing build && cd ..
-          npm run bundle:native
+          corepack pnpm@11.27.0 run bundle:native
         shell: bash
       - name: Install ninja (macos)
         if: runner.os == 'macos'

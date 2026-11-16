@@ -23,7 +23,7 @@ const GENERATING = Symbol.for('dcl.hud.shared-inputs.generating')
 const CONTROL_PATHS = [
   GENERATOR,
   WEB + '/package.json',
-  WEB + '/package-lock.json',
+  WEB + '/pnpm-lock.yaml',
   WEB + '/tsconfig.json',
   WEB + '/vite.config.ts',
   WEB + '/vitest.config.ts',
@@ -307,11 +307,11 @@ function validateResolutionDirectories(root, manifest, paths, strict) {
       const indexed = indexedNamespace(paths, directory.path)
       if (JSON.stringify(indexed) !== JSON.stringify(directory.entries))
         throw Error(
-          'Stale HUD resolution namespace; run npm run gen:shared-inputs: ' + directory.path
+          'Stale HUD resolution namespace; run pnpm run gen:shared-inputs: ' + directory.path
         )
       if (JSON.stringify(physical) !== JSON.stringify(indexed))
         throw Error(
-          'Untracked or missing HUD resolution namespace entry; repair inputs and run npm run gen:shared-inputs: ' +
+          'Untracked or missing HUD resolution namespace entry; repair inputs and run pnpm run gen:shared-inputs: ' +
             directory.path
         )
     } else if (!namespaceSubset(physical, directory.entries))
@@ -401,7 +401,7 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
         bytes = regular(root, entry.path)
       } catch (error) {
         if (error.code === 'ENOENT')
-          throw Error('Missing shared input ' + entry.path + '; run npm run gen:shared-inputs', {
+          throw Error('Missing shared input ' + entry.path + '; run pnpm run gen:shared-inputs', {
             cause: error
           })
         throw error

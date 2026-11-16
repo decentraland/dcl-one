@@ -78,10 +78,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-npm --prefix react-web ci
+corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
 corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
 corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-npm --prefix react-web run bundle:native
+corepack pnpm@11.27.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -185,6 +185,9 @@ Pulse and LiveKit rooms show one connection button. It changes from **Disconnect
 to **Connect** when paused, and is disabled when there is no controllable connection.
 
 World and Scene Loading show where the player is and which load stage is active.
+Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
+this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
+is Performance's client version.
 Performance and Memory and limits expose the engine's measurements and budgets.
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
@@ -225,20 +228,23 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
-- `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
+- `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
+  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `pooled` (tag counts), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
   avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position`, `headOffset` (metres over the head bone for
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`
-  replaces the text of the bubble showing that message; `/nametag_official <address> [bool]`
+  replaces the text of the bubble showing that message, for tests (the HUD's translations come
+  through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
@@ -435,7 +441,7 @@ of the contract.
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
-  source change run `npm run export-native` (native) or `npm run bundle` (web) from
+  source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.
 - **Local SDK builds install through overrides, never `file:` paths** in a scene's
   `package.json`. The `@dcl/sdk` tarball carries internal `file:` references that break once
@@ -451,7 +457,7 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
-- `react-web`: `npm test` runs the checked-in Vitest suite. The Playwright visual/engine
+- `react-web`: `pnpm test` runs the checked-in Vitest suite. The Playwright visual/engine
   gate specs and configs are absent from this public checkout; the corresponding package
   scripts do not establish suite availability. See `react-web/review.md` for the optional
   tiers and report them as not run unless the authorized test workspace supplies them.

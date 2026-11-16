@@ -109,10 +109,22 @@ fn nametag_height(head: f32, head_scale: f32, others: [f32; 3], offset: f32, gli
 pub(crate) fn avatar_units(avatar: &GlobalTransform) -> Option<(f32, Mat3A)> {
     let to_world = avatar.affine().matrix3;
     // a scale of nothing reaches here as a sliver, on any of the axes
-    let scales = [to_world.x_axis, to_world.y_axis, to_world.z_axis].map(Vec3A::length);
+    let scales = axis_scales(avatar);
     let to_avatar = to_world.inverse();
     (scales.into_iter().all(|scale| scale > SCALE_MIN) && to_avatar.is_finite())
         .then_some((scales[1], to_avatar))
+}
+
+fn axis_scales(avatar: &GlobalTransform) -> [f32; 3] {
+    let to_world = avatar.affine().matrix3;
+    [to_world.x_axis, to_world.y_axis, to_world.z_axis].map(Vec3A::length)
+}
+
+/// The least an avatar's transform scales any of its axes by; `None` for an avatar scaled to
+/// nothing.
+pub(crate) fn smallest_scale(avatar: &GlobalTransform) -> Option<f32> {
+    let smallest = axis_scales(avatar).into_iter().map(FloatOrd).min()?.0;
+    (smallest > SCALE_MIN).then_some(smallest)
 }
 
 #[allow(clippy::type_complexity)]

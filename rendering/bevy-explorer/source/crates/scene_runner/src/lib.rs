@@ -20,8 +20,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
-        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, MicState, NearbyVoiceDisabled,
+        NoRenderApp, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -448,7 +448,10 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
-        app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.add_systems(
+            Update,
+            (update_scene_room, update_scene_voice_block).in_set(SceneSets::PostLoop),
+        );
         app.init_resource::<load_timing::FirstRingTiming>();
         app.add_systems(
             Update,
@@ -1755,6 +1758,26 @@ fn update_scene_room(
     *last = Some(ev.clone());
     debug!("set scene room {ev:?}");
     writer.write(ev);
+}
+
+/// Only the parcel scene under the player counts: a portable experience never blocks.
+fn update_scene_voice_block(
+    mic_state: Option<ResMut<MicState>>,
+    containing_scene: ContainingScene,
+    player: Query<Entity, With<PrimaryUser>>,
+    disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
+) {
+    let Some(mut mic_state) = mic_state else {
+        return;
+    };
+    let blocked = player
+        .single()
+        .ok()
+        .and_then(|player| containing_scene.get_parcel(player))
+        .is_some_and(|scene| disabling_scenes.contains(scene));
+    if mic_state.scene_blocked != blocked {
+        mic_state.set_scene_blocked(blocked);
+    }
 }
 
 fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {

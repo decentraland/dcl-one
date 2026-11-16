@@ -167,18 +167,28 @@ pub async fn try_get_extra_addresses(
             })?;
         extra.extend(protected.into_iter().map(|a| a.as_str().to_string()));
     } else {
-        let parcel = place
-            .base_position
-            .clone()
-            .or_else(|| place.positions.first().cloned());
-        if let Some(parcel) = parcel
-            && let Some(doc) = try_fetch_land_operators(state, &parcel).await?
-            && let Some(ops) = doc.as_ref()
-        {
-            extra.extend(ops.addresses());
-        }
+        extra = try_get_land_operator_addresses(state, place).await?;
     }
     Ok(extra)
+}
+
+/// The LAND owner and operators of a Genesis place's base parcel (else its
+/// first position); an unreadable source is an error.
+async fn try_get_land_operator_addresses(
+    state: &CommsState,
+    place: &PlaceInfo,
+) -> Result<BTreeSet<String>, ApiError> {
+    let parcel = place
+        .base_position
+        .clone()
+        .or_else(|| place.positions.first().cloned());
+    if let Some(parcel) = parcel
+        && let Some(doc) = try_fetch_land_operators(state, &parcel).await?
+        && let Some(ops) = doc.as_ref()
+    {
+        return Ok(ops.addresses().collect());
+    }
+    Ok(BTreeSet::new())
 }
 
 /// The listing's best-effort variant: an outage reads as no extra address.
@@ -387,4 +397,38 @@ pub async fn ensure_target_not_protected(
         }
     }
     Ok(())
+}
+
+/// Whether `signer` holds a place through its extended permission surfaces
+/// (upstream's `hasExtendedPermissions` and `hasLandLease`): a world's
+/// deployment or streaming grantee, or a Genesis place's LAND operator or
+/// lease holder. Ownership is not asked here (the owner-or-admin decision
+/// already answered it), so unlike the ban-target protection set no owner
+/// fallback widens this on a fault. An unreadable grant or operator source
+/// is 503; an unreadable lease document reads as no holder, as in the
+/// `/scene-admin` listing.
+pub async fn holds_extended_permission(
+    state: &CommsState,
+    place: &PlaceInfo,
+    signer: &Address,
+) -> Result<bool, ApiError> {
+    if place.world {
+        let Some(world) = place.world_name.as_deref().and_then(world_of) else {
+            return Ok(false);
+        };
+        let grantees = state
+            .policy
+            .world_grantees(&world, &parcel_set(&place.positions))
+            .await
+            .map_err(|why| {
+                tracing::error!(error = %why, world = %world, "world grantees could not be read");
+                service_unavailable(WORLD_PERMISSIONS_UNAVAILABLE_MSG)
+            })?;
+        return Ok(grantees.contains(signer));
+    }
+    let (operators, leases) = tokio::join!(
+        try_get_land_operator_addresses(state, place),
+        get_lease_holders_for_parcels(state, &place.positions)
+    );
+    Ok(operators?.contains(signer.as_str()) || leases.contains(signer.as_str()))
 }

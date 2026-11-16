@@ -8,7 +8,6 @@ use bevy::{
     prelude::*,
     render::{
         mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology},
-        primitives::Aabb,
         render_asset::RenderAssetUsages,
         render_resource::{
             AsBindGroup, RenderPipelineDescriptor, ShaderDefVal, ShaderRef,
@@ -18,7 +17,10 @@ use bevy::{
 };
 use scene_runner::update_world::text_shape::GlyphAtlas;
 
-use super::layout::{Tail, TAIL_CLIP, TAIL_SIZE, TAIL_TIP_RADIUS};
+use super::{
+    layout::{Tail, TAIL_CLIP, TAIL_SIZE, TAIL_TIP_RADIUS},
+    FADE_DISTANCE, MAX_DISTANCE, SCREEN_SCALE, UNIT,
+};
 
 const SHADER: &str = "embedded://shaders/nametag.wgsl";
 
@@ -33,8 +35,9 @@ const KIND_ICON: u32 = 2;
 const KIND_RECT: u32 = 3;
 const KIND_VOICE: u32 = 4;
 
-/// The steps of opacity a tag's mesh tag carries: as many as an 8-bit display shows.
-const OPACITY_STEPS: u32 = 255;
+/// The tag's world size per tag unit, metre of distance and unit of `tan(fov / 2)`, in
+/// millionths: shader definitions are whole numbers.
+const SCALE_MILLIONTHS: u32 = (SCREEN_SCALE * UNIT * 1e6) as u32;
 /// How long a voice bar takes from one of its heights to the other, in milliseconds.
 const VOICE_PERIOD_MS: u32 = 300;
 
@@ -43,16 +46,6 @@ pub enum Icon {
     Verified = 0,
     Official = 1,
     Hushed = 2,
-}
-
-/// The mesh tag of a tag `opacity` opaque.
-pub fn opacity_mesh_tag(opacity: f32) -> u32 {
-    (opacity.clamp(0.0, 1.0) * OPACITY_STEPS as f32).round() as u32
-}
-
-/// The opacity a mesh tag carries, as nametag.wgsl reads it.
-pub fn mesh_tag_opacity(tag: u32) -> f32 {
-    tag as f32 / OPACITY_STEPS as f32
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
@@ -100,7 +93,7 @@ impl Material for NametagMaterial {
             ATTRIBUTE_SHAPE.at_shader_location(3),
             ATTRIBUTE_RADII.at_shader_location(4),
         ])?];
-        // a tag always faces the camera
+        // the vertex stage turns a tag to the camera
         descriptor.primitive.cull_mode = None;
 
         let defs = [
@@ -111,7 +104,9 @@ impl Material for NametagMaterial {
             ("NAMETAG_ICON_VERIFIED", Icon::Verified as u32),
             ("NAMETAG_ICON_OFFICIAL", Icon::Official as u32),
             ("NAMETAG_SDF_SPREAD", GlyphAtlas::SPREAD),
-            ("NAMETAG_OPACITY_STEPS", OPACITY_STEPS),
+            ("NAMETAG_SCALE_MILLIONTHS", SCALE_MILLIONTHS),
+            ("NAMETAG_FADE_DISTANCE", FADE_DISTANCE as u32),
+            ("NAMETAG_MAX_DISTANCE", MAX_DISTANCE as u32),
             ("NAMETAG_VOICE_PERIOD_MS", VOICE_PERIOD_MS),
         ]
         .map(|(name, value)| ShaderDefVal::UInt(name.to_owned(), value));
@@ -272,8 +267,9 @@ impl Quad {
     }
 }
 
-/// The mesh of `quads`, painted in order, and its bounds. Positions are tag units.
-pub fn quad_mesh(quads: &[Quad]) -> (Mesh, Aabb) {
+/// The mesh of `quads`, painted in order, and how far it reaches from the anchor. Positions
+/// are tag units.
+pub fn quad_mesh(quads: &[Quad]) -> (Mesh, f32) {
     let count = quads.len() * 4;
     let mut positions = Vec::with_capacity(count);
     let mut uvs = Vec::with_capacity(count);
@@ -281,8 +277,7 @@ pub fn quad_mesh(quads: &[Quad]) -> (Mesh, Aabb) {
     let mut shapes = Vec::with_capacity(count);
     let mut radii = Vec::with_capacity(count);
     let mut indices = Vec::with_capacity(quads.len() * 6);
-    let mut min = Vec2::INFINITY;
-    let mut max = Vec2::NEG_INFINITY;
+    let mut reach = 0f32;
 
     for quad in quads {
         let base = positions.len() as u32;
@@ -299,11 +294,7 @@ pub fn quad_mesh(quads: &[Quad]) -> (Mesh, Aabb) {
             radii.push(quad.radii.to_array());
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        min = min.min(quad.min);
-        max = max.max(quad.max);
-    }
-    if quads.is_empty() {
-        (min, max) = (Vec2::ZERO, Vec2::ZERO);
+        reach = reach.max(quad.min.abs().max(quad.max.abs()).length());
     }
 
     let mesh = Mesh::new(
@@ -317,7 +308,7 @@ pub fn quad_mesh(quads: &[Quad]) -> (Mesh, Aabb) {
     .with_inserted_attribute(ATTRIBUTE_RADII, radii)
     .with_inserted_indices(Indices::U32(indices));
 
-    (mesh, Aabb::from_min_max(min.extend(-1.0), max.extend(1.0)))
+    (mesh, reach)
 }
 
 #[cfg(test)]
@@ -325,20 +316,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opacity_survives_the_mesh_tag() {
-        let decode = mesh_tag_opacity;
-        assert_eq!(opacity_mesh_tag(0.0), 0);
-        assert_eq!(decode(opacity_mesh_tag(1.0)), 1.0);
-        assert_eq!(opacity_mesh_tag(7.0), OPACITY_STEPS);
-        assert_eq!(opacity_mesh_tag(-1.0), 0);
-        let mut last = 0;
-        for step in 0..=1000 {
-            let opacity = step as f32 / 1000.0;
-            let tag = opacity_mesh_tag(opacity);
-            assert!(tag >= last);
-            assert!((decode(tag) - opacity).abs() <= 0.5 / OPACITY_STEPS as f32 + 1e-6);
-            last = tag;
-        }
+    fn the_shader_is_given_the_scale_whole() {
+        assert_eq!(SCALE_MILLIONTHS as f32 * 1e-6, SCREEN_SCALE * UNIT);
+        assert_eq!(FADE_DISTANCE.fract(), 0.0);
+        assert_eq!(MAX_DISTANCE.fract(), 0.0);
     }
 
     #[test]
@@ -404,14 +385,14 @@ mod tests {
             Quad::rect(Rect::new(-5.0, 0.0, 5.0, 4.0), 2.0, Color::BLACK),
             Quad::rect(Rect::new(-1.0, 1.0, 20.0, 3.0), 1.0, Color::WHITE),
         ];
-        let (mesh, aabb) = quad_mesh(&quads);
+        let (mesh, reach) = quad_mesh(&quads);
         assert_eq!(mesh.count_vertices(), 8);
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("no indices");
         };
         assert_eq!(indices[..6], [0, 1, 2, 0, 2, 3]);
         assert_eq!(indices[6..], [4, 5, 6, 4, 6, 7]);
-        assert_eq!(Vec3::from(aabb.min()).truncate(), Vec2::new(-5.0, 0.0));
-        assert_eq!(Vec3::from(aabb.max()).truncate(), Vec2::new(20.0, 4.0));
+        // the corner farthest from the anchor
+        assert_eq!(reach, Vec2::new(20.0, 3.0).length());
     }
 }

@@ -94,7 +94,7 @@ export type VoiceChatApi = {
 
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
-export type MicState = { enabled: boolean; available: boolean }
+export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean; refusals: number }
 
 // World-entity hover events. targetType: 0=WORLD, 1=UI, 2=AVATAR. eventType: PointerEventType.
 // eventInfo.maxPlayerDistance absent/null → the entry is range-gated by camera distance only (the
@@ -144,6 +144,8 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** Pin the home scene the engine boots into and the HUD's home actions go to. */
+  setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -173,6 +175,9 @@ export type BevyApiInterface = {
    *  UiCanvasInformation.interactable_area. */
   setInteractableArea: (area: { left: number; top: number; right: number; bottom: number }) => void
   sendChat: (message: string, channel: string) => void
+  /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
+   *  original back); a message no bubble shows is ignored. */
+  setChatBubbleText: (messageId: string, message: string) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void

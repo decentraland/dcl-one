@@ -390,7 +390,9 @@ mod tests {
     ) {
         let mut settings = crate::archipelago::Settings::for_tests();
         settings.server.max_sockets = 1;
+        // The socket never sends its challenge request; keep it open across the idle probes.
         settings.auth.handshake_timeout_ms = 600_000;
+        settings.auth.challenge_request_timeout_ms = 600_000;
         let state = crate::archipelago::test_support::state_over(
             settings,
             Arc::new(crate::gatekeeper::bus::DisabledBus),

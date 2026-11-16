@@ -68,7 +68,7 @@ checking its licence and provenance.
 | `SelfProfile.UpdateProfileAsync`'s revert, `ProfilePropagated` after the save | `comms::profile::CurrentUserProfile::revert_to`; peers hear `peer_profile()`, a version once it deploys |
 | Skipping `CharacterPreviewComponent` | `resolve_content` names players only (`Or<(With<ForeignPlayer>, With<PrimaryUser>)>`), which leaves out photo-booth previews; `resolve_scene_avatar_content` names scene `AvatarShape` avatars and skips those of a `SuperUserScene`, the HUD's previews |
 | `AvatarBase` anchor points, `GetAdaptiveNametagPosition` | `AttachPoints`; `crates/avatar/src/dynamic_nametag.rs` |
-| `NametagElement`, `NametagPlacementSystem`, the `NametagHolder` pool | `crates/avatar/src/nametag`: `layout.rs` (boxes), `animation.rs` (the bubble's transitions), `mod.rs` (the pooled tags and their placement); drawn by `nametag.wgsl` |
+| `NametagElement`, `NametagPlacementSystem`, the `NametagHolder` pool | `crates/avatar/src/nametag`: `layout.rs` (boxes), `animation.rs` (the bubble's transitions), `mod.rs` (each player's tag and whether it shows); placed, sized, faded and drawn by `nametag.wgsl` |
 | `ChatWorldBubbleService` | `ChatBubbleRequest`, written by `pipe_chats_to_scene` in `crates/system_ui/src/chat/mod.rs` |
 | PlayMode tests | `#[test]` on the plain state struct; headless asset tests; `#[ignore]`d GPU tests |
 
