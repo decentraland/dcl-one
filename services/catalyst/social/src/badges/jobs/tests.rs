@@ -983,6 +983,31 @@ async fn off_chain_goods_are_credited_to_their_beneficiaries() {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A `transfer` of the token from `from` to `to`.
+async fn forward(
+    pool: &PgPool,
+    block: i64,
+    log: i32,
+    contract: &str,
+    item_id: i64,
+    from: &str,
+    to: &str,
+) {
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+         VALUES ('matic', $1, $2, 1700000000, 'transfer', $3, $3, $4::numeric * 105312291668557186697918027683670432318895095400549111254310977536 + 1, $5, $6)",
+    )
+    .bind(block)
+    .bind(log)
+    .bind(contract)
+    .bind(item_id)
+    .bind(from)
+    .bind(to)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn nft_event(
     pool: &PgPool,
     block: i64,
@@ -1045,12 +1070,12 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
         Some(&tx2),
     )
     .await;
-    nft_event(&pool, 103, 2, "transfer", &other, 1, user.as_str(), None).await;
+    forward(&pool, 103, 2, &other, 1, relay, user.as_str()).await;
     // a relay buys and forwards the token only in a later block: nobody counts
     let tx3 = format!("0x{}", "c".repeat(64));
     nft_event(&pool, 104, 0, "transfer", &c, 1, relay, None).await;
     nft_event(&pool, 104, 1, "order_successful", &c, 1, relay, Some(&tx3)).await;
-    nft_event(&pool, 105, 0, "transfer", &c, 1, user.as_str(), None).await;
+    forward(&pool, 105, 0, &c, 1, relay, user.as_str()).await;
     chain_ready(&pool, "nft", 105).await;
     assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 5);
     let emotes = progress(&pool, b, "emotionista").await.unwrap();
@@ -1097,7 +1122,10 @@ async fn credits_manager_legacy_orders_credit_the_credits_user() {
         Some(&tx),
     )
     .await;
-    nft_event(&pool, 101, 2, "transfer", &c, 1, user.as_str(), None).await;
+    forward(&pool, 101, 2, &c, 1, credits_manager, user.as_str()).await;
+    // the user hands it on in the same block: the gift earns nothing
+    let friend = fresh_address();
+    forward(&pool, 101, 3, &c, 1, user.as_str(), friend.as_str()).await;
     chain_ready(&pool, "nft", 101).await;
     sales::batch(&p, Log::Order).await.unwrap();
     let bought = progress(&pool, user.as_str(), "fashionista").await.unwrap();
@@ -1106,6 +1134,7 @@ async fn credits_manager_legacy_orders_credit_the_credits_user() {
         json!([{"transactionHash": tx, "saleAt": 1_700_000_000_000_i64}])
     );
     assert_eq!(progress(&pool, credits_manager, "fashionista").await, None);
+    assert_eq!(progress(&pool, friend.as_str(), "fashionista").await, None);
 }
 
 async fn mirror_ready(pool: &PgPool, mirror: &str) {

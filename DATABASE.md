@@ -1517,8 +1517,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   indexed before `nft_event.tx_hash` was recorded counted by its chain
   position until a re-index fills the hash). An off-chain good counts for
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
-  or cross-chain relay counts for the token's last `transfer` recipient after
-  the order in the same block, and for nobody while a relay holds it (one
+  or cross-chain relay or a CreditsManager counts for the recipient of the
+  relay's own first `transfer` of the token after the order, in the same
+  block and transaction, and for nobody while a relay holds it (one
   `nft_event_token_idx` probe per such order). Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
   a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
