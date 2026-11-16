@@ -2,6 +2,7 @@
 
 use bevy::{ecs::resource::Resource, log::warn};
 use serde::{Deserialize, Serialize};
+use system_api_types::PlatformBanNotice;
 
 /// What a realm change refused for a platform ban answers.
 pub const PLATFORM_BANNED: &str = "You are banned from Decentraland";
@@ -143,5 +144,20 @@ impl PlatformBanStatus {
 impl Default for PlatformBanStatus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Not banned unless a ban is known.
+impl From<&PlatformBanStatus> for PlatformBanNotice {
+    fn from(status: &PlatformBanStatus) -> Self {
+        match status.ban() {
+            None => Self::default(),
+            Some(ban) => Self {
+                banned: true,
+                reason: ban.reason.clone(),
+                custom_message: ban.custom_message.clone(),
+                expires_at: ban.expires_at.clone(),
+            },
+        }
     }
 }

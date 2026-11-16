@@ -13,19 +13,6 @@ use system_bridge::{PlatformBanNotice, SystemApi};
 
 use crate::PlatformBanStatus;
 
-/// The notice for `status`; not banned unless a ban is known.
-pub fn notice(status: &PlatformBanStatus) -> PlatformBanNotice {
-    match status.ban() {
-        None => PlatformBanNotice::default(),
-        Some(ban) => PlatformBanNotice {
-            banned: true,
-            reason: ban.reason.clone(),
-            custom_message: ban.custom_message.clone(),
-            expires_at: ban.expires_at.clone(),
-        },
-    }
-}
-
 /// The open streams and the notice they last got.
 #[derive(Resource, Default)]
 struct PlatformBanStreams {
@@ -39,7 +26,7 @@ fn publish_platform_ban(
     status: Res<PlatformBanStatus>,
     mut streams: ResMut<PlatformBanStreams>,
 ) {
-    let current = notice(&status);
+    let current = PlatformBanNotice::from(&*status);
     streams.streams.retain(|stream| !stream.is_closed());
     if streams.sent != current {
         for stream in &streams.streams {
