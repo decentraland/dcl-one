@@ -48,6 +48,10 @@ compiler cache), medians of three interleaved runs, against the Shop decoupling.
 | `explore` | off | 45.5 s | 32.6 s |
 | `explore` | on | 10.6 s | 7.9 s |
 
+The trigger's semantics tests (opt-out is not a removal, repeated disables collapse, re-adding
+starts a new removal) live with the reader in `comms::gatekeeper::removed_places`, so a change
+to the trigger in `schemas/10_explore.sql` is checked by `cargo test -p catalyst-comms`.
+
 Shop is the longest unit on the chain again. A change to the removal-feed columns updates
 Comms' reader and the documented edge; a new Explore trait that higher crates need is
 implemented in `serve`, not by linking Explore.

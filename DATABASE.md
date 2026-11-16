@@ -1909,8 +1909,8 @@ consumes it by shared SQL: at most 100 due rows a pass on
 `place_removal_due_idx`, `owner_address` filled once when it was empty,
 `cleaned_at` set in the same transaction as its destructive cleanup so a retry
 cannot replay it, `attempts` and `retry_at` advanced with capped backoff, and
-a cleaned row deleted together with the place's `place_removal_state` row once
-neither catalogue holds the place. Its context lookups read
+a cleaned row deleted, and the place's `place_removal_state` row with it once
+neither catalogue holds the place and no pending row for it remains. Its context lookups read
 `explore.place_indexed`, joined to `content.active_pointers` and
 `content.deployments` for shared-scene rooms, by primary key or world name.
 Neither table has an FK: queue rows outlive catalogue deletion.
