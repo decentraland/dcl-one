@@ -22,10 +22,12 @@ Internal development and CI install with pnpm. This replaces the package-manager
 [SDK](2026-10-26-sdk-in-dcl-one.md) and [Creator Hub](2026-11-09-creator-hub-in-dcl-one.md)
 decisions; the rest of both stands.
 
-- A project commits `pnpm-lock.yaml` and pins pnpm 11.27.0 in its root `packageManager`. CI and
-  the build scripts run that version through corepack (`corepack enable`, or
-  `corepack pnpm@11.27.0`, the `PNPM` default of the SDK and protocol Makefiles) and install with
-  `--frozen-lockfile`.
+- A project commits `pnpm-lock.yaml` and pins pnpm 11.28.12 in its root `packageManager`; 11.28.8
+  is the first 11.x whose standalone build no longer trusts the compromised eMudhra certificates.
+  CI and the build scripts install with `--frozen-lockfile` on that version, through corepack
+  (`corepack enable`, or `corepack pnpm@11.28.12`, the `PNPM` default of the SDK and protocol
+  Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
+  Nix builds run the Nix package set's pnpm and ignore the pin.
 - pnpm does not read `package-lock.json`. A project moves with `pnpm import`, which writes
   `pnpm-lock.yaml` from it, and then deletes `package-lock.json`. The import resolves again
   where npm had settled a dist-tag or a peer on its own, so the two version sets are compared
@@ -42,8 +44,8 @@ decisions; the rest of both stands.
   hands a `--` to the script as an argument, where npm removes it.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
   install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
-- `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on an `.npmrc` key pnpm does
-  not read, and on a workflow that installs or runs with npm or yarn, or runs anything through
+- `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
+  off the pinned pnpm (`PNPM_VERSION`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs with npm or yarn, or runs anything through
   `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
 
 Where the layout differs from pnpm's default:
@@ -78,6 +80,8 @@ What stays on npm:
   declare, which the flat install hides. Declaring them changes what their users install and is a
   separate decision.
 - The electron-builder setting depends on that tool's internals and is checked on each upgrade.
+- Another pnpm version is one change: each project's pin, the workflows, the Makefiles' `PNPM`
+  defaults and `PNPM_VERSION`, which the guard then holds everything to.
 - CI fetches pnpm through the corepack Node 24 ships. Node 25 and later do not ship corepack, so a
   move of CI past Node 24 needs another way to fetch the pinned pnpm. The development shell
   provides pnpm itself.

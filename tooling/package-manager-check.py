@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Fail on an npm or yarn lockfile, a setting pnpm ignores in .npmrc, or a workflow that installs or runs with npm or yarn."""
+"""Fail on an npm or yarn lockfile, a project or workflow off the pinned pnpm, a setting pnpm ignores in .npmrc, or npm or yarn in a workflow."""
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -17,6 +18,11 @@ NPMRC_READ = {'ca', 'cafile', 'cert', 'key', 'registry', '_auth', '_authToken', 
               'https-proxy', 'proxy', 'no-proxy', 'http-proxy', 'local-address', 'strict-ssl'}
 NPMRC_KEY = re.compile(r'^\s*([^#;\s=][^=]*?)\s*=', re.M)
 WORKFLOWS = ('.github/workflows/', '.github/actions/')
+# The pnpm every project pins in packageManager and every workflow fetches.
+PNPM_VERSION = '11.28.12'
+PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
+# Copies of projects the service test installs with the pnpm its machine carries.
+UNPINNED = ('infra/dev/service-test/fixture/',)
 # A job may fetch a newer npm to publish; that npm is checked like any other.
 NPX_NPM = re.compile(r'\bnpx\s+--yes\s+npm@\S+')
 # npm commands that install or run a project, after any global flags; publishing and registry queries stay on npm.
@@ -46,6 +52,11 @@ def offenders(root):
         name = rel.rsplit('/', 1)[-1]
         if name in LOCKFILES:
             found.append(f'{rel}: npm or yarn lockfile; convert it with `pnpm import` and delete it')
+        elif name == 'pnpm-lock.yaml' and not rel.startswith(UNPINNED):
+            manifest = root / rel.rsplit('/', 1)[0] / 'package.json' if '/' in rel else root / 'package.json'
+            pinned = json.loads(manifest.read_text(encoding='utf-8')).get('packageManager', '') if manifest.is_file() else ''
+            if pinned.split('+', 1)[0] != f'pnpm@{PNPM_VERSION}':
+                found.append(f'{manifest.relative_to(root).as_posix()}: pins `{pinned or "nothing"}`; set packageManager to pnpm@{PNPM_VERSION}')
         elif name == '.npmrc':
             for match in NPMRC_KEY.finditer((root / rel).read_text(encoding='utf-8', errors='replace')):
                 key = match.group(1)
@@ -53,8 +64,13 @@ def offenders(root):
                     found.append(f'{rel}: pnpm does not read `{key}` here; move it to pnpm-workspace.yaml or delete it')
         elif rel.startswith(WORKFLOWS) and name.endswith(('.yml', '.yaml', '.sh')):
             for number, line in enumerate((root / rel).read_text(encoding='utf-8', errors='replace').splitlines(), 1):
-                if not line.lstrip().startswith('#') and NPM_USE.search(NPX_NPM.sub('npm', line)):
+                if line.lstrip().startswith('#'):
+                    continue
+                if NPM_USE.search(NPX_NPM.sub('npm', line)):
                     found.append(f'{rel}:{number}: installs or runs with npm or yarn; use pnpm')
+                for version in PNPM_NAMED.findall(line):
+                    if version != PNPM_VERSION:
+                        found.append(f'{rel}:{number}: fetches pnpm {version}; the projects pin {PNPM_VERSION}')
     return found
 
 
