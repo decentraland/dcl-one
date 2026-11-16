@@ -4463,6 +4463,34 @@
         "startup-diagnostics": "Local capture startup diagnostics retain bounded sanitized stderr, executable basename and available version, pre-cleanup process status and port-file observations. The existing polling budget, launch flags, abort behavior and primary failure are unchanged. After collection, the drained stderr stream is unreferenced so inherited helper writers cannot pin the caller event loop; the pipe remains open for browser writes.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
+    },
+    {
+      "repository": "https://github.com/decentraland/unity-explorer",
+      "revision": "59c3766303b02b8e4f776b5f11d5b97b565c0cb3",
+      "license": {
+        "spdx": "Apache-2.0",
+        "status": "The repository's license. The shader is not shipped: one image rendered from it is. Its water model is not original to the repository and its origin is unknown: the shader's header keeps a Shadertoy-style note ('V1.1 - added real water height', 'CLICK and MOVE the MOUSE to: X -> Change water height') with no author, and attributes two functions, 'hash' and 'noise' by iq, to CC BY-NC-SA 3.0. Those two are not in the render: the shader calls them only in a branch its USETEXTUREHEIGHT switch compiles out, and the bake reads the noise texture instead. Whether the water model's own licence allows the rendered image is unresolved until its origin is found."
+      },
+      "imported": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": "library/ui/apps/hud/assets/map/sea.webp, with DCLMap_basecolor2.png, DCLMap_height2.png and OceanNoise.png: the shader's texture-height path with the constants of MapOcean.mat, ported to GLSL and rendered once at time 0 over the 24000 map units square centred on the map's origin, at 4096 px, scaled to 2048 px (Lanczos) and encoded with cwebp 1.6.0 -q 80. The water does not move."
+      },
+      "files": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": {
+          "sha256": "230f0360beb3fc1fce344aa3db3532417162bd9a5eb66262fc226cc2d59fdf3c"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_basecolor2.png": {
+          "sha256": "4d17c5fc6a87f8bb7b971dd557e5925c9a4294fd2678d30235e0aa602b6a78ed"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_height2.png": {
+          "sha256": "969161ac76e2eb5797b3ca6688e4ba7aa9c592e04c4fe87fc11a78b4ffce86c4"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/OceanNoise.png": {
+          "sha256": "de293e005d398faea2fe03b886d9332889a63799c4b98ecb060f88588d8eb3ce"
+        },
+        "library/ui/apps/hud/assets/map/sea.webp": {
+          "sha256": "d2a732d4e2c3113b1fb32d79e304355b0bf9d76ec0e06d62a9eb49ccaab2089c"
+        }
+      }
     }
   ],
   "publicFoundations": {

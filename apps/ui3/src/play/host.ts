@@ -26,11 +26,15 @@ const engineExited = (): boolean => false
 /** /play acts on no params of its own beyond the shared ones. */
 const hostEntryParams = (): string[] => []
 
+/** The commit Sites built /play from (apps/sites/vite.config.ts `define`), null without one. */
+declare const __PLAY_BUILD__: string | undefined
+const BUILD_VERSION: string | null = (typeof __PLAY_BUILD__ !== 'undefined' && __PLAY_BUILD__) || null
+
 /** The gate's Exit leaves for the Sites page this HUD is served from, whatever `?baseDomain=` the link
  *  carries. */
 const exitUrl = (): string => `${window.location.origin}/`
 
-export { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host
