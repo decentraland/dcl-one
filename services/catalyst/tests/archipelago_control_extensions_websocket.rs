@@ -1047,6 +1047,120 @@ async fn legacy_heartbeat_authority_deadline_preserves_signaling_without_publish
     fixture.finish().await;
 }
 
+/// Counts this thread's reads of a realm owner's fence row (`AssignmentAuthority::snapshot`).
+struct OwnerReads(Arc<std::sync::atomic::AtomicUsize>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for OwnerReads {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        struct Statement(bool);
+        impl tracing::field::Visit for Statement {
+            fn record_str(&mut self, _: &tracing::field::Field, value: &str) {
+                self.0 |= value.contains("archipelago_v4_assignments") && value.contains("AS live");
+            }
+            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+        }
+        if event.metadata().target() != "sqlx::query" {
+            return;
+        }
+        let mut statement = Statement(false);
+        event.record(&mut statement);
+        if statement.0 {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+#[tokio::test]
+async fn fenced_heartbeats_read_the_realm_owner_at_most_once_per_position_interval() {
+    use catalyst::comms::protocol::bus::control_position::{ControlPosition, SUBJECT};
+    use tracing_subscriber::layer::SubscriberExt;
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let server = Server::start(&fixture).await;
+    let wallet = PrivateKeySigner::random();
+    let mut socket = server.connect().await;
+    admit_legacy(&mut socket, &wallet).await;
+    let old = current_owner(&server, &fixture, &wallet).await;
+    let heartbeat = packet(
+        0,
+        pb::client_packet::Message::Heartbeat(pb::Heartbeat {
+            position: Some(common::Position {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            }),
+            desired_room: Some("test-realm".into()),
+            sample_sequence: None,
+        }),
+    );
+    let positions = |epoch: u64| {
+        server
+            .bus
+            .published()
+            .into_iter()
+            .filter(|(subject, _)| subject == SUBJECT)
+            .filter_map(|(_, payload)| ControlPosition::decode(&payload))
+            .filter(|record| record.epoch == epoch && record.position.is_some())
+            .count()
+    };
+
+    // The server runs on this test's thread: a thread-local capture sees its queries. A second
+    // live dispatcher keeps another test's thread from caching the callsite as uninteresting.
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    let capture = tracing::subscriber::set_default(
+        tracing_subscriber::registry().with(OwnerReads(reads.clone())),
+    );
+    // One second at the heartbeat rate a socket may sustain.
+    for _ in 0..20 {
+        send(&mut socket, &heartbeat).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop(capture);
+    let reads = reads.load(std::sync::atomic::Ordering::Relaxed);
+    // Positions apply at most every 500 ms and the ownership poll runs every 2 s.
+    assert!(
+        (1..=8).contains(&reads),
+        "20 heartbeats read the realm owner {reads} times"
+    );
+    drained(&server).await;
+    assert!(
+        positions(old.epoch) > 0,
+        "the current owner's position publishes"
+    );
+
+    // A newer owner of the realm: the poll kicks the old socket, which publishes nothing more.
+    let mut newer = server.connect().await;
+    admit_legacy(&mut newer, &wallet).await;
+    let next = current_owner(&server, &fixture, &wallet).await;
+    assert!(next.epoch > old.epoch);
+    drained(&server).await;
+    let published = positions(old.epoch);
+    let _ = socket.send(Message::Binary(heartbeat.clone().into())).await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            match socket.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Binary(bytes))) => {
+                    let packet = pb::ServerPacket::decode(bytes.as_ref()).unwrap();
+                    if matches!(packet.message, Some(pb::server_packet::Message::Kicked(_))) {
+                        break;
+                    }
+                }
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await
+    .expect("a superseded fenced socket is kicked within the poll interval");
+    drained(&server).await;
+    assert_eq!(positions(old.epoch), published);
+    drop((socket, newer, server));
+    fixture.finish().await;
+}
+
 #[tokio::test]
 async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
     use catalyst::comms::archipelago::control_v4::{AssignmentPayload, LaneKey};
