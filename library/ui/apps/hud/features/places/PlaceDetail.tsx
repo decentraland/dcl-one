@@ -10,11 +10,9 @@ import defaultPlace from '../../assets/lobby/default-image-place.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
 import favouriteOutline from '../../assets/map/panel/favourite-outline.png'
 import favouriteSolid from '../../assets/map/panel/favourite-solid.png'
-import homeOutline from '../../assets/map/panel/home-outline.png'
 import jumpInIcon from '../../assets/map/panel/jump-in.png'
 import likeOutline from '../../assets/map/panel/like-outline.png'
 import likeSolid from '../../assets/map/panel/like-solid.png'
-import navigationIcon from '../../assets/map/panel/navigation.png'
 import parcelsIcon from '../../assets/map/panel/parcels.png'
 import playersIcon from '../../assets/map/panel/players.png'
 import shareIcon from '../../assets/map/panel/share.png'
@@ -27,6 +25,7 @@ import type { SignedPlace } from '@explorer-core/engine/protocol'
 import { setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { fetchWorldAccess, type WorldAccess } from '@explorer-core/features/places/worldAccess'
+import { placeOnline } from '@explorer-core/features/lobby/lobbyApi'
 import { userColor } from '@explorer-core/lib/identity'
 import { lobbyEvents } from '../events/eventsStore'
 import { ConnectedFriends, type ConnectedFriend } from '../lobby/LobbyCards'
@@ -34,7 +33,7 @@ import { CAT_ICONS } from '../map/mapArt'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
 import { useProfile } from '../session/profileStore'
-import { compactNumber, creatorFallback, isWorldPlace, likeRateText, onlineCount, placeJumpLink, placeShareUrl, updatedText } from './placeDetailFormat'
+import { compactNumber, creatorFallback, isWorldPlace, likeRateText, placeJumpLink, placeShareUrl, updatedText } from './placeDetailFormat'
 import styles from './PlaceDetail.module.css'
 
 export type DetailPlace = DiscoverPlace & { connected_addresses?: string[] | null }
@@ -137,12 +136,15 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   const { readSigned } = session.places
   const wallet = session.profile.data?.address ?? null
   const communityIds = session.communities.list.map((c) => c.id)
+  const communitiesLoaded = session.lobbyData.communitiesLoaded
   const world = isWorldPlace(place)
 
   const [signed, setSigned] = useState<SignedPlace | null>(null)
   const [votes, setVotes] = useState<Votes>(() => votesOf(place as Partial<SignedPlace>))
   // the last votes the service confirmed, which a refused change goes back to
   const confirmed = useRef(votes)
+  // the signed read can predate a vote or favourite: once one is sent, the read no longer sets them
+  const wrote = useRef(false)
   const [busy, setBusy] = useState<{ vote: boolean; favorite: boolean }>({ vote: false, favorite: false })
   const [access, setAccess] = useState<WorldAccess | 'checking'>(world ? 'checking' : 'allowed')
   const [thumbFailed, setThumbFailed] = useState(false)
@@ -152,6 +154,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     void readSigned(place.id).then((read) => {
       if (!live || read == null) return
       setSigned(read)
+      if (wrote.current) return
       confirmed.current = votesOf(read)
       setVotes(confirmed.current)
     })
@@ -164,14 +167,16 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   const communityKey = communityIds.join(',')
   useEffect(() => {
     if (!world) return
+    setAccess('checking')
     const ctrl = new AbortController()
-    fetchWorldAccess(worldName, wallet, communityKey === '' ? [] : communityKey.split(','), ctrl.signal).then(setAccess, () => undefined)
+    const communities = !communitiesLoaded ? null : communityKey === '' ? [] : communityKey.split(',')
+    fetchWorldAccess(worldName, wallet, communities, ctrl.signal).then(setAccess, () => undefined)
     return () => ctrl.abort()
-  }, [world, worldName, wallet, communityKey])
+  }, [world, worldName, wallet, communityKey, communitiesLoaded])
 
   const vote = (next: boolean | null, error: string): void => {
-    const before = confirmed.current
-    setVotes({ ...before, like: next === true, dislike: next === false })
+    wrote.current = true
+    setVotes((v) => ({ ...v, like: next === true, dislike: next === false }))
     setBusy((b) => ({ ...b, vote: true }))
     setPlaceLike(place.id, next).then(
       (result) => {
@@ -188,6 +193,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   }
   const favorite = (): void => {
     const next = !votes.favorite
+    wrote.current = true
     setVotes((v) => ({ ...v, favorite: next }))
     setBusy((b) => ({ ...b, favorite: true }))
     setPlaceFavorite(place.id, next).then(
@@ -204,12 +210,13 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     )
   }
 
+  const signingIn = session.login.busy
   const jumpIn = (): void => {
     if (onJumpIn(place)) onClose()
   }
 
   const connected = signed?.connected_addresses ?? place.connected_addresses
-  const online = onlineCount({ connected_addresses: connected, user_count: signed?.user_count ?? place.user_count })
+  const online = placeOnline({ connected_addresses: connected, user_count: signed?.user_count ?? place.user_count })
   const friendList = session.friends.list
   const friends = useMemo((): ConnectedFriend[] => {
     const here = new Set((connected ?? []).map((a) => a.toLowerCase()))
@@ -273,28 +280,19 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
           <Toggle label="Like" on={votes.like} iconOn={likeSolid} iconOff={likeOutline} disabled={busy.vote} onClick={() => vote(votes.like ? null : true, LIKE_ERROR)} />
           <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} disabled={busy.vote} onClick={() => vote(votes.dislike ? null : false, DISLIKE_ERROR)} />
           <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} disabled={busy.favorite} onClick={favorite} />
-          {/* Inert until the HUD keeps a pinned home it can change. */}
-          <Toggle label="Set as home" on={false} iconOn={homeOutline} iconOff={homeOutline} disabled />
           <Button size="bare" radius="md" variant="faint" className={styles.share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
             <MaskIcon src={shareIcon} size={24} />
           </Button>
         </div>
         <div className={styles.row}>
-          {!world && (
-            // Inert until the map can draw a route to a place.
-            <Button size="bare" radius="md" variant="faint" className={styles.wide} disabled>
-              <MaskIcon src={navigationIcon} size={24} />
-              START NAVIGATION
-            </Button>
-          )}
           {showJumpIn && (
-            <Button size="bare" radius="md" variant="primary" className={styles.wide} aria-label={`Jump in to ${place.title}`} onClick={jumpIn}>
+            <Button size="bare" radius="md" variant="primary" className={styles.wide} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={jumpIn}>
               JUMP IN
               <MaskIcon src={jumpInIcon} size={24} />
             </Button>
           )}
           {access === 'password' && (
-            <Button size="bare" radius="md" variant="primary" className={styles.wide} onClick={jumpIn}>
+            <Button size="bare" radius="md" variant="primary" className={styles.wide} disabled={signingIn} onClick={jumpIn}>
               ENTER PASSWORD
             </Button>
           )}

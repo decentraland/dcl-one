@@ -10,6 +10,7 @@ import {
   type LobbyPlace
 } from '@explorer-core/features/lobby/lobbyApi'
 import type { Friend } from '@explorer-core/engine/protocol'
+import { parseParcel } from '@explorer-core/features/map/mapCoords'
 
 export interface LandingDestination {
   world: string | null
@@ -19,8 +20,7 @@ export interface LandingDestination {
 /** A realm with a dot is a world. */
 export function landingDestination(home: { realm: string | null; parcel: string } | null): LandingDestination | null {
   if (home == null) return null
-  const [x, y] = home.parcel.split(',').map(Number)
-  const parcel = Number.isFinite(x) && Number.isFinite(y) ? { x, y } : { x: 0, y: 0 }
+  const parcel = parseParcel(home.parcel) ?? { x: 0, y: 0 }
   return { world: home.realm != null && home.realm.includes('.') ? home.realm : null, parcel }
 }
 

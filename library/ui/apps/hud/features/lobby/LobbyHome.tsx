@@ -18,6 +18,7 @@ import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { clickButton } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
 import { holeClip } from '@explorer-core/lib/holeClip'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { lobbyStagePreset } from '@explorer-core/engine/lobbyStage'
 import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { placeTeleport } from '@explorer-core/features/places/placesApi'
@@ -146,16 +147,7 @@ function EditSession({
   const { display, lifted, changed, draft } = e.editor
   const cancel = useRef(() => onDone(null))
   cancel.current = () => onDone(null)
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent): void => {
-      if (ev.key === 'Escape') {
-        ev.stopPropagation()
-        cancel.current()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  useEffect(() => registerCancelLayer(() => cancel.current()), [])
   return (
     <>
       <EditorGrids canvas={canvas} target={e.target} size={e.drag?.widget ?? null} />
@@ -188,7 +180,8 @@ export function LobbyHome({
   onClose,
   setEngineViewport
 }: {
-  onPick: (dest: Destination) => void
+  /** False when the pick is refused. */
+  onPick: (dest: Destination) => boolean
   /** In-world only: the lobby can be closed back to the world (at startup Jump In is the way out). */
   onClose?: () => void
   setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: Rect | null, dpr?: number) => void
@@ -259,13 +252,12 @@ export function LobbyHome({
     openExploreSection(section)
   }
 
-  /** False when the place names nowhere to travel to. */
+  /** False when the place names nowhere to travel to or the pick is refused. */
   const jumpPlace = (p: LobbyPlace, origin: lobbyAnalytics.CardOrigin): boolean => {
     const dest = placeTeleport(p)
-    if (dest == null) return false
+    if (dest == null || !pick(dest)) return false
     lobbyAnalytics.placeJumpedIn(p, origin)
     clickButton('JUMP_IN', 'LOBBY', { kind: 'place', place_id: p.id })
-    pick(dest)
     return true
   }
   const openPlace = (p: LobbyPlace, origin: lobbyAnalytics.CardOrigin): void => {

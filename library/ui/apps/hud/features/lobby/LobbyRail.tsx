@@ -148,6 +148,16 @@ export function LobbyRail({
     return () => v.removeEventListener('wheel', onWheel)
   }, [])
 
+  const onFocus = (e: React.FocusEvent): void => {
+    const cards = strip.current == null ? [] : Array.from(strip.current.children)
+    const card = cards.findIndex((c) => c.contains(e.target as Node))
+    if (card >= 0) setState((s) => modelRef.current.reveal(s, card))
+  }
+  // the strip moves by its transform alone: a browser scrolling the viewport to a focused card is undone
+  const onScroll = (e: React.UIEvent<HTMLDivElement>): void => {
+    if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0
+  }
+
   const pages = model.pageCount
   const offset = dragOffset ?? state.offset
   return (
@@ -161,6 +171,8 @@ export function LobbyRail({
         onPointerCancel={endPress}
         onLostPointerCapture={endPress}
         onClickCapture={onClickCapture}
+        onFocus={onFocus}
+        onScroll={onScroll}
       >
         <div ref={strip} className={styles.strip} style={{ transform: `translateX(${-offset}px)` }}>
           {children}

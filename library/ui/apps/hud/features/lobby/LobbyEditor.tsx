@@ -343,12 +343,7 @@ export function CustomizeModal({
                 type="button"
                 className={styles.rowButton}
                 aria-label={`Add ${familyTitle(family)}`}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    onPlace(chosen)
-                  }
-                }}
+                onClick={() => onPlace(chosen)}
               />
               <MaskIcon src={dragIcon} size={24} className={styles.grip} />
               <img className={styles.familyIcon} src={FAMILY_ICONS[family]} alt="" width={24} height={24} />

@@ -19,9 +19,6 @@ export function likeRateText(likeRate: number | string | null | undefined): stri
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 export const compactNumber = (n: number | undefined): string => compact.format(n ?? 0)
 
-/** Who is there now: the connected wallets when the read lists them, else the scene's count. */
-export const onlineCount = (place: { connected_addresses?: readonly string[] | null; user_count?: number }): number => place.connected_addresses?.length ?? place.user_count ?? 0
-
 /** "dd/MM/yyyy", or "-" without a date. */
 export function updatedText(updatedAt: string | null | undefined): string {
   const at = updatedAt != null ? new Date(updatedAt) : null

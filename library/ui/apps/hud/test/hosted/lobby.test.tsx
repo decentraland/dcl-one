@@ -16,6 +16,7 @@ import { receiveProfile, resetProfileStore, setProfileRequester } from '../../fe
 import { SessionProvider } from '../../features/session/SessionContext'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import { fakeSession } from '../harness'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { openCommunityModal } from '../../features/communities/CommunityModal'
 import { profilePictureStyle } from '../../features/lobby/LobbyCards'
 
@@ -137,6 +138,19 @@ describe('lobby controls', () => {
     expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 3, y: 4 })
     expect(track).toHaveBeenCalledWith('place_jumped_in', expect.objectContaining({ place_id: 'p', from_section: 'recent' }))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps the detail open and reports no jump when the pick is refused (a sign-in finishing)', async () => {
+    const track = vi.spyOn(analytics, 'track')
+    vi.mocked(fetchRecents).mockResolvedValueOnce([{ id: 'p', title: 'Plaza', description: '', image: '', positions: ['3,4'], base_position: '3,4', owner: null }])
+    const session = fakeSession()
+    vi.mocked(session.pickDestination).mockReturnValue(false)
+    render(lobbyWithPopups(session))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Plaza' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Plaza' })).getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.pickDestination).toHaveBeenCalledOnce()
+    expect(track).not.toHaveBeenCalledWith('place_jumped_in', expect.anything())
+    expect(screen.getByRole('dialog', { name: 'Plaza' })).toBeInTheDocument()
   })
 
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
@@ -320,7 +334,7 @@ describe('lobby go to', () => {
 })
 
 describe('lobby layout editor', () => {
-  it('drops the changes on Escape and stores them on Save', async () => {
+  it('drops the changes on Cancel (the key or a gamepad button) and stores them on Save', async () => {
     render(lobby(fakeSession()))
     expect(screen.getByRole('heading', { name: /welcome/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
@@ -329,9 +343,10 @@ describe('lobby layout editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove Jump In Home' }))
     expect(within(modal).getByRole('button', { name: 'SAVE' })).toBeEnabled()
     act(() => {
-      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(dispatchCancelLayer()).toBe(true)
     })
     expect(screen.queryByRole('dialog', { name: 'Customize Lobby' })).not.toBeInTheDocument()
+    expect(dispatchCancelLayer()).toBe(false)
     expect(screen.getByRole('heading', { name: /welcome/i })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
@@ -369,15 +384,31 @@ describe('lobby layout editor', () => {
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledTimes(2)
   })
 
-  it('lists only the widgets off the grids and places one from the keyboard', () => {
+  it('lists only the widgets off the grids and places one on a click', () => {
     render(lobby(fakeSession()))
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
     const modal = screen.getByRole('dialog', { name: 'Customize Lobby' })
     expect(within(modal).getByRole('button', { name: 'Add My Communities' })).toBeInTheDocument()
     expect(within(modal).queryByRole('button', { name: 'Add Friends' })).not.toBeInTheDocument()
-    fireEvent.keyDown(within(modal).getByRole('button', { name: 'Add Go to' }), { key: 'Enter' })
+    fireEvent.click(within(modal).getByRole('button', { name: 'Add Go to' }))
     expect(within(modal).queryByRole('button', { name: 'Add Go to' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Remove Go to' })).toBeInTheDocument()
+  })
+
+  it('takes a widget dragged back onto the modal off the grid', () => {
+    render(lobby(fakeSession()))
+    fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
+    const modal = screen.getByRole('dialog', { name: 'Customize Lobby' })
+    expect(within(modal).queryByRole('button', { name: 'Add Friends' })).not.toBeInTheDocument()
+    // jsdom lays nothing out: the modal's box is the point (0, 0), where the drop lands
+    const friends = screen.getByRole('group', { name: 'Friends widget' })
+    fireEvent.pointerDown(friends, { pointerId: 1, button: 0, clientX: 0, clientY: 0 })
+    act(() => {
+      window.dispatchEvent(Object.assign(new Event('pointermove'), { pointerId: 1, clientX: 0, clientY: 0 }))
+      window.dispatchEvent(Object.assign(new Event('pointerup'), { pointerId: 1, clientX: 0, clientY: 0 }))
+    })
+    expect(screen.queryByRole('group', { name: 'Friends widget' })).not.toBeInTheDocument()
+    expect(within(modal).getByRole('button', { name: 'Add Friends' })).toBeInTheDocument()
   })
 })
 
@@ -391,6 +422,17 @@ describe('lobby profile menu and visit', () => {
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Sign Out' }))
     expect(session.logout).toHaveBeenCalledOnce()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('closes the menu on Cancel (the key or a gamepad button) and leaves the lobby up', () => {
+    render(lobby(fakeSession()))
+    fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
+    expect(screen.getByRole('menu', { name: 'Profile menu' })).toBeInTheDocument()
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(dispatchCancelLayer()).toBe(false)
   })
 
   it("fills the top bar's picture with the player's name colour", () => {

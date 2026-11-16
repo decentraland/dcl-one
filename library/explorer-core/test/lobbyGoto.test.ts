@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { isDestination, isGenesisParcel, parseGotoTarget, randomParcel, worldName } from '../features/lobby/goto'
 
 describe('lobby go to', () => {
-  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5/spawn', 'eax/spawn', '3', 'random', 'crowd', 'crowd.dcl.eth'])('accepts %s', (text) => {
+  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth'])('accepts %s', (text) => {
     expect(isDestination(text)).toBe(true)
   })
 
-  it.each(['1000,-500', '3,-5,7', 'your.world.eth', 'my-world.dcl.eth', 'foo bar', 'mana.dcl.eth/'])('rejects %s', (text) => {
+  it.each(['1000,-500', '3,-5,7', 'your.world.eth', 'my-world.dcl.eth', 'foo bar', 'mana.dcl.eth/', '3,-5/door', 'eax/spawn', 'mana.dcl.eth/3,-5/spawn'])('rejects %s', (text) => {
     expect(isDestination(text)).toBe(false)
   })
 

@@ -24,6 +24,14 @@ describe('world access', () => {
     expect(judgeWorldAccess(list([ME]), null, [])).toBe('denied')
   })
 
+  it('leaves a world only a community opens undecided until the communities are known', () => {
+    const list = { owner: OWNER, permissions: { access: { type: 'allow-list', wallets: [], communities: ['c1'] } } }
+    expect(judgeWorldAccess(list, ME, null)).toBe('failed')
+    expect(judgeWorldAccess(list, ME, [])).toBe('denied')
+    expect(judgeWorldAccess(list, OWNER, null)).toBe('invited')
+    expect(judgeWorldAccess({ owner: OWNER, permissions: { access: { type: 'allow-list', wallets: [] } } }, ME, null)).toBe('denied')
+  })
+
   it('cannot tell for an access type it does not know', () => {
     expect(judgeWorldAccess({ owner: OWNER, permissions: { access: { type: 'nft-gated' } } }, ME, [])).toBe('failed')
   })

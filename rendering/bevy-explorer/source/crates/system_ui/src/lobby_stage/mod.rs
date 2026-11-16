@@ -23,6 +23,7 @@ use bevy::{
     },
     scene::SceneInstanceReady,
 };
+use common::sets::SceneSets;
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
 use system_bridge::{LobbyStage, SystemApi};
 use texture_camera::TextureLayersCache;
@@ -84,7 +85,12 @@ impl Plugin for LobbyStagePlugin {
     fn build(&self, app: &mut App) {
         add_materials(app);
         app.init_resource::<StageRequest>()
-            .add_systems(Update, (take_requests, sync_stage, animate_dust).chain())
+            .add_systems(
+                Update,
+                (take_requests, sync_stage, animate_dust)
+                    .chain()
+                    .in_set(SceneSets::RestrictedActions),
+            )
             .add_systems(
                 PostUpdate,
                 fit_stage.after(TransformSystem::TransformPropagate),
@@ -119,6 +125,7 @@ struct Stage {
     preset: &'static StagePreset,
     layer: u32,
     render_layer: usize,
+    feet: Vec3,
     camera: Option<Entity>,
 }
 
@@ -175,6 +182,7 @@ fn sync_stage(
     roots: Query<Entity, (With<SuperUserScene>, With<RendererSceneContext>)>,
     root_transforms: Query<&GlobalTransform, (With<SuperUserScene>, With<RendererSceneContext>)>,
     cameras: Query<StageCamera, With<Camera3d>>,
+    bloomed: Query<(), With<Bloom>>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut builder: StageAssets,
@@ -194,18 +202,23 @@ fn sync_stage(
             .find(|(_, _, l, p, _)| **l == layers && matches!(p, Projection::Perspective(_)))
     };
 
+    let mut built = false;
     for (entity, mut stage) in &mut stages {
         let keep = wanted.as_ref().is_some_and(|(want, render_layer)| {
             presets::preset(&want.preset).id == stage.preset.id
                 && want.layer == stage.layer
                 && *render_layer == stage.render_layer
+                && want.feet.world_vec_to_vec3() == stage.feet
         });
         if !keep {
             commands.entity(entity).despawn();
             continue;
         }
+        built = true;
         let camera = camera_for(stage.render_layer).map(|(c, ..)| c);
-        if stage.camera != camera {
+        // the bloom setting re-applies Bloom to every camera
+        let redressed = camera.is_some_and(|c| bloomed.contains(c));
+        if stage.camera != camera || redressed {
             stage.camera = camera;
             if let Some(camera) = camera {
                 unprocessed(&mut commands, camera);
@@ -216,13 +229,10 @@ fn sync_stage(
     let Some((want, render_layer)) = wanted else {
         return;
     };
-    let preset = presets::preset(&want.preset);
-    if stages
-        .iter()
-        .any(|(_, s)| s.preset.id == preset.id && s.render_layer == render_layer)
-    {
+    if built {
         return;
     }
+    let preset = presets::preset(&want.preset);
     let layers = RenderLayers::layer(render_layer);
     let Some((camera, camera_transform, _, _, exposure)) = camera_for(render_layer) else {
         return;
@@ -237,7 +247,8 @@ fn sync_stage(
 
     // The stage hangs from the scene's root, as the avatar and its camera do, so it moves with
     // them (a scene's root starts parked below the world and is raised once the scene runs).
-    let origin = want.feet.world_vec_to_vec3() + Vec3::Y * ORIGIN_ABOVE_FEET;
+    let feet = want.feet.world_vec_to_vec3();
+    let origin = feet + Vec3::Y * ORIGIN_ABOVE_FEET;
     let camera_local = root_transform
         .affine()
         .inverse()
@@ -257,6 +268,7 @@ fn sync_stage(
                 preset,
                 layer: want.layer,
                 render_layer,
+                feet,
                 camera: Some(camera),
             },
             Transform::from_translation(origin).with_rotation(facing),
@@ -662,10 +674,14 @@ pub fn fit(
 #[allow(clippy::type_complexity)]
 fn fit_stage(
     stages: Query<(&Stage, &GlobalTransform, &Children)>,
-    cameras: Query<(&GlobalTransform, &Projection)>,
+    cameras: Query<(&GlobalTransform, &Projection), Without<Backdrop>>,
     mut backdrops: Query<
-        (&mut Transform, &MeshMaterial3d<StandardMaterial>),
-        (With<Backdrop>, Without<StageFloor>),
+        (
+            &mut Transform,
+            &mut GlobalTransform,
+            &MeshMaterial3d<StandardMaterial>,
+        ),
+        (With<Backdrop>, Without<StageFloor>, Without<Stage>),
     >,
     floors: Query<&MeshMaterial3d<FloorMaterial>, With<StageFloor>>,
     standard: Res<Assets<StandardMaterial>>,
@@ -685,7 +701,7 @@ fn fit_stage(
         let Some(backdrop) = children.iter().find(|c| backdrops.contains(*c)) else {
             continue;
         };
-        let Ok((mut transform, material)) = backdrops.get_mut(backdrop) else {
+        let Ok((mut transform, mut global, material)) = backdrops.get_mut(backdrop) else {
             continue;
         };
         let texture_aspect = standard
@@ -712,14 +728,27 @@ fn fit_stage(
         };
         if *transform != local {
             *transform = local;
+            // propagation has run
+            *global = stage_transform.mul_transform(local);
         }
 
-        let floor = children.iter().find_map(|c| floors.get(c).ok());
-        if let Some(material) = floor.and_then(|f| floor_materials.get_mut(&f.0)) {
-            let uniform = &mut material.extension.floor;
-            uniform.blend_axis = fit.blend_axis.extend(0.0);
-            uniform.blend_start = fit.blend_start;
-            uniform.blend_end = fit.blend_end;
+        // `get_mut` marks the material modified, which re-prepares it
+        let blend_axis = fit.blend_axis.extend(0.0);
+        let Some(floor) = children.iter().find_map(|c| floors.get(c).ok()) else {
+            continue;
+        };
+        let current = floor_materials.get(&floor.0).map(|m| &m.extension.floor);
+        if current.is_some_and(|u| {
+            u.blend_axis != blend_axis
+                || u.blend_start != fit.blend_start
+                || u.blend_end != fit.blend_end
+        }) {
+            if let Some(material) = floor_materials.get_mut(&floor.0) {
+                let uniform = &mut material.extension.floor;
+                uniform.blend_axis = blend_axis;
+                uniform.blend_start = fit.blend_start;
+                uniform.blend_end = fit.blend_end;
+            }
         }
     }
 }
@@ -727,6 +756,15 @@ fn fit_stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Bevy panics on conflicting query access when it initialises a system.
+    #[test]
+    fn stage_systems_have_disjoint_queries() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let _ = world.run_system_once(fit_stage);
+        let _ = world.run_system_once(sync_stage);
+    }
 
     #[test]
     fn cover_size_keeps_the_aspect_and_covers_both_ways() {

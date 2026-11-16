@@ -1,7 +1,7 @@
 // Signed reads (events, communities, the gallery) go through the bridge, not here.
 
 import { serviceUrl } from '@hud-host'
-import { placePlayers, type DiscoverPlace } from '../places/placesApi'
+import type { DiscoverPlace } from '../places/placesApi'
 import { getPref, PREF, setPref } from '../../lib/prefs'
 
 const PLACES_API = `${serviceUrl('places')}/api`
@@ -25,15 +25,18 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
 
 async function placesData(url: string, init?: RequestInit): Promise<LobbyPlace[]> {
   const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`places API failed: ${res.status}`)
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error(`places API failed: ${res.status}`)
+  }
   const json = (await res.json()) as { ok?: boolean; data?: LobbyPlace[] }
   if (json.ok === false || !Array.isArray(json.data)) throw new Error('places API returned not-ok')
   return json.data
 }
 
 /** Connected wallets when known, else the place's user count. */
-export function placeOnline(p: LobbyPlace): number {
-  return p.connected_addresses?.length ?? placePlayers(p)
+export function placeOnline(p: { connected_addresses?: readonly string[] | null; user_count?: number }): number {
+  return p.connected_addresses?.length ?? p.user_count ?? 0
 }
 
 export function fetchHighlighted(): Promise<LobbyPlace[]> {
@@ -105,7 +108,10 @@ export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, F
   if (wallets.length === 0) return found
   const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
   const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`)
-  if (!res.ok) throw new Error(`peers: ${res.status}`)
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error(`peers: ${res.status}`)
+  }
   const body = (await res.json()) as { peers?: Peer[] }
   for (const peer of body.peers ?? []) {
     const id = (peer.id ?? peer.address ?? '').toLowerCase()
@@ -116,7 +122,11 @@ export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, F
       .filter((w) => !found.has(w.toLowerCase()))
       .map(async (w) => {
         const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(w)}/connected-world`).catch(() => null)
-        if (r == null || !r.ok) return
+        if (r == null) return
+        if (!r.ok) {
+          await r.body?.cancel().catch(() => undefined)
+          return
+        }
         const data = (await r.json().catch(() => null)) as { world?: string } | null
         if (data?.world) found.set(w.toLowerCase(), { kind: 'world', world: data.world, parcel: null })
       })
@@ -133,7 +143,10 @@ export async function whereTitle(where: FriendWhere): Promise<string> {
 
 export async function fetchCrowd(): Promise<{ x: number; y: number }> {
   const res = await fetch(`${serviceUrl('realmProvider')}/hot-scenes`)
-  if (!res.ok) throw new Error(`hot-scenes: ${res.status}`)
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error(`hot-scenes: ${res.status}`)
+  }
   const scenes = (await res.json()) as Array<{ baseCoords?: [number, number] }>
   const top = scenes[0]?.baseCoords
   if (!Array.isArray(top)) throw new Error('hot-scenes: none')

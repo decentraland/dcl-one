@@ -1,6 +1,7 @@
 // Grammar, shared with the /goto chat command: "random" | "crowd" | "x,y" | "x,y/spawn" | "world" |
 // "world/x,y" | "world/spawn" | "world/x,y/spawn"; a spawn point name holds neither ',' nor '/'.
-// Anything else is taken verbatim as a world name.
+// Anything else is taken verbatim as a world name. The lobby cannot travel to a spawn point, so
+// isDestination refuses the forms that name one.
 
 export interface GotoTarget {
   world: string | null
@@ -62,6 +63,7 @@ export function isGenesisParcel(x: number, y: number): boolean {
 export function isDestination(text: string): boolean {
   const t = parseGotoTarget(text)
   if (t.random || t.crowd) return true
+  if (t.spawnPoint != null) return false
   if (t.world != null && !WORLD.test(t.world) && !WORLD_SHORT_NAME.test(t.world)) return false
   if (t.parcel != null && !isGenesisParcel(t.parcel.x, t.parcel.y)) return false
   return t.world != null || t.parcel != null

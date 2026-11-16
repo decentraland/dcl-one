@@ -9,7 +9,10 @@ import type { MapApiRequest, MapApiResultMessage } from '../../engine/protocol'
 import { parcelKey, type Vec2 } from './mapCoords'
 
 type Send = (id: number, request: MapApiRequest) => void
-type Pending = { resolve: (data: unknown) => void; reject: (error: Error) => void }
+type Pending = { resolve: (data: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+
+/** A request the bridge never answers fails after this. */
+export const MAP_API_TIMEOUT_MS = 30_000
 
 let send: Send | null = null
 let nextId = 1
@@ -19,7 +22,10 @@ const pending = new Map<number, Pending>()
 export function setMapApiTransport(transport: Send | null): void {
   send = transport
   if (transport == null) {
-    for (const p of pending.values()) p.reject(new Error('The map lost its connection'))
+    for (const p of pending.values()) {
+      clearTimeout(p.timer)
+      p.reject(new Error('The map lost its connection'))
+    }
     pending.clear()
   }
 }
@@ -29,16 +35,28 @@ export function resolveMapApi(msg: MapApiResultMessage): void {
   const p = pending.get(msg.id)
   if (p == null) return
   pending.delete(msg.id)
+  clearTimeout(p.timer)
   if (msg.ok) p.resolve(msg.data)
   else p.reject(new Error(msg.error ?? 'The request failed'))
 }
 
 function request<T>(req: MapApiRequest): Promise<T> {
-  if (send == null) return Promise.reject(new Error('The map is not connected'))
+  const transport = send
+  if (transport == null) return Promise.reject(new Error('The map is not connected'))
   const id = nextId++
   return new Promise<T>((resolve, reject) => {
-    pending.set(id, { resolve: resolve as (data: unknown) => void, reject })
-    send?.(id, req)
+    const timer = setTimeout(() => {
+      pending.delete(id)
+      reject(new Error('The map did not answer'))
+    }, MAP_API_TIMEOUT_MS)
+    pending.set(id, { resolve: resolve as (data: unknown) => void, reject, timer })
+    try {
+      transport(id, req)
+    } catch (e) {
+      clearTimeout(timer)
+      pending.delete(id)
+      reject(e instanceof Error ? e : new Error(String(e)))
+    }
   })
 }
 

@@ -144,6 +144,15 @@ export class RailModel {
     return Math.min(Math.max(start - dx, 0), this.maxOffset())
   }
 
+  /** The state that shows `card` whole: unchanged when it already is, else that card's page. */
+  reveal(state: RailState, card: number): RailState {
+    if (card < 0 || card >= this.shown) return state
+    const left = this.cardX(card)
+    const right = this.geometry.rights[card] ?? left
+    if (left >= state.offset - END_TOLERANCE && right <= state.offset + this.geometry.viewport + END_TOLERANCE) return state
+    return this.snapTo(Math.floor(card / this.perPage))
+  }
+
   /** Re-placed on the card it was on, once the cards are laid out (or after a change of cards). */
   settle(state: RailState): RailState {
     return { ...state, offset: this.cardOffset(state.card) }

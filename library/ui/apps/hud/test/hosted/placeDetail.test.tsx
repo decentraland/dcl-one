@@ -120,10 +120,65 @@ describe('place detail', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('shows Set as home and Start navigation without acting on them yet', () => {
+  it('leaves out Set as home and Start navigation until they can act', () => {
     show(fakeSession(), PLAZA)
-    expect(screen.getByRole('button', { name: 'Set as home' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /start navigation/i })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Set as home' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /start navigation/i })).toBeNull()
+  })
+
+  it('keeps a vote sent before the signed read lands', async () => {
+    const session = fakeSession()
+    let read: (place: { id: string; user_like: boolean; user_dislike: boolean; user_favorite: boolean }) => void = () => undefined
+    vi.mocked(session.places.readSigned).mockReturnValue(new Promise((resolve) => (read = resolve)))
+    vi.mocked(setPlaceLike).mockResolvedValue({ likes: 1, dislikes: 0, user_like: true, user_dislike: false })
+    show(session, PLAZA)
+    const like = screen.getByRole('button', { name: 'Like' })
+    fireEvent.click(like)
+    await waitFor(() => expect(like).toBeEnabled())
+    await act(async () => read({ id: 'plaza', user_like: false, user_dislike: false, user_favorite: false }))
+    expect(like).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('keeps a favourite in flight when a vote is sent', async () => {
+    vi.mocked(setPlaceFavorite).mockReturnValue(new Promise(() => undefined))
+    vi.mocked(setPlaceLike).mockReturnValue(new Promise(() => undefined))
+    show(fakeSession(), PLAZA)
+    fireEvent.click(screen.getByRole('button', { name: 'Favorite' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Like' }))
+    expect(screen.getByRole('button', { name: 'Favorite' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Like' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('holds Jump in while a sign-in finishes', () => {
+    const session = fakeSession()
+    session.login.busy = true
+    const onJumpIn = vi.fn(() => true)
+    show(session, PLAZA, onJumpIn)
+    const jump = screen.getByRole('button', { name: 'Jump in to Genesis Plaza' })
+    expect(jump).toBeDisabled()
+    fireEvent.click(jump)
+    expect(onJumpIn).not.toHaveBeenCalled()
+  })
+
+  it("judges a world's access again once the player's communities arrive", async () => {
+    const session = fakeSession()
+    session.lobbyData.communitiesLoaded = false
+    vi.mocked(fetchWorldAccess).mockResolvedValueOnce('failed').mockResolvedValueOnce('invited')
+    const view = (s: EngineSession): React.JSX.Element => (
+      <SessionProvider value={s}>
+        <PopupHost />
+      </SessionProvider>
+    )
+    const { rerender } = render(view(session))
+    act(() => openPlaceDetail({ place: WORLD, onJumpIn: () => true }))
+    await waitFor(() => expect(fetchWorldAccess).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(fetchWorldAccess).mock.calls[0][2]).toBeNull()
+    expect(screen.queryByText('INVITE ONLY')).toBeNull()
+    const loaded = { ...session, lobbyData: { ...session.lobbyData, communitiesLoaded: true }, communities: { ...session.communities, list: [{ id: 'c1' }] as EngineSession['communities']['list'] } }
+    rerender(view(loaded))
+    await waitFor(() => expect(fetchWorldAccess).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(fetchWorldAccess).mock.calls[1][2]).toEqual(['c1'])
+    expect(await screen.findByText('YOU ARE INVITED')).toBeInTheDocument()
   })
 
   it("holds a world's Jump in until its access is known, then follows it", async () => {

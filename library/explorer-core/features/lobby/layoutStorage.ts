@@ -1,7 +1,7 @@
 // Widgets and corners are stored by name, so a renamed or resized widget is dropped on load instead of
 // landing on a wrong one. The shape is versioned so a later layout can migrate it.
 import { getPref, PREF, setPref } from '../../lib/prefs'
-import { LOBBY_CORNERS, LOBBY_WIDGETS, type LobbyCorner, type LobbyLayout, type LobbyWidgetId } from './layout'
+import { LOBBY_CORNERS, LOBBY_WIDGETS, widgetFamily, type LobbyCorner, type LobbyLayout, type LobbyWidgetId } from './layout'
 
 const VERSION = 1
 
@@ -19,7 +19,8 @@ export function serializeLayout(layout: LobbyLayout): string {
   })
 }
 
-/** Unknown, out-of-grid or overlapping entries are skipped; a missing, malformed or other-version value
+/** Unknown, out-of-grid or overlapping entries, and a second widget of one family, are skipped; a
+ *  missing, malformed or other-version value
  *  gives the default layout. */
 export function deserializeLayout(layout: LobbyLayout, stored: string | null): void {
   layout.clear()
@@ -40,6 +41,7 @@ export function deserializeLayout(layout: LobbyLayout, stored: string | null): v
     if (typeof corner !== 'string' || !(LOBBY_CORNERS as readonly string[]).includes(corner)) continue
     const x = typeof entry.X === 'number' && Number.isInteger(entry.X) ? entry.X : 0
     const y = typeof entry.Y === 'number' && Number.isInteger(entry.Y) ? entry.Y : 0
+    if (layout.all.some((p) => widgetFamily(p.widget) === widgetFamily(widget as LobbyWidgetId))) continue
     layout.tryPlace(widget as LobbyWidgetId, corner as LobbyCorner, { x, y })
   }
 }

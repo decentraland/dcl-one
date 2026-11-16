@@ -9,6 +9,7 @@ import signOutIcon from '../../assets/lobby/sign-out-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
 import { MaskIcon } from '../../design'
 import { siteUrl } from '@hud-host'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { profilePictureStyle } from './LobbyCards'
 import styles from './LobbyProfileMenu.module.css'
 
@@ -46,17 +47,12 @@ export function LobbyProfileMenu({
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const first = useRef<HTMLButtonElement>(null)
+  const close = useRef(onClose)
+  close.current = onClose
   useEffect(() => {
     first.current?.focus()
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+    return registerCancelLayer(() => close.current())
+  }, [])
   useEffect(() => {
     if (!copied) return
     const id = setTimeout(() => setCopied(false), COPIED_MS)

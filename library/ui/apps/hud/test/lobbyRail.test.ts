@@ -28,6 +28,16 @@ describe('lobby rail paging', () => {
     expect(r.previous(RAIL_START).page).toBe(2)
   })
 
+  it('brings in the page of a card focused off it, and stays for one in view', () => {
+    const r = rail(7, 3)
+    expect(r.reveal(RAIL_START, 2)).toBe(RAIL_START)
+    expect(r.reveal(RAIL_START, 4).page).toBe(1)
+    const last = r.reveal(RAIL_START, 6)
+    expect(last.page).toBe(2)
+    expect(last.offset).toBe(r.maxOffset())
+    expect(r.reveal(last, 6)).toBe(last)
+  })
+
   it('stops the wheel at both ends', () => {
     const r = rail(7, 3)
     expect(r.wheel(RAIL_START, false)).toEqual(RAIL_START)

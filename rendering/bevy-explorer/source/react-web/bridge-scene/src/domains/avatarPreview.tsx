@@ -397,6 +397,9 @@ function disposePreview(): void {
 // Backpack opens over the lobby, and the lobby takes it back when the Backpack closes.
 type PreviewState = ReturnType<typeof takeState>
 let parkedLobby: PreviewState | null = null
+// Taken off while the Backpack covers the lobby, so the engine stops drawing its stage.
+type TextureCameraValue = NonNullable<Parameters<typeof TextureCamera.create>[1]>
+let parkedCamera: TextureCameraValue | null = null
 
 function takeState() {
   return { rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, shownLook, standbyLook, turn, shownYaw, swapReady, expecting, wanted, standbyWanted, preload, showLoad, standbyLoad, shownLoaded, zoom, zoomShift }
@@ -408,6 +411,11 @@ function putState(s: PreviewState): void {
 
 function parkLobby(): void {
   parkedLobby = takeState()
+  const camera = cameraEntity != null ? TextureCamera.getOrNull(cameraEntity) : null
+  if (cameraEntity != null && camera != null) {
+    parkedCamera = JSON.parse(JSON.stringify(camera)) as TextureCameraValue
+    TextureCamera.deleteFrom(cameraEntity)
+  }
   clearPreview()
   rect = null
   stageUp = false
@@ -419,6 +427,8 @@ function unparkLobby(): void {
   if (parkedLobby == null) return
   putState(parkedLobby)
   parkedLobby = null
+  if (cameraEntity != null && parkedCamera != null) TextureCamera.createOrReplace(cameraEntity, parkedCamera)
+  parkedCamera = null
   // the Backpack's item preview is its own: the lobby wears the look
   previewUrns = null
 }
@@ -429,6 +439,7 @@ function disposeParkedLobby(): void {
   const current = takeState()
   putState(parkedLobby)
   parkedLobby = null
+  parkedCamera = null
   disposePreview()
   putState(current)
 }

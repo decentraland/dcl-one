@@ -917,6 +917,7 @@ const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
 export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
@@ -1050,7 +1051,7 @@ export interface EngineSession {
   /** The engine has drawn the lobby stage and avatar, so the page's stand-in can fade out. */
   lobbyStageReady: boolean
   /** The lobby reopened in-world from the menu. */
-  lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
+  lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => boolean }
   /** Read signed through the bridge. */
   lobbyData: LobbyDataState
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
@@ -2708,10 +2709,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // the world starts instead, and the lobby closes into it.
   const startupLobbyRef = useRef(false)
   const pickRef = useRef<(dest: Destination) => boolean>(() => false)
+  // True whenever the startup lobby is up, so the caller never travels in-world instead.
   const pickFromStartupLobby = useCallback((dest: Destination): boolean => {
     if (!startupLobbyRef.current) return false
-    closeAllPanelsRef.current()
-    pickRef.current(dest)
+    if (pickRef.current(dest)) closeAllPanelsRef.current()
+    else showToast(SIGNING_IN_PICK)
     return true
   }, [])
   const closeAllPanelsRef = useRef<() => void>(() => undefined)
@@ -3227,10 +3229,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'getHomeScene' })
   }, [lobby, lobbyOpen])
   const travelFromLobbyInWorld = useCallback(
-    (dest: Destination) => {
+    (dest: Destination): boolean => {
       if (dest == null) {
         const home = homeScene()
-        if (home == null) return
+        if (home == null) return false
         const [x, y] = home.parcel.split(',').map(Number)
         travel({ kind: 'teleport', realm: home.realm ?? DEFAULT_REALM, x, y })
       } else if (dest.kind === 'parcel') teleportToPlace(dest.x, dest.y)
@@ -3240,6 +3242,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         else travel({ kind: 'changeRealm', realm: dest.realm })
       }
       setLobbyOpen(false)
+      return true
     },
     [homeScene, teleportToPlace, travel]
   )

@@ -323,6 +323,16 @@ describe('lobby layout storage', () => {
     expect(layout.placement('JumpBackIn7By2')?.corner).toBe('BottomRight')
   })
 
+  it('keeps one widget of a family, the first stored', () => {
+    deserializeLayout(
+      layout,
+      '{"Version":1,"Entries":[' +
+        '{"Corner":"BottomRight","Widget":"JumpBackIn7By2","X":0,"Y":0},' +
+        '{"Corner":"BottomLeft","Widget":"JumpBackIn4By2","X":0,"Y":0}]}'
+    )
+    expect(layout.all.map((p) => p.widget)).toEqual(['JumpBackIn7By2'])
+  })
+
   it('skips entries that do not fit the grid', () => {
     deserializeLayout(
       layout,
