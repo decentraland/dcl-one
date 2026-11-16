@@ -95,6 +95,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         trial_mode: config.shop.credits_trial_mode,
         trial_buyers: non_empty(&config.shop.credits_trial_buyers),
         shop_base_url: config.shop.shop_base_url.clone(),
+        notifications_cdn_url: config.social.notifications_cdn_url.clone(),
     })
     .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
 }
@@ -119,6 +120,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         voice_initial_connection_ttl_ms: config.social.voice_chat_initial_connection_ttl_ms,
         community_voice_no_moderator_ttl_ms: config.social.community_voice_chat_no_moderator_ttl_ms,
         voice_expired_batch_size: config.social.voice_chat_expired_batch_size,
+        report_evidence_daily_mib: config.social.report_evidence_daily_mib,
         commit_hash: config.node.commit_hash.clone(),
     })
     .context("LIVEKIT_* / COMMS_* configuration")
@@ -138,6 +140,7 @@ pub(super) fn referral_settings(config: &Config) -> communities::referral::Setti
         },
         min_login_days: config.social.referral_min_login_days,
         profile_url: config.social.referral_profile_url.clone(),
+        cdn_url: config.social.notifications_cdn_url.clone(),
         reward_server_url: config.social.referral_reward_server_url.clone(),
         reward_keys: [
             (

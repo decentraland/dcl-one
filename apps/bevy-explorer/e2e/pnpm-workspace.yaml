@@ -1,0 +1,3 @@
+# No package runs code at install time; new dependencies are saved with exact versions.
+ignoreScripts: true
+saveExact: true

@@ -7,8 +7,8 @@ zero fog density. These explicit values exercise optional protobuf fields.
 From `apps/bevy-explorer/e2e`, build with the repository's scene CLI:
 
 ```sh
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes -- environment
-DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy npm run check:environment
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes environment
+DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy pnpm run check:environment
 ```
 
 The native check serves this scene on a temporary loopback realm, checks its SDK
