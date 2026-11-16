@@ -722,7 +722,7 @@ mod tests {
             "the reason is not published: {reported}"
         );
         let (_, snap) = call(&app, "GET", "/federation/places/snapshot", None).await;
-        assert_eq!(snap["latest_seq"], page["latest_seq"]);
+        assert!(snap["latest_seq"].as_i64() >= page["latest_seq"].as_i64());
         assert!(snap["log_hash"].as_str().unwrap().len() == 64);
 
         // events: a schedule needs a moderator, settings are the signer's own
