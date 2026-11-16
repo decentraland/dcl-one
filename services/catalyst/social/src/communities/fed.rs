@@ -1796,6 +1796,11 @@ mod tests {
             assert_eq!(public(extended), expected, "{stored}");
         }
         assert_eq!(public(Value::Null), Value::Null);
+        // An object of no known shape publishes only the community field.
+        assert_eq!(
+            public(json!({ "reason": "spam", "note": "local" })),
+            json!({ "community_id": null })
+        );
     }
 
     #[test]
