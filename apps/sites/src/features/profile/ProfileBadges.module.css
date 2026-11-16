@@ -1,5 +1,5 @@
-/* TODO(figma-ds): replace with the Figma-generated badges row's styles. The source's 30px gap has
- * no spacing token; the nearest one (32px) is used. */
+/* The badges row and its tooltip. The design system has no Badge or Tooltip yet, so they are drawn
+ * here. The source's 30px gap has no spacing token; the nearest one (32px) is used. */
 .root {
   width: 100%;
 }

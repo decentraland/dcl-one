@@ -17,6 +17,8 @@ The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts
 
 The same Sites profile Places tab also adopts Button, JumpInCTA, Spinner, Tabs and TabsBar (pill variant, for the owner's My Places / Favourites switch), verified the same way in [profile Places](https://github.com/decentraland/dcl-one/pull/634).
 
+The profile frame every ported profile tab shares (`apps/sites/src/features/profile/ProfileShell.tsx`, `/profile/:address` and `/profile/:address/places`) adopts TabsBar and Tabs (underline variant) for the section tabs, rendered through the router link with Tabs' `linkComponent`, and Button for the owner's Get a Unique Name and Manage World. Unit tests and local screenshots at 1440 px; screen reader and touch unverified. The profile header, avatar, avatar body, About card and badges row stay app-local markup in `apps/sites/src/features/profile/`: the design system has no Avatar, profile header, card or Badge yet.
+
 The Sites profile Creations and Assets tabs (`apps/sites/src/features/profile/ProfileCreationsScreen.tsx`, `ProfileAssetsScreen.tsx`, `/profile/:address/creations` and `/assets`) adopt ShopCard, Button, Spinner, Tabs and TabsBar (pill variant, controlling a tabpanel) in [profile Creations and Assets](https://github.com/decentraland/dcl-one/pull/640). The NAME row and the list panel stay app-local in `apps/sites/src/features/profile/collectibles.tsx`.
 
 The mobile menu keeps the single branded header usable above a full-width lower panel. Opening the menu moves numeric balances into that panel at all mobile widths; account and balance controls are not duplicated. The public `className` applies to the outer navigation frame so host positioning and stacking remain effective.
