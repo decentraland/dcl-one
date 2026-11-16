@@ -41,7 +41,7 @@ flowchart LR
 | `PostInit` | Adding data to scenes that just appeared | scene collider data, gltf readiness, scene UI root, avatar colliders |
 | `Input` | Systems that produce this frame's engine-to-scene messages | pointer results, raycasts, trigger areas, pointer lock, camera mode, time and FOV into the CRDT |
 | `RunLoop` | The scene loop (below), the partitions it ranks by, and the download priorities published from them | `update_scene_partitions`, `publish_download_priorities`, `update_scene_priority`, `run_scene_loop` |
-| `PostLoop` | Reacting to scene state the loop wrote: by far the largest set | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
+| `PostLoop` | Reacting to scene state the loop wrote: by far the largest set. The mesh renderer and materials charge an entity's first mesh and first material to the frame's instantiation slice (`InstantiationBudget`), and leave what does not fit marked for the next frame | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
 | `RestrictedActions` | Anything that may move the player, change realm, or alter engine-level state on a scene's behalf | teleport and move player, settings, profile updates, emote reports, imposter render |
 
 `run_raycasts` runs each request in three phases. Prepare is serial: it sets `last_run`, resolves
@@ -132,9 +132,10 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
 - **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
   - `slice_scene_spawning` sets this frame's instantiation slice: a quarter of the target frame
-    (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, the spawner's deadline
-    a quarter of the slice before its end and processing's (`ProcessingDeadline`) at its end;
-    none behind the loading backdrop or on headless;
+    (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, less what
+    `PostLoop`'s mesh renderer and materials charged it this frame (`InstantiationCharges`, then
+    reset), the spawner's deadline a quarter of the slice before its end and processing's
+    (`ProcessingDeadline`) at its end; none behind the loading backdrop or on headless;
   - bevy's `scene_spawner_system` writes scene instances up to its deadline;
   - `update_ready_gltfs` processes complete glTF instances a node at a time until its deadline,
     instances already in progress first, and reveals each when its last node is done;
@@ -153,7 +154,10 @@ The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom 
 uniforms, and two render-graph nodes in `Core3d`, in this order between `DepthOfField` and
 `Tonemapping`: the hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds
 queue and sort systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
-(`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's conventions, not ours.
+(`crates/visuals/src/stars.rs`). Below render scale 1 the world camera renders to an image that a
+`Core2d` compositor camera (`crates/visuals/src/upscale.rs`, order 1) draws onto the window, and
+that camera carries the UI; at scale 1 the compositor is inactive. Render-world ordering follows
+bevy's conventions, not ours.
 
 ## Headless
 

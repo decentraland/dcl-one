@@ -1,7 +1,8 @@
 use bevy::{
     asset::{io::VecReader, AssetLoader},
     image::{
-        CompressedImageFormats, ImageLoader, ImageLoaderError, ImageLoaderSettings, ImageType,
+        CompressedImageFormats, ImageFormat, ImageFormatSetting, ImageLoader, ImageLoaderError,
+        ImageLoaderSettings, ImageType,
     },
     log::debug,
     prelude::{FromWorld, Image},
@@ -87,6 +88,12 @@ impl AssetLoader for SvgLoader {
     }
 }
 
+/// The image paths this loader takes: `image` (an image path without an extension), and the
+/// formats a BC texture variant (`ipfs::bevy_variants`) may stand in for, so that a variant read
+/// at a `.png`, `.jpg`, `.jpeg` or `.webp` path is unwrapped here, inside the asset load. It is
+/// registered after Bevy's `ImageLoader`, which it wraps, so it wins those extensions.
+pub const EXTENSIONS: &[&str] = &["image", "png", "jpg", "jpeg", "webp"];
+
 pub struct ExtendedImageLoader {
     image_loader: ImageLoader,
     svg_loader: SvgLoader,
@@ -120,6 +127,24 @@ impl AssetLoader for ExtendedImageLoader {
         let mut data = Vec::default();
         reader.read_to_end(&mut data).await?;
 
+        // a BC texture variant: the DDS its KTX2 unwraps to
+        let dds_settings;
+        let (data, settings) = match ipfs::bevy_variants::ktx2::bc_ktx2_dds(&data) {
+            Some(Ok(dds)) => {
+                dds_settings = ImageLoaderSettings {
+                    format: ImageFormatSetting::Format(ImageFormat::Dds),
+                    ..settings.clone()
+                };
+                (dds, &dds_settings)
+            }
+            Some(Err(reason)) => {
+                return Err(ImageLoaderError::Io(std::io::Error::other(format!(
+                    "invalid KTX2 texture variant: {reason}"
+                ))))
+            }
+            None => (data, settings),
+        };
+
         match self
             .image_loader
             .load(&mut VecReader::new(data.clone()), settings, load_context)
@@ -146,6 +171,6 @@ impl AssetLoader for ExtendedImageLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["image"]
+        EXTENSIONS
     }
 }

@@ -21,9 +21,30 @@ pub fn web_explorer_base() -> String {
     std::env::var("DCL_SCENE_CLI_WEB_EXPLORER")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_WEB_EXPLORER.to_string())
+        .unwrap_or_else(|| default_web_explorer(dclenv()))
         .trim_end_matches('/')
         .to_string()
+}
+
+/// The hosted web explorer of a Decentraland environment: bevy-web is
+/// deployed on decentraland.org and decentraland.zone alone.
+pub fn default_web_explorer(dclenv: &str) -> String {
+    match dclenv {
+        "zone" => DEFAULT_WEB_EXPLORER.replace("decentraland.org", "decentraland.zone"),
+        _ => DEFAULT_WEB_EXPLORER.to_string(),
+    }
+}
+
+static DCLENV: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `start --dclenv`: the environment every deep link and hosted-explorer URL
+/// of this run names; `org` until set, and set once.
+pub fn set_dclenv(env: &str) {
+    let _ = DCLENV.set(env.trim().to_ascii_lowercase());
+}
+
+pub fn dclenv() -> &'static str {
+    DCLENV.get().map(String::as_str).unwrap_or("org")
 }
 
 pub fn world_name(scene_json: &Value) -> Option<String> {
@@ -81,6 +102,9 @@ pub struct JoinBlock {
     pub optimized_assets_url: Option<String>,
     /// Pre-encoded `&key=value...`, appended verbatim to every desktop link.
     pub deep_link_extra: String,
+    /// `start --realm`: the realm the desktop deep links name instead of
+    /// this preview's own address.
+    pub realm_override: Option<String>,
     pub native_hud: bool,
     /// From [`detect_native_bin`]; None prints the generic `bevy-explorer` name.
     pub native_bin: Option<String>,
@@ -215,6 +239,29 @@ fn query_value_encode(value: &str) -> String {
     out
 }
 
+/// Why a browser will refuse this player on this realm, when it will: a page
+/// served over https may fetch plain http from this machine's loopback and
+/// from nowhere else, so an https player pointed at `http://<lan address>`
+/// loads and then shows nothing. The answer names the ways out.
+pub fn web_blocked(web_explorer: &str, realm: &str) -> Option<String> {
+    let player = parse_web_explorer(web_explorer).ok()?;
+    let realm = url::Url::parse(realm).ok()?;
+    let loopback = match realm.host()? {
+        url::Host::Domain(d) => d == "localhost" || d.ends_with(".localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    (player.scheme() == "https" && realm.scheme() == "http" && !loopback).then(|| {
+        format!(
+            "The browser blocks this pairing: {} is served over https and cannot load a preview from plain http at {}. \
+             Open the preview as http://127.0.0.1 on the machine that runs it, or serve it over https: \
+             start with --tunnel, or put a proxy in front and pass --public-url https://<your domain>.",
+            player.host_str().unwrap_or("the player"),
+            realm.host_str().unwrap_or("this address"),
+        )
+    })
+}
+
 pub fn web_join_url(web_explorer: &str, realm: &str, position: (i64, i64)) -> String {
     let Ok(mut player) = parse_web_explorer(web_explorer) else {
         return String::new();
@@ -264,12 +311,22 @@ pub fn desktop_deep_link(
     optimized_assets_url: Option<&str>,
     extra: &str,
 ) -> String {
+    desktop_deep_link_in(dclenv(), realm, position, optimized_assets_url, extra)
+}
+
+fn desktop_deep_link_in(
+    dclenv: &str,
+    realm: &str,
+    position: (i64, i64),
+    optimized_assets_url: Option<&str>,
+    extra: &str,
+) -> String {
     let ab = match optimized_assets_url {
         Some(url) => format!("&optimized-assets-url={}", form_encode(url)),
         None => String::new(),
     };
     format!(
-        "{}&local-scene=true&dclenv=org{ab}{extra}",
+        "{}&local-scene=true&dclenv={dclenv}{ab}{extra}",
         crate::deep_link::realm_deep_link(realm, position),
     )
 }
@@ -348,6 +405,16 @@ impl JoinBlock {
         web_join_url(&self.web_explorer, realm, self.position)
     }
 
+    /// The desktop deep link and web URL for a player on this machine: what
+    /// `start --explorer-alpha` and `start --web` open.
+    pub fn local_desktop_link(&self) -> String {
+        self.desktop_link(&self.local_realm(), "")
+    }
+
+    pub fn local_web_url(&self) -> String {
+        self.web_url(&self.local_realm())
+    }
+
     /// Keys in the row's own `extra` drop the same key from the shared
     /// `deep_link_extra`, so a passthrough `multi-instance` is never doubled.
     fn desktop_link(&self, realm: &str, extra: &str) -> String {
@@ -364,7 +431,7 @@ impl JoinBlock {
             .map(|kv| format!("&{kv}"))
             .collect();
         desktop_deep_link(
-            realm,
+            self.realm_override.as_deref().unwrap_or(realm),
             self.position,
             self.optimized_assets_url.as_deref(),
             &format!("{extra}{shared}"),
@@ -541,9 +608,18 @@ impl JoinBlock {
     }
 
     pub fn internet_section(&self, public_url: &str) -> String {
+        self.public_section(
+            "Join from the INTERNET \u{2014} tunnel connected",
+            public_url,
+        )
+    }
+
+    /// The join links of an address other than this machine's own: a tunnel's
+    /// public URL, or the `--public-url` a proxy serves the preview at.
+    pub fn public_section(&self, heading: &str, public_url: &str) -> String {
         let realm = public_url.trim_end_matches('/');
         let mut out = String::new();
-        out.push_str("\nJoin from the INTERNET \u{2014} tunnel connected\n");
+        out.push_str(&format!("\n{heading}\n"));
         row(&mut out, "realm:", realm);
         row(&mut out, "web:", self.web_url(realm));
         row(&mut out, "desktop:", self.desktop_link(realm, ""));
@@ -608,8 +684,44 @@ mod tests {
             native_bin: None,
             optimized_assets_url: None,
             deep_link_extra: String::new(),
+            realm_override: None,
             native_hud: true,
         }
+    }
+
+    #[test]
+    fn realm_override_renames_the_desktop_links_only() {
+        let mut b = block(vec![iface("lo", "127.0.0.1")], QrMode::Hint);
+        b.realm_override = Some("https://tunnel.example".to_string());
+        let out = b.render();
+        assert!(out.contains("realm=https%3A%2F%2Ftunnel.example&"), "{out}");
+        assert!(
+            !out.contains("realm=http%3A%2F%2F127.0.0.1%3A5600"),
+            "{out}"
+        );
+        assert!(
+            out.contains("realm=http://127.0.0.1:5600"),
+            "web row keeps the preview: {out}"
+        );
+        assert!(
+            b.local_desktop_link()
+                .starts_with("decentraland://realm=https%3A%2F%2Ftunnel.example&")
+        );
+        assert!(b.local_web_url().contains("realm=http://127.0.0.1:5600"));
+    }
+
+    #[test]
+    fn dclenv_names_the_environment_in_the_deep_link_and_the_web_explorer() {
+        let zone = desktop_deep_link_in("zone", "http://127.0.0.1:1", (0, 0), None, "");
+        assert!(zone.contains("&local-scene=true&dclenv=zone"), "{zone}");
+        let org = desktop_deep_link_in("org", "http://127.0.0.1:1", (0, 0), None, "");
+        assert!(org.contains("&dclenv=org"), "{org}");
+        assert_eq!(
+            default_web_explorer("zone"),
+            "https://decentraland.zone/bevy-web"
+        );
+        assert_eq!(default_web_explorer("org"), DEFAULT_WEB_EXPLORER);
+        assert_eq!(default_web_explorer("anything-else"), DEFAULT_WEB_EXPLORER);
     }
 
     fn full_ifaces() -> Vec<Iface> {
@@ -988,6 +1100,30 @@ mod tests {
 
     /// A realm reflected from a proxy header must not be able to open a second
     /// query param in the web-explorer href.
+    #[test]
+    fn an_https_player_is_blocked_only_on_plain_http_off_loopback() {
+        let player = "https://decentraland.org/bevy-web";
+        for fine in [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://[::1]:8000",
+            "https://preview.example.com",
+            "https://tunnel.example/t/abc",
+        ] {
+            assert_eq!(web_blocked(player, fine), None, "{fine}");
+        }
+        let blocked = web_blocked(player, "http://192.0.2.20:8000").unwrap();
+        assert!(blocked.contains("decentraland.org"), "{blocked}");
+        assert!(blocked.contains("192.0.2.20"), "{blocked}");
+        assert!(blocked.contains("--tunnel"), "{blocked}");
+        assert!(blocked.contains("--public-url"), "{blocked}");
+        assert_eq!(
+            web_blocked("http://192.0.2.20:5173/play", "http://192.0.2.20:8000"),
+            None,
+            "a player served over http loads an http preview"
+        );
+    }
+
     #[test]
     fn web_join_url_encodes_the_realm() {
         let url = web_join_url(

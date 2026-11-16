@@ -7,6 +7,7 @@ import type {
   Ref
 } from 'react'
 import styles from './Button.module.css'
+import { secureRel } from '../../link.helpers'
 
 type AccessibleName = { 'aria-label': string } | { 'aria-labelledby': string }
 type NamedContent = Exclude<ReactNode, null | undefined | boolean>
@@ -50,15 +51,9 @@ export type ButtonProps = NativeProps &
     startIcon?: ReactNode
     endIcon?: ReactNode
     forceState?: 'hover' | 'pressed' | 'focus'
+    contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
   ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
-
-function secureRel(target: string | undefined, rel: string | undefined): string | undefined {
-  if (!target || ['_self', '_parent', '_top'].includes(target.toLowerCase())) return rel
-  return [...new Set([...(rel ?? '').split(/\s+/).filter(Boolean), 'noopener', 'noreferrer'])].join(
-    ' '
-  )
-}
 
 export function Button({
   children,
@@ -74,11 +69,13 @@ export function Button({
   iconOnly = false,
   forceState,
   className,
+  contentLayout = 'intrinsic',
   disabled = false,
   ...native
 }: ButtonProps) {
   // Button owns its content, including when an untyped caller supplies native HTML props.
   Reflect.deleteProperty(native, 'dangerouslySetInnerHTML')
+  const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
@@ -93,7 +90,11 @@ export function Button({
           : variant
   const content = (
     <>
-      <span className={styles.content} data-loading={loading || undefined}>
+      <span
+        className={styles.content}
+        data-loading={loading || undefined}
+        data-content-layout={compact ? 'intrinsic' : layout}
+      >
         {(leadingIcon ?? startIcon) != null && (
           <span className={styles.icon} aria-hidden="true">
             {leadingIcon ?? startIcon}

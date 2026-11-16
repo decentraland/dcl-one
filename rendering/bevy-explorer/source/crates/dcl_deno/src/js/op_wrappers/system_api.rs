@@ -10,11 +10,12 @@ use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
-    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
-    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
+    WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -74,15 +75,24 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_mic_enabled(),
             op_get_voice_stream(),
             op_read_voice_stream(),
+            op_set_nearby_muted(),
+            op_get_nearby_mute_stream(),
+            op_read_nearby_mute_stream(),
             op_get_hover_stream(),
             op_read_hover_stream(),
             op_get_proximity_stream(),
             op_read_proximity_stream(),
+            op_get_connectivity_stream(),
+            op_read_connectivity_stream(),
+            op_close_connectivity_stream(),
+            op_retry_connectivity(),
             op_get_photo_mode_stream(),
             op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
             op_set_world_password(),
+            op_get_portables_stream(),
+            op_read_portables_stream(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
             op_get_scene_loading_ui_stream(),
@@ -523,6 +533,30 @@ pub async fn op_read_voice_stream(
 }
 
 #[op2(async)]
+#[serde]
+pub async fn op_set_nearby_muted(
+    state: Rc<RefCell<OpState>>,
+    #[string] address: String,
+    muted: bool,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_set_nearby_muted(state, address, muted).await
+}
+
+#[op2(async)]
+pub async fn op_get_nearby_mute_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_nearby_mute_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_nearby_mute_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<Vec<String>>, anyhow::Error> {
+    dcl_js::system_api::op_read_nearby_mute_stream(state, rid).await
+}
+
+#[op2(async)]
 pub async fn op_get_hover_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_hover_stream(state).await
 }
@@ -539,6 +573,30 @@ pub async fn op_read_hover_stream(
 #[op2(async)]
 pub async fn op_get_proximity_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_proximity_stream(state).await
+}
+
+#[op2(async)]
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_connectivity_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_connectivity_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_close_connectivity_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
+    dcl_js::system_api::op_close_connectivity_stream(state, rid)
+}
+
+#[op2(fast)]
+pub fn op_retry_connectivity(state: Rc<RefCell<OpState>>) {
+    dcl_js::system_api::op_retry_connectivity(state)
 }
 
 #[op2(async)]
@@ -899,4 +957,18 @@ pub async fn op_read_block_update_stream(
     #[smi] rid: u32,
 ) -> Result<Option<BlockUpdateData>, anyhow::Error> {
     dcl_js::system_api::op_read_block_update_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_portables_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_portables_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_portables_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    dcl_js::system_api::op_read_portables_stream(state, rid).await
 }

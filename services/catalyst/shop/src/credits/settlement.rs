@@ -43,8 +43,9 @@ use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
 use crate::evm::signer::{DirectSigner, ReceiptOutcome};
 use crate::jobs::{JobContext, Jobs, PeriodicCfg};
+use crate::policy_entry::EXECUTOR_EXECUTE_SELECTOR;
 use crate::shared::cache::TtlMap;
-use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE, ops_refusal};
+use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE};
 use crate::types::{ManaUsdRate, ManaWei, UsdCents};
 
 pub const GATE_SOURCE: &str = "credits-manager-gate";
@@ -67,15 +68,15 @@ pub const SHARED_MANAGERS: [&str; 4] = [
     "0x037566bc90f85e76587e1b07f9184585f09c1420",
 ];
 
-/// The pass-through NAME executors (CORAL/Squid and Across) and their
-/// `execute` selector: a manager that allowlists one lets a custom call
+/// The pass-through NAME executors (CORAL/Squid and Across), whose
+/// `execute` selector is [`EXECUTOR_EXECUTE_SELECTOR`]: a manager that
+/// allowlists one lets a custom call
 /// reach a resale (CONTRACTS.md, "Can a custom call reach a resale?").
 pub const PASS_THROUGH_EXECUTORS: [&str; 3] = [
     "0x84c682b1b862859730446bca5b853a5693aefc84",
     "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7",
     "0x5e359ebd4cc379f46020fac720261dc9c1d80404",
 ];
-pub const EXECUTOR_EXECUTE_SELECTOR: [u8; 4] = [0xfd, 0x16, 0x5a, 0x73];
 
 sol! {
     interface ICreditsManager {
@@ -717,8 +718,7 @@ impl StaleProcessingReport {
 
 /// The `credits-settlement` job: every `interval`, the pack-order abandon
 /// sweep and, with a revoker, the revocation pass; both write local
-/// authority, so neither runs while `OPS_WRITES_ENABLED` is off, and a pass
-/// is skipped while the restore stamps hold the operator plane. Each pass
+/// authority, so neither runs while `OPS_WRITES_ENABLED` is off. Each pass
 /// also reports, daily, the processing orders nothing moved
 /// ([`settlement_job_pass`]).
 pub fn spawn_settlement_job(
@@ -739,7 +739,7 @@ pub fn spawn_settlement_job(
             "CREDITS_REVOKER_KEY_FILE unset: credit revocations queue in credits.revocations and are not sent"
         );
     }
-    let gate = Arc::new(PassGate::new(JOB_NAME, ops_refusal));
+    let gate = Arc::new(PassGate::new(JOB_NAME));
     let report = Arc::new(StaleProcessingReport::default());
     jobs.spawn_periodic_leased(
         JOB_NAME,
@@ -770,8 +770,8 @@ pub fn spawn_settlement_job(
 /// One pass of the settlement job: [`settlement_pass`], then the daily
 /// report. The report only reads, so a pass that failed (its sweep, or its
 /// revocations) still runs it: an order stuck processing is not silenced by
-/// another failure. A pass the restore stamps held skips it, as it skips
-/// every write: this node does not speak for the ledger yet.
+/// another failure. A pass with the switch off skips it, as it skips every
+/// write: this node does not speak for the ledger yet.
 pub(super) async fn settlement_job_pass(
     credits: &Credits,
     revoker: Option<&Revoker>,
@@ -787,7 +787,7 @@ pub(super) async fn settlement_job_pass(
     ran
 }
 
-/// One settlement pass; `false` when `gate` held it and nothing was written.
+/// One settlement pass; `false` when the switch is off and nothing was written.
 pub(super) async fn settlement_pass(
     credits: &Credits,
     revoker: Option<&Revoker>,
@@ -795,9 +795,9 @@ pub(super) async fn settlement_pass(
     writes_enabled: bool,
     ctx: Option<&JobContext>,
 ) -> anyhow::Result<bool> {
-    if let Some(refusal) = gate.check(writes_enabled) {
+    if !gate.allows(writes_enabled) {
         if let Some(ctx) = ctx {
-            ctx.progress(refusal.message("operator-plane", WRITES_DISABLED_MESSAGE));
+            ctx.progress(WRITES_DISABLED_MESSAGE);
         }
         return Ok(false);
     }

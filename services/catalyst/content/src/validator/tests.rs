@@ -327,6 +327,31 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
         ])
     );
 
+    // The per-pointer limit is not truncated: one byte over twice the limit
+    // across two pointers is refused, exactly twice the limit is accepted.
+    let limit = 15 * 1024 * 1024;
+    let over = vec![0u8; 2 * limit + 1];
+    let (entity, files, chain, _) =
+        signed(scene(&["1,1", "1,2"], &over), std::slice::from_ref(&over)).await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(
+        validate(&entity, &files, &ctx).await,
+        rejected(&[
+            "The deployment is too big. The maximum allowed size per pointer is 15 MB for scene. You can upload up to 31457280 bytes but you tried to upload 31457281."
+        ])
+    );
+    let exact = vec![0u8; 2 * limit];
+    let (entity, files, chain, _) =
+        signed(scene(&["1,1", "1,2"], &exact), std::slice::from_ref(&exact)).await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(validate(&entity, &files, &ctx).await, Ok(()));
+
     let (entity, files, chain, _) = signed(
         json!({
             "version": "v3", "type": "scene", "pointers": ["1,1"], "timestamp": chrono::Utc::now().timestamp_millis(),
@@ -1139,7 +1164,7 @@ fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
         ValidationError::Rejected("b".into()),
     ]);
     assert!(
-        matches!(&rejected, DeployFailure::Rejected(e) if e == &["a".to_string(), "b".to_string()])
+        matches!(&rejected, DeployFailure::Rejected(_, e) if e == &["a".to_string(), "b".to_string()])
     );
     let unavailable = into_deploy_failure(vec![ValidationError::Unavailable("store".into())]);
     assert!(matches!(&unavailable, DeployFailure::Unavailable(e) if e == &["store".to_string()]));
@@ -1301,4 +1326,28 @@ async fn the_erc721_route_formats_the_active_wearable() {
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
     pool.close().await;
+}
+
+#[tokio::test]
+async fn staging_accepts_missing_content_that_full_validation_rejects() {
+    let (storage, tmp) = temp_storage("staging-missing").await;
+    let s = sources(
+        lazy_pool(),
+        storage,
+        Settings {
+            ignore_blockchain_access: true,
+            ..Settings::default()
+        },
+    );
+    let model = b"staged-model".to_vec();
+    let (entity, mut files, chain, _) =
+        signed(scene(&["1,1"], &model), std::slice::from_ref(&model)).await;
+    files.remove(&hash_bytes_v1(&model));
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(validate_staging(&entity, &files, &ctx, false).await, Ok(()));
+    assert!(validate(&entity, &files, &ctx).await.is_err());
+    let _ = std::fs::remove_dir_all(tmp);
 }

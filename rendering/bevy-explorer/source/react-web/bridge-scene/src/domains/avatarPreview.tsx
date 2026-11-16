@@ -7,6 +7,10 @@
 //
 // The preview wears the Backpack's look (./avatarDraft), which equipping edits, so equipping in the
 // Backpack reflects here before anything is deployed. Mounted via ReactEcsRenderer in index.ts.
+//
+// The sign-in screens open the same stage (region 'signin') for a new account's starting look, but
+// draw the sign-in background over the whole screen behind it, so the avatar and its podium stand
+// on that background; the page fades its own copy out once told (signinStageReady).
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MaterialTransparencyMode, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
@@ -46,6 +50,10 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
 // The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
 // the stage's floor logo (~970px down the screen). The Shop frames nothing else.
 const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
+// about a quarter of the screen wide.
+const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
+const SIGNIN_PODIUM_SCALE = 1.38
 const FOCUS_SECONDS = 0.6
 const CAMERA_PITCH = 12
 const CAMERA_DISTANCE = 8
@@ -64,6 +72,21 @@ const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
 // The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
 // says it draws it, so the avatar's window in the page shows no seam.
 const SHOP_STAGE = 'images/shop-stage.jpg'
+// The sign-in background, as the page draws it: the purple vignette, the logo pattern drifting over it
+// at 7% (650px tiles, one tile right every 5.65 s and up every 8.02 s), faded out towards the edges by
+// the vignette drawn again over it with the pattern's mask as its transparency.
+const SIGNIN_VIGNETTE = 'images/signin-vignette.png'
+const SIGNIN_VIGNETTE_EDGE = 'images/signin-vignette-edge.png'
+const SIGNIN_PATTERN = 'images/signin-pattern.jpg'
+const SIGNIN_PATTERN_TINT = Color4.create(1, 1, 1, 0.07)
+const SIGNIN_TILE = 650
+const SIGNIN_DRIFT_X_SECONDS = 5.65
+const SIGNIN_DRIFT_Y_SECONDS = 8.02
+// enough tiles, one tile of drift either side, for a 4K screen in CSS pixels
+const SIGNIN_TILES_X = 8
+const SIGNIN_TILES_Y = 5
+// frames for the background's images to arrive before the page drops its own
+const SIGNIN_SETTLE_FRAMES = 30
 const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
 const LOBBY_SHADE_BAND_PX = 4
 const LOBBY_TARGET_Y = 0.8
@@ -113,10 +136,13 @@ function floorShade(height: number): Array<{ top: number; height: number; color:
 
 type Stage = 'backpack' | 'lobby'
 let stage: Stage = 'backpack'
+// The page's region on show: the sign-in screens' is the Backpack's stage on their own background.
+type Region = 'avatarPreview' | 'lobby' | 'signin'
+let region: Region = 'avatarPreview'
 
 let rect: Rect | null = null
 // Frames until a closed region's stage is dropped: a page handing the stage to the next one (the
-// guest start page to the lobby, say) closes its region and the next opens its own straight after,
+// lobby to the Backpack, say) closes its region and the next opens its own straight after,
 // and the stage, with its loaded avatar, must survive that.
 let disposeIn = 0
 const DISPOSE_FRAMES = 2
@@ -130,28 +156,18 @@ let emoteTrigger = 0
 let lastShapeKey = ''
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
-// the standby first, and the stage swaps once the engine reports it loaded. The next RANDOMIZE's
-// look is loaded on the standby ahead, once the one on show has loaded, so its swap is instant.
+// the standby first, and the stage swaps once the engine reports it loaded.
 let standbyEntity: Entity | null = null
 let shownKey = ''
 let standbyKey = ''
-// the curated default look numbers behind the keys, for the page (`lookShown`); the requested
-// one is the page's pick, held until the stage takes it up (a shape change without one is an equip)
-let shownLook: number | null = null
-let standbyLook: number | null = null
-let requestedLook: number | null = null
 // the turn under way, and where the avatar on show is facing (YAW_FRONT when still)
 let turn: { entity: Entity; from: number; to: number; t: number } | null = null
 let shownYaw = YAW_FRONT
 // the standby has the wanted look loaded: it takes the stage once the shown one has turned away
 let swapReady = false
-// frames left to wait for the look a RANDOMIZE promised, turned away for it in advance
-let expecting = 0
-let announce: ((look: number) => void) | null = null
-// whether the standby's look was asked for (a RANDOMIZE), as opposed to loaded ahead
+// whether the standby's look was asked for, as opposed to the look that was on show before
 let standbyWanted = false
-let wanted: { key: string; shape: ShapeData; look: number | null } | null = null
-let preload: { key: string; shape: ShapeData; look: number } | null = null
+let wanted: { key: string; shape: ShapeData } | null = null
 let showLoad: LoadWatch | null = null
 let standbyLoad: LoadWatch | null = null
 let shownLoaded = false
@@ -280,7 +296,7 @@ function createPreview(): void {
     MeshRenderer.setCylinder(e, 1, 1)
     Material.setPbrMaterial(e, { albedoColor: layer.color, metallic: 0, roughness: 0.6 })
     CameraLayers.create(e, { layers: [LAYER] })
-    Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: Vector3.create(layer.scale, layer.height, layer.scale) })
+    Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: podiumLayerScale(layer) })
     return e
   })
 
@@ -323,12 +339,9 @@ function createPreview(): void {
   lastShapeKey = ''
   shownKey = ''
   standbyKey = ''
-  shownLook = null
-  standbyLook = null
   turn = null
   shownYaw = YAW_FRONT
   swapReady = false
-  expecting = 0
   wanted = null
   standbyWanted = false
   showLoad = null
@@ -353,6 +366,12 @@ async function announceLobbyStage(ctx: Ctx): Promise<void> {
   if (current()) ctx.send({ kind: 'lobbyStageReady' })
 }
 
+async function announceSigninStage(ctx: Ctx): Promise<void> {
+  const generation = ++stageGeneration
+  await waitFrames(SIGNIN_SETTLE_FRAMES)
+  if (generation === stageGeneration && region === 'signin' && rect != null) ctx.send({ kind: 'signinStageReady' })
+}
+
 function lobbyShadow(): Entity {
   const e = engine.addEntity()
   MeshRenderer.setCylinder(e, 1, 1)
@@ -373,15 +392,11 @@ function disposePreview(): void {
   podiumEntities = []
   shownKey = ''
   standbyKey = ''
-  shownLook = null
-  standbyLook = null
   turn = null
   shownYaw = YAW_FRONT
   swapReady = false
-  expecting = 0
   wanted = null
   standbyWanted = false
-  preload = null
   showLoad = null
   standbyLoad = null
   shownLoaded = false
@@ -392,23 +407,19 @@ function disposePreview(): void {
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
  *  setAvatar). The Backpack's preview changes in place; the lobby stage loads the new look on its
  *  standby and swaps to it once loaded. */
-export function syncShape(look?: number): void {
-  if (look != null) requestedLook = look
+export function syncShape(): void {
   if (avatarEntity == null) return
   const current = currentLook()
   if (!current?.bodyShape) return
-  const pick = requestedLook
-  requestedLook = null
   const shape = shapeOf(current, previewUrns)
   const key = shapeKey(shape)
   if (key === lastShapeKey) return
   lastShapeKey = key
   if (key === shownKey && stage === 'lobby' && AvatarShape.has(avatarEntity)) {
-    // the look on show again (a RANDOMIZE taken back before its swap): it turns back to the front
+    // the look on show again (a change taken back before its swap): it turns back to the front
     wanted = null
     swapReady = false
     standbyWanted = false
-    expecting = 0
     if (shownYaw !== YAW_FRONT) startTurn(avatarEntity, shownYaw, YAW_FRONT)
     return
   }
@@ -416,18 +427,16 @@ export function syncShape(look?: number): void {
     setShape(avatarEntity, shape)
     if (stage === 'lobby') {
       shownKey = key
-      shownLook = pick
       shownLoaded = false
       showLoad = watchLoad(avatarEntity)
     }
     return
   }
-  wanted = { key, shape, look: pick }
-  expecting = 0
+  wanted = { key, shape }
   // the avatar on show turns away meanwhile; the new one takes the stage once it has, and is loaded
   if (shownYaw !== YAW_AWAY) startTurn(avatarEntity, shownYaw, YAW_AWAY)
-  // already loaded on the standby (a look loaded ahead, or the one before): on show now if the
-  // shown avatar has already turned away (RANDOMIZE turns it ahead of the look), else once it has
+  // already loaded on the standby (the one before): on show now if the shown avatar has already
+  // turned away, else once it has
   if (key === standbyKey && standbyLoad == null) {
     if (shownYaw === YAW_AWAY && turn == null) swapToStandby()
     else swapReady = true
@@ -436,20 +445,12 @@ export function syncShape(look?: number): void {
   loadOnStandby()
 }
 
-/** RANDOMIZE was hit: the avatar on show turns away now, ahead of the look (which the page is still
- *  fetching); it turns back if none comes. */
-export function expectLook(): void {
-  if (stage !== 'lobby' || avatarEntity == null || !AvatarShape.has(avatarEntity) || !shownLoaded) return
-  expecting = LOBBY_LOOK_FRAMES
-  if (shownYaw !== YAW_AWAY && turn?.to !== YAW_AWAY) startTurn(avatarEntity, shownYaw, YAW_AWAY)
-}
-
 function startTurn(entity: Entity, from: number, to: number): void {
   turn = { entity, from, to, t: 0 }
 }
 
 // Advance the turn under way; done, a look that was waiting for the shown avatar to face away
-// can take the stage, and a new one facing front is announced to the page.
+// can take the stage.
 function pollTurn(dt: number): void {
   if (turn == null) return
   turn.t = Math.min(1, turn.t + dt / TURN_SECONDS)
@@ -461,29 +462,25 @@ function pollTurn(dt: number): void {
   const done = turn
   turn = null
   if (done.entity !== avatarEntity) return
-  if (done.to === YAW_FRONT && shownLook != null && announce != null) announce(shownLook)
   if (done.to === YAW_AWAY && swapReady) swapToStandby()
   // a look loaded meanwhile (one asked for after the one just shown): turn away for it
   else if (done.to === YAW_FRONT && swapReady) startTurn(done.entity, YAW_FRONT, YAW_AWAY)
 }
 
-// The look wanted on show goes on the standby (unless already there, loaded ahead); the next
-// RANDOMIZE's look goes there once the one on show has loaded and nothing else is wanted, nor on
-// its way (a RANDOMIZE's look, usually the one loaded ahead, must find it there).
+// The look wanted on show goes on the standby, unless already there.
 function loadOnStandby(): void {
   if (standbyEntity == null || standbyLoad != null) return
-  const next = wanted != null && wanted.key !== standbyKey ? wanted : wanted == null && expecting === 0 && preload != null && shownLoaded && preload.key !== standbyKey ? preload : null
+  const next = wanted != null && wanted.key !== standbyKey ? wanted : null
   if (next == null) return
   setShape(standbyEntity, next.shape)
   standbyKey = next.key
-  standbyLook = next.look
   standbyWanted = next === wanted
   standbyLoad = watchLoad(standbyEntity)
 }
 
 // The standby, loaded with the look wanted on show, takes the stage; the avatar that was on show
 // becomes the standby, still wearing its look (a look dropped and replaced in one frame never
-// reports loaded; and a RANDOMIZE back to it then costs nothing).
+// reports loaded; and a change back to it then costs nothing).
 function swapToStandby(): void {
   if (avatarEntity == null || standbyEntity == null) return
   const shown = avatarEntity
@@ -496,9 +493,6 @@ function swapToStandby(): void {
   const wasShown = shownKey
   shownKey = standbyKey
   standbyKey = wasShown
-  const wasShownLook = shownLook
-  shownLook = standbyLook
-  standbyLook = wasShownLook
   standbyWanted = false
   swapReady = false
   if (wanted?.key === shownKey) wanted = null
@@ -509,15 +503,11 @@ function swapToStandby(): void {
 
 function pollStage(dt: number): void {
   pollTurn(dt)
-  if (expecting > 0 && --expecting === 0 && wanted == null && avatarEntity != null && shownYaw !== YAW_FRONT) {
-    startTurn(avatarEntity, shownYaw, YAW_FRONT)
-  }
   if (showLoad != null) {
     pollLoad(showLoad)
     if (showLoad.done) {
       showLoad = null
       shownLoaded = true
-      if (shownLook != null && announce != null) announce(shownLook)
     }
   }
   if (standbyLoad != null) {
@@ -541,16 +531,26 @@ function pollStage(dt: number): void {
 
 export function registerAvatarPreview(ctx: Ctx): void {
   ctx.on('engineViewport', (msg) => {
-    if (msg.region !== 'avatarPreview' && msg.region !== 'lobby') return
+    if (msg.region !== 'avatarPreview' && msg.region !== 'lobby' && msg.region !== 'signin') return
     const nextStage: Stage = msg.region === 'lobby' ? 'lobby' : 'backpack'
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
-    if (msg.rect == null && nextStage !== stage) return
+    if (msg.rect == null && msg.region !== region) return
     if (nextStage !== stage) {
       disposePreview()
       stage = nextStage
       framing = framingFrom = framingTo = FRAMING.body
       framingT = 1
     }
+    const opened = msg.rect != null && (msg.region !== region || rect == null)
+    if (msg.region !== region && stage === 'backpack' && avatarEntity != null) {
+      // the same stage under another page (not met in practice): rebuilt with that page's framing and podium
+      disposePreview()
+    }
+    if (msg.region !== region && stage === 'backpack') {
+      framing = framingFrom = framingTo = msg.region === 'signin' ? SIGNIN_FRAMING : FRAMING.body
+      framingT = 1
+    }
+    region = msg.region
     if (msg.rect == null) {
       if (avatarEntity != null) disposeIn = DISPOSE_FRAMES
       else rect = null
@@ -571,18 +571,23 @@ export function registerAvatarPreview(ctx: Ctx): void {
         cam.height = res.height
       }
     }
-    // told again for a stage carried over (the guest start page's into the lobby, the lobby's
-    // back to it on logout): the page taking it over may have put its stand-in back up
+    // told again for a stage carried over (the Backpack's back to the lobby): the page taking it
+    // over may have put its stand-in back up
     if (stage === 'lobby') {
       announceLobbyStage(ctx).catch((e) => {
         console.error('[avatarPreview] lobby stage', e)
+      })
+    }
+    if (region === 'signin' && opened) {
+      announceSigninStage(ctx).catch((e) => {
+        console.error('[avatarPreview] sign-in stage', e)
       })
     }
   })
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
-    if (stage !== 'backpack' || shopStage != null) return
+    if (stage !== 'backpack' || region === 'signin' || shopStage != null) return
     const to = FRAMING[msg.focus] ?? FRAMING.body
     if (to === framingTo) return
     framingFrom = framing
@@ -600,9 +605,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
       w.done()
     })
   })
-  announce = (look) => {
-    ctx.send({ kind: 'lookShown', look })
-  }
   ctx.push((dt) => {
     if (stage === 'lobby' && avatarEntity != null) pollStage(dt)
   })
@@ -615,13 +617,6 @@ export function registerAvatarPreview(ctx: Ctx): void {
       centerY: framingFrom.centerY + (framingTo.centerY - framingFrom.centerY) * e
     }
     applyFraming(framing)
-  })
-
-  // The look the next RANDOMIZE shows, loaded on the lobby's standby ahead of it.
-  ctx.on('preloadLook', (msg) => {
-    const shape = shapeOf(msg.avatar)
-    preload = { key: shapeKey(shape), shape, look: msg.look }
-    if (stage === 'lobby') loadOnStandby()
   })
 
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
@@ -690,11 +685,16 @@ export async function waitFrames(frames: number): Promise<void> {
   })
 }
 
+function podiumLayerScale(layer: (typeof PODIUM_LAYERS)[number]): Vector3 {
+  const wide = region === 'signin' ? SIGNIN_PODIUM_SCALE : 1
+  return Vector3.create(layer.scale * wide, layer.height, layer.scale * wide)
+}
+
 function showPodium(visible: boolean): void {
   if (stage !== 'backpack') return
   podiumEntities.forEach((e, i) => {
     const layer = PODIUM_LAYERS[i]
-    Transform.getMutable(e).scale = visible ? Vector3.create(layer.scale, layer.height, layer.scale) : Vector3.Zero()
+    Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
 }
 
@@ -796,10 +796,47 @@ function renderLobbyStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
   )
 }
 
+// The sign-in background over the whole screen, and the avatar at the page's column.
+function renderSigninStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
+  const seconds = Date.now() / 1000
+  const driftX = ((seconds / SIGNIN_DRIFT_X_SECONDS) % 1) * SIGNIN_TILE
+  const driftY = -((seconds / SIGNIN_DRIFT_Y_SECONDS) % 1) * SIGNIN_TILE
+  const tiles: Array<{ key: string; left: number; top: number }> = []
+  for (let i = 0; i < SIGNIN_TILES_X; i++) {
+    for (let j = 0; j < SIGNIN_TILES_Y; j++) {
+      tiles.push({ key: `${i}:${j}`, left: (i - 1) * SIGNIN_TILE + driftX, top: j * SIGNIN_TILE + driftY })
+    }
+  }
+  return (
+    <UiEntity
+      uiTransform={{ positionType: 'absolute', position: { left: 0, top: 0 }, width: '100%', height: '100%', overflow: 'hidden' }}
+      uiBackground={{ texture: { src: SIGNIN_VIGNETTE }, textureMode: 'stretch' }}
+    >
+      {tiles.map((tile) => (
+        <UiEntity
+          key={tile.key}
+          uiTransform={{ positionType: 'absolute', position: { left: tile.left, top: tile.top }, width: SIGNIN_TILE, height: SIGNIN_TILE }}
+          uiBackground={{ texture: { src: SIGNIN_PATTERN }, textureMode: 'stretch', color: SIGNIN_PATTERN_TINT }}
+        />
+      ))}
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
+        uiBackground={{ texture: { src: SIGNIN_VIGNETTE_EDGE }, textureMode: 'stretch' }}
+      />
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height }}
+        uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
+        onMouseDragLocked={rotateAvatar}
+      />
+    </UiEntity>
+  )
+}
+
 export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
   if (rect == null || cameraEntity == null) return null
   const r = rect
   if (stage === 'lobby') return renderLobbyStage(r, cameraEntity)
+  if (region === 'signin') return renderSigninStage(r, cameraEntity)
   return (
     // Full-screen opaque base: the live world can never show through React's transparent
     // avatar cutout, even if the reported rect and the cutout don't line up to the pixel.

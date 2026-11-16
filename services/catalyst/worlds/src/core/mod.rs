@@ -28,6 +28,7 @@
 //! worlds federation routes.
 
 pub mod active;
+mod active_entity;
 pub mod admin;
 pub mod auth;
 pub mod deploy;
@@ -45,6 +46,7 @@ pub mod owners;
 pub mod partial;
 pub mod permissions;
 pub mod quota;
+pub mod reprocess;
 pub mod scenes;
 pub mod settings;
 pub mod settings_policy;
@@ -280,6 +282,8 @@ impl crate::comms::gatekeeper::events::RoomEventSink for CoreState {
 
 pub struct CoreState {
     pub pool: PgPool,
+    /// Partial batches retain sessions across external work; bound their share of the pool.
+    pub(super) partial_sessions: Arc<tokio::sync::Semaphore>,
     pub storage: Arc<Storage>,
     /// The permission core, ONE instance shared with the storage routes, the
     /// scene host and comms.
@@ -292,7 +296,8 @@ pub struct CoreState {
     /// (`WorldsState`), whose `/status` reports the occupied world rooms, and
     /// read by the presence archive.
     pub presence: Arc<Presence>,
-    pub names: names::NameDenyList,
+    /// The name deny list, the same instance as `policy`'s ([`Policy::names`]).
+    pub names: Arc<names::NameDenyList>,
     access_log_tx: mpsc::UnboundedSender<store::AccessLogEntry>,
     /// Taken by `spawn_jobs`; `flush_access_log` drains it in process until then.
     access_log_rx: Mutex<Option<mpsc::UnboundedReceiver<store::AccessLogEntry>>>,
@@ -305,6 +310,9 @@ pub struct CoreState {
     pub allowance: Arc<dyn quota::SpaceAllowance>,
     /// The user notices (permission grants, storage quota) and their links.
     pub notices: Arc<notices::Notices>,
+    /// The local asset-bundle converter `POST /reprocess-ab` hands scenes to
+    /// (`ABGEN_ADMIN_URL`); `None` answers that route 500.
+    pub converter: Option<reprocess::Converter>,
 }
 
 pub type SharedState = Arc<CoreState>;
@@ -318,21 +326,37 @@ impl CoreState {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         let (access_log_tx, access_log_rx) = mpsc::unbounded_channel();
+        let names = policy.names().clone();
+        let partial_session_capacity = settings
+            .upload_limits
+            .max_concurrent_uploads
+            .min(u64::from((pool.options().get_max_connections() / 4).max(1)));
+        let partial_sessions = Arc::new(tokio::sync::Semaphore::new(
+            partial_session_capacity as usize,
+        ));
         Self {
             pool,
+            partial_sessions,
             storage,
             policy,
             settings,
             eip1654,
             presence: Arc::new(Presence::new()),
-            names: names::NameDenyList::default(),
+            names,
             access_log_tx,
             access_log_rx: Mutex::new(Some(access_log_rx)),
             revocation_sinks: parking_lot::RwLock::new(Vec::new()),
             forwarder: None,
             allowance: Arc::new(quota::Unlimited),
             notices: Arc::new(notices::Notices::default()),
+            converter: None,
         }
+    }
+
+    /// The asset-bundle converter `POST /reprocess-ab` hands scenes to.
+    pub fn with_converter(mut self, converter: Option<reprocess::Converter>) -> Self {
+        self.converter = converter;
+        self
     }
 
     /// The storage allowance source ([`holdings::configured`]).
@@ -602,6 +626,7 @@ pub fn router(state: SharedState) -> Router {
         .merge(non_colliding_routes())
         .route("/gc", post(admin::garbage_collect))
         .route("/admin/gc", post(admin::garbage_collect))
+        .route("/reprocess-ab", post(reprocess::reprocess_ab))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .with_state(state)

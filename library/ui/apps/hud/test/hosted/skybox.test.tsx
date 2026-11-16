@@ -40,7 +40,7 @@ describe('skybox', () => {
 
     act(() => h.session().skybox.setHours(20))
     act(() => h.session().skybox.setProgressing(true))
-    expect(h.driver.commands).toEqual(['/time', '/time', '/time 19.00 0', '/time 20.00 0', '/time 20.00 12'])
+    expect(h.driver.commands.filter(command => command.startsWith('/time'))).toEqual(['/time', '/time', '/time 19.00 0', '/time 20.00 0', '/time 20.00 12'])
     expect(h.driver.sentOf('consoleCommand')).toHaveLength(0)
   })
 
@@ -73,9 +73,9 @@ describe('skybox', () => {
     // Frozen: the menu stops reading the clock.
     act(() => h.session().skybox.setProgressing(false))
     await waitFor(() => expect(h.driver.commands).toContain('/time 0.25 0'))
-    const reads = h.driver.commands.length
+    const reads = h.driver.commands.filter(command => command.startsWith('/time')).length
     await new Promise((r) => setTimeout(r, 1200))
-    expect(h.driver.commands).toHaveLength(reads)
+    expect(h.driver.commands.filter(command => command.startsWith('/time'))).toHaveLength(reads)
   })
 
   it('formats hours as HH:MM', () => {

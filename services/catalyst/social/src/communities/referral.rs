@@ -52,7 +52,7 @@ fn login_database_error(error: sqlx::Error) -> CommError {
 }
 
 const LOGIN_MAX_AGE_MS: i64 = 86_400_000;
-// Match the existing signed-fetch symmetric clock tolerance.
+// Login timestamps may run up to five minutes ahead.
 const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
 
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In
@@ -91,6 +91,8 @@ pub struct Settings {
     pub suspicious_window_ms: f64,
     pub slack: SlackSettings,
     pub profile_url: String,
+    /// `NOTIFICATIONS_CDN_URL`: base of the referral notice icon.
+    pub cdn_url: String,
     pub reward_server_url: Option<String>,
     pub reward_keys: std::collections::HashMap<i64, String>,
 }
@@ -103,6 +105,7 @@ impl Default for Settings {
             suspicious_window_ms: 300_000.0,
             slack: Default::default(),
             profile_url: "https://decentraland.org".into(),
+            cdn_url: crate::notifications::DEFAULT_CDN_URL.into(),
             reward_server_url: None,
             reward_keys: Default::default(),
         }
@@ -334,12 +337,6 @@ impl Referral {
         today: Option<chrono::NaiveDate>,
         event: Option<(uuid::Uuid, i64)>,
     ) -> Result<(), CommError> {
-        if crate::shared::writes::refusal(true).is_some() {
-            return Err(CommError::MessageOnly(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Social writes are held".into(),
-            ));
-        }
         if !crate::auth::is_eth_address(invited) {
             return Err(CommError::bad_request("Invalid invitedUser address"));
         }
@@ -482,9 +479,6 @@ impl Referral {
     /// Resume a bounded due set without requiring another login. Requests with
     /// no confirmed response stay quarantined for provider reconciliation.
     pub async fn drain_pending_rewards(&self) -> Result<(), CommError> {
-        if crate::shared::writes::refusal(true).is_some() {
-            return Ok(());
-        }
         if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) AND received_at <= timezone('UTC',clock_timestamp()) - interval '24 hours' ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await {
             tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
@@ -500,11 +494,6 @@ impl Referral {
         .await
         .map_err(database_error)?;
         for (referrer, invited, tier) in rows {
-            // The restore hold is live: a long batch must stop before its next
-            // grant if the stamps expire or are withdrawn during the pass.
-            if crate::shared::writes::refusal(true).is_some() {
-                break;
-            }
             // The request path checks this too; a later ban also stops retries.
             if let Err(error) = self.assert_not_banned(&referrer, None).await {
                 tracing::warn!(?error, "pending referral reward is blocked");
@@ -662,14 +651,17 @@ impl Referral {
                 "referral_new_tier_reached",
                 "Referral Reward Unlocked!",
                 "Check the 'Referral Rewards' tab in your web profile to see your prize!",
-                reward["image"].as_str().unwrap_or_default(),
+                reward["image"].as_str().unwrap_or_default().to_string(),
                 reward.get("rarity").cloned().unwrap_or(Value::Null),
             ),
             None => (
                 "referral_invited_users_accepted",
                 "Referral Completed!",
                 "Your friend jumped into Decentraland, so you're closer to unlocking your next reward!",
-                "https://assets-cdn.decentraland.org/referral/referral-invited-user-accepted-icon.png",
+                crate::notifications::cdn_asset(
+                    &self.settings.cdn_url,
+                    "referral/referral-invited-user-accepted-icon.png",
+                ),
                 Value::Null,
             ),
         };
@@ -764,7 +756,7 @@ pub async fn get_referral_progress(
     .into_iter()
     .map(|(tier, url)| ReferralRewardImage { tier, url })
     .collect();
-    if crate::comms::writes::side_refusal(switch).is_none() {
+    if crate::comms::writes::side_writes_on(switch) {
         sqlx::query(
             "INSERT INTO social.referral_progress_viewed (referrer, invites_accepted_viewed) \
              VALUES ($1, $2) \
@@ -1727,6 +1719,23 @@ mod tests {
         }
         let count:i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1 AND type='referral_invited_users_accepted'").bind(referrer).fetch_one(&pool).await.unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn the_accepted_notice_icon_follows_the_configured_cdn() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/nowhere").unwrap();
+        let settings = Settings {
+            cdn_url: "https://cdn.example.org/".into(),
+            ..Settings::for_tests()
+        };
+        let referral = Referral::new(pool, Outbound::for_tests(), settings);
+        let referrer = "0x00000000000000000000000000000000000000a1";
+        let invited = "0x00000000000000000000000000000000000000b1";
+        let notice = referral.notification(referrer, invited, 1, None).unwrap();
+        assert_eq!(
+            notice.metadata["image"],
+            "https://cdn.example.org/referral/referral-invited-user-accepted-icon.png"
+        );
     }
 
     #[test]

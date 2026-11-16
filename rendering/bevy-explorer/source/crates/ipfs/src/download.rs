@@ -21,6 +21,27 @@ impl SharedReader {
 
 pub(super) type InFlightDownloads = Mutex<HashMap<String, Weak<SharedDownload>>>;
 
+/// How a download is attempted: its headers and body-inactivity timeouts, and how many attempts
+/// it may make.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FetchPolicy {
+    pub(crate) headers_timeout: Duration,
+    pub(crate) idle_timeout: Duration,
+    pub(crate) max_attempts: u32,
+}
+
+impl FetchPolicy {
+    /// Content with no other source: a slow-but-progressing transfer is never killed, only a
+    /// stall (no chunk for 10s) or a dead connection, and those are retried.
+    pub(crate) const CONTENT: FetchPolicy = FetchPolicy {
+        headers_timeout: Duration::from_secs(30),
+        idle_timeout: Duration::from_secs(10),
+        max_attempts: MAX_ATTEMPTS,
+    };
+}
+
+const MAX_ATTEMPTS: u32 = 4;
+
 impl IpfsIo {
     pub(super) fn share_download(
         self: &Arc<Self>,
@@ -29,6 +50,23 @@ impl IpfsIo {
         path: PathBuf,
         remote: String,
         scene: Option<String>,
+    ) -> (
+        SharedReader,
+        Option<impl ConditionalSendFuture<Output = ()> + 'static>,
+    ) {
+        self.share_download_with(key, token, path, remote, scene, FetchPolicy::CONTENT)
+    }
+
+    /// [`Self::share_download`] under its own timeouts and attempts. Readers that join an
+    /// in-flight download share the policy it was started with.
+    pub(super) fn share_download_with(
+        self: &Arc<Self>,
+        key: CacheKey,
+        token: u16,
+        path: PathBuf,
+        remote: String,
+        scene: Option<String>,
+        policy: FetchPolicy,
     ) -> (
         SharedReader,
         Option<impl ConditionalSendFuture<Output = ()> + 'static>,
@@ -70,7 +108,7 @@ impl IpfsIo {
                 biased;
                 _ = cancelled => None,
                 result = io.request_metrics.measure(io.clone().download_inner(
-                    token, path, remote.clone(), Some(key), attempts,
+                    token, path, remote.clone(), Some(key), attempts, policy,
                 )) => Some(result),
             };
             // Another reader may already have started a new generation for the same URL.
@@ -110,10 +148,14 @@ impl IpfsIo {
             self.preview_request_delay(),
         );
         self.request_metrics
-            .measure(
-                self.clone()
-                    .download_inner(token, path, remote, cache_key, attempts),
-            )
+            .measure(self.clone().download_inner(
+                token,
+                path,
+                remote,
+                cache_key,
+                attempts,
+                FetchPolicy::CONTENT,
+            ))
             .await
     }
 
@@ -137,7 +179,43 @@ impl IpfsIo {
                 attempts,
                 request,
                 &client,
-                (headers_timeout, idle_timeout),
+                FetchPolicy {
+                    headers_timeout,
+                    idle_timeout,
+                    max_attempts: MAX_ATTEMPTS,
+                },
+                None,
+                async_std::task::sleep,
+            ))
+            .await
+    }
+
+    /// [`Self::fetch_request`] in a single attempt: for a request with a fallback of its own,
+    /// where a retry would only hold a request slot the fallback could use.
+    pub(crate) async fn fetch_request_once(
+        &self,
+        request: reqwest::Request,
+        client: reqwest::Client,
+        headers_timeout: Duration,
+        idle_timeout: Duration,
+        owner: Option<String>,
+    ) -> Result<platform::FetchedResponse, platform::FetchError<anyhow::Error>> {
+        let (_reader, attempts) = DownloadReaders::first(
+            &self.request_slots,
+            owner,
+            None,
+            self.preview_request_delay(),
+        );
+        self.request_metrics
+            .measure(self.fetch_request_inner(
+                attempts,
+                request,
+                &client,
+                FetchPolicy {
+                    headers_timeout,
+                    idle_timeout,
+                    max_attempts: 1,
+                },
                 None,
                 async_std::task::sleep,
             ))
@@ -150,17 +228,18 @@ impl IpfsIo {
         mut attempts: DownloadAttempts,
         request: reqwest::Request,
         client: &reqwest::Client,
-        timeouts: (Duration, Duration),
+        policy: FetchPolicy,
         mut timing: Option<&mut DownloadTiming>,
         retry_wait: impl Fn(Duration) -> F,
     ) -> Result<platform::FetchedResponse, platform::FetchError<anyhow::Error>> {
         let is_get = request.method() == reqwest::Method::GET;
+        let max = policy.max_attempts.max(1);
         let mut original = Some(request);
-        for attempt in 1..=4 {
+        for attempt in 1..=max {
             // Keep a replayable GET for the next attempt. Consume every other request once.
             let request = original
                 .as_ref()
-                .filter(|_| is_get && attempt < 4)
+                .filter(|_| is_get && attempt < max)
                 .and_then(reqwest::Request::try_clone)
                 .or_else(|| original.take())
                 .expect("request is replayable or this is its only attempt");
@@ -179,8 +258,8 @@ impl IpfsIo {
                     }
                     async { client.execute(request).await.map_err(anyhow::Error::from) }
                 },
-                timeouts.0,
-                timeouts.1,
+                policy.headers_timeout,
+                policy.idle_timeout,
                 |bytes| {
                     add_saturating(&self.request_metrics.bytes, bytes as u64);
                     if let Some(observe) = &mut observe {
@@ -199,7 +278,7 @@ impl IpfsIo {
                         // nothing usable about when: wait a little longer each time, then ask.
                         .or_else(|| {
                             matches!(status.as_u16(), 502..=504)
-                                .then(|| Duration::from_millis(500 * attempt))
+                                .then(|| Duration::from_millis(500 * u64::from(attempt)))
                         })
                 }
                 Err(platform::FetchError::Headers | platform::FetchError::Stalled) => {
@@ -217,12 +296,12 @@ impl IpfsIo {
                 let url = request.url();
                 match &result {
                     Err(platform::FetchError::Status(status, _)) => warn!(
-                        "content request to `{url}` returned {status}, retrying in {delay:?} (attempt {attempt}/4)"
+                        "content request to `{url}` returned {status}, retrying in {delay:?} (attempt {attempt}/{max})"
                     ),
                     Err(platform::FetchError::Stalled) => warn!(
-                        "body from `{url}` stalled, retrying in {delay:?} (attempt {attempt}/4)"
+                        "body from `{url}` stalled, retrying in {delay:?} (attempt {attempt}/{max})"
                     ),
-                    _ => warn!("request to `{url}` timed out, retrying in {delay:?} (attempt {attempt}/4)"),
+                    _ => warn!("request to `{url}` timed out, retrying in {delay:?} (attempt {attempt}/{max})"),
                 }
                 if !delay.is_zero() {
                     retry_wait(delay).await;
@@ -241,6 +320,7 @@ impl IpfsIo {
         remote: String,
         cache_key: Option<CacheKey>,
         attempts: DownloadAttempts,
+        policy: FetchPolicy,
     ) -> Result<SharedBytes, AssetReaderError> {
         let start = web_time::Instant::now();
         let ipfs_io_read_state = IpfsIoReadState {
@@ -250,26 +330,16 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             start,
         };
-        // in wasm we add a custom header to allow the service worker to cache ipfs requests across content servers
-        #[cfg(target_arch = "wasm32")]
-        let sw_caches = cache_key.is_some();
 
         debug!("[{token:?}]: remote url: `{remote}` awaiting a request slot");
         // a request slot, granted nearest scene first
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let mut no_cache = false;
-        // whether the service worker answered from its cache
-        #[cfg(target_arch = "wasm32")]
-        let sw_cached;
         let client = &self.client;
+        // no `X-IPFS` header on web: a caller with a cache key has read `web_cache` before the first
+        // attempt, and the header would have the service worker repeat that lookup. A retry does
+        // not read it again
         let request = client.get(&remote);
-
-        #[cfg(target_arch = "wasm32")]
-        let request = if sw_caches {
-            request.header("X-IPFS", "true")
-        } else {
-            request
-        };
 
         let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
             AssetReaderError::Io(Arc::new(std::io::Error::other(format!("[{token:?}]: {e}"))))
@@ -277,14 +347,14 @@ impl IpfsIo {
 
         // Headers-phase timeout + body inactivity timeout; the total transfer
         // time is unbounded, so a slow-but-progressing download is never
-        // killed — only a stall (no chunk for 10s) or a dead connection trips.
+        // killed — only a stall or a dead connection trips.
         let mut timing = DownloadTiming::default();
         let fetched = match self
             .fetch_request_inner(
                 attempts,
                 request,
                 client,
-                (Duration::from_secs(30), Duration::from_secs(10)),
+                policy,
                 Some(&mut timing),
                 async_std::task::sleep,
             )
@@ -307,20 +377,31 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
+                // the bytes behind a content hash never change, so a server that says the url is
+                // wrong says so for the rest of the session; preview always asks again
+                let session = match (&e, &cache_key) {
+                    (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
+                        if !self.is_preview && failed_remotes::is_definitive(*status) =>
+                    {
+                        Some(*status)
+                    }
+                    _ => None,
+                };
                 let detail = match e {
                     platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
-                    platform::FetchError::Stalled => "stalled (no data for 10s)".to_owned(),
+                    platform::FetchError::Stalled => {
+                        format!("stalled (no data for {}s)", policy.idle_timeout.as_secs())
+                    }
                     platform::FetchError::Send(e) => format!("server responded `{e}`"),
                     platform::FetchError::Status(s, _) => {
                         format!("server responded with status {s}")
                     }
                     platform::FetchError::Body(e) => format!("body stream error: {e}"),
                 };
-                self.context
-                    .write()
-                    .await
-                    .failed_remotes
-                    .insert(remote.clone(), Instant::now());
+                self.failed_remotes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .record(remote.clone(), session, Instant::now());
                 return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
                     std::io::Error::other(format!(
                         "[{token:?}] failed to retrieve `{remote}`: {detail}"
@@ -339,21 +420,12 @@ impl IpfsIo {
             }
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let sw_cached = false;
-        if !sw_cached {
-            if let Some(start) = timing.started {
-                self.request_metrics.downloads.lock().unwrap().download(
-                    fetched.body.len(),
-                    start.elapsed(),
-                    timing.first_byte,
-                );
-            }
+        if let Some(start) = timing.started {
+            self.request_metrics.downloads.lock().unwrap().download(
+                fetched.body.len(),
+                start.elapsed(),
+                timing.first_byte,
+            );
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
@@ -376,10 +448,10 @@ impl IpfsIo {
             }
         };
 
-        // the worker only answers from its cache; fill it: content under its hash, for every
-        // server, once checked; a url under its own key
+        // fill the web cache, which callers read before they download: content under its hash,
+        // for every server, once checked; a url under its own key
         #[cfg(target_arch = "wasm32")]
-        if sw_caches && !sw_cached {
+        {
             let kept = match &cache_key {
                 Some(key @ CacheKey::Content(_)) => {
                     web_cache::share(&remote, key.name(), &data, || cacheable(key)).await
@@ -405,6 +477,10 @@ impl IpfsIo {
         }
 
         debug!("[{token:?}]: completed remote url: `{remote}`");
+        self.failed_remotes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .forget(&remote);
         ipfs_io_read_state.send_success(data.len());
         Ok(data)
     }

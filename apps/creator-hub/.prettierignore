@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/bin
+**/devtools-frontend
+**/*.svg
+
+package.json
+catalog.json
+.electron-vendors.cache.json
+
+.github
+.idea
