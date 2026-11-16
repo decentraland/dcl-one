@@ -1,6 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use crate::{
+    spring_bones::{spring_bone_models, SpringBoneModel},
     urn::{CollectibleInstance, CollectibleUrn},
     Collectible, CollectibleData, CollectibleType, Collectibles, CollectiblesTypePlugin,
 };
@@ -64,6 +65,9 @@ pub struct WearableData {
     pub replaces: Vec<WearableCategory>,
     pub removes_default_hiding: Option<Vec<String>>,
     pub outline_compatible: Option<bool>,
+    /// Read by [`spring_bone_models`], which tolerates a block that does not parse.
+    #[serde(default)]
+    pub spring_bones: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -292,6 +296,8 @@ impl WearableCategory {
 pub struct WearableModel {
     pub gltf: Handle<Gltf>,
     pub outline_compatible: bool,
+    /// The spring-bone parameters the wearable declares for this model file, by bone name.
+    pub spring_bones: Option<Arc<SpringBoneModel>>,
 }
 
 #[derive(Debug, TypePath, Clone, PartialEq)]
@@ -374,9 +380,18 @@ impl AssetLoader for WearableLoader {
             .to_string_lossy()
             .into_owned();
 
+        let spring_bones = spring_bone_models(meta.data.spring_bones.as_ref(), &meta.id);
+
         let mut representations = HashMap::new();
 
         for representation in meta.data.representations.into_iter() {
+            // declared for each model file, under that file's content hash
+            let spring_bones = entity
+                .content
+                .hash(&representation.main_file)
+                .and_then(|hash| spring_bones.get(hash.as_ref()))
+                .cloned();
+
             let (model, texture, mask) = if category.is_texture {
                 // don't validate the main file, as some base wearables have no extension on the main_file member (Eyebrows_09 e.g)
                 let texture = representation
@@ -506,6 +521,7 @@ impl AssetLoader for WearableLoader {
                         model: model.clone().map(|gltf| WearableModel {
                             gltf,
                             outline_compatible: meta.data.outline_compatible.unwrap_or(true),
+                            spring_bones: spring_bones.clone(),
                         }),
                         texture: texture.clone(),
                         mask: mask.clone(),
