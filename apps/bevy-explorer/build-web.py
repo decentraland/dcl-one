@@ -39,9 +39,9 @@ def executable(name):
     return git_bash() if name == 'bash' else shutil.which(name) or name
 
 
-def run(*args, cwd=SOURCE, env=None, **options):
+def run(*args, cwd=SOURCE, env=None):
     started = time.monotonic()
-    subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True, **options)
+    subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True)
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
@@ -78,9 +78,6 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
             target = ROOT / part
             if target.exists():
                 shutil.rmtree(target)
-        # Cargo reads Bevy and the forked crates from trees that are not tracked: write the ones
-        # that are missing or stale.
-        run(sys.executable, str(ROOT / 'tooling/patched-sources.py'), 'materialise', '--quiet', cwd=ROOT, env=env)
         if shared_build:
             compile_wasm(no_opt, env)
         else:

@@ -923,11 +923,10 @@ pub async fn serve(
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
-    // The gatekeeper's room events feed the worlds access log and, when
-    // enabled, the presence badges (stored before the webhook is
-    // acknowledged, applied by a leased job).
-    let presence_badges =
-        config.social.badges_presence_enabled && config.writes.social_writes_enabled;
+    // The gatekeeper's room events feed the worlds access log and, on a
+    // process with social writes, the presence badges (stored before the
+    // webhook is acknowledged, applied by a leased job).
+    let presence_badges = config.writes.social_writes_enabled;
     let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
     let presence_badge_settings = {

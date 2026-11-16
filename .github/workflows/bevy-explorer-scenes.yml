@@ -13,8 +13,6 @@ on:
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
-      - tooling/patched-sources.py
-      - .github/actions/bevy-explorer-sources/**
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
   workflow_dispatch:
@@ -89,8 +87,6 @@ jobs:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - name: Name the release of the runner image for the cache key
         id: image
         run: |
@@ -105,7 +101,7 @@ jobs:
           # The bindings to the image's libraries (FFmpeg, ALSA, udev) are built for one release, and
           # Cargo keeps them while the header paths and file times stay: another release starts cold.
           key: bevy-explorer-native-${{ steps.image.outputs.release }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
@@ -129,7 +125,7 @@ jobs:
         # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
         # Desktop and Headless packaging build their sidecars in separate invocations.
         run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Configure virtual audio for graphical tests
         run: |
