@@ -141,6 +141,13 @@ function stripLinuxBinary(binary, platform) {
  */
 function copyVendoredPrebuilds(binaryDir, platform, arch) {
   if (platform !== 'darwin' || arch !== 'x64') return;
+  // The vendored build is for the ABI of Node 22 (127). With another major it would never load,
+  // and Intel Macs would try to compile isolated-vm, so the build stops here.
+  if (!NODE_VERSION.startsWith('v22.')) {
+    throw new Error(
+      `download-node: the vendored isolated-vm build is for Node 22 (ABI 127), not ${NODE_VERSION}; rebuild it`,
+    );
+  }
 
   const src = path.join(
     import.meta.dirname,

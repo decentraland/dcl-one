@@ -75,6 +75,11 @@ function localHeader(record) {
     header.writeUInt32LE(record.crc32, 14);
     header.writeUInt32LE(record.zip64 ? ZIP64_32 : record.compressedSize, 18);
     header.writeUInt32LE(record.zip64 ? ZIP64_32 : record.size, 22);
+  } else if (record.zip64) {
+    // The sizes come in the descriptor. 0xffffffff sends a streaming reader to the zip64 field, so
+    // it reads the 64-bit descriptor (older Java ZipInputStream needs this).
+    header.writeUInt32LE(ZIP64_32, 18);
+    header.writeUInt32LE(ZIP64_32, 22);
   }
   header.writeUInt16LE(record.name.length, 26);
   header.writeUInt16LE(extra.length, 28);
