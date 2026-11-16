@@ -307,17 +307,21 @@ async fn auth(
 /// The answer to a refused signed fetch. A contract-wallet check that could
 /// not run (no validator, or its RPC failed) is 503 with a fixed message, its
 /// detail kept in the log; every other refusal, an unsigned request
-/// included, is the caller's 401.
+/// included, is the caller's 401 or 400 and is logged at debug only.
 fn auth_refusal(e: SignedFetchError) -> ApiError {
     if e.is_metadata_refusal() {
+        tracing::debug!(error = %e, "signed-fetch rejected");
         return ApiError::bad_request("Invalid metadata content");
     }
-    tracing::warn!(error = %e, "signed-fetch rejected");
     match e {
         SignedFetchError::EipNotImplemented | SignedFetchError::CatalystUnavailable(_) => {
+            tracing::warn!(error = %e, "signed-fetch validation unavailable");
             service_unavailable("Signature validation unavailable")
         }
-        e => unauthorized(format!("invalid identity: {e}")),
+        e => {
+            tracing::debug!(error = %e, "signed-fetch rejected");
+            unauthorized(format!("invalid identity: {e}"))
+        }
     }
 }
 
