@@ -1,0 +1,11 @@
+.VisitsTab {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.VisitsTab .Cards {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}

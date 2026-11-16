@@ -62,6 +62,9 @@
     },
     {
       "path": "video"
+    },
+    {
+      "path": "environment"
     }
   ]
 }

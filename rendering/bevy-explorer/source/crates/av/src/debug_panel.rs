@@ -7,25 +7,29 @@ use serde_json::json;
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use serde_json::Value;
 
-pub(super) fn register(app: &mut App) {
-    app.add_console_command::<MediaState, _>(media_state)
-        .add_console_command::<MediaRetryDelay, _>(media_retry_delay)
-        .add_debug_section(DebugSection {
-            title: "Media player",
-            query: "/media_state",
-            fields: &[
-                ("Playback backend", "backend"),
-                ("Loaded video players", "video"),
-                ("Loaded audio streams", "audio"),
-                ("Current scene", "scene"),
-                ("Current parcel video players", "parcelVideo"),
-                ("Current parcel audio streams", "parcelAudio"),
-                ("Current parcel HTTP media", "parcelExternal"),
-                ("Players", "players"),
-            ],
-            actions: &[],
-            inputs: &[],
-        });
+pub(super) struct MediaDebugPanelPlugin;
+
+impl Plugin for MediaDebugPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<MediaState, _>(media_state)
+            .add_console_command::<MediaRetryDelay, _>(media_retry_delay)
+            .add_debug_section(DebugSection {
+                title: "Media player",
+                query: "/media_state",
+                fields: &[
+                    ("Playback backend", "backend"),
+                    ("Loaded video players", "video"),
+                    ("Loaded audio streams", "audio"),
+                    ("Current scene", "scene"),
+                    ("Current parcel video players", "parcelVideo"),
+                    ("Current parcel audio streams", "parcelAudio"),
+                    ("Current parcel HTTP media", "parcelExternal"),
+                    ("Players", "players"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+    }
 }
 
 /// Set the wait before a failed web media source's first reopen; later waits double from it.

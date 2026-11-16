@@ -61,7 +61,7 @@ const server = await serveRealm({
 })
 after(() => server.close())
 
-const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,24', signIn: 'guest' }
+const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,26', signIn: 'guest' }
 
 async function prepare(explorer: Explorer): Promise<void> {
   if (sceneError) throw sceneError

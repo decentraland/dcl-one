@@ -45,7 +45,7 @@ pub const SERVE_SLOTS: [&str; 11] = [
 /// copies this one line into abgen's credential), minted while abgen runs.
 pub const ABGEN_SLOT: &str = "AB_REGISTRY_ADMIN_TOKEN";
 /// The pulse file: the LiveKit pair and the room-authority key serve holds.
-pub const PULSE_SLOTS: [(&str, &str); 4] = [
+pub const PULSE_SLOTS: [(&str, &str); 5] = [
     ("PULSE_APPLICATION_RELAY_LIVEKIT_API_KEY", "LIVEKIT_API_KEY"),
     (
         "PULSE_APPLICATION_RELAY_LIVEKIT_SECRET",
@@ -53,6 +53,11 @@ pub const PULSE_SLOTS: [(&str, &str); 4] = [
     ),
     ("PULSE_ROOM_AUTHORITY_KEY", "PULSE_ROOM_AUTHORITY_KEY"),
     ("COMMS_MODERATOR_TOKEN", "MODERATOR_TOKEN"),
+    // Pulse admits scene listeners from this wallet.
+    (
+        "AUTHORITATIVE_SERVER_ADDRESS",
+        "AUTHORITATIVE_SERVER_ADDRESS",
+    ),
 ];
 
 /// What one run changed: the serve slots it minted (names only) and whether
@@ -393,6 +398,41 @@ mod tests {
         assert!(
             EnvFile::read(&serve).unwrap().get(ABGEN_SLOT).is_none(),
             "abgen's bearer is minted only with --with-abgen"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // unix only: Windows cannot fsync a directory, which `write_private` does last.
+    #[cfg(unix)]
+    #[test]
+    fn a_pulse_file_from_before_the_authoritative_slot_gains_it_alone() {
+        let dir = scratch();
+        let serve = dir.join("catalyst.env");
+        let pulse = dir.join("catalyst-pulse.env");
+        init(&serve, Some(&pulse), false).unwrap();
+        let before = EnvFile::read(&pulse).unwrap();
+        let older: Vec<String> = before
+            .lines
+            .iter()
+            .filter(|l| !l.starts_with("AUTHORITATIVE_SERVER_ADDRESS="))
+            .cloned()
+            .collect();
+        assert_eq!(older.len(), PULSE_SLOTS.len() - 1);
+        fs::set_permissions(&pulse, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&pulse, format!("{}\n", older.join("\n"))).unwrap();
+
+        let out = init(&serve, Some(&pulse), false).unwrap();
+        assert!(out.generated.is_empty());
+        assert!(out.pulse_written);
+        let after = EnvFile::read(&pulse).unwrap();
+        for (slot, _) in PULSE_SLOTS {
+            assert_eq!(after.get(slot), before.get(slot), "{slot}");
+        }
+        assert_eq!(
+            after.get("AUTHORITATIVE_SERVER_ADDRESS"),
+            EnvFile::read(&serve)
+                .unwrap()
+                .get("AUTHORITATIVE_SERVER_ADDRESS")
         );
         fs::remove_dir_all(&dir).unwrap();
     }

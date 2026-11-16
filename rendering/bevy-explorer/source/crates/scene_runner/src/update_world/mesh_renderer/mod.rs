@@ -1,4 +1,4 @@
-use std::f32::consts::FRAC_PI_2;
+use std::{f32::consts::FRAC_PI_2, time::Duration};
 
 use bevy::{
     platform::collections::HashMap,
@@ -19,8 +19,13 @@ use dcl_types::interface::ComponentPosition;
 use scene_material::{SceneBound, SceneMaterial};
 
 use crate::{
-    gltf_resolver::GltfMeshResolver, renderer_context::RendererSceneContext,
-    update_world::material::MeshMaterial3dLoading, SceneEntity,
+    gltf_resolver::GltfMeshResolver,
+    renderer_context::RendererSceneContext,
+    scene_spawn_slice::{mark_waiting, InstantiationBudget},
+    update_world::material::{
+        MaterialPrepaid, MeshMaterial3dLoading, PbMaterialComponent, NEW_MATERIAL_COST,
+    },
+    SceneEntity,
 };
 
 use self::truncated_cone::TruncatedCone;
@@ -38,6 +43,20 @@ pub enum MeshDefinition {
     Sphere,
     Gltf { src: String, name: String },
 }
+
+/// What attaching an entity's first mesh (a shared default one) and the default material
+/// costs the frame, mostly after `update_mesh` returns: measured with a stress scene of 1,000
+/// primitives added in one tick (`docs/adr/2026-11-10-explorer-budgeted-primitives-and-materials.md`).
+pub const PRIMITIVE_COST: Duration = Duration::from_micros(7);
+
+/// On top of [`PRIMITIVE_COST`]: a mesh built for the entity (custom texture coordinates, a
+/// tapered cylinder) or a glTF mesh sent to the GPU.
+pub const NEW_MESH_COST: Duration = Duration::from_micros(10);
+
+/// The entity's first mesh waits for the next frame's instantiation slice.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct PendingPrimitive;
 
 #[derive(Resource)]
 pub struct MeshPrimitiveDefaults {
@@ -191,21 +210,48 @@ impl Plugin for MeshDefinitionPlugin {
 #[derive(Component)]
 pub struct RetryMeshDefinition;
 
+impl MeshDefinition {
+    /// The shared default mesh the entity uses, or `None` when it gets one of its own: custom
+    /// texture coordinates, a tapered cylinder, a glTF mesh. Both what an entity is charged and
+    /// what is built follow from it.
+    fn shared_mesh(&self, defaults: &MeshPrimitiveDefaults) -> Option<Handle<Mesh>> {
+        match self {
+            Self::Box { uvs } if uvs.is_empty() => Some(defaults.boxx.clone()),
+            Self::Plane { uvs } if uvs.is_empty() => Some(defaults.plane.clone()),
+            Self::Cylinder {
+                radius_top,
+                radius_bottom,
+            } if *radius_bottom == 0.5 && *radius_top == 0.5 => Some(defaults.cylinder.clone()),
+            Self::Sphere => Some(defaults.sphere.clone()),
+            _ => None,
+        }
+    }
+}
+
+type PrimitiveData = (
+    Entity,
+    &'static SceneEntity,
+    &'static MeshDefinition,
+    Option<&'static MeshMaterial3d<SceneMaterial>>,
+    Option<&'static MeshMaterial3dLoading>,
+    Option<&'static Mesh3d>,
+    Has<PbMaterialComponent>,
+    Has<PendingPrimitive>,
+);
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_mesh(
     mut commands: Commands,
+    pending_primitives: Query<PrimitiveData, With<PendingPrimitive>>,
     new_primitives: Query<
+        PrimitiveData,
         (
-            Entity,
-            &SceneEntity,
-            &MeshDefinition,
-            Option<&MeshMaterial3d<SceneMaterial>>,
-            Option<&MeshMaterial3dLoading>,
-            Option<&Mesh3d>,
+            Or<(Changed<MeshDefinition>, With<RetryMeshDefinition>)>,
+            Without<PendingPrimitive>,
         ),
-        Or<(Changed<MeshDefinition>, With<RetryMeshDefinition>)>,
     >,
     mut removed_primitives: RemovedComponents<MeshDefinition>,
+    has_definition: Query<(), With<MeshDefinition>>,
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<MeshPrimitiveDefaults>,
     mut default_material: Local<HashMap<Entity, Handle<SceneMaterial>>>,
@@ -213,110 +259,167 @@ pub fn update_mesh(
     scenes: Query<&RendererSceneContext>,
     config: Res<AppConfig>,
     mut gltf_mesh_resolver: GltfMeshResolver,
+    mut budget: InstantiationBudget,
 ) {
-    for (ent, scene_ent, prim, maybe_material, maybe_material_loading, maybe_existing_mesh) in
-        new_primitives.iter()
+    // removals first: a renderer removed and added again in one tick is attached below, and
+    // keeps its place if it was waiting
+    for ent in removed_primitives.read() {
+        if let Ok(mut e) = commands.get_entity(ent) {
+            e.remove::<Mesh3d>();
+            if !has_definition.contains(ent) {
+                e.remove::<PendingPrimitive>();
+            }
+        }
+    }
+
+    let mut gate = budget.gate();
+    for (
+        ent,
+        scene_ent,
+        prim,
+        maybe_material,
+        maybe_material_loading,
+        maybe_existing_mesh,
+        has_material,
+        pending,
+    ) in pending_primitives.iter().chain(new_primitives.iter())
     {
+        // the slice is spent: what waits stays as it is, untouched, and what is new joins it
+        if maybe_existing_mesh.is_none() && gate.is_spent() {
+            mark_waiting(&mut commands, ent, PendingPrimitive, pending);
+            continue;
+        }
+
         commands.entity(ent).remove::<RetryMeshDefinition>();
-        let handle = match prim {
-            MeshDefinition::Box { uvs } => {
-                if uvs.is_empty() {
-                    defaults.boxx.clone()
-                } else {
-                    let len = uvs.len();
-                    let mut mesh = Mesh::from(bevy::math::primitives::Cuboid::default());
-                    let Some(VertexAttributeValues::Float32x2(mesh_uvs)) =
-                        mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
-                    else {
-                        panic!("uvs are not f32x2")
-                    };
-                    for (from, to) in [
-                        (0, 17),
-                        (1, 16),
-                        (2, 19),
-                        (3, 18),
-                        (4, 22),
-                        (5, 23),
-                        (6, 20),
-                        (7, 21),
-                        (8, 14),
-                        (9, 13),
-                        (10, 12),
-                        (11, 15),
-                        (12, 9),
-                        (13, 10),
-                        (14, 11),
-                        (15, 8),
-                        (16, 4),
-                        (17, 5),
-                        (18, 6),
-                        (19, 7),
-                        (20, 3),
-                        (21, 2),
-                        (22, 1),
-                        (23, 0),
-                    ] {
-                        mesh_uvs[to][0] = uvs[from % len][0];
-                        mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
-                    }
-                    meshes.add(mesh)
-                }
-            }
-            MeshDefinition::Cylinder {
-                radius_bottom,
-                radius_top,
-            } => {
-                if *radius_bottom == 0.5 && *radius_top == 0.5 {
-                    defaults.cylinder.clone()
-                } else {
-                    meshes.add(Mesh::from(TruncatedCone {
-                        base_radius: *radius_bottom,
-                        tip_radius: *radius_top,
-                        ..Default::default()
-                    }))
-                }
-            }
-            MeshDefinition::Plane { uvs } => {
-                if uvs.is_empty() {
-                    defaults.plane.clone()
-                } else {
-                    let len = uvs.len();
-                    let mut mesh = Cuboid::default()
-                        .mesh()
-                        .build()
-                        .scaled_by(Vec3::new(1.0, 1.0, 0.0));
-                    let Some(VertexAttributeValues::Float32x2(mesh_uvs)) =
-                        mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
-                    else {
-                        panic!("uvs are not f32x2")
-                    };
-                    for (from, to) in [
-                        (0, 0),
-                        (1, 3),
-                        (2, 2),
-                        (3, 1),
-                        (4, 6),
-                        (5, 5),
-                        (6, 4),
-                        (7, 7),
-                    ] {
-                        mesh_uvs[to][0] = uvs[from % len][0];
-                        mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
-                    }
-                    meshes.add(mesh)
-                }
-            }
-            MeshDefinition::Sphere => defaults.sphere.clone(),
+
+        let mut gltf_mesh = match prim {
             MeshDefinition::Gltf { src, name } => {
                 let Ok(scene) = scenes.get(scene_ent.root) else {
+                    commands.entity(ent).remove::<PendingPrimitive>();
                     continue;
                 };
                 let Ok(maybe_mesh) = gltf_mesh_resolver.resolve_mesh(src, &scene.hash, name) else {
                     warn!("failed to load gltf for mesh");
+                    commands.entity(ent).remove::<PendingPrimitive>();
                     continue;
                 };
                 let Some(h_mesh) = maybe_mesh else {
                     commands.entity(ent).try_insert(RetryMeshDefinition);
+                    continue;
+                };
+                Some(h_mesh)
+            }
+            _ => None,
+        };
+
+        let shared_mesh = prim.shared_mesh(&defaults);
+
+        // only an entity's first mesh waits for the slice; a changed one is attached at once,
+        // uncharged
+        if maybe_existing_mesh.is_none() {
+            // a new primitive and its first material come in one frame: it pays for both
+            let first_material =
+                has_material && maybe_material.is_none() && maybe_material_loading.is_none();
+            let mut cost = PRIMITIVE_COST;
+            if shared_mesh.is_none() {
+                cost += NEW_MESH_COST;
+            }
+            if first_material {
+                cost += NEW_MATERIAL_COST;
+            }
+            if !gate.admit(cost) {
+                mark_waiting(&mut commands, ent, PendingPrimitive, pending);
+                continue;
+            }
+            commands.entity(ent).remove::<PendingPrimitive>();
+            if first_material {
+                commands.entity(ent).try_insert(MaterialPrepaid);
+            }
+        }
+
+        let handle = match (shared_mesh, prim) {
+            (Some(shared), _) => shared,
+            (None, MeshDefinition::Box { uvs }) => {
+                let len = uvs.len();
+                let mut mesh = Mesh::from(bevy::math::primitives::Cuboid::default());
+                let Some(VertexAttributeValues::Float32x2(mesh_uvs)) =
+                    mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
+                else {
+                    panic!("uvs are not f32x2")
+                };
+                for (from, to) in [
+                    (0, 17),
+                    (1, 16),
+                    (2, 19),
+                    (3, 18),
+                    (4, 22),
+                    (5, 23),
+                    (6, 20),
+                    (7, 21),
+                    (8, 14),
+                    (9, 13),
+                    (10, 12),
+                    (11, 15),
+                    (12, 9),
+                    (13, 10),
+                    (14, 11),
+                    (15, 8),
+                    (16, 4),
+                    (17, 5),
+                    (18, 6),
+                    (19, 7),
+                    (20, 3),
+                    (21, 2),
+                    (22, 1),
+                    (23, 0),
+                ] {
+                    mesh_uvs[to][0] = uvs[from % len][0];
+                    mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
+                }
+                meshes.add(mesh)
+            }
+            (
+                None,
+                MeshDefinition::Cylinder {
+                    radius_bottom,
+                    radius_top,
+                },
+            ) => meshes.add(Mesh::from(TruncatedCone {
+                base_radius: *radius_bottom,
+                tip_radius: *radius_top,
+                ..Default::default()
+            })),
+            (None, MeshDefinition::Plane { uvs }) => {
+                let len = uvs.len();
+                let mut mesh = Cuboid::default()
+                    .mesh()
+                    .build()
+                    .scaled_by(Vec3::new(1.0, 1.0, 0.0));
+                let Some(VertexAttributeValues::Float32x2(mesh_uvs)) =
+                    mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0)
+                else {
+                    panic!("uvs are not f32x2")
+                };
+                for (from, to) in [
+                    (0, 0),
+                    (1, 3),
+                    (2, 2),
+                    (3, 1),
+                    (4, 6),
+                    (5, 5),
+                    (6, 4),
+                    (7, 7),
+                ] {
+                    mesh_uvs[to][0] = uvs[from % len][0];
+                    mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
+                }
+                meshes.add(mesh)
+            }
+            // a sphere always uses the shared one
+            (None, MeshDefinition::Sphere) => defaults.sphere.clone(),
+            (None, MeshDefinition::Gltf { .. }) => {
+                // resolved before the gate, so a mesh still loading costs nothing
+                let Some(h_mesh) = gltf_mesh.take() else {
                     continue;
                 };
                 // the shared settings load MAIN_WORLD only, since the resolver's other
@@ -351,11 +454,9 @@ pub fn update_mesh(
         }
     }
 
-    for ent in removed_primitives.read() {
-        if let Ok(mut e) = commands.get_entity(ent) {
-            e.remove::<Mesh3d>();
-        }
-    }
-
     default_material.retain(|scene, _| scenes.get(*scene).is_ok());
+    gate.report("primitives");
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

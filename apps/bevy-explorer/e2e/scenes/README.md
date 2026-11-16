@@ -28,8 +28,8 @@ with the CLI's built-in build into `bin/` (a loader, `index.js`, and the chunks 
 Build them with `apps/dcl-scene-cli` (the vendored SDK toolchain, no npm):
 
 ```sh
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes          # every scene
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes -- core   # one
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes        # every scene
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes core   # one
 ```
 
 ## The pointer and raycast scenes
@@ -51,7 +51,7 @@ reference:
 
 ## The video scene
 
-`video`, parcel `0,24`, spawn at `(8, 0, 4)` facing the screens: the scene of
+`video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
 `specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference. Two
 planes at z = 12 each play one looped file of `assets/` into a basic material: `recover`
 (`assets/recover.webm`, x = 5) and `broken` (`assets/broken.webm`, x = 11), 2 s, 64 by 64 VP8 of
@@ -61,3 +61,11 @@ engine reports. The spec's realm fails the files' first GETs.
 
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
 `.webm` assets are in Git LFS.
+
+## Environment components
+
+[`environment`](environment/README.md), parcel `0,24`, authors the root Skybox, Sun and
+EnvironmentFog components through the SDK. It is a workspace fixture without a visual
+reference. After building it, `DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy pnpm run check:environment`
+serves an isolated loopback realm and checks its optional values, sky image, component removal
+and scene-departure reset through the native console. Captures are saved in `report/environment`.
