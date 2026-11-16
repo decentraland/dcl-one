@@ -762,7 +762,6 @@ mod tests {
                     &mut socket,
                     axum::extract::ws::Message::Binary(b"secret".to_vec().into()),
                     None,
-                    &state.feed,
                 )
                 .await
             );
