@@ -1993,3 +1993,105 @@ async fn cancelling_after_stored_progress_keeps_its_manifest_and_files() {
     .expect("stored progress must survive request cancellation");
     assert_one_completion(&f, &u, &world).await;
 }
+
+#[tokio::test]
+async fn ordinary_validation_does_not_pin_the_pool_during_allowance_lookup() {
+    struct PausedAllowance {
+        reached: Arc<Notify>,
+        resume: Arc<Notify>,
+        waited: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl super::super::quota::SpaceAllowance for PausedAllowance {
+        async fn allowance_bytes(&self, _: &Address) -> Result<i64, String> {
+            if !self.waited.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                self.reached.notify_one();
+                self.resume.notified().await;
+            }
+            Ok(i64::MAX)
+        }
+    }
+    let Some(pool) = crate::db::scratch::pool(1).await else {
+        return;
+    };
+    let mut f = fixture_on_pool(
+        pool,
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings(),
+        "",
+    )
+    .await;
+    let (world, owner) = owned(&f).await;
+    let reached = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    f.state = Arc::new(
+        CoreState::new(
+            f.pool.clone(),
+            f.storage.clone(),
+            f.state.policy.clone(),
+            test_settings(),
+            None,
+        )
+        .with_allowance(Arc::new(PausedAllowance {
+            reached: reached.clone(),
+            resume: resume.clone(),
+            waited: std::sync::atomic::AtomicBool::new(false),
+        })),
+    );
+    f.app = router(f.state.clone());
+    let entity = deployment(&owner, &world, "Ordinary", "0,0", &["0,0"]).await;
+    tokio::join!(post_entity(&f.app, &entity, 200), async {
+        reached_stage(&reached).await;
+        let conn = tokio::time::timeout(std::time::Duration::from_secs(5), f.pool.acquire())
+            .await
+            .expect("ordinary external validation must leave pool capacity available")
+            .unwrap();
+        drop(conn);
+        resume.notify_one();
+    });
+}
+
+#[tokio::test]
+async fn shared_state_bounds_partial_session_owners_by_pool_and_upload_capacity() {
+    for (upload_limit, owners) in [(40, 2), (1, 1)] {
+        let Some(pool) = crate::db::scratch::pool(8).await else {
+            return;
+        };
+        let mut settings = test_settings();
+        settings.upload_limits.max_concurrent_uploads = upload_limit;
+        let f = fixture_on_pool(
+            pool,
+            PersonalWorldsPolicy::disabled(),
+            None,
+            None,
+            settings,
+            "",
+        )
+        .await;
+        let mut held = Vec::new();
+        for _ in 0..owners {
+            held.push(
+                f.state
+                    .partial_sessions
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .unwrap(),
+            );
+        }
+        let waiting = f.state.partial_sessions.clone().acquire_owned();
+        tokio::pin!(waiting);
+        assert!(
+            futures::poll!(&mut waiting).is_pending(),
+            "an extra session owner must queue"
+        );
+        drop(held.pop());
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
+            .await
+            .expect("releasing a session owner must wake its successor")
+            .unwrap();
+        drop(next);
+    }
+}

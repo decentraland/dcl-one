@@ -227,16 +227,29 @@ async fn lock_entity(entity_id: &str) -> EntityGuard {
 /// (including a cancelled lock statement or unlock) closes the session instead of pooling it.
 struct SessionEntityGuard {
     conn: Option<PoolConnection<sqlx::Postgres>>,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
     key: String,
 }
 
 impl SessionEntityGuard {
-    async fn acquire(pool: &PgPool, entity_id: &str) -> Result<Self, sqlx::Error> {
+    async fn acquire(
+        pool: &PgPool,
+        slots: &Arc<tokio::sync::Semaphore>,
+        entity_id: &str,
+    ) -> Result<Self, sqlx::Error> {
         let key = format!("worlds-partial-entity:{entity_id}");
         let mut pause = Duration::from_millis(20);
+        // Both permit and entity-lock waits remain inside the request's existing
+        // deployment-processing timeout; cancellation drops any held resources.
         loop {
+            let permit = slots
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("partial session budget is never closed");
             let mut guard = Self {
                 conn: Some(pool.acquire().await?),
+                permit: Some(permit),
                 key: key.clone(),
             };
             let taken: bool =
@@ -254,6 +267,7 @@ impl SessionEntityGuard {
             }
             // A waiter never holds a checkout while sleeping behind another replica.
             drop(guard.conn.take());
+            drop(guard.permit.take());
             #[cfg(test)]
             let _ = ENTITY_LOCK_BUSY.try_with(|busy| busy.notify_one());
             tokio::time::sleep(pause).await;
@@ -281,6 +295,7 @@ impl SessionEntityGuard {
             conn.close_on_drop();
         }
         drop(self.conn.take());
+        drop(self.permit.take());
     }
 }
 
@@ -542,7 +557,7 @@ async fn stage_batch(
     now_ms: i64,
 ) -> Result<Response, Response> {
     let _local = lock_entity(entity_id).await;
-    let mut session = SessionEntityGuard::acquire(&state.pool, entity_id)
+    let mut session = SessionEntityGuard::acquire(&state.pool, &state.partial_sessions, entity_id)
         .await
         .map_err(db_error)?;
     let response = stage_batch_on(
@@ -1770,6 +1785,7 @@ mod session_guard_tests {
         let Some(pool) = crate::db::scratch::pool(1).await else {
             return;
         };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let id = format!("acquisition-cancel-{}", uuid::Uuid::new_v4());
         let original_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&pool)
@@ -1779,7 +1795,7 @@ mod session_guard_tests {
         let resume = Arc::new(tokio::sync::Notify::new());
         let mut acquiring = Box::pin(ENTITY_LOCK_ACQUIRED.scope(
             (reached.clone(), resume),
-            SessionEntityGuard::acquire(&pool, &id),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
         ));
         tokio::select! {
             _ = reached.notified() => {},
@@ -1788,7 +1804,7 @@ mod session_guard_tests {
         drop(acquiring);
         let mut retry = tokio::time::timeout(
             Duration::from_secs(5),
-            SessionEntityGuard::acquire(&pool, &id),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
         )
         .await
         .expect("cancelled acquisition must recover pool capacity")
@@ -1809,8 +1825,11 @@ mod session_guard_tests {
         let Some(pool) = crate::db::scratch::pool(1).await else {
             return;
         };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let id = format!("release-cancel-{}", uuid::Uuid::new_v4());
-        let mut guard = SessionEntityGuard::acquire(&pool, &id).await.unwrap();
+        let mut guard = SessionEntityGuard::acquire(&pool, &slots, &id)
+            .await
+            .unwrap();
         let original_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut **guard.conn.as_mut().unwrap())
             .await
@@ -1830,7 +1849,7 @@ mod session_guard_tests {
         drop(releasing);
         let mut retry = tokio::time::timeout(
             Duration::from_secs(5),
-            SessionEntityGuard::acquire(&pool, &id),
+            SessionEntityGuard::acquire(&pool, &slots, &id),
         )
         .await
         .expect("cancelled release must recover pool capacity")
@@ -1844,5 +1863,81 @@ mod session_guard_tests {
             "the held session must be closed instead of pooled"
         );
         retry.release().await;
+    }
+    #[tokio::test]
+    async fn session_budget_waiters_leave_pool_capacity_for_other_queries() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let a = format!("budget-a-{}", uuid::Uuid::new_v4());
+        let b = format!("budget-b-{}", uuid::Uuid::new_v4());
+        let mut first = SessionEntityGuard::acquire(&pool, &slots, &a)
+            .await
+            .unwrap();
+        let waiting = SessionEntityGuard::acquire(&pool, &slots, &b);
+        tokio::pin!(waiting);
+        tokio::select! {
+            biased;
+            _ = &mut waiting => panic!("a second session owner must wait for the permit"),
+            probes = tokio::time::timeout(Duration::from_secs(5), async {
+                let a = pool.acquire().await.unwrap();
+                let b = pool.acquire().await.unwrap();
+                let mut c = pool.acquire().await.unwrap();
+                let answer: i32 = sqlx::query_scalar("SELECT 7").fetch_one(&mut *c).await.unwrap();
+                assert_eq!(answer, 7);
+                (a, b, c)
+            }) => { drop(probes.expect("a permit waiter must not check out a pool connection")); },
+        }
+        first.release().await;
+        let mut next = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("unlock must release the session permit")
+            .unwrap();
+        next.release().await;
+    }
+
+    #[tokio::test]
+    async fn a_busy_entity_returns_its_session_permit_before_retrying() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let id = format!("busy-permit-{}", uuid::Uuid::new_v4());
+        let key = format!("worlds-partial-entity:{id}");
+        let mut blocker = pool.acquire().await.unwrap();
+        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
+            .bind(&key)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let busy = Arc::new(tokio::sync::Notify::new());
+        let (guard, ()) = tokio::join!(
+            ENTITY_LOCK_BUSY.scope(
+                busy.clone(),
+                SessionEntityGuard::acquire(&pool, &slots, &id)
+            ),
+            async {
+                busy.notified().await;
+                let permit =
+                    tokio::time::timeout(Duration::from_secs(5), slots.clone().acquire_owned())
+                        .await
+                        .expect("a failed entity attempt must return its permit")
+                        .unwrap();
+                let conn = tokio::time::timeout(Duration::from_secs(5), pool.acquire())
+                    .await
+                    .expect("a failed entity attempt must return its checkout")
+                    .unwrap();
+                drop(conn);
+                sqlx::query("SELECT pg_advisory_unlock(hashtextextended($1, 0))")
+                    .bind(&key)
+                    .execute(&mut *blocker)
+                    .await
+                    .unwrap();
+                drop(permit);
+            },
+        );
+        let mut guard = guard.unwrap();
+        guard.release().await;
     }
 }

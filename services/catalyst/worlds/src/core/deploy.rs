@@ -683,7 +683,7 @@ pub(super) enum Check<'a> {
 /// now, or a partial upload's first batch.
 pub(super) async fn validate(
     state: &SharedState,
-    conn: Option<&mut sqlx::PgConnection>,
+    mut conn: Option<&mut sqlx::PgConnection>,
     entity: &Value,
     signer: &Address,
     entity_id: &str,
@@ -770,23 +770,11 @@ pub(super) async fn validate(
         return Err(failed(e));
     }
     let parcels = ParcelSet::parse(&pointers).map_err(|e| failed(e.to_string()))?;
-    // Ordinary publishes acquire only after the pure entity checks; partial batches
-    // supply the session that already owns their entity lock.
-    let mut acquired;
-    let conn: &mut sqlx::PgConnection = match conn {
-        Some(conn) => conn,
-        None => {
-            acquired = state.pool.acquire().await.map_err(|e| {
-                internal(format!("Failed to read the world limits of {world}: {e}"))
-            })?;
-            &mut acquired
-        }
-    };
-    let limits = state
-        .policy
-        .world_limits_on(&mut *conn, &world)
-        .await
-        .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
+    let limits = match conn.as_deref_mut() {
+        Some(conn) => state.policy.world_limits_on(conn, &world).await,
+        None => state.policy.world_limits(&world).await,
+    }
+    .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
     if pointers.len() > limits.max_parcels as usize {
         return Err(failed(format!(
             "Max allowed scene dimensions is {} parcels.",
@@ -794,23 +782,32 @@ pub(super) async fn validate(
         )));
     }
 
-    if !state
-        .names
-        .check_name_deny_list_on(&mut *conn, world_name)
-        .await
-    {
+    let name_allowed = match conn.as_deref_mut() {
+        Some(conn) => state.names.check_name_deny_list_on(conn, world_name).await,
+        None => {
+            state
+                .names
+                .check_name_deny_list(&state.pool, world_name)
+                .await
+        }
+    };
+    if !name_allowed {
         return Err(failed(format!(
             "Deployment failed: World \"{world_name}\" can not be deployed because the name is in the name deny list managed by Decentraland DAO."
         )));
     }
     let check_permission = !matches!(check, Check::Stage { permission: false });
-    let replacement = match check_permission {
-        false => None,
-        true => match state
-            .policy
-            .can_deploy_on(&mut *conn, &world, signer, &parcels)
-            .await
-        {
+    let replacement = if check_permission {
+        let decision = match conn.as_deref_mut() {
+            Some(conn) => {
+                state
+                    .policy
+                    .can_deploy_on(conn, &world, signer, &parcels)
+                    .await
+            }
+            None => state.policy.can_deploy(&world, signer, &parcels).await,
+        };
+        match decision {
             Ok(decision) => Some(decision),
             Err(AuthorityNotEstablished::RefusedLacksAuthority { detail }) => {
                 tracing::info!(world = %world, signer = %signer.as_str(), "deploy denied: {detail}");
@@ -829,9 +826,15 @@ pub(super) async fn validate(
                     "Not authorized: could not verify deployment permissions (deploy denied)",
                 ));
             }
-        },
+        }
+    } else {
+        None
     };
-    match store::is_world_disabled(&mut *conn, &world).await {
+    let disabled = match conn.as_deref_mut() {
+        Some(conn) => store::is_world_disabled(conn, &world).await,
+        None => store::is_world_disabled(&state.pool, &world).await,
+    };
+    match disabled {
         Ok(false) => {}
         Ok(true) => return Err(forbidden(store::world_disabled(&world).public_message())),
         Err(e) => {
@@ -920,13 +923,33 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let cap = state
-        .scene_cap_on(&mut *conn, &world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
-        .await
-        .map_err(|e| {
-            tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
-            unavailable("Deployment failed: the storage allowance could not be determined right now")
-        })?;
+    let cap = match conn.as_deref_mut() {
+        Some(conn) => {
+            state
+                .scene_cap_on(
+                    conn,
+                    &world,
+                    &limits,
+                    name_owner.as_ref(),
+                    Some(pointers.as_slice()),
+                )
+                .await
+        }
+        None => {
+            state
+                .scene_cap(
+                    &world,
+                    &limits,
+                    name_owner.as_ref(),
+                    Some(pointers.as_slice()),
+                )
+                .await
+        }
+    }
+    .map_err(|e| {
+        tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
+        unavailable("Deployment failed: the storage allowance could not be determined right now")
+    })?;
     if size > cap.max {
         return Err(failed(super::quota::too_big(cap.max, size)));
     }

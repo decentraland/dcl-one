@@ -128,14 +128,26 @@ impl NameDenyList {
     /// configured blocks alone when none has; then the list is read again
     /// (upstream caches `[]` for its hour; WR-35).
     pub async fn snapshot(&self, pool: &PgPool) -> Arc<BannedNames> {
-        if let Some(cached) = self.fresh() {
-            return cached;
-        }
-        // Connection ownership precedes the refresh mutex, including for ordinary readers.
-        // A partial batch may already own the pool's only session when refreshing this list.
-        match pool.acquire().await {
-            Ok(mut conn) => self.snapshot_on(&mut conn).await,
-            Err(error) => self.read(Err::<Vec<String>, _>(error)),
+        loop {
+            if let Some(cached) = self.fresh() {
+                return cached;
+            }
+            let mut conn = match pool.acquire().await {
+                Ok(conn) => conn,
+                Err(error) => return self.read(Err::<Vec<String>, _>(error)),
+            };
+            // Refreshers acquire their session before the mutex, as partial batches do.
+            // Queued ordinary readers return theirs before waiting for another refresh.
+            let Ok(_reading) = self.reading.try_lock() else {
+                drop(conn);
+                drop(self.reading.lock().await);
+                continue;
+            };
+            if let Some(cached) = self.fresh() {
+                return cached;
+            }
+            return self
+                .read(crate::explore::api::lists::values(&mut *conn, BANNED_NAMES_LIST).await);
         }
     }
 
@@ -436,6 +448,25 @@ mod session_refresh_tests {
             );
         assert!(!guarded.allows("blocked.dcl.eth"));
         drop(conn);
+        assert!(!ordinary.await.allows("blocked.dcl.eth"));
+    }
+    #[tokio::test]
+    async fn cold_readers_wait_for_refresh_without_holding_a_connection() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let checker = NameDenyList::new("blocked.dcl.eth");
+        let refreshing = checker.reading.lock().await;
+        let ordinary = checker.snapshot(&pool);
+        tokio::pin!(ordinary);
+        tokio::select! {
+            biased;
+            _ = &mut ordinary => panic!("a cold reader must wait for the active refresh"),
+            available = tokio::time::timeout(Duration::from_secs(5), pool.acquire()) => {
+                drop(available.expect("a queued refresh reader must return its connection").unwrap());
+            },
+        }
+        drop(refreshing);
         assert!(!ordinary.await.allows("blocked.dcl.eth"));
     }
 }

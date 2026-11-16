@@ -102,13 +102,17 @@ or several creates a new identity. Retired identities keep their storage rows.
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and
-short transaction uses it; this supports a pool with one connection. Staging
-commits remain independent of blob persistence. A failed lock attempt returns
-its connection before waiting; cancellation or uncertain unlock closes the
-session. Connection ownership precedes the name deny-list refresh mutex.
-Publication releases the session before its existing synchronous postcommit
-access revocation and other effects, which still finish before the response.
-Cleanup retains its independent store lock and expiry rules. See the
+short transaction uses it; this supports a pool with one connection. A permit
+budget shared by CoreState bounds partial-session owners to
+`min(upload_limit, max(1, pool_max / 4))`. Permit waits use the existing request
+timeout; failed lock attempts return both checkout and permit before retrying.
+Staging commits remain independent of blob persistence. Cancellation or
+uncertain unlock closes the session. Connection ownership precedes the name
+deny-list refresh mutex, and ordinary readers return their checkout before
+waiting for an active refresh. Publication releases the session before its
+existing synchronous postcommit access revocation and other effects, which still
+finish before the response. Cleanup retains its independent store lock and
+expiry rules. See the
 [session ownership decision](docs/adr/2026-11-16-worlds-partial-upload-session.md).
 
 Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
