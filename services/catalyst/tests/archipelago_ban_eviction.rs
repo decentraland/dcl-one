@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use alloy::signers::{SignerSync, local::PrivateKeySigner};
 use catalyst::comms::archipelago::config::{ClusterConfig, Settings};
-use catalyst::comms::archipelago::peers::PeerDirectory;
+use catalyst::comms::archipelago::enforcement::Enforcement;
 use catalyst::comms::archipelago::registry::{PeersRegistry, SocketEvent};
 use catalyst::comms::archipelago::{self as connector, AppState};
 use catalyst::comms::gatekeeper::admission::cluster::gateway::StateGateway;
@@ -105,7 +105,8 @@ fn gatekeeper(bans: &Bans, livekit: LiveKit) -> SharedState {
                 ..Default::default()
             },
         )
-        .unwrap(),
+        .unwrap()
+        .with_bus(archipelago::statistics_bus()),
     )
 }
 
@@ -190,12 +191,12 @@ async fn handshake(port: u16, wallet: &PrivateKeySigner) -> WsStream {
 
 async fn wait_for_peer(state: &AppState, addr: &str) {
     for _ in 0..60 {
-        if state.peers.peer(addr).is_some() {
+        if archipelago::peer(&state, addr).is_some() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the heartbeat never reached the peer directory");
+    panic!("the heartbeat never reached the complete statistics reader");
 }
 
 async fn send_heartbeat(ws: &mut WsStream) {
@@ -234,7 +235,7 @@ async fn mid_session_ban_sweep_kicks_and_closes_socket() {
     wait_for_peer(&state, &addr).await;
 
     bans.ban(&addr).await;
-    state.peers.ban_sweep_once().await;
+    state.enforcement.ban_sweep_once().await;
 
     match recv_msg(&mut ws, Duration::from_secs(3)).await {
         Some(server_packet::Message::Kicked(k)) => {
@@ -247,8 +248,8 @@ async fn mid_session_ban_sweep_kicks_and_closes_socket() {
         "socket is closed after the kick"
     );
     assert!(
-        state.peers.peer(&addr).is_none(),
-        "banned peer evicted from the peer directory"
+        archipelago::peer(&state, &addr).is_none(),
+        "banned peer removed from statistics after socket disconnect"
     );
     jobs.shutdown(Duration::from_secs(2)).await;
     scratch.teardown().await;
@@ -278,7 +279,7 @@ async fn periodic_ban_sweep_evicts_without_manual_trigger() {
         Some(server_packet::Message::Kicked(_)) => {}
         other => panic!("the periodic sweep should kick the banned peer, got {other:?}"),
     }
-    assert!(state.peers.peer(&addr).is_none());
+    assert!(archipelago::peer(&state, &addr).is_none());
     jobs.shutdown(Duration::from_secs(2)).await;
     scratch.teardown().await;
 }
@@ -294,7 +295,7 @@ async fn the_sweep_kicks_every_session_of_the_banned_wallet_and_drops_it() {
     };
     let ban = archipelago::ban_checker(bans.policy());
     let registry = PeersRegistry::new();
-    let peers = PeerDirectory::new(
+    let peers = Enforcement::new(
         ClusterConfig::default(),
         archipelago::gatekeeper(None),
         ban,
@@ -304,7 +305,7 @@ async fn the_sweep_kicks_every_session_of_the_banned_wallet_and_drops_it() {
     let (_desktop, mut desktop_events, _) = registry.on_peer_connected(wallet, "0xsession1");
     let (_mobile, mut mobile_events, _) = registry.on_peer_connected(wallet, "0xsession2");
 
-    peers.upsert_peer(wallet.into(), [8.0, 0.0, 8.0], [0, 0], "r".into());
+    peers.set_island(wallet, "island-test");
 
     bans.ban(wallet).await;
     peers.ban_sweep_once().await;
@@ -315,13 +316,13 @@ async fn the_sweep_kicks_every_session_of_the_banned_wallet_and_drops_it() {
     );
     assert!(matches!(mobile_events.try_recv(), Ok(SocketEvent::Kicked)));
     assert!(
-        peers.peer(wallet).is_none(),
+        peers.island_of(wallet).is_none(),
         "the sweep removes the banned peer"
     );
 
-    peers.upsert_peer(wallet.into(), [8.0, 0.0, 8.0], [0, 0], "r".into());
+    peers.set_island(wallet, "island-test");
     assert!(
-        peers.peer(wallet).is_some(),
+        peers.island_of(wallet).is_some(),
         "a later heartbeat re-admits the wallet; the ban gate is the sweep and the handshake, \
          not a local kicked set"
     );
@@ -644,15 +645,15 @@ async fn the_sweep_evicts_the_livekit_participant_of_a_wallet_that_never_heartbe
         other => panic!("expected the island assignment, got {other:?}"),
     }
     assert!(
-        state.peers.peer(&addr).is_none(),
+        archipelago::peer(&state, &addr).is_none(),
         "no heartbeat has arrived"
     );
     assert_eq!(
-        state.peers.island_of(&addr).as_deref(),
+        state.enforcement.island_of(&addr).as_deref(),
         Some(mock.room.as_str())
     );
     bans.ban(&addr).await;
-    state.peers.ban_sweep_once().await;
+    state.enforcement.ban_sweep_once().await;
     match recv_msg(&mut ws, Duration::from_secs(3)).await {
         Some(server_packet::Message::Kicked(k)) => {
             assert_eq!(k.reason, KickedReason::KrNewSession as i32)
@@ -663,9 +664,9 @@ async fn the_sweep_evicts_the_livekit_participant_of_a_wallet_that_never_heartbe
         recv_msg(&mut ws, Duration::from_secs(3)).await.is_none(),
         "socket closes after kick"
     );
-    assert!(state.peers.peer(&addr).is_none());
+    assert!(archipelago::peer(&state, &addr).is_none());
     assert!(
-        state.peers.island_of(&addr).is_none(),
+        state.enforcement.island_of(&addr).is_none(),
         "assignment is evicted without a heartbeat"
     );
     wait_for_dispatch(&scratch.pool, &addr, "confirmed").await;
