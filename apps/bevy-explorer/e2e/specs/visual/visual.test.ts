@@ -57,7 +57,10 @@ for (const scene of SCENES) {
       // the hidden player, whose name is the session's fresh guest's: off for the frame. The
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
       // agree: held still for the frame.
+      const cloudBefore = await explorer.json<{ enabled: boolean }>('/cloud_motion')
       restore(async () => {
+        const restored = await explorer.json<{ enabled: boolean }>(`/cloud_motion ${cloudBefore.enabled}`)
+        assert.equal(restored.enabled, cloudBefore.enabled, 'cloud motion must be restored')
         await explorer.json('/nametags true')
         await explorer.json('/tree_wind true')
       })
@@ -72,6 +75,17 @@ for (const scene of SCENES) {
         what: `the scene ${scene.id} at ${x},${y} to create its entities`
       })
       await sleep(scene.settleMs)
+      // Clouds use a calendar-seeded field and elapsed phase independently of the scene's
+      // sky time. Pin that field without replacing authored lighting (lights uses midnight).
+      // The sky redraws 1/64 of its pixels per frame. Wait 128 CPU sky updates after the
+      // scene settles as a conservative refresh window; this is not a GPU fence.
+      const clouds = await explorer.json<{ enabled: boolean }>('/cloud_motion false')
+      assert.equal(clouds.enabled, false, 'clouds must use the reproducible field')
+      await until(
+        () => explorer.json<{ enabled: boolean; pinnedFrames: number }>('/cloud_motion'),
+        (state) => !state.enabled && state.pinnedFrames >= 128,
+        { timeoutMs: 60_000, intervalMs: 250, what: 'the fixed cloud field to refresh the sky and reflections' }
+      )
       const frame = await explorer.screenshot()
 
       const file = path.join(REFERENCES_DIR, `${scene.id}.png`)

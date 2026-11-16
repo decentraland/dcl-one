@@ -20,8 +20,8 @@ use common::{
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
-        WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta,
+        SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -330,6 +330,8 @@ pub(crate) fn load_scene_javascript(
 
         let portable = portable_scenes.get(&definition.id);
         let portable_experiences = meta.portable_experiences_toggle();
+        let legacy_declared_permissions = meta.legacy_declared_permissions();
+        let nearby_voice_chat_enabled = meta.nearby_voice_chat_enabled();
 
         let Some(base) = meta
             .scene
@@ -440,6 +442,10 @@ pub(crate) fn load_scene_javascript(
                 .try_insert(SceneTime { time: fixed_time });
         }
 
+        if !nearby_voice_chat_enabled {
+            commands.entity(root).try_insert(NearbyVoiceDisabled);
+        }
+
         info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");
         let scene_bounds = SceneBounds::new(&bounds, storage_buffers.as_deref_mut());
         let mut renderer_context = RendererSceneContext::new(
@@ -462,6 +468,7 @@ pub(crate) fn load_scene_javascript(
             meta.authoritative_multiplayer.unwrap_or_default(),
         );
         renderer_context.portable_experiences = portable_experiences;
+        renderer_context.legacy_declared_permissions = legacy_declared_permissions;
 
         // start from this scene's crdt context (its own room's on a multi-tenant server,
         // the shared context otherwise), with position data localized for this scene.

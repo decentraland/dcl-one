@@ -37,7 +37,7 @@ export const PAGES: Record<PageName, Page> = {
   settings: { key: 'KeyP', rail: 'Settings', tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
   places: { key: 'KeyZ', rail: 'Places', tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
   events: { key: 'KeyX', rail: 'Events', tab: 'Events [ X ]', marker: { name: 'Events', role: 'heading' } },
-  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search places & worlds', role: 'textbox' } }
+  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search', role: 'textbox' } }
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000
@@ -78,6 +78,9 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
  *  deployment first. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
+  // Restores also run after a successful body already closed the page. An extra Escape
+  // reaches the world instead, and can consume the key used to reopen the page next.
+  if (!(await explorer.hud.isVisible(marker))) return
   if (page === 'backpack') await explorer.profileDeployWindow()
   try {
     if ((await explorer.worldState()).keyboardClaimed === true) {

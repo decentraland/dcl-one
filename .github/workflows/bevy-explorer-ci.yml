@@ -413,6 +413,8 @@ jobs:
         run: node --test crates/dcl_js/src/modules/Scene.test.cjs
       - name: Test scene signed fetch
         run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
+      - name: Test legacy scene kernel contracts
+        run: node --test crates/dcl_js/src/modules/EthereumController.test.cjs crates/dcl_js/src/modules/LegacyKernel.test.cjs
       - name: Test scene topic messaging
         run: node --test crates/dcl_js/src/modules/CommsApi.test.cjs
       - name: Test LiveKit browser bindings
@@ -762,11 +764,10 @@ jobs:
       # Bevy Explorer / Benchmark refuses unoptimized web apps; while its fleet is off ('none'),
       # nothing measures a PR's, so PR builds skip wasm-opt.
       BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
-      # A same-repo PR with the ci:preview label publishes under the pr-<n> dist-tag as a preview,
-      # which the CI status comment links (label, then push or reopen); no PR job reads the
-      # publication. Fork PRs have no secrets. oddish tags a main/master branch next whatever
-      # custom-tag says, so a PR from one never publishes.
-      BEVY_WEB_PUBLISH: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref != 'main' && github.head_ref != 'master' && contains(github.event.pull_request.labels.*.name, 'ci:preview')) }}
+      # A same-repo PR publishes under the pr-<n> dist-tag as a preview, which the CI status
+      # comment links; no PR job reads the publication. Fork PRs have no secrets. oddish tags a
+      # main/master branch next whatever custom-tag says, so a PR from one never publishes.
+      BEVY_WEB_PUBLISH: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref != 'main' && github.head_ref != 'master') }}
     outputs:
       publish: ${{ env.BEVY_WEB_PUBLISH }}
     permissions:
@@ -806,9 +807,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            rendering/bevy-explorer/source/react-web/package-lock.json
       - run: corepack enable
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         if: steps.engine-cache.outputs.cache-matched-key == ''
@@ -850,10 +848,27 @@ jobs:
       - name: Install the pinned WASM binding generator and optimizer
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 ../../../apps/bevy-explorer/install-web-tools.py ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
+      # The pnpm store is kept between runs, keyed on the two lockfiles; only main saves it.
+      - name: Restore the pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rendering/bevy-explorer/source/react-web/pnpm-lock.yaml', 'rendering/bevy-explorer/source/react-web/bridge-scene/pnpm-lock.yaml') }}
+          restore-keys: |
+            bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Build and test the local web app
+        env:
+          pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
+      - name: Save the pnpm store from main
+        if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - name: Test the checked shared-input generator
-        run: npm run test:shared-inputs --prefix react-web
+        run: cd react-web && pnpm run test:shared-inputs
       - name: Record the rebuilt Bevy tree's file times for the cache
         if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -905,9 +920,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            rendering/bevy-explorer/source/react-web/package-lock.json
       - run: corepack enable
       - name: Download the tested web app
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -922,11 +934,27 @@ jobs:
           rm -rf deploy/web/engine/pkg deploy/web/engine/pkg-scene "$bindings"
           cp -R "$RUNNER_TEMP/web-app/engine/pkg" "$RUNNER_TEMP/web-app/engine/pkg-scene" deploy/web/engine/
           cp -R "$RUNNER_TEMP/web-app/bindings" "$bindings"
+      - name: Restore the pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rendering/bevy-explorer/source/react-web/pnpm-lock.yaml', 'rendering/bevy-explorer/source/react-web/bridge-scene/pnpm-lock.yaml') }}
+          restore-keys: |
+            bevy-web-pnpm-${{ runner.os }}-${{ runner.arch }}-
       - name: Install the HUD and bridge scene dependencies
+        env:
+          pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: |
-          npm ci --prefix react-web
+          corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
           corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
           corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+      - name: Save the pnpm store from main
+        if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
       # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
@@ -949,23 +977,20 @@ jobs:
           PUBLIC_URL=$(node -p "require('./deploy/web/package.json').homepage || ''")
           export PUBLIC_URL
           echo "PUBLIC_URL=$PUBLIC_URL"
-          npm run build --prefix react-web
+          cd react-web && pnpm run build
       - name: Test scene Fetch in Chromium
         env:
           DEBUG: pw:browser  # Chrome's own output, timestamped
-        run: CHROME_BIN="$(command -v google-chrome)" dbus-run-session -- npm run test:scene-fetch --prefix react-web
+        run: cd react-web && CHROME_BIN="$(command -v google-chrome)" dbus-run-session -- pnpm run test:scene-fetch
       - name: Export the compiled bridge scene for the CDN
         # The web job linted and tested the scene; its compiled bin/ is not part of the artifact.
         run: |
-          npx --no sdk-commands build --production
+          corepack pnpm@11.27.0 exec sdk-commands build --production
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
           corepack pnpm@11.27.0 run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
-      - name: Say how to get a preview
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.build-deploy-web.outputs.publish != 'true'
-        run: echo '::notice::This pull request has no web preview. Add the ci:preview label, then push or reopen, to publish one.'
       - name: Upload the stamped package for publication
         if: needs.build-deploy-web.outputs.publish == 'true'
         continue-on-error: ${{ github.event_name == 'pull_request' }}

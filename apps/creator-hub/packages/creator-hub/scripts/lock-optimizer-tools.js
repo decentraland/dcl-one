@@ -5,7 +5,7 @@
  *
  * The lockfile is what the app installs with `npm ci` on first use (see tools.ts), so every
  * package the optimizer downloads is pinned to an exact registry tarball + integrity hash.
- * Run after bumping a version: `npm run lock:optimizer-tools`.
+ * Run after bumping a version: `pnpm run lock:optimizer-tools`.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

@@ -9,20 +9,22 @@
 # HEAD_RUNS_FILE (the runs of the PR head, an /actions/runs response; the caller gives it only for
 # an open pull request).
 #
-# The build section covers the products: the web app (*Web engine, HUD and bridge scene*), its
-# package (*Web package for the CDN*, a row only when the job ran) and the headless engine
-# (*Headless Smoke*), with their artifacts' download links, and the `benchmark` runners the
-# *Test Suite* uploads. The tests section covers *Test Suite* on each platform and
-# *Headless Smoke*. A job *Changes* did not select (`skipped`) is reported as not selected; a
-# section none of whose jobs ran says its inputs are unchanged; the tests section adds that a draft
-# holds its tests, because the job list does not tell the two apart. A run with no test job reads
-# the newer runs of the same workflow for the same head (the run that ready_for_review starts
-# waits for this one): while one has not ended, the tests section says so and links it; when one
-# has ended, that run wrote the tests section and this run writes none.
+# The build section covers the products: the web build (*Web engine, HUD and bridge scene*, with
+# *Web package for the CDN*, its repack for the CDN, in the same row), its preview (*Publish the web
+# package*, a row only when the job ran) and the headless engine (*Headless Smoke*), with their
+# artifacts' download links and job times, and the `benchmark` runners the *Test Suite* uploads. The
+# tests section covers *Test Suite* on each platform and *Headless Smoke*. A job *Changes* did not
+# select (`skipped`) is reported as not selected; a section none of whose jobs ran says its inputs
+# are unchanged; the tests section adds that a draft holds its tests, because the job list does not
+# tell the two apart. A run with no test job reads the newer runs of the same workflow for the same
+# head (the run that ready_for_review starts waits for this one): while one has not ended, the tests
+# section says so and links it; when one has ended, that run wrote the tests section and this run
+# writes none.
 #
 # The early report of the tests (the test jobs ended and the run goes on) uses only tests.md: its
 # caller gives an empty RUN_FILE (`{}`) and an ARTIFACTS_FILE without artifacts, so the build
-# section it also writes makes no lookup.
+# section it also writes makes no lookup. The early report of the build (the products ended and
+# the run goes on, often for the preview publication) uses only build.md.
 #
 # Usage: REPO=o/r PR_NUMBER=10 RUN_ID=1 RUN_URL=... HEAD_SHA=... RUN_FILE=run.json \
 #          JOBS_FILE=jobs.json ARTIFACTS_FILE=artifacts.json bash explorer-ci-sections.sh
@@ -40,9 +42,11 @@ OUT_DIR="${OUT_DIR:-.}"
 
 WEB_JOB='Web engine, HUD and bridge scene'
 WEB_PACKAGE_JOB='Web package for the CDN'
+PUBLISH_JOB='Publish the web package'
 HEADLESS_JOB='Headless Smoke'
 TEST_JOB_PREFIX='Test Suite'
 BADGE_STYLE='logoColor=white&style=for-the-badge'
+US=$'\x1f'
 
 # Same h/m/s convention as the benchmark report's durations.
 fmt_secs() {
@@ -50,19 +54,20 @@ fmt_secs() {
     if (h>0) printf("%dh %dm", h, m); else if (m>0) printf("%dm %ds", m, r); else printf("%ds", r) }'
 }
 
-# A job's fields by exact name: conclusion, html_url and wall time in seconds, tab-separated;
-# empty when the run has no such job. jq's output loses any carriage return, so a Windows jq
+# A job's fields by exact name: conclusion, html_url and wall time in seconds, separated by $US;
+# empty when the run has no such job. $US is no IFS whitespace, so the empty conclusion of a job
+# that has not ended stays a field. jq's output loses any carriage return, so a Windows jq
 # works too.
 job_fields() {
   local conclusion url started completed secs=""
-  IFS=$'	' read -r conclusion url started completed <<< "$(jq -r --arg n "$1" '
+  IFS="$US" read -r conclusion url started completed <<< "$(jq -r --arg n "$1" '
     first(.jobs[] | select(.name == $n)) // empty
-    | [(.conclusion // ""), (.html_url // ""), (.started_at // ""), (.completed_at // "")] | @tsv' "$JOBS_FILE" | tr -d '\r')" || true
+    | [(.conclusion // ""), (.html_url // ""), (.started_at // ""), (.completed_at // "")] | join("\u001f")' "$JOBS_FILE" | tr -d '\r')" || true
   [ -n "${url:-}${conclusion:-}" ] || return 0
   if [ -n "$started" ] && [ -n "$completed" ]; then
     secs=$(( $(date -u -d "$completed" +%s) - $(date -u -d "$started" +%s) ))
   fi
-  printf '%s	%s	%s' "$conclusion" "$url" "$secs"
+  printf '%s%s%s%s%s' "$conclusion" "$US" "$url" "$US" "$secs"
 }
 
 # The names of the jobs starting with $1, sorted.
@@ -132,12 +137,12 @@ preview_matches_checkout() {
 }
 
 FOOTER="[Run summary]($RUN_URL) · PR head \`${HEAD_SHA:0:7}\`"
-web_revision=""
+web_revision="" web_conclusion="" event=""
 
 # --- build -----------------------------------------------------------------------------------
 state=none
 rows=""
-IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$WEB_JOB")" || true
+IFS="$US" read -r conclusion url secs <<< "$(job_fields "$WEB_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then
   state=$(fold_state "$state" "$conclusion")
   # GitHub records the exact SHA when it resolves a local reusable workflow in
@@ -164,7 +169,30 @@ if [ -n "${url:-}${conclusion:-}" ]; then
       web_revision="$checkout_sha"
     fi
   fi
-  if [ "$conclusion" = success ] && [ -n "$web_revision" ] && [[ "$event" = pull_request || "$event" = workflow_dispatch ]]; then
+  web_conclusion="$conclusion"
+  result=$(result_cell "$conclusion" Built)
+  time_cell=$(job_time "$secs")
+  # The package job repacks this build for the CDN; it is skipped when the web app was not built.
+  # It shares the row: its time follows the build's, and its failure is the row's.
+  IFS="$US" read -r conclusion package_url secs <<< "$(job_fields "$WEB_PACKAGE_JOB")" || true
+  if [ -n "${package_url:-}${conclusion:-}" ] && [ "$conclusion" != skipped ]; then
+    state=$(fold_state "$state" "$conclusion")
+    if [ "$web_conclusion" = success ] && [ "$conclusion" != success ]; then
+      result="$(result_cell "$conclusion" Built) (CDN package)"
+    fi
+    time_cell="$(job_cell "$time_cell" "$url") + $(job_cell "$(job_time "$secs")" "$package_url")"
+  fi
+  rows="$rows| $(job_cell 'Web build' "$url") | $result | $time_cell | ${downloads:-—} |"$'\n'
+fi
+# The publication follows the package, a row only when the run selected it. Its result is not
+# the build's: a pull request's preview never fails the run. The early report writes it while
+# the job runs; the completed run links the preview.
+publishing=false
+IFS="$US" read -r conclusion url secs <<< "$(job_fields "$PUBLISH_JOB")" || true
+if [ -n "${url:-}${conclusion:-}" ] && [ "$conclusion" != skipped ]; then
+  preview=""
+  if [ "$conclusion" = success ] && [ "${web_conclusion:-}" = success ] && [ -n "$web_revision" ] &&
+     [[ "$event" = pull_request || "$event" = workflow_dispatch ]]; then
     version=""
     if [ "$event" = pull_request ]; then
       # Use Oddish's versioned tarball so moving the PR tag does not break the link.
@@ -192,25 +220,23 @@ if [ -n "${url:-}${conclusion:-}" ]; then
     fi
     if [ -n "$version" ]; then
       preview="[preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$version/index.html?position=0%2C-2&baseDomain=decentraland.zone)"
-      downloads="${downloads:+$downloads · }$preview"
     fi
   fi
-  rows="$rows| $(job_cell 'Web app' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
+  case "$conclusion" in
+    '') result='🕓 Publishing'; publishing=true ;;
+    success) if [ -n "$preview" ]; then result='✅ Published'; else result='⚠️ No preview'; fi ;;
+    *) result=$(result_cell "$conclusion" Published) ;;
+  esac
+  rows="$rows| $(job_cell 'Web preview' "$url") | $result | $(job_time "$secs") | ${preview:-—} |"$'\n'
 fi
-# The package job follows the web job: it is skipped when the web app was not built.
-IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$WEB_PACKAGE_JOB")" || true
-if [ -n "${url:-}${conclusion:-}" ] && [ "$conclusion" != skipped ]; then
-  state=$(fold_state "$state" "$conclusion")
-  rows="$rows| $(job_cell 'Web package' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | — |"$'\n'
-fi
-IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$HEADLESS_JOB")" || true
+IFS="$US" read -r conclusion url secs <<< "$(job_fields "$HEADLESS_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then
   state=$(fold_state "$state" "$conclusion")
   downloads=""
   link=$(artifact_link 'bevy-headless-linux-x64-' 'npm package'); [ -n "$link" ] && downloads="$downloads · $link"
   link=$(artifact_link 'bevy-explorer-headless-linux-amd64-' 'engine'); [ -n "$link" ] && downloads="$downloads · $link"
   downloads="${downloads# · }"
-  rows="$rows| $(job_cell 'Headless engine (Linux)' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
+  rows="$rows| $(job_cell 'Headless' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
 fi
 
 runners=""
@@ -232,6 +258,10 @@ esac
   echo "[![Build](https://img.shields.io/badge/$badge?logo=webassembly&$BADGE_STYLE)]($RUN_URL)"
   echo
   echo "$headline"
+  if [ "$publishing" = true ]; then
+    echo
+    echo "The web preview is publishing; its link lands here when the run ends."
+  fi
   if [ -n "$rows" ]; then
     echo
     echo "| Product | Result | Job time | Download |"
@@ -255,7 +285,7 @@ state=none
 rows=""
 while IFS= read -r name; do
   [ -n "$name" ] || continue
-  IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$name")" || true
+  IFS="$US" read -r conclusion url secs <<< "$(job_fields "$name")" || true
   state=$(fold_state "$state" "$conclusion")
   case "$name" in
     *windows*) display='Test Suite (Windows)' ;;
@@ -268,7 +298,7 @@ while IFS= read -r name; do
   display=$(tr -d '|`' <<< "$display")
   rows="$rows| $(job_cell "$display" "$url") | $(result_cell "$conclusion" Passed) | $(job_time "$secs") |"$'\n'
 done <<< "$(job_names_with_prefix "$TEST_JOB_PREFIX")"
-IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$HEADLESS_JOB")" || true
+IFS="$US" read -r conclusion url secs <<< "$(job_fields "$HEADLESS_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then
   state=$(fold_state "$state" "$conclusion")
   rows="$rows| $(job_cell "$HEADLESS_JOB" "$url") | $(result_cell "$conclusion" Passed) | $(job_time "$secs") |"$'\n'

@@ -1,0 +1,99 @@
+/* 56x60 slots, 12 apart; the next one to fill gets a ring 6px outside it. */
+.row {
+  position: relative;
+  display: flex;
+  gap: 12px;
+}
+.slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 60px;
+  border-radius: var(--r-md);
+  background: var(--text);
+  color: var(--black);
+  font-size: var(--type-36);
+  font-weight: var(--fw-bold);
+  transition: background-color var(--dur-fast) ease;
+}
+.row:focus-within .slot.current::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2.86px solid var(--white-50);
+  border-radius: calc(var(--r-md) + 5px);
+}
+.caret {
+  display: none;
+  width: 2px;
+  height: 30px;
+  background: var(--panel);
+  animation: blink 0.667s steps(1, end) infinite;
+}
+.row:focus-within .caret {
+  display: block;
+}
+.success .slot {
+  background: var(--signin-code-success);
+}
+.error .slot {
+  background: var(--signin-code-error);
+}
+.error {
+  animation: shake 1.5s var(--ease-inout) both;
+}
+/* The field over the row: it takes the typing, the paste and the focus, and shows nothing. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  font-size: var(--type-16);
+  cursor: text;
+}
+.input:disabled {
+  cursor: default;
+}
+@keyframes blink {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+/* a punch that dies away, as a refused code */
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  10% {
+    transform: translateX(15px);
+  }
+  25% {
+    transform: translateX(-11px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  55% {
+    transform: translateX(-5px);
+  }
+  70% {
+    transform: translateX(3px);
+  }
+  85% {
+    transform: translateX(-1px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .error,
+  .caret {
+    animation: none;
+  }
+}

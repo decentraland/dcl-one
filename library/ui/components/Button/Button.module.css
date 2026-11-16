@@ -62,15 +62,6 @@
   .root[data-viewport='mobile'][data-size='sm'] {
     --button-height: 44px;
   }
-  .root[data-variant='primary']:not([data-icon-only='true']):not([aria-disabled='true']) {
-    --button-color: var(--dcl-neutrals-black);
-  }
-  .root[data-variant='primary']:not([data-icon-only='true']):is(
-      :active,
-      [data-force-state='pressed']
-    ):not([aria-disabled='true']) {
-    color: var(--dcl-neutrals-white);
-  }
   .root[data-variant='secondary'] {
     --button-background: var(--dcl-transparencies-white-10);
     --button-color: var(--dcl-neutrals-snow);

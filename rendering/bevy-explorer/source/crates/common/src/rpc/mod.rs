@@ -166,6 +166,9 @@ impl RPCSendableMessage {
     pub const SIGNING_METHODS: &[&str] = &["eth_sendTransaction", "eth_signTypedData_v4"];
 }
 
+/// Maximum UTF-8 bytes of legacy fields, excluding the engine-owned fixed signing prefix.
+pub const MAX_LEGACY_SIGN_MESSAGE_BYTES: usize = 16 * 1024;
+
 pub type RpcEventSender = RpcStreamSender<String>;
 
 /// `decentraland.kernel.apis.OpenExplorerUiResult` (restricted_actions.proto; the kernel api
@@ -343,6 +346,11 @@ pub enum RpcCall {
         error: Option<String>,
     },
     TestSnapshot(CompareSnapshot),
+    /// Unprefixed legacy field text; the engine adds the signing prefix and selects the account.
+    SignLegacyMessage {
+        message: String,
+        response: RpcResultSender<Result<serde_json::Value, String>>,
+    },
     SendAsync {
         body: RPCSendableMessage,
         response: RpcResultSender<Result<serde_json::Value, String>>,
@@ -381,6 +389,19 @@ pub enum RpcCall {
     },
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
+    },
+    GetUserAccount {
+        response: RpcResultSender<Option<String>>,
+    },
+    GetPermissions {
+        permissions: Vec<i32>,
+        response: RpcResultSender<Vec<bool>>,
+    },
+    SubscribeLegacyAvatarEvents {
+        sender: RpcEventSender,
+    },
+    PullLegacyAvatarEvents {
+        response: RpcResultSender<Vec<String>>,
     },
 }
 

@@ -29,6 +29,7 @@ try {
     scene: string | null; sunVisible: boolean; sunIntensity: number; fogDensity: number | null;
     zenith: number[] | null; nadir: number[] | null; cloudOpacity: number | null;
     cloudSpeed: number | null; starsBrightness: number | null; textureState: string
+    unavailable: Record<string, string>
   }>('/scene_environment')
   const env = await until(state, s => s.sunVisible === false && s.sunIntensity === 0 && s.fogDensity === 0,
     { timeoutMs: 90_000, what: 'SDK root environment components' })
@@ -48,8 +49,11 @@ try {
   assert.equal(reset.sunVisible, true)
   assert.equal(reset.sunIntensity, 1)
   assert.equal(reset.fogDensity, null)
+  assert.ok(reset.unavailable.scene?.trim(), 'the debug reading explains why no scene owns overrides')
+  assert.ok(reset.unavailable.fogDensity?.trim(), 'the debug reading explains its renderer fallback')
+  assert.equal(reset.unavailable.sunVisible, undefined)
   await writeFile(path.join(output, 'default.png'), await client.screenshot())
-  checks.push('component removal restores defaults')
+  checks.push('component removal restores defaults and explains unavailable debug readings')
   await client.run('/set_component root Sun {"visible":false,"intensity":0}')
   await until(state, s => s.sunVisible === false, { timeoutMs: 10_000, what: 'sun override' })
   await client.run('/teleport 1 24')
