@@ -23,7 +23,8 @@ impl Server {
         format!("http://{}/{path}", self.0.local_addr().unwrap())
     }
 
-    async fn next(&self, path: &str) -> TcpStream {
+    /// The next request, which must be for `path`, and its header names in lower case.
+    async fn request(&self, path: &str) -> (TcpStream, Vec<String>) {
         let (socket, _) = self.0.accept().await.unwrap();
         let mut request = BufReader::new(socket);
         let mut line = String::new();
@@ -32,14 +33,22 @@ impl Server {
             line.split_whitespace().nth(1),
             Some(format!("/{path}").as_str())
         );
+        let mut names = Vec::new();
         loop {
             line.clear();
             assert!(request.read_line(&mut line).await.unwrap() > 0);
             if line == "\r\n" {
                 break;
             }
+            if let Some((name, _)) = line.split_once(':') {
+                names.push(name.trim().to_ascii_lowercase());
+            }
         }
-        request.into_inner()
+        (request.into_inner(), names)
+    }
+
+    async fn next(&self, path: &str) -> TcpStream {
+        self.request(path).await.0
     }
 
     async fn reply(&self, path: &str, response: &[u8]) {
@@ -490,4 +499,40 @@ async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
     })
     .await
     .expect("shared downloads did not finish in FIFO order");
+}
+
+// Pins the request builder that native and web share, not the web branch: this module only builds
+// on native, so a header added again under `cfg(target_arch = "wasm32")` would not turn it red.
+#[tokio::test]
+async fn a_cacheable_download_does_not_ask_the_service_worker_to_look_in_its_cache() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        for key in [
+            CacheKey::Content("bafkreicontent".to_owned()),
+            CacheKey::Url("urldigest".to_owned()),
+        ] {
+            let path = key.name().to_owned();
+            let (reader, task) =
+                io.share_download(key, 1, path.clone().into(), server.url(&path), None);
+            IoTaskPool::get().spawn_compat(task.unwrap()).detach();
+            let (mut stream, names) = server.request(&path).await;
+            stream.write_all(OK).await.unwrap();
+            let mut result = reader.result();
+            let body = result
+                .wait_for(Option::is_some)
+                .await
+                .unwrap()
+                .clone()
+                .unwrap()
+                .unwrap();
+            // the server saw the request and its headers were read
+            assert_eq!(body.0.as_slice(), b"x");
+            assert!(names.iter().any(|name| name == "host"), "{names:?}");
+            // and it carried nothing that sends it through the worker's cache
+            assert!(!names.iter().any(|name| name == "x-ipfs"), "{names:?}");
+        }
+    })
+    .await
+    .unwrap();
 }
