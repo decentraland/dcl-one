@@ -1,0 +1,1007 @@
+//! Cast 2.0 (`/cast/*`), upstream comms-gatekeeper's `handlers/cast` and
+//! `logic/cast` at b42d45c7b: a scene admin turns the place's stream
+//! credential (the `social.scene_stream_access` row `/scene-stream-access`
+//! keeps) into a stream link, and the link's streaming key then admits a
+//! WebRTC streamer and a presentation bot to the scene's own room, where
+//! signed-in viewers watch. Presenters are a `presenters` array in that
+//! room's LiveKit metadata.
+//!
+//! - `GET /generate-stream-link` (signed as scene): the platform ban, then
+//!   owner or admin of the bound scene's place; the active credential is
+//!   reused or replaced exactly as `POST /scene-stream-access` does.
+//! - `GET /stream-info/{streamingKey}` (public): the place behind a key.
+//! - `POST /streamer-token`, `POST /presentation-bot-token` (the key is
+//!   the credential): publish tokens for the key's room; the streamer is
+//!   added to the room's presenters.
+//! - `POST /watcher-token` (a viewer's own signed fetch, never a scene's):
+//!   the platform ban, then the scene ban of the room the stream runs in;
+//!   a subscribe-only token.
+//! - `GET /presenters`, `PUT|DELETE /presenters/{identity}` (signed as
+//!   scene): owner or admin of the place the room's stream credential is
+//!   stored for.
+//!
+//! Errors answer upstream's `{"error": msg}` with its statuses; a signature
+//! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
+//! body refusal `@dcl/schema-validator-component`'s. Local preview realms are
+//! not special-cased: upstream does so only with `ALLOW_LOCAL_PREVIEW=true`.
+
+use axum::Json;
+use axum::body::Bytes;
+use axum::extract::{OriginalUri, Path, State};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use chrono::NaiveDateTime;
+use serde::Serialize;
+use serde_json::{Map, Value, json};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use super::super::admission::scene::{self, PlaceLookup};
+use super::super::auth::{
+    SCENE_SIGNER, SignedFetch, device_identifier, verify_signed_fetch, verify_viewer_signed_fetch,
+};
+use super::super::errors::{ApiError, forbidden, service_unavailable, unauthorized};
+use super::super::livekit::{AccessToken, TRACK_SOURCE_MICROPHONE, VideoGrants};
+use super::super::{CommsState, SharedState};
+use super::{
+    Context, FOUR_DAYS_MS, NOT_AUTHORIZED_TO_STREAM_MSG, active_access, issue_access,
+    refuse_if_platform_banned, resolve_place_id,
+};
+use crate::access::SceneBanKey;
+use crate::rooms::{ParsedRoom, ResolveError, RoomRequest};
+use crate::shared::signed_fetch::SignedPath;
+use crate::world_identity::{Parcel, WorldName};
+use crate::{Address, AuthorityNotEstablished, PermissionDecision};
+
+pub const GENERATE_STREAM_LINK_PATH: &str = "/cast/generate-stream-link";
+pub const WATCHER_TOKEN_PATH: &str = "/cast/watcher-token";
+pub const PRESENTERS_PATH: &str = "/cast/presenters";
+
+/// `CAST2_URL`'s default, upstream's `buildStreamLinks` fallback.
+pub const DEFAULT_CAST2_URL: &str = "https://cast2.decentraland.org";
+
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+// Upstream's error texts (`logic/cast/errors.ts`, the handlers).
+pub const INVALID_STREAMING_KEY_MSG: &str = "Invalid or expired streaming token";
+pub const EXPIRED_STREAMING_KEY_MSG: &str = "Streaming token has expired";
+pub const EXPIRED_STREAM_ACCESS_MSG: &str =
+    "Stream access has expired. Please generate a new stream link.";
+pub const NOT_STREAM_LINK_ADMIN_MSG: &str = "Only scene administrators can generate stream links";
+pub const NOT_PRESENTER_ADMIN_MSG: &str = "Only scene administrators can manage presenters";
+pub const SCENE_BANNED_WATCHER_MSG: &str = "You are banned from this scene";
+pub const NO_REALM_MSG: &str = "Access denied, invalid signed-fetch request, no realm";
+pub const INVALID_PRESENTER_IDENTITY_MSG: &str =
+    "participantIdentity must be a valid Ethereum address or streamer identity";
+const PLACE_NOT_FOUND_MSG: &str = "place not found for this scene";
+const LIVEKIT_UNCONFIGURED_MSG: &str =
+    "LiveKit is not configured (set LIVEKIT_API_KEY / LIVEKIT_API_SECRET)";
+
+fn no_active_stream(location: &str) -> ApiError {
+    ApiError::not_found(format!("No active stream found for {location}"))
+}
+
+fn require_livekit(state: &CommsState) -> Result<(), ApiError> {
+    if state.livekit.configured {
+        Ok(())
+    } else {
+        Err(service_unavailable(LIVEKIT_UNCONFIGURED_MSG))
+    }
+}
+
+// ── the credential row ──
+
+/// A stream credential as the cast routes read it.
+#[derive(sqlx::FromRow)]
+struct KeyedAccess {
+    place_id: String,
+    room_id: Option<String>,
+    created_at: NaiveDateTime,
+    expiration_time: Option<NaiveDateTime>,
+}
+
+/// The stored expiry, else the legacy four days from creation (upstream's
+/// `getStreamAccessExpirationTime`).
+fn expires_ms(created_at: NaiveDateTime, expiration_time: Option<NaiveDateTime>) -> i64 {
+    expiration_time
+        .map(|t| t.and_utc().timestamp_millis())
+        .unwrap_or_else(|| created_at.and_utc().timestamp_millis() + FOUR_DAYS_MS)
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// The active credential holding `key` (`scene_stream_access_active_key_idx`).
+async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+         WHERE streaming_key = $1 AND active ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+}
+
+/// The active credential streaming into `room` (`scene_stream_access_active_room_idx`).
+async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+         WHERE room_id = $1 AND active ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(room)
+    .fetch_optional(pool)
+    .await
+}
+
+/// A key's credential for the publishing tokens: unknown 401, expired 401,
+/// without a room 401 (upstream's `validateStreamerToken` and
+/// `generatePresentationBotToken`). Returns the place and the room.
+async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String), ApiError> {
+    let access = access_by_key(pool, key)
+        .await?
+        .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
+    if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
+        return Err(unauthorized(EXPIRED_STREAMING_KEY_MSG));
+    }
+    let room = access
+        .room_id
+        .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
+    Ok((access.place_id, room))
+}
+
+// ── places ──
+
+#[derive(sqlx::FromRow)]
+struct CastPlace {
+    title: Option<String>,
+    world: bool,
+    world_name: Option<String>,
+    base_position: String,
+}
+
+/// The mirrored catalogue, then the worlds published here.
+async fn load_place(pool: &PgPool, id: &str) -> Result<Option<CastPlace>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT title, world, world_name, base_position FROM explore.place WHERE id = $1 \
+         UNION ALL \
+         SELECT title, world, world_name, base_position FROM explore.place_world_local WHERE id = $1 \
+         LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// A watch location's place: a name ending in `.eth` is a world, anything
+/// else a Genesis parcel, resolved as the stream link keyed its credential.
+async fn watch_place(pool: &PgPool, location: &str) -> Result<(String, CastPlace), ApiError> {
+    let id = if location.to_lowercase().ends_with(".eth") {
+        let not_found =
+            || ApiError::not_found(format!("No world scene place found for world {location}"));
+        let world = WorldName::parse(location).map_err(|_| not_found())?;
+        resolve_place_id(pool, Some(&world), "", false)
+            .await?
+            .ok_or_else(not_found)?
+    } else {
+        let not_found = || ApiError::not_found(format!("No place found with parcel {location}"));
+        // Upstream matches the place's `positions` verbatim.
+        match Parcel::parse(location) {
+            Ok(parcel) if parcel.canonical() == location => {
+                resolve_place_id(pool, None, location, false)
+                    .await?
+                    .ok_or_else(not_found)?
+            }
+            _ => return Err(not_found()),
+        }
+    };
+    let place = load_place(pool, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("No place found with id {id}")))?;
+    Ok((id, place))
+}
+
+/// The key a scene ban of `room`'s scene is stored under: a Genesis room's
+/// scene id, a world room's deployment base. `None` when the room names no
+/// scene this node can resolve.
+async fn room_ban_key(state: &CommsState, room: &str) -> Result<Option<SceneBanKey>, ApiError> {
+    match crate::rooms::parse_room(room) {
+        Some(ParsedRoom::Local(resolved)) => Ok(resolved.ban_key()),
+        Some(ParsedRoom::WorldScene(room)) => {
+            match state
+                .scenes
+                .resolve(RoomRequest::NamedWorldScene { room })
+                .await
+            {
+                Ok(resolved) => Ok(resolved.ban_key()),
+                Err(ResolveError::Db(error)) => Err(AuthorityNotEstablished::store_unavailable(
+                    "worlds.world_scenes",
+                    &error,
+                )
+                .into()),
+                Err(_) => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+// ── tokens ──
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParticipantMetadata<'a> {
+    role: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    room_id: Option<&'a str>,
+}
+
+/// Upstream's `livekit.generateCredentials` for the cast roles: an identity
+/// in the token's own `cast` list publishes any source, any other only the
+/// microphone; `name` is the display name; five minutes.
+struct Grant<'a> {
+    identity: &'a str,
+    room: &'a str,
+    can_publish: bool,
+    can_update_own_metadata: bool,
+    all_sources: bool,
+    metadata: ParticipantMetadata<'a>,
+}
+
+fn mint(state: &CommsState, grant: Grant<'_>) -> Result<String, ApiError> {
+    let grants = VideoGrants {
+        room_join: true,
+        room: grant.room.to_owned(),
+        can_publish: grant.can_publish,
+        can_subscribe: true,
+        can_publish_data: true,
+        can_update_own_metadata: grant.can_update_own_metadata,
+        room_list: Some(false),
+        can_publish_sources: (!grant.all_sources).then(|| vec![TRACK_SOURCE_MICROPHONE.to_owned()]),
+    };
+    let mut token = AccessToken::new(
+        &state.livekit.api_key,
+        &state.livekit.api_secret,
+        grant.identity,
+        grants,
+    )
+    .with_metadata(
+        serde_json::to_string(&grant.metadata)
+            .map_err(|e| ApiError::internal(format!("cast metadata: {e}")))?,
+    );
+    token.name = grant.metadata.display_name.map(str::to_owned);
+    token
+        .to_jwt()
+        .map_err(|e| ApiError::internal(format!("livekit token: {e}")))
+}
+
+/// A room write upstream lets fail as its bare 500.
+fn room_service_failure(room: &str, error: impl std::fmt::Debug) -> ApiError {
+    tracing::error!(room, ?error, "cast presenter update failed");
+    ApiError::internal("Internal Server Error")
+}
+
+/// Upstream's `addPresenter`: the room is created when missing, so a
+/// streamer can be a presenter before anyone joins.
+async fn add_presenter(state: &CommsState, room: &str, identity: &str) -> Result<(), ApiError> {
+    let rooms = state.room_service();
+    rooms
+        .ensure_room(room)
+        .await
+        .map_err(|e| room_service_failure(room, e))?;
+    rooms
+        .append_to_room_metadata_array(room, PRESENTERS_FIELD, identity)
+        .await
+        .map_err(|e| room_service_failure(room, e))
+}
+
+const PRESENTERS_FIELD: &str = "presenters";
+
+// ── request bodies ──
+
+/// One string property of an upstream cast body schema:
+/// `{type: 'string', pattern: '^\S+.*$', maxLength: 256}`.
+struct Field {
+    name: &'static str,
+    required: bool,
+}
+
+const STREAMER_BODY: &[Field] = &[
+    Field {
+        name: "token",
+        required: true,
+    },
+    Field {
+        name: "identity",
+        required: true,
+    },
+];
+const WATCHER_BODY: &[Field] = &[
+    Field {
+        name: "location",
+        required: true,
+    },
+    Field {
+        name: "identity",
+        required: true,
+    },
+    Field {
+        name: "parcel",
+        required: false,
+    },
+];
+const BOT_BODY: &[Field] = &[Field {
+    name: "streamingKey",
+    required: true,
+}];
+
+const BODY_PATTERN: &str = r"^\S+.*$";
+const BODY_MAX_LENGTH: usize = 256;
+
+/// ECMAScript `\s`.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{000B}' | '\u{000C}' | '\r' | ' ' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
+}
+
+/// `^\S+.*$` under the `u` flag: a non-space first character and no line
+/// terminator (`.` matches none, `$` is the end of input).
+fn matches_body_pattern(s: &str) -> bool {
+    s.chars().next().is_some_and(|c| !is_js_space(c))
+        && !s.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
+}
+
+/// The first AJV error (`allErrors: false`) of an upstream cast body schema.
+fn body_schema_error(body: &Value, fields: &[Field]) -> Option<Value> {
+    let Some(object) = body.as_object() else {
+        return Some(json!({
+            "instancePath": "", "schemaPath": "#/type", "keyword": "type",
+            "params": { "type": "object" }, "message": "must be object",
+        }));
+    };
+    if let Some(missing) = fields
+        .iter()
+        .find(|f| f.required && !object.contains_key(f.name))
+    {
+        return Some(json!({
+            "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+            "params": { "missingProperty": missing.name },
+            "message": format!("must have required property '{}'", missing.name),
+        }));
+    }
+    for field in fields {
+        let Some(value) = object.get(field.name) else {
+            continue;
+        };
+        let at = |keyword: &str, params: Value, message: String| {
+            json!({
+                "instancePath": format!("/{}", field.name),
+                "schemaPath": format!("#/properties/{}/{keyword}", field.name),
+                "keyword": keyword, "params": params, "message": message,
+            })
+        };
+        let Some(s) = value.as_str() else {
+            return Some(at(
+                "type",
+                json!({ "type": "string" }),
+                "must be string".into(),
+            ));
+        };
+        // AJV counts code points.
+        if s.chars().count() > BODY_MAX_LENGTH {
+            return Some(at(
+                "maxLength",
+                json!({ "limit": BODY_MAX_LENGTH }),
+                format!("must NOT have more than {BODY_MAX_LENGTH} characters"),
+            ));
+        }
+        if !matches_body_pattern(s) {
+            return Some(at(
+                "pattern",
+                json!({ "pattern": BODY_PATTERN }),
+                format!("must match pattern \"{BODY_PATTERN}\""),
+            ));
+        }
+    }
+    None
+}
+
+fn validator_refusal(status: StatusCode, body: &Value) -> Response {
+    (
+        status,
+        [(CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        crate::content::validation::ordered_refusal_json(body),
+    )
+        .into_response()
+}
+
+/// `withSchemaValidatorMiddleware`: a JSON content type (415), a JSON body
+/// (400 with the parse error) matching the schema (400 `Invalid JSON body`).
+fn validated_body(
+    headers: &HeaderMap,
+    bytes: &[u8],
+    fields: &[Field],
+) -> Result<Map<String, Value>, Response> {
+    let content_type = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok());
+    if !crate::content::validation::is_json_content_type(content_type) {
+        return Err(validator_refusal(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            &json!({ "ok": false, "message": "Content-Type must be application/json" }),
+        ));
+    }
+    let body: Value = serde_json::from_slice(bytes).map_err(|e| {
+        validator_refusal(
+            StatusCode::BAD_REQUEST,
+            &json!({ "ok": false, "message": crate::content::validation::json_parse_message(bytes, &e) }),
+        )
+    })?;
+    if let Some(error) = body_schema_error(&body, fields) {
+        return Err(validator_refusal(
+            StatusCode::BAD_REQUEST,
+            &json!({ "ok": false, "message": "Invalid JSON body", "data": [error] }),
+        ));
+    }
+    match body {
+        Value::Object(map) => Ok(map),
+        _ => unreachable!("the schema admits only objects"),
+    }
+}
+
+fn text<'a>(body: &'a Map<String, Value>, field: &str) -> Option<&'a str> {
+    body.get(field).and_then(Value::as_str)
+}
+
+// ── signed scene requests ──
+
+/// Upstream's `validate`: the signed metadata must carry a `realm` (401)
+/// and, for every cast route, a `sceneId` (400).
+fn require_scene_metadata(sf: &SignedFetch, missing_scene: &str) -> Result<(), ApiError> {
+    if sf.metadata.get("realm").is_none_or(Value::is_null) {
+        return Err(unauthorized(NO_REALM_MSG));
+    }
+    let scene = sf.metadata.get("sceneId");
+    if scene.is_none_or(|v| v.is_null() || v.as_str() == Some("")) {
+        return Err(ApiError::bad_request(missing_scene));
+    }
+    Ok(())
+}
+
+async fn scene_signed(
+    state: &CommsState,
+    headers: &HeaderMap,
+    method: &str,
+    path: SignedPath,
+    missing_scene: &str,
+) -> Result<SignedFetch, ApiError> {
+    let sf = verify_signed_fetch(headers, method, &path, &[SCENE_SIGNER], state.eip1654()).await?;
+    require_scene_metadata(&sf, missing_scene)?;
+    Ok(sf)
+}
+
+// ── GET /cast/generate-stream-link ──
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamLink {
+    pub stream_link: String,
+    pub watcher_link: String,
+    pub streaming_key: String,
+    pub place_id: String,
+    pub place_name: String,
+    pub expires_at: String,
+    pub expires_in_days: i64,
+}
+
+/// Upstream's `buildStreamLinks`.
+pub fn build_stream_links(base: &str, streaming_key: &str, location: &str) -> (String, String) {
+    let base = if base.is_empty() {
+        DEFAULT_CAST2_URL
+    } else {
+        base
+    };
+    (
+        format!("{base}/s/{streaming_key}"),
+        format!("{base}/w/{location}"),
+    )
+}
+
+/// `Date.prototype.toISOString` of a millisecond instant.
+fn iso_millis(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .unwrap_or_default()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+/// `Math.ceil` of the days left.
+fn days_left(expires_ms: i64, now_ms: i64) -> i64 {
+    (expires_ms - now_ms + DAY_MS - 1).div_euclid(DAY_MS)
+}
+
+pub async fn generate_stream_link(
+    State(state): State<SharedState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let sf = scene_signed(
+        &state,
+        &headers,
+        "get",
+        SignedPath::at(&uri, GENERATE_STREAM_LINK_PATH),
+        "sceneId is required in authMetadata for Cast2 chat functionality",
+    )
+    .await?;
+    require_livekit(&state)?;
+    // Before the admin lookup, so the refusal is no admin-status oracle.
+    let device_id = device_identifier(&sf.metadata);
+    refuse_if_platform_banned(&state, &sf.signer, device_id.as_deref()).await?;
+    if state.deny_list.is_denied(sf.signer.as_str()).await {
+        return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
+    }
+    // The room and the authorizing place both come from the one bound scene.
+    let bound = Context::resolve(&state, &sf.metadata).await?;
+    let world = bound.world_scene.as_ref().map(|(world, _)| world);
+    let base = bound.footprint.base_position.clone().unwrap_or_default();
+    let place_id = resolve_place_id(&state.pool, world, &base, true)
+        .await?
+        .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
+    let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
+    match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
+        PermissionDecision::Allowed => {}
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
+            tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");
+            return Err(forbidden(NOT_STREAM_LINK_ADMIN_MSG));
+        }
+        PermissionDecision::Refused(why) => return Err(why.into()),
+    }
+    let access = issue_access(&state, &state.ingress(), &place_id, &bound.room, &sf.signer).await?;
+    let row = load_place(&state.pool, &place_id).await?;
+    let (title, location) = match &row {
+        Some(row) => (
+            row.title.clone().filter(|t| !t.is_empty()),
+            row.world_name
+                .clone()
+                .filter(|w| !w.is_empty())
+                .unwrap_or_else(|| row.base_position.clone()),
+        ),
+        None => (None, "none".to_owned()),
+    };
+    let (stream_link, watcher_link) =
+        build_stream_links(&state.settings.cast2_url, &access.streaming_key, &location);
+    Ok(Json(StreamLink {
+        stream_link,
+        watcher_link,
+        streaming_key: access.streaming_key,
+        place_name: title.unwrap_or_else(|| place_id.clone()),
+        place_id,
+        expires_at: iso_millis(access.ends_at),
+        expires_in_days: days_left(access.ends_at, now_ms()),
+    })
+    .into_response())
+}
+
+// ── GET /cast/stream-info/{streamingKey} ──
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamInfo {
+    pub place_name: String,
+    pub place_id: String,
+    pub location: String,
+    pub is_world: bool,
+}
+
+pub async fn stream_info(
+    State(state): State<SharedState>,
+    Path(streaming_key): Path<String>,
+) -> Result<Json<StreamInfo>, ApiError> {
+    if streaming_key.is_empty() {
+        return Err(ApiError::bad_request("Streaming key is required"));
+    }
+    let access = access_by_key(&state.pool, &streaming_key)
+        .await?
+        .ok_or_else(|| ApiError::bad_request("Invalid streaming key"))?;
+    if expires_ms(access.created_at, access.expiration_time) <= now_ms() {
+        return Err(ApiError::bad_request("Stream access has expired"));
+    }
+    if access.room_id.is_none() {
+        return Err(ApiError::bad_request(
+            "Stream access is missing room information",
+        ));
+    }
+    let place = load_place(&state.pool, &access.place_id)
+        .await?
+        .ok_or_else(|| ApiError::bad_request("Place not found"))?;
+    let world_name = place.world_name.filter(|w| !w.is_empty());
+    let location = if place.world {
+        world_name
+            .clone()
+            .unwrap_or_else(|| place.base_position.clone())
+    } else {
+        place.base_position.clone()
+    };
+    Ok(Json(StreamInfo {
+        place_name: world_name.unwrap_or(place.base_position),
+        place_id: access.place_id,
+        location,
+        is_world: place.world,
+    }))
+}
+
+// ── POST /cast/streamer-token ──
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Credentials {
+    pub url: String,
+    pub token: String,
+    pub room_id: String,
+    pub identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place_name: Option<String>,
+}
+
+pub async fn streamer_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let body = match validated_body(&headers, &body, STREAMER_BODY) {
+        Ok(body) => body,
+        Err(refusal) => return Ok(refusal),
+    };
+    let key = text(&body, "token").unwrap_or_default();
+    let display_name = text(&body, "identity").unwrap_or_default();
+    let (place_id, room) = publishing_access(&state.pool, key).await?;
+    // The streamer is registered as a presenter in the room's metadata.
+    require_livekit(&state)?;
+    // A unique LiveKit identity; the display name rides in the metadata.
+    let identity = format!("stream:{place_id}:{}", Uuid::new_v4());
+    let token = mint(
+        &state,
+        Grant {
+            identity: &identity,
+            room: &room,
+            can_publish: true,
+            can_update_own_metadata: true,
+            all_sources: true,
+            metadata: ParticipantMetadata {
+                role: "streamer",
+                display_name: Some(display_name),
+                room_id: None,
+            },
+        },
+    )?;
+    add_presenter(&state, &room, &identity).await?;
+    tracing::info!(room, place_id, "cast streamer token issued");
+    Ok(Json(Credentials {
+        url: state.livekit.client_url.clone(),
+        token,
+        room_id: room,
+        identity,
+        place_name: None,
+    })
+    .into_response())
+}
+
+// ── POST /cast/watcher-token ──
+
+pub async fn watcher_token(
+    State(state): State<SharedState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    // A viewer's own wallet, so the scene's bans reach it; never a scene.
+    let sf = verify_viewer_signed_fetch(
+        &headers,
+        "post",
+        &SignedPath::at(&uri, WATCHER_TOKEN_PATH),
+        state.eip1654(),
+    )
+    .await?;
+    let body = match validated_body(&headers, &body, WATCHER_BODY) {
+        Ok(body) => body,
+        Err(refusal) => return Ok(refusal),
+    };
+    let location = text(&body, "location").unwrap_or_default();
+    let display_name = text(&body, "identity").unwrap_or_default();
+    let watcher = &sf.signer;
+    // Before the location, so an unresolvable place still refuses.
+    let device_id = device_identifier(&sf.metadata);
+    refuse_if_platform_banned(&state, watcher, device_id.as_deref()).await?;
+    if state.deny_list.is_denied(watcher.as_str()).await {
+        return Err(unauthorized(super::super::voice::DENY_LISTED_MSG));
+    }
+    let (place_id, place) = watch_place(&state.pool, location).await?;
+    let access = active_access(&state.pool, &place_id)
+        .await?
+        .ok_or_else(|| no_active_stream(location))?;
+    if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
+        return Err(unauthorized(EXPIRED_STREAM_ACCESS_MSG));
+    }
+    let room = access.room_id.ok_or_else(|| no_active_stream(location))?;
+    // Watchers join the scene's own room: its scene bans hold for them too.
+    let ban_key = room_ban_key(&state, &room)
+        .await?
+        .ok_or_else(|| no_active_stream(location))?;
+    if is_scene_banned(&state, &ban_key, watcher).await? {
+        tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
+        return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
+    }
+    let identity = format!("watch:{room}:{}", Uuid::new_v4());
+    let token = mint(
+        &state,
+        Grant {
+            identity: &identity,
+            room: &room,
+            can_publish: false,
+            // A watcher cannot rewrite its own role.
+            can_update_own_metadata: false,
+            all_sources: false,
+            metadata: ParticipantMetadata {
+                role: "watcher",
+                display_name: Some(display_name),
+                room_id: Some(&room),
+            },
+        },
+    )?;
+    let place_name = place
+        .title
+        .filter(|t| !t.is_empty())
+        .or(place.world_name.filter(|w| !w.is_empty()))
+        .unwrap_or_else(|| location.to_owned());
+    Ok(Json(Credentials {
+        url: state.livekit.client_url.clone(),
+        token,
+        room_id: room,
+        identity,
+        place_name: Some(place_name),
+    })
+    .into_response())
+}
+
+async fn is_scene_banned(
+    state: &CommsState,
+    key: &SceneBanKey,
+    watcher: &Address,
+) -> Result<bool, ApiError> {
+    state
+        .moderation
+        .is_scene_banned(key.as_str(), watcher)
+        .await
+        .map_err(|e| AuthorityNotEstablished::store_unavailable("social.scene_bans", &e).into())
+}
+
+// ── POST /cast/presentation-bot-token ──
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotCredentials {
+    pub url: String,
+    pub token: String,
+    pub room_id: String,
+}
+
+pub async fn presentation_bot_token(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let body = match validated_body(&headers, &body, BOT_BODY) {
+        Ok(body) => body,
+        Err(refusal) => return Ok(refusal),
+    };
+    let key = text(&body, "streamingKey").unwrap_or_default();
+    let (_place_id, room) = publishing_access(&state.pool, key).await?;
+    let identity = format!("presentation-bot:{room}:{}", Uuid::new_v4());
+    let token = mint(
+        &state,
+        Grant {
+            identity: &identity,
+            room: &room,
+            can_publish: true,
+            // It publishes its layout state in its own metadata.
+            can_update_own_metadata: true,
+            all_sources: true,
+            metadata: ParticipantMetadata {
+                role: "presentation",
+                display_name: None,
+                room_id: None,
+            },
+        },
+    )?;
+    Ok(Json(BotCredentials {
+        url: state.livekit.client_url.clone(),
+        token,
+        room_id: room,
+    })
+    .into_response())
+}
+
+// ── /cast/presenters ──
+
+/// Upstream's `isValidPresenterIdentity`: a wallet, or a streamer identity
+/// this module mints (`stream:<place id>:<uuid>`).
+pub fn is_valid_presenter_identity(identity: &str) -> bool {
+    if identity.len() > 512 {
+        return false;
+    }
+    if let Some(hex) = identity.strip_prefix("0x") {
+        return hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    let Some((place, uuid)) = identity
+        .strip_prefix("stream:")
+        .and_then(|rest| rest.rsplit_once(':'))
+    else {
+        return false;
+    };
+    let place_ok = !place.is_empty()
+        && place
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:+/=-".contains(&b));
+    let uuid_ok = uuid.len() == 36
+        && uuid.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        });
+    place_ok && uuid_ok
+}
+
+/// The signed scene's room, once the signer owns or administers the place
+/// the room's active stream credential is stored for (upstream's
+/// `validatePresenterAdmin`): no stream 404, a vanished place 404, anyone
+/// else 403.
+async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, ApiError> {
+    require_scene_metadata(sf, "sceneId is required in authMetadata")?;
+    require_livekit(state)?;
+    let room = Context::resolve(state, &sf.metadata).await?.room;
+    let access = access_by_room(&state.pool, &room)
+        .await?
+        .ok_or_else(|| no_active_stream(&room))?;
+    let place = PlaceLookup::new(state, &access.place_id);
+    match place.get().await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Err(ApiError::not_found(format!(
+                "No place found with id {}",
+                access.place_id
+            )));
+        }
+        Err(error) => {
+            tracing::error!(
+                error,
+                "place lookup failed during the presenter authz check"
+            );
+            return Err(service_unavailable(
+                "Place verification is temporarily unavailable",
+            ));
+        }
+    }
+    match scene::scene_owner_or_admin_decision(state, &place, &sf.signer).await {
+        PermissionDecision::Allowed => Ok(room),
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
+            Err(forbidden(NOT_PRESENTER_ADMIN_MSG))
+        }
+        PermissionDecision::Refused(why) => Err(why.into()),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Presenters {
+    pub presenters: Vec<String>,
+}
+
+pub async fn list_presenters(
+    State(state): State<SharedState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Result<Json<Presenters>, ApiError> {
+    let sf = verify_signed_fetch(
+        &headers,
+        "get",
+        &SignedPath::at(&uri, PRESENTERS_PATH),
+        &[SCENE_SIGNER],
+        state.eip1654(),
+    )
+    .await?;
+    let room = presenter_room(&state, &sf).await?;
+    // Room metadata is the source of truth; an unreadable room has none.
+    let info = match state.room_service().get_room_info(&room).await {
+        Ok(info) => info,
+        Err(error) => {
+            tracing::warn!(room, ?error, "cast presenters: room info unavailable");
+            None
+        }
+    };
+    let metadata = crate::shared::livekit::parse_room_metadata(
+        info.as_ref()
+            .and_then(|i| i.get("metadata"))
+            .and_then(Value::as_str),
+    );
+    let presenters = match metadata.get(PRESENTERS_FIELD) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(Json(Presenters { presenters }))
+}
+
+/// The presenter route's signed path: the identity segment as requested.
+fn presenter_path(uri: &Uri) -> SignedPath {
+    let segment = uri.path().rsplit('/').next().unwrap_or_default();
+    SignedPath::at(uri, format!("{PRESENTERS_PATH}/{segment}"))
+}
+
+fn checked_identity(identity: &str) -> Result<(), ApiError> {
+    if is_valid_presenter_identity(identity) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(INVALID_PRESENTER_IDENTITY_MSG))
+    }
+}
+
+pub async fn promote_presenter(
+    State(state): State<SharedState>,
+    OriginalUri(uri): OriginalUri,
+    Path(identity): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    // The signature first (upstream's route middleware), then the identity.
+    let sf = verify_signed_fetch(
+        &headers,
+        "put",
+        &presenter_path(&uri),
+        &[SCENE_SIGNER],
+        state.eip1654(),
+    )
+    .await?;
+    checked_identity(&identity)?;
+    let room = presenter_room(&state, &sf).await?;
+    add_presenter(&state, &room, &identity).await?;
+    tracing::info!(room, "cast presenter promoted");
+    Ok(Json(
+        json!({ "message": "Participant promoted to presenter" }),
+    ))
+}
+
+pub async fn demote_presenter(
+    State(state): State<SharedState>,
+    OriginalUri(uri): OriginalUri,
+    Path(identity): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let sf = verify_signed_fetch(
+        &headers,
+        "delete",
+        &presenter_path(&uri),
+        &[SCENE_SIGNER],
+        state.eip1654(),
+    )
+    .await?;
+    checked_identity(&identity)?;
+    let room = presenter_room(&state, &sf).await?;
+    state
+        .room_service()
+        .remove_from_room_metadata_array(&room, PRESENTERS_FIELD, &identity)
+        .await
+        .map_err(|e| room_service_failure(&room, e))?;
+    tracing::info!(room, "cast presenter demoted");
+    Ok(Json(
+        json!({ "message": "Participant demoted from presenter" }),
+    ))
+}

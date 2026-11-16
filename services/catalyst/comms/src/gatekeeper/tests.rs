@@ -34,6 +34,9 @@ use super::{CommsState, Settings, SharedState};
 #[path = "canonical_rooms_tests.rs"]
 mod canonical_rooms;
 
+#[path = "cast_tests.rs"]
+mod cast;
+
 #[path = "toolkit_moderation_tests.rs"]
 mod toolkit_moderation;
 

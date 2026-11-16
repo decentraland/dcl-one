@@ -474,6 +474,15 @@ CREATE UNIQUE INDEX scene_stream_access_active_place_key
 CREATE INDEX scene_stream_access_active_ingress_idx
     ON social.scene_stream_access (ingress_id) WHERE active;
 
+-- Cast 2.0: the streamer, presentation-bot and stream-info lookups of a
+-- streaming key (stream-info is unauthenticated), and the presenter routes'
+-- lookup of the active credential streaming into a room. Active rows only:
+-- at most one per place, while replaced rows accumulate.
+CREATE INDEX scene_stream_access_active_key_idx
+    ON social.scene_stream_access (streaming_key) WHERE active;
+CREATE INDEX scene_stream_access_active_room_idx
+    ON social.scene_stream_access (room_id) WHERE active;
+
 -- Comms-owned streaming cleanup intents: no FK, so revocation survives place/access removal.
 CREATE TABLE social.scene_stream_cleanup (
  access_id uuid PRIMARY KEY, place_id text NOT NULL, ingress_id text,

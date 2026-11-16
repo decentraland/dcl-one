@@ -507,6 +507,15 @@ pub struct SocialConfig {
     #[arg(long, env = "REPORT_EVIDENCE_DAILY_MIB", default_value_t = 2048)]
     pub report_evidence_daily_mib: u32,
 
+    /// The Cast 2.0 web app whose `/s/{key}` and `/w/{location}` pages the
+    /// stream links of `/cast/generate-stream-link` name.
+    #[arg(
+        long,
+        env = "CAST2_URL",
+        default_value = "https://cast2.decentraland.org"
+    )]
+    pub cast2_url: String,
+
     /// Service token in front of the voice routes, the DM privacy patch and
     /// the world ban status; unset answers 503 on them.
     #[arg(long, env = "COMMS_GATEKEEPER_AUTH_TOKEN", hide_env_values = true)]
