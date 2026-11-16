@@ -36,8 +36,6 @@ bevy_dui = { workspace = true }
 alloy-core = { workspace = true }
 
 [dev-dependencies]
-# the glyph atlases' upkeep, for the tests that build tags
-scene_runner = { workspace = true, features = ["test-support"] }
 # the embedded ghost body, for the idle-bones test
 assets = { workspace = true }
 # the headless renderer, for the GPU shader tests

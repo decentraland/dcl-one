@@ -105,9 +105,8 @@ the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`); the rest is fre
   entity carries its own switches; the shared tag carries only the value.
 - Rust owns encode and decode, in `scene_material`, with a round-trip test that mirrors the
   WGSL decode: monotonic across the range and within half a step.
-- After writing a tag on an entity whose `GlobalTransform` does not change that frame, call
-  `set_changed` on the `Mesh3d`: bevy 0.16 ignores `Changed<MeshTag>`
-  ([oddities](oddities.md#rendering)). An entity that moves every frame needs nothing.
+- After writing a tag, call `set_changed` on the `Mesh3d`: bevy 0.16 ignores
+  `Changed<MeshTag>` ([oddities](oddities.md#rendering)).
 
 ## A constant shared between Rust and WGSL
 

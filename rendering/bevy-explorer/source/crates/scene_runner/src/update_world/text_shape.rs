@@ -1970,7 +1970,6 @@ fn update_text_shapes(
 
 /// The atlases' upkeep alone, for a test of something that draws from an atlas without scene
 /// text.
-#[cfg(feature = "test-support")]
 pub fn add_glyph_atlas_maintenance(app: &mut App) {
     // what the text shapes' own build does first each frame
     fn collect_rasters(mut atlases: ResMut<GlyphAtlases>, mut images: ResMut<Assets<Image>>) {
