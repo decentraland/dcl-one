@@ -4,6 +4,7 @@ import { TabsBar } from '@dcl/one-ui'
 import { GeneralFavorites, GeneralHistory, ShopCart } from '@dcl/one-ui/foundations'
 import '../../foundations/foundations.css'
 import styles from './tabsbar-browser.module.css'
+if (new URLSearchParams(location.search).get('dir') === 'rtl') document.documentElement.dir = 'rtl'
 const pageQuery = new URLSearchParams(location.search).get('page')
 const page = pageQuery === 'shop' || pageQuery === 'learn' ? pageQuery : 'create'
 const labels =

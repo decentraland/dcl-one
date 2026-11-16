@@ -2,7 +2,13 @@
 import { describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
-async function navigate(page: string, width: number, activeId?: string, external = false) {
+async function navigate(
+  page: string,
+  width: number,
+  activeId?: string,
+  external = false,
+  rtl = false
+) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
@@ -14,7 +20,8 @@ async function navigate(page: string, width: number, activeId?: string, external
       '?page=' +
       page +
       (activeId ? '&active=' + activeId : '') +
-      (external ? '&external-selection' : '')
+      (external ? '&external-selection' : '') +
+      (rtl ? '&dir=rtl' : '')
   )
   await browser.evaluate(
     '(async()=>{for(let n=0;n<100&&!document.querySelector("nav");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
@@ -421,4 +428,19 @@ describe('when tablet widths give routes less room than their labels', () => {
             ).toBe(true)
         }
       )
+  it('should fade the inline edges and keep the selected route clear of them in right-to-left layouts', async () => {
+    await navigate('shop', 1024, '0', true, true)
+    await paint()
+    let tray = await routeTray()
+    expect(tray.hidden).toBeGreaterThan(1)
+    expect([tray.fadeStart, tray.fadeEnd]).toEqual([false, true])
+    expect(tray.mask).toContain('to left')
+    await clickControl('#outside')
+    await paint()
+    tray = await routeTray()
+    expect([tray.fadeStart, tray.fadeEnd]).toEqual([true, false])
+    expectFadedOverflow(tray)
+    expect(tray.current[0]).toBeGreaterThanOrEqual(-1)
+    expect(tray.current[1]).toBeLessThanOrEqual(tray.width - FADE + 1)
+  })
 })

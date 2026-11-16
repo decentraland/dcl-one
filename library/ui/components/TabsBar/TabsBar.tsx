@@ -134,6 +134,7 @@ function NavigationTabsBar({
       const hidden = list.scrollWidth - list.clientWidth
       list.toggleAttribute('data-fade-start', scrolled > 1)
       list.toggleAttribute('data-fade-end', hidden - scrolled > 1)
+      list.toggleAttribute('data-rtl', getComputedStyle(list).direction === 'rtl')
     }
     /* Keep the current route clear of the fades: the scroll padding is the fade width. */
     const revealCurrent = () => {
