@@ -288,19 +288,40 @@ fn event_key(kind: &str, badge_id: &str, event: &PresenceEvent, room: &str) -> S
     )
 }
 
+/// A scene badge met a scene entity this node has not synced yet: the
+/// event waits for the sync instead of matching no parcel.
+#[derive(Debug)]
+pub struct SceneNotSynced(pub String);
+
+impl std::fmt::Display for SceneNotSynced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "scene {} is not synced yet", self.0)
+    }
+}
+
+impl std::error::Error for SceneNotSynced {}
+
+/// Whether `error` is [`SceneNotSynced`] (carried as a decode error).
+pub fn is_scene_not_synced(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Decode(e) if e.is::<SceneNotSynced>())
+}
+
 /// What a scene badge needs of the event: the deployed scene's parcels,
 /// read from `content.deployments` once per event and only when needed. An
-/// entity this node does not hold matches no parcel.
+/// entity this node does not hold is [`SceneNotSynced`] while the flow
+/// waits for scenes, else it matches no parcel.
 struct Place<'a> {
     event: &'a PresenceEvent,
     pointers: Option<Vec<String>>,
+    wait_for_scenes: bool,
 }
 
 impl<'a> Place<'a> {
-    fn new(event: &'a PresenceEvent) -> Self {
+    fn new(event: &'a PresenceEvent, wait_for_scenes: bool) -> Self {
         Self {
             event,
             pointers: None,
+            wait_for_scenes,
         }
     }
 
@@ -324,6 +345,11 @@ impl<'a> Place<'a> {
                     .bind(scene)
                     .fetch_optional(&mut *conn)
                     .await?;
+                    if pointers.is_none() && self.wait_for_scenes {
+                        return Err(sqlx::Error::Decode(Box::new(SceneNotSynced(
+                            scene.to_string(),
+                        ))));
+                    }
                     self.pointers = Some(
                         pointers
                             .unwrap_or_default()
@@ -352,6 +378,8 @@ pub struct Flow<'a> {
     pub now: i64,
     /// The badge art base of the `badge_granted` notifications.
     pub asset_base: &'a str,
+    /// An unsynced scene entity is [`SceneNotSynced`] instead of no match.
+    pub wait_for_scenes: bool,
 }
 
 impl Flow<'_> {
@@ -382,7 +410,7 @@ impl Flow<'_> {
             return Ok(());
         };
         let at = event.event_time_ms;
-        let mut place = Place::new(event);
+        let mut place = Place::new(event, self.wait_for_scenes);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at, self.settings.lookahead_ms).await? {
             if place.matches(conn, &badge).await? && writable(&badge, out) {
@@ -563,7 +591,7 @@ impl Flow<'_> {
         // A leave pairs with a delayed join only where a configured badge
         // could have counted it: windows a bounded connection can cross.
         let max_age = self.settings.max_age_ms;
-        let mut place = Place::new(event);
+        let mut place = Place::new(event, self.wait_for_scenes);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at - max_age, max_age).await? {
             if place.matches(conn, &badge).await? && writable(&badge, out) {

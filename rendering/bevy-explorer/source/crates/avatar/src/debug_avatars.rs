@@ -2,14 +2,14 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
-use common::structs::{AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
-use comms::profile::{ProfileManager, UserProfile};
+use common::structs::{AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
+use comms::profile::{name_color::name_color, ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use rand::{seq::IteratorRandom, Rng};
 use serde_json::json;
 
-use crate::{AvatarSelection, AvatarShape};
+use crate::{nametag::NametagContent, AvatarSelection, AvatarShape};
 
 const MAX_DEMOS: usize = 128;
 const BASE_AVATARS: &str = "urn:decentraland:off-chain:base-avatars:";
@@ -280,6 +280,23 @@ fn demo_command(
                     wearables,
                     ..default()
                 });
+                // a demo avatar stands in for a player: it carries a nametag too, every other
+                // one with a claimed name
+                let attach_points = AttachPoints::new(&mut commands);
+                let claimed = index & 1 == 0;
+                let name = format!("Demo{index}");
+                let address = format!("{index:040x}");
+                let nametag = NametagContent {
+                    suffix: if claimed {
+                        String::new()
+                    } else {
+                        format!("#{index:04x}")
+                    },
+                    color: name_color(&name, &address, claimed),
+                    verified: claimed,
+                    official: false,
+                    name,
+                };
                 let mut entity = commands.spawn((
                     DemoAvatar,
                     Transform::from_translation(player.translation() + offset),
@@ -291,7 +308,11 @@ fn demo_command(
                         automatic_delete: false,
                         disable_dither: false,
                     },
+                    nametag,
                 ));
+                entity
+                    .add_children(&attach_points.entities())
+                    .insert(attach_points);
                 if let Some(name) = &creator.emote {
                     entity.insert(EmoteCommand {
                         urn: format!("urn:decentraland:off-chain:base-emotes:{name}"),
