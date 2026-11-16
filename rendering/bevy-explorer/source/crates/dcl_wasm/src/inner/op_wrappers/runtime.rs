@@ -40,3 +40,18 @@ pub fn op_get_platform(op_state: &WorkerContext) -> String {
 pub fn op_get_player_language(op_state: &WorkerContext) -> Option<String> {
     dcl_js::runtime::op_get_player_language(&*op_state.rc().borrow())
 }
+
+#[wasm_bindgen]
+pub fn op_scene_id(state: &WorkerContext) -> String {
+    dcl_js::runtime::op_scene_id(&*state.rc().borrow())
+}
+
+#[wasm_bindgen]
+pub async fn op_get_permissions(
+    state: &WorkerContext,
+    permissions: JsValue,
+) -> Result<JsValue, WasmError> {
+    let permissions = serde_wasm_bindgen::from_value(permissions)
+        .map_err(|error| WasmError::from(anyhow::anyhow!(error.to_string())))?;
+    serde_result!(dcl_js::runtime::op_get_permissions(state.rc(), permissions).await)
+}
