@@ -24,7 +24,9 @@ than once. Check here before correcting something surprising.
   adaptations of later upstream work.
 - **bevy 0.16 ignores `Changed<MeshTag>`** in GPU mesh extraction. A tag that changes on its own
   stays stale in the mesh uniform. After writing the tag, call `set_changed` on the `Mesh3d`
-  so the entity re-extracts. The particle system does this every frame.
+  so the entity re-extracts. The particle system does this every frame. An entity whose
+  `GlobalTransform` changes that frame re-extracts anyway and carries its tag along, so it
+  skips the call, which would also specialize its pipeline again; nametags rely on this.
 - **Nametags are drawn by the engine**, not by the system UI scene: `crates/avatar/src/nametag`
   gives each player in range a pooled tag entity with one mesh, drawn by one shared material
   in the main pass, facing the camera and scaled to keep its size on screen. A tag is a

@@ -954,13 +954,7 @@ fn place_tags(
     camera: Query<(&Transform, &Projection), (With<PrimaryCamera>, Without<Nametag>)>,
     owners: Query<(&GlobalTransform, &AttachPoints, Has<ChildOf>)>,
     anchors: Query<&Transform, Without<Nametag>>,
-    mut tags: Query<(
-        &NametagOf,
-        &mut Nametag,
-        &mut Transform,
-        &mut MeshTag,
-        &mut Mesh3d,
-    )>,
+    mut tags: Query<(&NametagOf, &mut Nametag, &mut Transform, &mut MeshTag)>,
 ) {
     // the camera's own transform: its global one is a frame behind here, and it has no parent
     let Ok((camera, projection)) = camera.single() else {
@@ -970,7 +964,7 @@ fn place_tags(
         return;
     };
 
-    for (owner, mut nametag, mut transform, mut mesh_tag, mut mesh) in &mut tags {
+    for (owner, mut nametag, mut transform, mut mesh_tag) in &mut tags {
         let Ok((global, attach_points, parented)) = owners.get(owner.0) else {
             continue;
         };
@@ -996,10 +990,10 @@ fn place_tags(
         let distance = distance.sqrt();
         transform.scale = Vec3::splat(tag_scale(distance, perspective.fov));
         let opacity = opacity_mesh_tag(tag_opacity(distance));
+        // the transform written above re-extracts the tag each frame, and the mesh tag goes
+        // with it
         if mesh_tag.0 != opacity {
             mesh_tag.0 = opacity;
-            // the mesh tag reaches the renderer only with a changed mesh
-            mesh.set_changed();
         }
     }
 }
