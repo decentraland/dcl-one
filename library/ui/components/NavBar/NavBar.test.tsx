@@ -521,8 +521,9 @@ describe('NavBar', () => {
       expect(within(dialog).getByRole('link', { name: 'Blog' })).toHaveAttribute('href', '/blog')
     })
 
-    it('should include the account actions', () => {
-      expect(within(dialog).getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    it('should retain one account action set in the usable header popup', async () => {
+      await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
+      expect(within(dialog).getAllByRole('button', { name: 'Sign out' })).toHaveLength(1)
     })
 
     it('should include the balances', () => {
@@ -531,22 +532,23 @@ describe('NavBar', () => {
 
     describe('and Tab is pressed on the last control', () => {
       beforeEach(async () => {
-        within(dialog).getByRole('button', { name: 'Sign out' }).focus()
+        within(dialog).getByRole('link', { name: 'Blog' }).focus()
         await user.tab()
       })
 
-      it('should wrap focus to the first control', () => {
-        expect(screen.getByRole('button', { name: 'Close menu' })).toHaveFocus()
+      it('should wrap focus to the real header home link', () => {
+        expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
       })
     })
 
-    describe('and Shift+Tab is pressed on the first control', () => {
+    describe('and Shift+Tab is pressed on the first header control', () => {
       beforeEach(async () => {
+        screen.getByRole('link', { name: 'Decentraland home' }).focus()
         await user.tab({ shift: true })
       })
 
       it('should wrap focus to the last control', () => {
-        expect(within(dialog).getByRole('button', { name: 'Sign out' })).toHaveFocus()
+        expect(within(dialog).getByRole('link', { name: 'Blog' })).toHaveFocus()
       })
     })
 
@@ -591,6 +593,7 @@ describe('NavBar', () => {
       )
       menuButton = screen.getByRole('button', { name: 'Open menu' })
       await user.click(menuButton)
+      await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign out' }))
     })
 
@@ -801,8 +804,8 @@ describe('NavBar', () => {
         fireEvent.keyDown(document.body, { key: 'Tab' })
       })
 
-      it('should move focus back to the first control of the dialog', () => {
-        expect(screen.getByRole('button', { name: 'Close menu' })).toHaveFocus()
+      it('should move focus back to the first owned header control', () => {
+        expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
       })
     })
 
@@ -811,10 +814,8 @@ describe('NavBar', () => {
         fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true })
       })
 
-      it('should move focus back to the last control of the dialog', () => {
-        expect(
-          within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' })
-        ).toHaveFocus()
+      it('should move focus back to the last lower navigation link', () => {
+        expect(within(screen.getByRole('dialog')).getByRole('link', { name: 'Blog' })).toHaveFocus()
       })
     })
   })

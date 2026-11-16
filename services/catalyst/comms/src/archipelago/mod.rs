@@ -111,7 +111,17 @@ pub async fn build_state(
         handlers: Arc::new(tokio::sync::Semaphore::new(
             settings.server.max_sockets as usize,
         )),
+        pending_handshakes: state::PendingHandshakes::new(
+            settings
+                .server
+                .max_pending_handshakes
+                .clamp(1, settings.server.max_sockets) as usize,
+        ),
         restart: tokio_util::sync::CancellationToken::new(),
+        pending_handshakes_per_ip: state::IpSlots::new(
+            settings.server.max_pending_handshakes_per_ip,
+        ),
+        sockets_per_ip: state::IpSlots::new(settings.server.max_sockets_per_ip),
         settings,
         enforcement,
         registry,

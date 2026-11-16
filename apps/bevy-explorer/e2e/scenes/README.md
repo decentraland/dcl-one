@@ -28,8 +28,8 @@ with the CLI's built-in build into `bin/` (a loader, `index.js`, and the chunks 
 Build them with `apps/dcl-scene-cli` (the vendored SDK toolchain, no npm):
 
 ```sh
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes          # every scene
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes -- core   # one
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes        # every scene
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes core   # one
 ```
 
 ## The pointer and raycast scenes
@@ -51,3 +51,11 @@ reference:
 
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
 assets are in Git LFS.
+
+## Environment components
+
+[`environment`](environment/README.md), parcel `0,24`, authors the root Skybox, Sun and
+EnvironmentFog components through the SDK. It is a workspace fixture without a visual
+reference. After building it, `DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy pnpm run check:environment`
+serves an isolated loopback realm and checks its optional values, sky image, component removal
+and scene-departure reset through the native console. Captures are saved in `report/environment`.

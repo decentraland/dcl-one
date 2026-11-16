@@ -643,10 +643,15 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
     assert!(m.is_banned_for_connection(&s.banned, None).await.unwrap());
     assert!(!m.is_banned_for_connection(&s.clean, None).await.unwrap());
     assert!(
-        !m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
+        m.is_banned_for_connection(&s.same_device, Some("some-other-device"))
             .await
             .unwrap(),
-        "a device id the caller does send is the one matched"
+        "a fresh device id the caller sends never hides the recorded one"
+    );
+    assert!(
+        !m.is_banned_for_connection(&s.clean, Some("some-other-device"))
+            .await
+            .unwrap()
     );
     assert!(matches!(
         m.platform_ban_decision(&[s.clean.clone(), s.same_device.clone()])
@@ -856,6 +861,83 @@ fn meta(realm: &str, scene: &str, device: Option<&str>) -> String {
         m["deviceIdentifier"] = serde_json::json!(d);
     }
     m.to_string()
+}
+
+#[tokio::test]
+async fn the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let scene_id = format!("bafkrei{}", tag());
+    let mut headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &scene_id, Some("dev-1")),
+    )
+    .await;
+    headers.insert("cf-connecting-ip", "203.0.113.9".parse().unwrap());
+    headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+    let _adapter = handlers::get_scene_adapter(
+        State(state.clone()),
+        at("/get-scene-adapter"),
+        headers,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .expect("a clean wallet gets an adapter");
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT ip_address FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some("198.51.100.7"));
+}
+
+/// Through the router with the server's header pinning, as `serve` mounts it:
+/// an untrusted peer's own `X-Real-IP` and `X-Forwarded-For` are replaced by
+/// its socket address before the handler records it.
+#[tokio::test]
+async fn the_scene_adapter_route_records_an_untrusted_peer_by_its_socket_address() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let peer: std::net::SocketAddr = "203.0.113.50:40000".parse().unwrap();
+    let router = crate::shared::client_ip::pin_client_headers(super::router(state), Vec::new())
+        .layer(axum::Extension(crate::writes::Switch(true)));
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let scene_id = format!("bafkrei{}", tag());
+    let mut headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &scene_id, Some("dev-1")),
+    )
+    .await;
+    headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+    headers.insert("x-forwarded-for", "198.51.100.8".parse().unwrap());
+    headers.insert("cf-connecting-ip", "198.51.100.9".parse().unwrap());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/get-scene-adapter")
+        .body(Body::empty())
+        .unwrap();
+    *request.headers_mut() = headers;
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    let (status, body) = body_json(router.oneshot(request).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT ip_address FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some("203.0.113.50"));
 }
 
 #[tokio::test]
@@ -1735,12 +1817,10 @@ async fn connections_for(pool: &PgPool, address: &str) -> i64 {
         .unwrap()
 }
 
-/// The DM token's connection record is a social write: off or held, the
-/// token still mints and nothing is recorded; on with fresh stamps, the
-/// connection is stored.
+/// The DM token's connection record is a social write: off, the token
+/// still mints and nothing is recorded; on, the connection is stored.
 #[tokio::test]
 async fn the_private_messages_token_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1752,49 +1832,33 @@ async fn the_private_messages_token_records_the_connection_only_while_social_wri
         r#"{"signer":"dcl:explorer"}"#,
     )
     .await;
-    let lab = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
-        let held = scoped(
-            lab.stamps.clone(),
-            voice::private_messages_token(
-                State(state.clone()),
-                at("/private-messages/token"),
-                headers.clone(),
-                switch,
-            ),
-        )
-        .await;
-        assert!(held.is_ok(), "the token mints whatever the switch");
-    }
-    assert_eq!(
-        connections_for(&pool, me.as_str()).await,
-        0,
-        "no stamps: nothing recorded"
-    );
-    let lab = StampLab::fresh();
-    let minted = scoped(
-        lab.stamps.clone(),
+    let mint = |switch| {
         voice::private_messages_token(
             State(state.clone()),
             at("/private-messages/token"),
             headers.clone(),
-            writes_on(),
-        ),
-    )
-    .await;
-    assert!(minted.is_ok());
+            switch,
+        )
+    };
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
+        assert!(
+            mint(switch).await.is_ok(),
+            "the token mints whatever the switch"
+        );
+    }
+    assert_eq!(
+        connections_for(&pool, me.as_str()).await,
+        0,
+        "off: nothing recorded"
+    );
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 
-/// The scene adapter's connection record is a social write too: off or
-/// held, the adapter still mints and nothing is recorded.
+/// The scene adapter's connection record is a social write too: off, the
+/// adapter still mints and nothing is recorded.
 #[tokio::test]
 async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_through() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool.clone(), Settings::for_tests());
     let key = random_key();
@@ -1807,35 +1871,27 @@ async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_th
         &meta("main", &scene_id, Some("dev-held")),
     )
     .await;
-    let mint = |lab: &StampLab, switch| {
-        scoped(
-            lab.stamps.clone(),
-            handlers::get_scene_adapter(
-                State(state.clone()),
-                at("/get-scene-adapter"),
-                headers.clone(),
-                switch,
-                axum::body::Bytes::new(),
-            ),
+    let mint = |switch| {
+        handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            switch,
+            axum::body::Bytes::new(),
         )
     };
-    let held = StampLab::new();
-    for switch in [
-        None,
-        Some(axum::Extension(crate::writes::Switch(false))),
-        writes_on(),
-    ] {
+    for switch in [None, Some(axum::Extension(crate::writes::Switch(false)))] {
         assert!(
-            mint(&held, switch).await.is_ok(),
+            mint(switch).await.is_ok(),
             "the adapter mints whatever the switch"
         );
     }
     assert_eq!(
         connections_for(&pool, me.as_str()).await,
         0,
-        "held or off: nothing recorded"
+        "off: nothing recorded"
     );
-    assert!(mint(&StampLab::fresh(), writes_on()).await.is_ok());
+    assert!(mint(writes_on()).await.is_ok());
     assert_eq!(connections_for(&pool, me.as_str()).await, 1);
 }
 
@@ -2303,6 +2359,189 @@ impl super::events::RoomEventSink for AccessLogSink {
     }
 }
 
+/// What social's presence-badge store is in `serve`: every verified
+/// participant event, by `(event id, session)`; `fail` refuses the next one.
+#[derive(Default)]
+struct RecordingStore {
+    events: std::sync::Mutex<Vec<(String, String)>>,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl super::events::RoomEventStore for RecordingStore {
+    async fn store_room_event(
+        &self,
+        event: &crate::protocol::bus::room_events::RoomEvent,
+    ) -> anyhow::Result<()> {
+        if self.fail.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!("database unavailable");
+        }
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.event_id.clone(), event.participant_sid.clone()));
+        Ok(())
+    }
+}
+
+type WebhookPost =
+    Box<dyn Fn(&str, &str, &str, i64) -> futures::future::BoxFuture<'static, StatusCode>>;
+
+/// A webhook on a world room with the access-log sink and a recording store;
+/// the returned poster signs and sends `(id, kind, sid, createdAt)`.
+fn room_event_store_app() -> (WebhookPost, Arc<AccessLogSink>, Arc<RecordingStore>) {
+    use super::webhook::test_support::webhook_jwt;
+    use crate::world_identity::WorldName;
+    let room = crate::rooms::worlds_service_world_room(&WorldName::parse("alice.dcl.eth").unwrap());
+    let settings = Settings::for_tests();
+    let (key, secret) = (
+        settings.livekit.api_key.clone(),
+        settings.livekit.api_secret.clone(),
+    );
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(50))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+        .expect("a lazy pool never connects");
+    let sink = Arc::new(AccessLogSink::default());
+    let store = Arc::new(RecordingStore::default());
+    let state = Arc::new(
+        CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(known_lobby_scenes("alice.dcl.eth")),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_room_event_sink(sink.clone())
+        .with_room_event_store(store.clone()),
+    );
+    let app = super::router(state);
+    let post: WebhookPost = Box::new(move |id, kind, sid, at| {
+        let body = serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xabc", "sid": sid, "metadata": "{}" } })).unwrap();
+        let jwt = webhook_jwt(&body, &key, &secret);
+        let app = app.clone();
+        Box::pin(async move { post_webhook(&app, Some(&jwt), &body).await })
+    });
+    (post, sink, store)
+}
+
+/// A reconnect's old leave arrives after the new join: comms' own session
+/// ordering skips it, the store still receives it, and a failed store is a
+/// 503 so LiveKit delivers the event again.
+#[tokio::test]
+async fn the_room_event_store_receives_superseded_session_events_and_fails_the_webhook() {
+    let (post, sink, store) = room_event_store_app();
+    for (id, kind, sid, at) in [
+        ("old-join", "participant_joined", "PA_old", 1718900000),
+        ("new-join", "participant_joined", "PA_new", 1718900001),
+        ("old-leave", "participant_left", "PA_old", 1718900002),
+    ] {
+        assert_eq!(post(id, kind, sid, at).await, StatusCode::OK);
+    }
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        2,
+        "the access log keeps comms' ordering"
+    );
+    let stored = |id: &str, sid: &str| (id.to_string(), sid.to_string());
+    assert_eq!(
+        store.events.lock().unwrap().as_slice(),
+        &[
+            stored("old-join", "PA_old"),
+            stored("new-join", "PA_new"),
+            stored("old-leave", "PA_old")
+        ]
+    );
+
+    let leave = || post("new-leave", "participant_left", "PA_new", 1718900003);
+    store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(leave().await, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(sink.0.lock().unwrap().len(), 2, "nothing applied yet");
+    assert_eq!(leave().await, StatusCode::OK);
+    assert_eq!(sink.0.lock().unwrap().len(), 3);
+    assert_eq!(
+        store.events.lock().unwrap().last(),
+        Some(&stored("new-leave", "PA_new"))
+    );
+}
+
+/// A leave whose store failed is still logged once when its redelivery
+/// follows the reconnect's join; a superseded leave's failed store (its
+/// tombstone already kept) is retried; an applied event's redelivery is not
+/// stored again.
+#[tokio::test]
+async fn the_room_event_store_retries_failed_leaves_and_skips_duplicates() {
+    let (post, sink, store) = room_event_store_app();
+    let fail = || store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    let stored = || store.events.lock().unwrap().len();
+    let leaves = || {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(action, ..)| action == "leave")
+            .count()
+    };
+    assert_eq!(
+        post("a-join", "participant_joined", "PA_a", 1718900000).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post("a-join", "participant_joined", "PA_a", 1718900000).await,
+        StatusCode::OK
+    );
+    assert_eq!(stored(), 1, "a duplicate is not stored again");
+
+    fail();
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        post("b-join", "participant_joined", "PA_b", 1718900002).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::OK
+    );
+    assert_eq!(leaves(), 1, "the redelivered leave reaches the access log");
+    assert_eq!(
+        post("a-leave", "participant_left", "PA_a", 1718900001).await,
+        StatusCode::OK
+    );
+    assert_eq!(leaves(), 1, "only once");
+    assert_eq!(stored(), 4);
+
+    assert_eq!(
+        post("c-join", "participant_joined", "PA_c", 1718900004).await,
+        StatusCode::OK
+    );
+    fail();
+    assert_eq!(
+        post("b-leave", "participant_left", "PA_b", 1718900005).await,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a superseded leave's failed store is retried"
+    );
+    assert_eq!(
+        post("b-leave", "participant_left", "PA_b", 1718900005).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        store.events.lock().unwrap().last(),
+        Some(&("b-leave".to_string(), "PA_b".to_string()))
+    );
+    assert_eq!(
+        leaves(),
+        1,
+        "comms' ordering still skips it in the access log"
+    );
+}
+
 /// The webhook feeds the live presence itself, then hands the event to the
 /// access-log sink: a join counts the wallet in the world and logs one
 /// `join`, its leave drops it and logs one `leave`.
@@ -2637,35 +2876,11 @@ async fn world_mint_refuses_at_capacity() {
 /// exercised: this crate has no LiveKit room-service double.
 #[tokio::test(flavor = "current_thread")]
 async fn revoke_maps_each_arm_to_its_livekit_call() {
-    use std::io::Write;
-    use std::sync::Mutex;
-
     use super::RoomRevocation;
+    use crate::test_logs::LogBuffer;
     use crate::world_identity::WorldName;
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let buffer = LogBuffer::default();
-    let writer = buffer.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .without_time()
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let (buffer, _capture) = LogBuffer::capture(tracing::Level::TRACE);
 
     let state = lazy_state(Settings {
         livekit: super::LiveKit {
@@ -2705,7 +2920,7 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             tasks,
             "{variant}: no LiveKit task is spawned while LiveKit is not configured"
         );
-        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        let logs = buffer.text();
         let line = logs.lines().last().unwrap_or_default();
         assert!(
             line.contains("LiveKit not configured; no participant evicted")
@@ -2713,7 +2928,7 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
             "{variant}: {logs}"
         );
     }
-    let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    let logs = buffer.text();
     assert!(!logs.contains("comms-revocation"), "{logs}");
 }
 
@@ -3117,7 +3332,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     }
     let path = "/private-messages/token";
     let error = voice::private_messages_token(
-        State(state),
+        State(state.clone()),
         at(path),
         signed(KEY, "get", path, metadata).await,
         None,
@@ -3125,7 +3340,145 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     .await
     .unwrap_err();
     assert_eq!(error.code, 401);
+    let path = "/get-scene-adapter";
+    let scene_meta = meta("main", "bafkreidenylisted", None);
+    let error = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 401);
+    let Json(_) = handlers::get_scene_adapter(
+        State(state.clone()),
+        at(path),
+        signed(OUTSIDER_KEY, "post", path, &scene_meta).await,
+        writes_on(),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .expect("an unlisted wallet still gets the scene room");
+    let denied = Address::parse(&address_of(KEY)).unwrap();
+    let outsider = Address::parse(&address_of(OUTSIDER_KEY)).unwrap();
+    let error = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &Uuid::new_v4().to_string(),
+        &[outsider, denied],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (401, voice::DENY_LISTED_MSG)
+    );
     server.abort();
+}
+
+/// A refused connection never records its fresh device id, so a retry stays refused.
+#[tokio::test]
+async fn a_refused_scene_adapter_retry_keeps_the_recorded_banned_device() {
+    let Some(pool) = scratch().await else { return };
+    let state = state_with(pool.clone(), Settings::for_tests());
+    let key = random_key();
+    let me = Address::parse(&address_of(&key)).unwrap();
+    let device = format!("banned-device-{}", tag());
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: me.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    state
+        .moderation
+        .create_ban(CreateBan {
+            banned_address: wallet(),
+            banned_by: wallet().as_str().into(),
+            reason: "abuse".into(),
+            custom_message: None,
+            banned_device_id: Some(device.clone()),
+            duration_ms: None,
+        })
+        .await
+        .unwrap();
+    let headers = signed(
+        &key,
+        "post",
+        "/get-scene-adapter",
+        &meta("main", &format!("bafkrei{}", tag()), Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = handlers::get_scene_adapter(
+            State(state.clone()),
+            at("/get-scene-adapter"),
+            headers.clone(),
+            writes_on(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&me)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
+
+    // The private-messages token keeps the same rule.
+    let other_key = random_key();
+    let other = Address::parse(&address_of(&other_key)).unwrap();
+    state
+        .moderation
+        .upsert_connection(UpsertPlayerConnection {
+            address: other.clone(),
+            ip_address: None,
+            device_id: Some(device.clone()),
+        })
+        .await
+        .unwrap();
+    let path = "/private-messages/token";
+    let headers = signed(
+        &other_key,
+        "get",
+        path,
+        &meta("main", "bafkreiunused", Some("fresh-device")),
+    )
+    .await;
+    for attempt in 0..2 {
+        let err = voice::private_messages_token(
+            State(state.clone()),
+            at(path),
+            headers.clone(),
+            writes_on(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (403, PLATFORM_BANNED_MSG),
+            "attempt {attempt}"
+        );
+    }
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM social.player_connections WHERE address = $1")
+            .bind(&other)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(recorded.as_deref(), Some(device.as_str()));
 }
 
 #[tokio::test]

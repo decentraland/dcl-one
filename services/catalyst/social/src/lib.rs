@@ -20,6 +20,7 @@
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 use catalyst_comms as comms;
+pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
@@ -48,8 +49,8 @@ pub mod notifications;
 pub mod profile_images;
 pub mod rpc;
 pub mod segment_webhooks;
-#[cfg(test)]
-mod test_fixtures;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_fixtures;
 pub mod writes;
 
 pub use crate::shared::identity::{

@@ -390,6 +390,16 @@ difference not listed here is a gap, not a decision.
   (upstream: LiveKit's room listing, cached 60 seconds), answers
   `adapterType: "offline"` without `statusUrl` when no LiveKit host is set,
   and adds `personalWorlds` and `mirror`.
+- **Name deny list after a failed read.** For five seconds after a failed
+  read of the `banned-names` list, the last list that read applies with
+  `BLOCKED_WORLD_NAMES` (the configured names alone if none has read since
+  start); then the list is read again. Upstream keeps an empty list for an
+  hour after a failed fetch.
+- **Gateway rate limits.** Reads (GET, HEAD, OPTIONS) have no rate limit,
+  as upstream. Writes, and the `admin`, `gc` and `reprocess-ab` routes, are
+  limited to 30 requests a second per address (burst 60), answered with
+  nginx's 429; settings uploads also take at most 10 connections per address.
+  Upstream limits none of them.
 
 ## Notifications
 
@@ -435,6 +445,14 @@ difference not listed here is a gap, not a decision.
   not only recorded.
 - **Shared-secret hashes** use bcrypt cost 12 (upstream: 10); existing
   hashes verify unchanged.
+- **Mirrored worlds** take the source's access type and allow-list wallets
+  and apply this node's permission model to them. Deployment and streaming
+  grants are not copied, so their lists and `summary` are empty; a
+  shared-secret world refuses every secret, because the source does not
+  publish its hash; allow-list communities are matched against this node's
+  members. Once the owner changes the access here, the mirror keeps that
+  setting while they hold the name. A world's own grants, secrets and
+  members come with a data migration, not through the mirror.
 
 ## World metadata and settings
 
@@ -442,11 +460,10 @@ difference not listed here is a gap, not a decision.
   permission edits, the operator and storage routes) answers 503
   `{"ok": false, "error": "Service Unavailable", "message": …}` with
   `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
-  default, and while the restore stamps do not vouch for this node
-  (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
+  default (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
   `POST /entities/active`, the parcel-holder lookup, the world-storage
-  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once a restore of its
-  database, blobs and credentials has been shown to work.
+  export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once its database, blobs
+  and credentials are backed up and a restore has been tested.
 - **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
   whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
   than `sepolia` reports `networkId: 1` (upstream answers 500 for a network

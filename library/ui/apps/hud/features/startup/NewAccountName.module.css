@@ -1,0 +1,141 @@
+/* The screen's 1080 rows, centred vertically on the canvas; positions are from the frame's top-left. */
+.frame {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 540px);
+  height: 1080px;
+}
+.back {
+  position: absolute;
+  left: 200px;
+  top: 280px;
+}
+.logo {
+  position: absolute;
+  left: 200px;
+  top: 350px;
+  width: 50px;
+  height: 50px;
+}
+.title {
+  position: absolute;
+  left: 200px;
+  top: 412.8px;
+  height: 46px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-48);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.label {
+  position: absolute;
+  left: 200px;
+  top: 500px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+}
+/* 572x42, radius 12; a ring 6px outside it while focused, red on an invalid name */
+.field {
+  position: absolute;
+  left: 206px;
+  top: 542px;
+  width: 572px;
+  height: 42px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-md);
+  background: var(--text);
+}
+.field:focus-within::after,
+.invalid::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2.86px solid var(--white-30);
+  border-radius: calc(var(--r-md) + 5px);
+  pointer-events: none;
+}
+.invalid::after {
+  border-color: var(--signin-error-ring);
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--panel);
+  font: inherit;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  outline: none;
+}
+.input::placeholder {
+  color: var(--signin-name-placeholder);
+  font-weight: var(--fw-regular);
+}
+.counter {
+  position: absolute;
+  left: 200px;
+  top: 594.2px;
+  height: 20px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-14);
+  color: var(--white-30);
+}
+.counterError {
+  color: var(--signin-error-text);
+}
+.error {
+  position: absolute;
+  left: 242.6px;
+  top: 594.4px;
+  height: 20px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-14);
+  color: var(--signin-error-text);
+}
+/* the newsletter, the terms and JUMP IN, 15 apart; without the newsletter everything moves up */
+.checks {
+  position: absolute;
+  left: 199px;
+  top: 645.5px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 15px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 20px;
+  font-size: var(--type-16);
+  white-space: nowrap;
+}
+.link {
+  color: var(--text);
+  font-weight: var(--fw-bold);
+  text-decoration: underline;
+}
+.jumpIn {
+  margin-top: 7px;
+  width: 300px;
+  gap: 10px;
+  border-radius: var(--r-lg);
+}
+.jumpIn:hover:not(:disabled) {
+  transform: scale(1.05);
+}

@@ -46,3 +46,9 @@
   background: var(--text);
   transform: translateX(15px);
 }
+.onLight:not(.on) {
+  background: var(--switch-off-on-light);
+}
+.onLight .knob {
+  background: var(--text);
+}
