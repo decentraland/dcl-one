@@ -2086,6 +2086,101 @@ async fn a_cancelled_events_pass_resumes_from_its_persisted_cursor() {
     db.teardown().await;
 }
 
+/// The events leg of the skipped-page resume: the first page fails and is
+/// skipped, shutdown lands on the second, and the resumed run fetches the
+/// rest cleanly. The pass stays incomplete, so neither the unlisted check nor
+/// the sweep touches a row the skipped page would have refreshed.
+#[tokio::test]
+async fn a_resumed_events_pass_after_a_skipped_page_is_incomplete_and_never_sweeps() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    // A row of the failing first page last stamped by an earlier pass beyond
+    // the grace window: a complete pass would sweep it.
+    sqlx::query(
+        "INSERT INTO explore.event (id, name, raw, fetched_at) \
+         VALUES ('stale', 'stale', '{}', timezone('UTC', now()) - interval '3 hours')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let events = fixture_events();
+    let first: Vec<Value> = (0..5)
+        .flat_map(|copy| {
+            events.iter().enumerate().map(move |(i, e)| {
+                let mut e = e.clone();
+                e["id"] = Value::String(format!("first-page-{copy}-{i}"));
+                e
+            })
+        })
+        .collect();
+    let mut second: Vec<Value> = events.iter().take(40).cloned().collect();
+    for (i, e) in second.iter_mut().enumerate() {
+        e["id"] = Value::String(format!("second-page-{i}"));
+    }
+    let up = serve_upstream(
+        "/api/events",
+        vec![first, second],
+        500,
+        true,
+        vec![],
+        Some(500),
+    )
+    .await;
+    let cancel = CancellationToken::new();
+    let run = {
+        let (pool, source, cancel) = (pool.clone(), up.source(), cancel.clone());
+        tokio::spawn(async move {
+            events_mirror::run_pass(&client(), &pool, &source, HOUR, &cancel).await
+        })
+    };
+    up.hold.notified().await;
+    cancel.cancel();
+    let out = run.await.unwrap().unwrap();
+    assert!(out.cancelled && out.failed_pages == 1);
+
+    let out = events_mirror::run_pass(
+        &client(),
+        &pool,
+        &up.source(),
+        HOUR,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.resumed_from, Some(500));
+    assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(!out.complete);
+    assert_eq!((out.swept, out.unlisted_gone), (0, 0));
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.event WHERE id = 'stale'"
+        )
+        .await,
+        1,
+        "the row of the skipped page survives"
+    );
+    let marker = mirror_state::status(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.mirror == "events")
+        .unwrap();
+    assert_eq!(marker.last_pass_complete, Some(false));
+    assert_eq!(marker.last_complete_pass_at, None);
+    assert!(
+        marker
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("resumed at offset 500")),
+        "{:?}",
+        marker.last_error
+    );
+    db.teardown().await;
+}
+
 const USER: &str = "0x000000000000000000000000000000000000BEEF";
 const OTHER: &str = "0x000000000000000000000000000000000000cafe";
 
