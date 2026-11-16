@@ -247,7 +247,25 @@ async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_r
     assert_eq!(stored, serde_json::to_value(document).unwrap());
     selected.selected_identity = Some(2);
     selected.assignment_version += 1;
-    let same_session = fence.lock_selected(&selected).await.unwrap();
+    let same_session = match fence.lock_selected(&selected).await {
+        Ok(lease) => lease,
+        Err(error) => {
+            let unresolved = fence.unresolved_mutations();
+            let row = tokio::time::timeout(
+                Duration::from_secs(1),
+                sqlx::query_scalar::<_, serde_json::Value>("SELECT jsonb_build_object('owner_session',owner_session,'owner_epoch',owner_epoch,'assignment_revision',assignment_revision,'fencing_token',fencing_token,'authority_incarnation',authority_incarnation,'updated_at',updated_at::text,'assignment_json',CASE WHEN assignment_json IS NULL OR octet_length(assignment_json::text)<=65536 THEN assignment_json ELSE jsonb_build_object('diagnostic_truncated_bytes',octet_length(assignment_json::text)) END) FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                    .bind(AUDIENCE).bind(WALLET).fetch_optional(&fixture.pool),
+            ).await;
+            panic!(
+                "same-session transition after lost-publication acknowledgment failed: {error:?}; unresolved={unresolved}; prior_epoch={committed_epoch}; selected_identity={:?}; version={}; proxy_pool(size={},idle={},closed={}); direct_row={row:?}",
+                selected.selected_identity,
+                selected.assignment_version,
+                proxy.pool.size(),
+                proxy.pool.num_idle(),
+                proxy.pool.is_closed()
+            );
+        }
+    };
     let same_epoch = same_session.token_fence().owner_epoch;
     assert!(same_epoch > committed_epoch as u64);
     assert_eq!(same_session.token_fence().owner_session, SESSION);

@@ -27,7 +27,7 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct Server {
-    source_incarnation: String,
+    source_incarnation: std::sync::Mutex<String>,
     url: String,
     state: AppState,
     bus: Arc<InProcessBus>,
@@ -167,7 +167,7 @@ impl Server {
         .stats;
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
-            source_incarnation,
+            source_incarnation: std::sync::Mutex::new(source_incarnation),
             url,
             state,
             bus,
@@ -213,7 +213,7 @@ impl Server {
             session: owner.session.clone(),
             cluster_id: room.strip_prefix("island-").unwrap_or(room).into(),
             realm: "test-realm".into(),
-            source_incarnation: self.source_incarnation.clone(),
+            source_incarnation: self.source_incarnation.lock().unwrap().clone(),
             assignment_version: version,
             token_not_before: Some(0),
             pass: 1,
@@ -1670,7 +1670,7 @@ async fn pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_chan
             let current = plans.get_mut(&owner.address).unwrap();
             match change {
                 "realm" => current.realm = "next-realm".into(),
-                "source" => current.source_incarnation = "next-source".into(),
+                "source" => current.source_incarnation = uuid::Uuid::new_v4().to_string(),
                 "version" => current.assignment_version += 1,
                 "floor" => current.token_not_before = Some(1),
                 "pass" => current.pass += 1,
@@ -1720,6 +1720,19 @@ async fn pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_chan
                 .get(&owner.address)
                 .unwrap()
                 .clone();
+            if change == "source" {
+                // The old publisher has settled and its stale frame was rejected;
+                // its generation SHARE can no longer oppose this fixture cutover.
+                let previous_source = server.source_incarnation.lock().unwrap().clone();
+                let changed = sqlx::query("UPDATE social.pulse_authority_generation SET epoch=nextval('social.archipelago_v4_connection_epoch'),source_incarnation=$1::uuid,updated_at=timezone('UTC',clock_timestamp()) WHERE deployment_audience='test-realm' AND source_incarnation=$2::uuid")
+                    .bind(&current.source_incarnation).bind(previous_source).execute(&fixture.pool).await.unwrap();
+                assert_eq!(
+                    changed.rows_affected(),
+                    1,
+                    "only the exact prior fixture generation rotates"
+                );
+                *server.source_incarnation.lock().unwrap() = current.source_incarnation.clone();
+            }
             let safety = catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
                 fixture.pool.clone(),
             )
