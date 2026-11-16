@@ -1,4 +1,5 @@
 .root {
+  box-sizing: border-box;
   display: flex;
   width: min(100%, 32.5rem);
   flex-direction: column;

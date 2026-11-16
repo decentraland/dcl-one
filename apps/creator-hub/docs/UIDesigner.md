@@ -29,10 +29,10 @@ The transport and asset params `buildInspectorUrl` (`creator-hub/renderer/src/co
 
 Two environments run the UI Designer, and they differ in ways that decide what a given change can be verified in.
 
-- **Standalone dev inspector** (`npm run start` in `packages/inspector`, open the printed port). Fastest loop, but limited:
+- **Standalone dev inspector** (`pnpm run start` in `packages/inspector`, open the printed port). Fastest loop, but limited:
   - It runs the **Babylon** renderer, so `sdk.renderer.sceneRun`, `editorCamera`, and `interaction` are absent. The toolbar's Play/Pause/Stop, camera dropdown, and interact toggle only render under **Bevy**, so they can't be exercised here.
   - Its scene is the in-memory `feeded-local-fs` fixture, which re-seeds on every reload. Anything that must survive a reload — notably 2D/3D mode persistence (`inspector::UIState.uiDesignerOpen`) — can't be verified here.
-- **Creator Hub app.** Loads the inspector iframe from `packages/inspector/public` at runtime, so rebuilding the inspector's `public/` (the `npm run start` watch) is enough — no Creator Hub rebuild. Use it to test the Bevy scene-run controls and mode persistence.
+- **Creator Hub app.** Loads the inspector iframe from `packages/inspector/public` at runtime, so rebuilding the inspector's `public/` (the `pnpm run start` watch) is enough — no Creator Hub rebuild. Use it to test the Bevy scene-run controls and mode persistence.
 
 ### Browser automation traps
 

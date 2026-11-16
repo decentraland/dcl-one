@@ -150,6 +150,13 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "builderApi",
+    "value": "http",
+    "scheme": "https",
+    "sub": "builder-api",
+    "path": ""
+  },
+  {
     "name": "pulseServer",
     "value": "authority",
     "scheme": "",

@@ -59,6 +59,8 @@ pub enum Service {
     MarketplaceApi,
     /// Chat translation (a LibreTranslate) — HUD only
     Autotranslate,
+    /// Builder api: the newsletter sign-up a new account opts into — HUD only
+    BuilderApi,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
     PulseServer,
 }
@@ -104,6 +106,7 @@ impl Service {
             Service::AssetsCdn => ("https", "assets-cdn", ""),
             Service::MarketplaceApi => ("https", "marketplace-api", ""),
             Service::Autotranslate => ("https", "autotranslate-server", ""),
+            Service::BuilderApi => ("https", "builder-api", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
     }
@@ -135,6 +138,7 @@ impl Service {
             Service::AssetsCdn => "assets_cdn",
             Service::MarketplaceApi => "marketplace_api",
             Service::Autotranslate => "autotranslate",
+            Service::BuilderApi => "builder_api",
             Service::PulseServer => "pulse_server",
         }
     }
@@ -272,6 +276,10 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub autotranslate: Option<String>,
 
+    /// Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub builder_api: Option<String>,
+
     /// Pulse comms server, `host` or `host:port` (no port = the platform's: 7777 ENet on native,
     /// 7743 WebTransport on web); absent = `pulse-server.<base>`
     #[arg(long, value_name = "host[:port]", help_heading = HELP_HEADING)]
@@ -304,6 +312,7 @@ impl ServiceOverrides {
             Service::AssetsCdn => &self.assets_cdn,
             Service::MarketplaceApi => &self.marketplace_api,
             Service::Autotranslate => &self.autotranslate,
+            Service::BuilderApi => &self.builder_api,
             Service::PulseServer => &self.pulse_server,
         }
         .as_deref()

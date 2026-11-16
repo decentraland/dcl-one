@@ -75,7 +75,8 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'camera-reel-service': '/camera-reel-service',
   badges: '/badges',
   notifications: '/notifications',
-  'assets-cdn': '/assets-cdn'
+  'assets-cdn': '/assets-cdn',
+  'builder-api': '/builder-api'
 }
 // Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
 // CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths
