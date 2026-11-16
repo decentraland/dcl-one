@@ -1,5 +1,6 @@
 // TODO(figma-ds): replace with the Figma-generated avatar from library/ui/components.
-import { useEffect, useState, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
+import { useBrokenImage } from '../useBrokenImage'
 import styles from './ProfileAvatar.module.css'
 
 type ProfileAvatarProps = {
@@ -21,9 +22,8 @@ function firstGrapheme(value: string): string {
 
 /** A round avatar face with a soft border; the source's ProfileAvatar. */
 function ProfileAvatar({ imageUrl, name, color, size, className }: ProfileAvatarProps) {
-  const [failed, setFailed] = useState(false)
-  useEffect(() => setFailed(false), [imageUrl])
-  const showImage = Boolean(imageUrl) && !failed
+  const { broken, ref, onError } = useBrokenImage(imageUrl)
+  const showImage = Boolean(imageUrl) && !broken
   const style = {
     ...(size === undefined ? {} : { '--avatar-size': `${size}px` }),
     '--avatar-color': color
@@ -32,7 +32,7 @@ function ProfileAvatar({ imageUrl, name, color, size, className }: ProfileAvatar
   return (
     <span className={[styles.root, className].filter(Boolean).join(' ')} style={style}>
       {showImage ? (
-        <img className={styles.image} src={imageUrl} alt={name} onError={() => setFailed(true)} />
+        <img ref={ref} className={styles.image} src={imageUrl} alt={name} onError={onError} />
       ) : (
         <span className={styles.initial} aria-hidden="true">
           {(firstGrapheme(name) || '?').toUpperCase()}

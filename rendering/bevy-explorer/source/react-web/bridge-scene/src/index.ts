@@ -32,9 +32,9 @@ import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
-import { registerMapApi } from './domains/mapApi'
 import { registerPlaces } from './domains/places'
 import { registerLobby } from './domains/lobby'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -80,9 +80,9 @@ export function main(): void {
     registerCommunities(ctx)
     registerEvents(ctx)
     registerGallery(ctx)
-    registerMapApi(ctx)
     registerPlaces(ctx)
     registerLobby(ctx)
+    registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)

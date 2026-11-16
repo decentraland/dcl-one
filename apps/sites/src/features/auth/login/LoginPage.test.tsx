@@ -316,6 +316,22 @@ describe("the sign-in page", () => {
     expect(screen.getByTestId("connection-status").textContent).toBe("Redirecting...");
   });
 
+  it("starts the method the player picked in the Explorer, once, as its button would", async () => {
+    await act(async () => {
+      render(<LoginPage redirectTo="/play" layoutVariant="two-options" magicApiKey={MAGIC_KEY} loginMethod="discord" />);
+    });
+    expect(magic.start).toHaveBeenCalledTimes(1);
+    expect(magic.start).toHaveBeenCalledWith(MAGIC_KEY, "discord", "/play");
+  });
+
+  it("leaves a requested method the page does not offer to the page's own options", async () => {
+    await act(async () => {
+      render(<LoginPage redirectTo="/play" layoutVariant="two-options" magicApiKey={MAGIC_KEY} loginMethod="email" />);
+    });
+    expect(magic.start).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("connection-status")).toBeNull();
+  });
+
   it("offers every social option through Magic from the grid", async () => {
     page();
     fireEvent.click(screen.getByRole("button", { name: "More Options" }));

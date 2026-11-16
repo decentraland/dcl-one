@@ -34,7 +34,7 @@ function ExploreSectionModal({ section, onClose }: { section: ExploreSection; on
   return (
     <div className={styles.panel} role="dialog" aria-modal="true" aria-label={LABEL[section]} onClick={(e) => e.stopPropagation()}>
       <div className={section === 'places' ? `${styles.host} ${styles.places}` : styles.host}>
-        {section === 'map' && <MapPage map={session.map} profile={session.profile} compact={compact} onNavigate={ignore} />}
+        {section === 'map' && <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} compact={compact} onNavigate={ignore} />}
         {section === 'places' && (
           <PlacesPage
             places={session.places}

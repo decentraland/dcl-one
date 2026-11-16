@@ -45,6 +45,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
   const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
   const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
+  const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const catalystBase = browserCatalystBase();
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
@@ -58,6 +59,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     segmentWriteKey,
     segmentApiHost,
     docsBase,
+    commitHash,
     catalystBase,
     shopApiMode,
     wallet,
@@ -98,7 +100,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; catalystBase?: string; shopApiMode?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
@@ -107,6 +109,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     SEGMENT_WRITE_KEY: data?.segmentWriteKey ?? "",
     SEGMENT_API_HOST: data?.segmentApiHost ?? "",
     docsBase: data?.docsBase ?? "",
+    commitHash: data?.commitHash ?? "",
   }).replace(/</g, "\\u003c");
   const catalystBase = data?.catalystBase
     ? `;window.__CATALYST_BASE__=${JSON.stringify(data.catalystBase).replace(/</g, "\\u003c")}`

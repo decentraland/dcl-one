@@ -53,6 +53,7 @@ import { cellRect, type Rect } from './grid'
 import { offlineTitle, refreshWhere, useFriendLocations, useLanding, usePlaces } from './useLobbyData'
 import { STAGE_BACKDROPS } from './stageBackdrops'
 import styles from './LobbyHome.module.css'
+import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
@@ -188,7 +189,7 @@ export function LobbyHome({
   onPick: (dest: Destination) => boolean
   /** In-world only: the lobby can be closed back to the world (at startup Jump In is the way out). */
   onClose?: () => void
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: Rect | null, dpr?: number) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: Rect | null, dpr?: number) => void
 }): React.JSX.Element {
   const session = useSession()
   const startup = onClose == null

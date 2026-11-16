@@ -153,10 +153,22 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`"
   },
   {
+    "name": "dclLists",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Curated lists (points of interest), used by the HUD; absent = `https://dcl-lists.<base>`"
+  },
+  {
     "name": "archipelagoStats",
     "kind": "string",
     "delivery": "resolved",
-    "doc": "Archipelago statistics (where online players are), used by the HUD; absent = `https://archipelago-ea-stats.<base>`"
+    "doc": "Archipelago stats (connected players), used by the HUD; absent = `https://archipelago-ea-stats.<base>`"
+  },
+  {
+    "name": "builderApi",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`"
   },
   {
     "name": "pulseServer",

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { showToast } from '../../design/Toast'
 import type { LoginDriver } from '@explorer-core/engine/driver'
 import type { EventData, GetEventsRequest, SceneToPage } from '@explorer-core/engine/protocol'
+import { nextRequestId } from '@explorer-core/engine/requestIds'
 import { calendarRange, dayRange, startOfDay, sameDay } from './eventFormat'
 import { emptyEventsStore, eventsReducer, placeIds, type EventsQuery, type EventsStore } from './eventsStore'
 
@@ -35,7 +36,6 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const [store, dispatch] = useReducer(eventsReducer, undefined, emptyEventsStore)
   const storeRef = useRef(store)
   storeRef.current = store
-  const seq = useRef(0)
   const waiting = useRef<Partial<Record<EventsQuery, Pending>>>({})
   const reminderTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   // reminders that ran out of time: the service may still confirm them
@@ -59,7 +59,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const read = useCallback(
     (query: EventsQuery, params: Omit<GetEventsRequest, 'kind' | 'request'>): void => {
       stop(query)
-      const request = ++seq.current
+      const request = nextRequestId()
       const pending: Pending = { request, timer: null }
       pending.timer = setTimeout(() => {
         pending.timer = null
@@ -152,7 +152,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
         }
         dispatch({ type: 'loaded', query, events: msg.events })
         const unknown = placeIds(msg.events).filter((id) => storeRef.current.places[id] == null)
-        if (unknown.length > 0) driverRef.current?.send({ kind: 'getEventPlaces', request: ++seq.current, placeIds: unknown })
+        if (unknown.length > 0) driverRef.current?.send({ kind: 'getEventPlaces', request: nextRequestId(), placeIds: unknown })
       } else if (msg.kind === 'eventAttending') {
         settleReminder(msg.eventId, msg.attending, msg.failed === true)
       } else if (msg.kind === 'eventPlaces') {

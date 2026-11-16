@@ -13,11 +13,12 @@ engine's companion protocol SDK (`@dcl/sdk@7.22.6-…commit-83012ab`), which mus
 match the engine bundle — a mismatch crashes the engine's asset loader.
 
 > **This package is NOT a workspace** (it lives at `packages/inspector/agents/bevy`,
-> outside the root `packages/*` glob) and has its **own `node_modules`**. The
-> repo-wide `make init` / root `npm install` does **not** install it — you must
-> run `npm install` here (see [Build / run](#build--run-for-testing)). Its one
-> dependency, the shared `@dcl/inspector-bevy-protocol` bus contract, is a
-> sibling package linked via `file:../protocol`.
+> outside the root `packages/*` glob) and has its **own `node_modules`**, lock
+> and `pnpm-workspace.yaml`. The root `pnpm install` does **not** install it —
+> `make install` does, or run `pnpm install` here (see
+> [Build / run](#build--run-for-testing)). Its one dependency, the shared
+> `@dcl/inspector-bevy-protocol` bus contract, is a sibling package linked via
+> `link:../protocol`.
 
 ## How it fits
 
@@ -43,9 +44,9 @@ one source of truth, no drift.
 ## Build / run (for testing)
 
 ```
-npm install          # once, in this dir
-npm run build        # → bin/index.js
-npm run start -- --port 8005 --no-browser --no-client
+pnpm install         # once, in this dir
+pnpm run build       # → bin/index.js
+pnpm run start --port 8005 --no-browser --no-client
 ```
 
 Then point the inspector at it — see the `bevy-renderer-testing-setup` runbook

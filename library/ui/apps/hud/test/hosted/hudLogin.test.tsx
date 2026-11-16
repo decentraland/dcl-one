@@ -309,9 +309,10 @@ describe('/hud_login through the session', () => {
       await waitFor(() => expect(h.session().login.engineReady).toBe(true))
       await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
       await waitFor(() => expect(h.session().phase).toBe('login'))
-      // the profile arrives: the stored account is not jumped into on the runner's behalf
-      profileArrives(new Response('{}', { status: 404 }))
-      await waitFor(() => expect(h.session().login.profile.settled).toBe(true))
+      // the failure leaves the first screen, and the profile arriving after it doesn't jump the
+      // stored account in on the runner's behalf
+      expect(h.session().login.status).toBe('sign-in-or-guest')
+      await act(async () => profileArrives(new Response('{}', { status: 404 })))
       expect(driver.calls).not.toContain('jumpIn')
       expect(h.session().phase).toBe('login')
     } finally {
@@ -522,8 +523,8 @@ describe('/hud_login through the session', () => {
       await expect(login(`${ENCODED} --name tester --look 1`)).rejects.toThrow("isn't reachable right now")
       await waitFor(() => expect(h.session().phase).toBe('login'))
       // a person goes in with the page's own sign-in: their welcome page is theirs to answer
-      act(() => h.session().login.jumpIn())
-      await waitFor(() => expect(driver.calls).toContain('jumpIn'))
+      act(() => h.session().login.exploreAsGuest())
+      await waitFor(() => expect(driver.calls).toContain('loginGuest'))
       await waitFor(() => expect(h.session().phase).toBe('welcome'))
       expect(driver.sentOf('acceptWelcome')).toEqual([])
     } finally {

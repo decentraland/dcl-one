@@ -8,33 +8,9 @@ import type { StoredLogin } from '../auth/sso'
 
 const API_BASE = `${serviceUrl('places')}/api`
 
-export interface DiscoverPlace {
-  id: string
-  title: string
-  description: string
-  image: string
-  positions: string[]
-  base_position?: string
-  owner: string | null
-  contact_name?: string
-  categories?: string[]
-  favorites?: number
-  likes?: number
-  dislikes?: number
-  user_count?: number
-  user_name?: string
-  world?: boolean
-  world_name?: string
-  /** In the places API's curated set — the Featured rail. */
-  highlighted?: boolean
-  live?: boolean
-  live_event_name?: string | null
-  /** 0..1; some services send it as a string. */
-  like_rate?: number | string | null
-  user_visits?: number
-  updated_at?: string | null
-  creator_address?: string | null
-}
+import type { DiscoverPlace } from '../../engine/protocol'
+
+export type { DiscoverPlace }
 
 export type PlacesOrderBy = 'most_active' | 'name' | 'created_at' | 'updated_at' | 'like_score_best'
 export type PlacesOrder = 'asc' | 'desc'
