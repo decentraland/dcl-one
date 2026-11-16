@@ -630,7 +630,7 @@ mod tests {
                 .as_object()
                 .map(|o| o.keys().cloned().collect::<Vec<_>>()),
             Some(
-                ["healthy", "protocol", "usersCount", "adapter"]
+                ["adapter", "healthy", "protocol", "usersCount"]
                     .map(String::from)
                     .to_vec()
             ),
