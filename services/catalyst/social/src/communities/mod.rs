@@ -189,6 +189,9 @@ pub struct State {
     /// The process's shared chain reader, attached by `serve`. Profile claims
     /// are user-authored and cannot establish NAME ownership.
     pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
+    /// Explore's explorer-flags document, attached once explore is up: the official wallets
+    /// (`features::official_wallets`). Unattached, no post is official.
+    pub explorer_flags: std::sync::OnceLock<Arc<crate::explore::api::feature_flags::Snapshot>>,
     /// The communities mirror's upstream, set when its job is attached: the
     /// listing then answers that mirror's copy ([`copies`]).
     pub mirror_source: std::sync::OnceLock<String>,
@@ -284,6 +287,7 @@ impl State {
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
             chain_index: std::sync::OnceLock::new(),
+            explorer_flags: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
             sources: copies::Sources::bounded(copies::MARKER_TTL, copies::SOURCES_CAP),
@@ -368,6 +372,11 @@ impl State {
 
     pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
         let _ = self.chain_index.set(index);
+    }
+
+    /// Attaches explore's explorer-flags document, which names the official wallets (once).
+    pub fn set_explorer_flags(&self, flags: Arc<crate::explore::api::feature_flags::Snapshot>) {
+        let _ = self.explorer_flags.set(flags);
     }
 
     pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
