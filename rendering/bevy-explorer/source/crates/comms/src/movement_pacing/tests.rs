@@ -43,8 +43,32 @@ fn a_burst_of_edges_never_exceeds_the_budget_in_any_second() {
             sends.push(now);
         }
     }
-    assert!(sends.len() > MOVEMENT_SENDS_PER_SECOND as usize);
-    assert_eq!(busiest_second(&sends), MOVEMENT_SENDS_PER_SECOND as usize);
+    assert!(busiest_second(&sends) <= MOVEMENT_MAX_SENDS_PER_SECOND as usize);
+}
+
+#[test]
+fn a_storm_of_edges_settles_to_the_regular_cadence_without_gaps() {
+    let mut pacer = MovementPacer::default();
+    let mut sends = Vec::new();
+    // An edge on every 60 Hz frame for ten seconds.
+    for frame in 0..600 {
+        let now = 10.0 + frame as f64 / 60.0;
+        if ask(&mut pacer, now, Change::Edge) {
+            sends.push(now);
+        }
+    }
+    // The first sends spend the burst; after that no gap is much longer than one regular spacing.
+    let settled = &sends[MOVEMENT_BURST as usize..];
+    let longest = settled
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .fold(0.0, f64::max);
+    assert!(
+        longest <= REGULAR_SPACING_SECONDS + 1.0 / 60.0 + 1e-9,
+        "longest gap {longest}"
+    );
+    // And it keeps sending: about ten a second, not a burst and a silence.
+    assert!(sends.len() >= 95, "{} sends in ten seconds", sends.len());
 }
 
 #[test]
@@ -62,17 +86,17 @@ fn edges_mixed_with_regular_movement_stay_inside_the_budget() {
             sends.push(now);
         }
     }
-    assert!(busiest_second(&sends) <= MOVEMENT_SENDS_PER_SECOND as usize);
+    assert!(busiest_second(&sends) <= MOVEMENT_MAX_SENDS_PER_SECOND as usize);
 }
 
 #[test]
-fn a_held_back_edge_goes_out_once_the_budget_returns() {
+fn a_held_back_edge_goes_out_once_a_token_returns() {
     let mut pacer = MovementPacer::default();
-    for step in 0..MOVEMENT_SENDS_PER_SECOND {
+    for step in 0..MOVEMENT_BURST as u32 {
         assert!(ask(&mut pacer, step as f64 * 0.01, Change::Edge));
     }
-    assert!(!ask(&mut pacer, 0.2, Change::Edge));
-    assert!(ask(&mut pacer, 1.0, Change::Edge));
+    assert!(!ask(&mut pacer, 0.05, Change::Edge));
+    assert!(ask(&mut pacer, 0.13, Change::Edge));
 }
 
 #[test]
@@ -101,7 +125,7 @@ fn regular_movement_keeps_its_hundred_millisecond_spacing() {
         assert!(pair[1] - pair[0] >= REGULAR_SPACING_SECONDS);
         assert!(pair[1] - pair[0] < REGULAR_SPACING_SECONDS + 1.0 / 60.0 + 1e-9);
     }
-    assert!(busiest_second(&sends) <= MOVEMENT_SENDS_PER_SECOND as usize);
+    assert!(busiest_second(&sends) <= MOVEMENT_MAX_SENDS_PER_SECOND as usize);
 }
 
 #[test]

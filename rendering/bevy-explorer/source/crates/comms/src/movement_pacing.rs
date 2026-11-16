@@ -1,6 +1,6 @@
 //! Decides when the local player's movement goes to the Pulse server.
 //!
-//! Three kinds of send share one budget. Ordinary movement goes out at most every
+//! Three kinds of send share one token bucket. Ordinary movement goes out at most every
 //! [`REGULAR_SPACING_SECONDS`]; a player who stands still sends a keepalive every
 //! [`IDLE_KEEPALIVE_SECONDS`]; and an edge (a take-off, a landing, a jump, a change of scene-driven
 //! clip) goes out on the frame it happens, inside the spacing, so other players see it at once.
@@ -8,18 +8,28 @@
 //! The server debits a bucket for every movement input and disconnects a peer that finds it empty:
 //! 20 inputs a second, 16 held (`services/catalyst/comms/src/pulse/hardening.rs`,
 //! `DEFAULT_INPUT_MAX_HZ` and `DEFAULT_INPUT_BURST`; the rejection is `InputRateExceeded` in
-//! `server/mod.rs`). The pacer lets out at most [`MOVEMENT_SENDS_PER_SECOND`] in any window of one
-//! second, half the refill rate and under the burst, which leaves room for frames that bunch up in
-//! transit. An edge that finds the budget spent is not lost: the caller keeps comparing against the
-//! last state it sent, so the edge is still there on the next frame the budget allows.
+//! `server/mod.rs`). The bucket here refills [`MOVEMENT_REFILL_PER_SECOND`] tokens a second, holds
+//! [`MOVEMENT_BURST`], and every send costs one. Any window of one second therefore holds at most
+//! [`MOVEMENT_MAX_SENDS_PER_SECOND`] sends, under the server's 20 and its burst of 16, which leaves
+//! room for frames that bunch up in transit.
+//!
+//! A bucket rather than a sliding window of sends, because a window lets a storm of edges (a grounded
+//! flag flickering at its threshold, a scene swapping clips every frame) spend a whole second of
+//! budget at once and then go silent, ordinary movement included. The bucket refills as it empties,
+//! so a storm settles to one send per [`REGULAR_SPACING_SECONDS`], the cadence of ordinary movement.
+//! An edge that finds the bucket empty is not lost: the caller keeps comparing against the last state
+//! it sent, so the edge is still there on the next frame a token is back.
 //!
 //! A pure object, like [`crate::pulse::pacing`]: its times are `f64` seconds on the caller's clock
 //! and it knows nothing of Bevy or the connection, so a test drives it without an app.
 
-use std::collections::VecDeque;
-
-/// The most movement inputs let out in any window of one second: half of the server's 20 a second.
-pub const MOVEMENT_SENDS_PER_SECOND: u32 = 10;
+/// Tokens the bucket regains each second: half of the server's 20 inputs a second, and the rate of
+/// ordinary movement.
+pub const MOVEMENT_REFILL_PER_SECOND: f64 = 10.0;
+/// Tokens the bucket holds: sends that can follow one another at once after a quiet spell.
+pub const MOVEMENT_BURST: f64 = 3.0;
+/// The most sends in any window of one second: the burst plus a second of refill.
+pub const MOVEMENT_MAX_SENDS_PER_SECOND: u32 = (MOVEMENT_BURST + MOVEMENT_REFILL_PER_SECOND) as u32;
 /// The shortest time between two sends of ordinary movement.
 pub const REGULAR_SPACING_SECONDS: f64 = 0.1;
 /// The longest time between two sends while nothing changes.
@@ -37,7 +47,7 @@ pub enum Change {
     Idle,
     /// Position, rotation, velocity, head or pointing moved: the next regular slot sends.
     Moving,
-    /// A take-off, a landing, a new jump or a new clip: sends at once, budget allowing.
+    /// A take-off, a landing, a new jump or a new clip: sends at once, a token allowing.
     Edge,
 }
 
@@ -46,20 +56,37 @@ pub fn head_turned(last_degrees: f32, now_degrees: f32) -> bool {
     (now_degrees - last_degrees).abs() > HEAD_EPSILON_DEGREES
 }
 
-/// Remembers when movement last went out. The default has sent nothing, so the first ask is allowed.
-#[derive(Default)]
+/// Remembers the bucket and when movement last went out. The default is a full bucket with nothing
+/// sent, so the first ask is allowed.
 pub struct MovementPacer {
-    /// The times of the sends in the last second, oldest first.
-    recent: VecDeque<f64>,
+    /// Tokens held as of `updated_at`.
+    tokens: f64,
+    updated_at: f64,
     last_sent: Option<f64>,
 }
 
+impl Default for MovementPacer {
+    fn default() -> Self {
+        Self {
+            tokens: MOVEMENT_BURST,
+            updated_at: 0.0,
+            last_sent: None,
+        }
+    }
+}
+
 impl MovementPacer {
+    /// The tokens held at `now`.
+    fn tokens_at(&self, now: f64) -> f64 {
+        let elapsed = (now - self.updated_at).max(0.0);
+        (self.tokens + elapsed * MOVEMENT_REFILL_PER_SECOND).min(MOVEMENT_BURST)
+    }
+
     /// Whether a send is allowed at `now` for `change`. It does not record one: call
     /// [`record_send`](Self::record_send) when the packet goes out.
     pub fn should_send(&self, now: f64, change: Change) -> bool {
-        let in_window = self.recent.iter().filter(|&&sent| sent > now - 1.0).count();
-        if in_window >= MOVEMENT_SENDS_PER_SECOND as usize {
+        // A whole token pays for a send; the tolerance absorbs rounding in the refill.
+        if self.tokens_at(now) < 1.0 - 1e-9 {
             return false;
         }
         let Some(last) = self.last_sent else {
@@ -75,10 +102,8 @@ impl MovementPacer {
 
     /// Note that a packet went out at `now`.
     pub fn record_send(&mut self, now: f64) {
-        while self.recent.front().is_some_and(|&sent| sent <= now - 1.0) {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(now);
+        self.tokens = (self.tokens_at(now) - 1.0).max(0.0);
+        self.updated_at = now;
         self.last_sent = Some(now);
     }
 }
