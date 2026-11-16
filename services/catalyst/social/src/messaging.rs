@@ -14,8 +14,10 @@
 //! `comms::gatekeeper`, and it owns its state ([`MessagingState`]): the ONE
 //! pool, the ONE blob store, the EIP-1654 validator, the platform service
 //! token and this catalyst's federation identity (the epoch author). From
-//! the gatekeeper it takes the route contract only: `ApiError`; the caller
-//! is the wallet signer the shared verifier accepts, never a scene signer.
+//! the gatekeeper it takes the route contract only: `ApiError` and its
+//! `forbidden`, `service_unavailable` and `unauthorized` constructors; the
+//! caller is the wallet signer the shared verifier accepts, never a scene
+//! signer.
 //! [`router`] keeps the body limit, NUL guard and CORS. `serve` merges
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
 //! when they were part of that router.
@@ -41,7 +43,7 @@ use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable,
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
-use crate::shared::signed_fetch::{PayloadPolicy, SignedPath, require_signer_at};
+use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, SignedPath, require_signer_at};
 
 /// The settings `serve` resolves from `Config`.
 #[derive(Clone, Default)]
@@ -281,9 +283,9 @@ fn b64_field(v: &Value, key: &str) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
-/// The wallet that signed the request: a scene-signed request (or a legacy
-/// payload with a re-spelled `signer`) answers 400 as the gatekeeper's other
-/// wallet routes do; every other refusal stays 401.
+/// The wallet that signed the request. A scene-signed request, or one whose
+/// `signer` key is re-spelled (under either payload shape), answers 400 as
+/// the gatekeeper's other wallet routes do; see [`auth_refusal`] for the rest.
 async fn auth(
     state: &MessagingState,
     headers: &HeaderMap,
@@ -299,13 +301,24 @@ async fn auth(
     )
     .await
     .map(|signer| Address::from_signer(&signer).into_string())
-    .map_err(|e| {
-        if e.is_metadata_refusal() {
-            ApiError::bad_request("Invalid metadata content")
-        } else {
-            unauthorized(format!("invalid identity: {e}"))
+    .map_err(auth_refusal)
+}
+
+/// The answer to a refused signed fetch. A contract-wallet check that could
+/// not run (no validator, or its RPC failed) is 503 with a fixed message, its
+/// detail kept in the log; every other refusal, an unsigned request
+/// included, is the caller's 401.
+fn auth_refusal(e: SignedFetchError) -> ApiError {
+    if e.is_metadata_refusal() {
+        return ApiError::bad_request("Invalid metadata content");
+    }
+    tracing::warn!(error = %e, "signed-fetch rejected");
+    match e {
+        SignedFetchError::EipNotImplemented | SignedFetchError::CatalystUnavailable(_) => {
+            service_unavailable("Signature validation unavailable")
         }
-    })
+        e => unauthorized(format!("invalid identity: {e}")),
+    }
 }
 
 fn authorized_community_binding(
@@ -1528,6 +1541,60 @@ mod tests {
             Some(uuid::Uuid::parse_str(&id).unwrap())
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The MLS caller is the wallet itself: scene metadata and a re-spelled
+    /// `signer` key are refused under either payload shape; wallet metadata
+    /// is served as the wallet.
+    #[tokio::test]
+    async fn auth_serves_the_wallet_and_refuses_scene_metadata() {
+        use crate::shared::test_keys::{KEY, SHAPES, signed_as};
+
+        let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let dir = std::env::temp_dir().join(format!("mls-auth-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = MessagingState::new(pool, storage, None, Settings::default());
+        const PATH: &str = "/mls/key-packages";
+        let path = SignedPath::local(PATH);
+        for shape in SHAPES {
+            for metadata in [
+                r#"{"signer":"decentraland-kernel-scene","sceneId":"x","parcel":"0,0"}"#,
+                r#"{"Signer":"decentraland-kernel-scene"}"#,
+            ] {
+                let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
+                let err = auth(&state, &headers, "post", &path).await.unwrap_err();
+                assert_eq!(err.code, 400, "{shape:?} {metadata}: {err}");
+                assert_eq!(err.message, "Invalid metadata content");
+            }
+            for metadata in ["{}", r#"{"signer":"dcl:explorer"}"#] {
+                let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
+                assert_eq!(
+                    auth(&state, &headers, "post", &path).await.unwrap(),
+                    address_of(KEY),
+                    "{shape:?} {metadata}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A contract-wallet check that could not run is an outage, not an
+    /// invalid identity, and its detail never reaches the client.
+    #[test]
+    fn auth_refusal_reports_an_unrun_contract_wallet_check_as_503() {
+        for e in [
+            SignedFetchError::CatalystUnavailable("rpc detail".into()),
+            SignedFetchError::EipNotImplemented,
+        ] {
+            let err = auth_refusal(e);
+            assert_eq!(err.code, 503);
+            assert_eq!(err.message, "Signature validation unavailable");
+        }
+        let err = auth_refusal(SignedFetchError::InvalidSignature("detail".into()));
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (401, "invalid identity: Invalid signature")
+        );
     }
 
     #[test]
