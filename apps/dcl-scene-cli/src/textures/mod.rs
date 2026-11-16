@@ -7,14 +7,21 @@
 //! While the project's setting ([`settings`]) enables it, `start` imports in
 //! the background ([`import`]), like a game engine's asset import: every run
 //! fills the cache, and its finished overlay replaces the previous one in one
-//! swap. `deploy` finishes whatever the cache lacks in the foreground
-//! ([`stage_for_deploy`]).
+//! swap. `deploy`, `pack` and `export-static` finish whatever the cache lacks
+//! in the foreground ([`stage_for_deploy`]) and read their payload through
+//! their own run's overlay, never the preview's registry entry.
 //!
-//! The overlay is applied where the payload is decided — `deploy`'s
-//! `with_release_files`/`payload_path` and the preview's scene entity and
-//! `/content/contents` — so the preview serves exactly the bytes a deploy
-//! uploads. With no enabled overlay registered every function here hands its
-//! input back unchanged.
+//! The overlay is applied where the payload is decided — the payload's
+//! `with_release_files`/`payload_path` ([`payload_publishable`],
+//! [`payload_source`]) and the preview's scene entity and `/content/contents`
+//! ([`publishable`], [`staged_source`]) — so the preview serves the bytes a
+//! deploy uploads. With no enabled overlay registered every function here
+//! hands its input back unchanged.
+//!
+//! A run keeps the stage's cache, KTX2 files and staged models consistent
+//! with one lock across processes ([`lock_stage`]); a file's hash and a GLB's
+//! plan are kept per size and time, so a save that changes no image or model
+//! re-encodes, re-reads and re-parses nothing.
 
 mod basisu;
 mod encode;
@@ -125,9 +132,14 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn apply(&self, rels: Vec<String>) -> Vec<String> {
+        self.apply_with(rels, true)
+    }
+
+    /// [`Overlay::apply`], leaving the originals in when `remove` is false.
+    fn apply_with(&self, rels: Vec<String>, remove: bool) -> Vec<String> {
         let mut out: Vec<String> = rels
             .into_iter()
-            .filter(|r| !self.removed.contains(r))
+            .filter(|r| !remove || !self.removed.contains(r))
             .collect();
         let present: std::collections::HashSet<String> = out.iter().cloned().collect();
         out.extend(self.added.iter().filter(|a| !present.contains(*a)).cloned());
@@ -142,7 +154,7 @@ impl Overlay {
 /// A file as last seen: a moved stamp means the inputs changed.
 type Stamp = (String, u64, Option<SystemTime>);
 
-/// One project's last finished run.
+/// One project's last finished background run: what the preview serves.
 #[derive(Clone, Debug, Default)]
 struct Entry {
     /// The project setting the run read: whether the overlay is applied.
@@ -151,6 +163,8 @@ struct Entry {
     overlay: Option<Arc<Overlay>>,
     /// The inputs the overlay was built from; `None` forces the next run.
     stamps: Option<Vec<Stamp>>,
+    /// Each rewritten model's size and time when the run read it.
+    model_inputs: Arc<HashMap<String, FileKey>>,
 }
 
 /// Projects this process has imported, by canonical root.
@@ -162,17 +176,67 @@ fn registry() -> MutexGuard<'static, HashMap<PathBuf, Entry>> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The overlay each deploy in progress reads its payload through, by root:
+/// its own run's, or `None` with the setting off. Apart from [`registry`], so
+/// a deploy never changes what the preview serves.
+fn deploys() -> MutexGuard<'static, HashMap<PathBuf, Option<Arc<Overlay>>>> {
+    static DEPLOYS: OnceLock<Mutex<HashMap<PathBuf, Option<Arc<Overlay>>>>> = OnceLock::new();
+    DEPLOYS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
 /// One run at a time in this process, background or deploy: a deploy holds
 /// it from its own run until its payload is read, so no background swap or
 /// prune lands in between.
 static RUN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// The overlay the preview and payload apply: the last finished run's, when
-/// the project enables it.
-fn overlay(root: &Path) -> Option<Arc<Overlay>> {
+/// The stage's lock file. Held exclusively by whatever writes, prunes or
+/// sweeps the stage, or reads a payload from it, across processes: a `start`
+/// and a `deploy` in another terminal share `.dcl-one/optimized-textures`.
+fn stage_lock_file(root: &Path) -> std::io::Result<std::fs::File> {
+    let stage = root.join(STAGE);
+    std::fs::create_dir_all(&stage)?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(stage.join(".lock"))
+}
+
+/// Takes the stage's lock, waiting for another process that holds it.
+fn lock_stage(root: &Path) -> std::io::Result<std::fs::File> {
+    let file = stage_lock_file(root)?;
+    file.lock()?;
+    Ok(file)
+}
+
+/// Takes the stage's lock when it is free; `None` when another process holds it.
+fn try_lock_stage(root: &Path) -> std::io::Result<Option<std::fs::File>> {
+    let file = stage_lock_file(root)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// The overlay the preview applies, when the project enables it, with the
+/// inputs of the models it rewrote.
+fn overlay(root: &Path) -> Option<(Arc<Overlay>, Arc<HashMap<String, FileKey>>)> {
     let reg = registry();
     let entry = reg.get(root)?;
-    entry.overlay.clone().filter(|_| entry.enabled)
+    let overlay = entry.overlay.clone().filter(|_| entry.enabled)?;
+    Some((overlay, entry.model_inputs.clone()))
+}
+
+/// Whether model `rel` moved since the overlay's run read it: until the next
+/// run swaps its new staged copy in, the preview serves the source.
+fn is_stale(root: &Path, inputs: &HashMap<String, FileKey>, rel: &str) -> bool {
+    inputs
+        .get(rel)
+        .is_some_and(|key| file_key(&root.join(rel)) != Some(*key))
 }
 
 /// Replaces `root`'s entry in one step and says whether what a client sees
@@ -188,18 +252,47 @@ fn swap(root: &Path, next: Entry) -> bool {
     was_enabled != next.enabled || was != now
 }
 
-/// The published list with the overlay applied; `rels` itself when `root`
-/// is not optimized.
+/// The list the preview serves, with the overlay applied; `rels` itself when
+/// `root` is not optimized. While a rewritten model has moved since the run
+/// that staged it, its source is served (see [`staged_source`]) and no
+/// original drops out, since the source names them.
 pub fn publishable(root: &Path, rels: Vec<String>) -> Vec<String> {
     match overlay(root) {
-        Some(o) => o.apply(rels),
+        Some((o, inputs)) => {
+            let any_stale = inputs.keys().any(|rel| is_stale(root, &inputs, rel));
+            o.apply_with(rels, !any_stale)
+        }
         None => rels,
     }
 }
 
-/// The staged file holding `rel`'s published bytes, when the overlay has one.
+/// The staged file holding `rel`'s bytes in the preview, when the overlay has
+/// one and, for a model, the model has not moved since the run read it.
 pub fn staged_source(root: &Path, rel: &str) -> Option<PathBuf> {
-    overlay(root)?.source(rel).map(Path::to_path_buf)
+    let (overlay, inputs) = overlay(root)?;
+    if is_stale(root, &inputs, rel) {
+        return None;
+    }
+    overlay.source(rel).map(Path::to_path_buf)
+}
+
+/// The list a payload carries: while a [`DeployStage`] for `root` is held,
+/// that run's overlay (none with the setting off); otherwise the preview's.
+pub fn payload_publishable(root: &Path, rels: Vec<String>) -> Vec<String> {
+    match deploys().get(root).cloned() {
+        Some(Some(o)) => o.apply(rels),
+        Some(None) => rels,
+        None => publishable(root, rels),
+    }
+}
+
+/// The staged file holding `rel`'s payload bytes, read as
+/// [`payload_publishable`] lists them.
+pub fn payload_source(root: &Path, rel: &str) -> Option<PathBuf> {
+    match deploys().get(root).cloned() {
+        Some(o) => o?.source(rel).map(Path::to_path_buf),
+        None => staged_source(root, rel),
+    }
 }
 
 fn stamp(rel: &str, path: &Path) -> Stamp {
@@ -216,35 +309,30 @@ fn stamps_of(root: &Path, rels: &[String]) -> Vec<Stamp> {
     rels.iter().map(|rel| stamp(rel, &root.join(rel))).collect()
 }
 
-/// While held, the payload `deploy` reads carries its own run's overlay (or
-/// none, with the setting off); dropping it puts back what the preview had
-/// and asks the background import, if any, to catch up.
+/// While held, the payload `deploy`, `pack` or `export-static` reads carries
+/// its own run's overlay (or none, with the setting off), and no other run, in
+/// this process or another, touches the stage. Dropping it asks the
+/// background import, if any, to catch up with the setting it may have stored.
 pub struct DeployStage {
     root: PathBuf,
-    previous: Option<Entry>,
     _turn: tokio::sync::MutexGuard<'static, ()>,
+    _lock: std::fs::File,
 }
 
 impl Drop for DeployStage {
     fn drop(&mut self) {
-        {
-            let mut reg = registry();
-            match self.previous.take() {
-                Some(entry) => reg.insert(self.root.clone(), entry),
-                None => reg.remove(&self.root),
-            };
-        }
+        deploys().remove(&self.root);
         import::request(&self.root);
     }
 }
 
-/// `deploy`, after the build and before the payload is read: applies the
-/// command line's `overrides` to the project setting and, when it is on,
-/// runs over the release payload. Textures the cache has (the preview's
-/// background import put them there) cost nothing; the rest are encoded here
-/// with a progress line. A run that fails stops the deploy rather than
-/// publishing a half-optimized scene; a texture that fails alone keeps its
-/// original.
+/// `deploy`, `pack` and `export-static`, after the build and before the
+/// payload is read: applies the command line's `overrides` to the project
+/// setting and, when it is on, runs over the release payload. Textures the
+/// cache has (the preview's background import put them there) cost nothing;
+/// the rest are encoded here with a progress line. A run that fails stops the
+/// command rather than publishing a half-optimized scene; a texture that fails
+/// alone keeps its original.
 pub async fn stage_for_deploy(
     root: &Path,
     overrides: Overrides,
@@ -260,38 +348,34 @@ pub async fn stage_for_deploy(
             RUN_LOCK.lock().await
         }
     };
-    let previous = registry().get(root).cloned();
+    let lock = match try_lock_stage(root).context("locking the texture stage")? {
+        Some(lock) => lock,
+        None => {
+            if !quiet {
+                ux::note("waiting for another dcl-scene-cli working on this project's textures");
+            }
+            let owned = root.to_path_buf();
+            tokio::task::spawn_blocking(move || lock_stage(&owned))
+                .await
+                .context("waiting for the texture stage")?
+                .context("locking the texture stage")?
+        }
+    };
     let stage = DeployStage {
         root: root.to_path_buf(),
-        previous,
         _turn: turn,
+        _lock: lock,
     };
     let settings = Settings::for_project(project);
     if !project.optimize_textures {
-        swap(
-            root,
-            Entry {
-                enabled: false,
-                settings,
-                overlay: None,
-                stamps: None,
-            },
-        );
+        deploys().insert(root.to_path_buf(), None);
         return Ok(stage);
     }
     let owned = root.to_path_buf();
     let overlay = tokio::task::spawn_blocking(move || deploy_run(&owned, settings, quiet))
         .await
         .context("the texture optimizer stopped")??;
-    swap(
-        root,
-        Entry {
-            enabled: true,
-            settings,
-            overlay: Some(Arc::new(overlay)),
-            stamps: None,
-        },
-    );
+    deploys().insert(root.to_path_buf(), Some(Arc::new(overlay)));
     Ok(stage)
 }
 
@@ -484,6 +568,12 @@ pub struct Outcome {
     pub overlay: Overlay,
     pub summary: Summary,
     pub manifest: Value,
+    /// The cache entries and KTX2 files this run read or publishes: what a
+    /// sweep of the stage keeps.
+    pub stage_files: BTreeSet<PathBuf>,
+    /// Each rewritten model's size and time when the run read it: the preview
+    /// serves the source of a model that moved since.
+    pub model_inputs: HashMap<String, FileKey>,
 }
 
 fn is_model(rel: &str) -> bool {
@@ -498,10 +588,23 @@ fn scanned(rel: &str) -> bool {
         .is_some_and(|(_, ext)| SCANNED_EXTENSIONS.contains(&ext))
 }
 
+/// Where a texture's source bytes are, read only when the texture must be
+/// encoded: the cache answers for the rest from the hash alone.
+enum JobSource {
+    /// A published image file, at its payload path.
+    File(PathBuf),
+    /// Image `index` of the model at `path` (a buffer view or `data:` URI).
+    Embedded {
+        path: PathBuf,
+        rel: String,
+        index: usize,
+    },
+}
+
 struct Job {
     sha: String,
     mode: ColorMode,
-    bytes: Vec<u8>,
+    source: JobSource,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -511,6 +614,7 @@ enum Encoded {
         len: u64,
         cached: bool,
     },
+    /// Kept as its source, and why; `cached` when an earlier run decided it.
     Failed(String),
 }
 
@@ -533,22 +637,177 @@ struct ImageWork {
 
 struct ModelWork {
     rel: String,
-    model: gltf::Model,
+    /// Where its bytes are read (the payload path), and as what size and time.
+    path: PathBuf,
+    key: FileKey,
     original_len: u64,
     images: Vec<ImageWork>,
+}
+
+/// A file's size and modification time: when both hold, its bytes, hash and
+/// plan are taken as unchanged.
+pub type FileKey = (u64, Option<SystemTime>);
+
+fn file_key(path: &Path) -> Option<FileKey> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// The sha256 of `path` and its size, read again only when its size or time
+/// moved: a run whose images did not change reads none of them.
+fn file_sha(path: &Path) -> Option<(String, u64)> {
+    use sha2::Digest;
+    use std::io::Read;
+    static HASHES: OnceLock<Mutex<HashMap<PathBuf, (FileKey, String)>>> = OnceLock::new();
+    let hashes = HASHES.get_or_init(Default::default);
+    let key = file_key(path)?;
+    if let Some((had, sha)) = hashes
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        && *had == key
+    {
+        return Some((sha.clone(), key.0));
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let sha = hex::encode(hasher.finalize().as_slice());
+    hashes
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(path.to_path_buf(), (key, sha.clone()));
+    Some((sha, key.0))
+}
+
+/// What one image of a model is, as [`scan_model`] found it.
+#[derive(Clone)]
+enum ScanSource {
+    /// A file of the scene, by the path the model gives.
+    External(String),
+    /// Inside the model, by the hash and size of its bytes.
+    Embedded { sha: String, len: u64 },
+}
+
+#[derive(Clone)]
+struct ImageScan {
+    plan: gltf::ImagePlan,
+    source: Result<ScanSource, String>,
+}
+
+/// A model as one run needs it, without its bytes: the plan of each image and
+/// what to search for names. Kept per GLB until its size or time moves, so a
+/// save that changes no model parses none.
+enum ModelScan {
+    Parsed {
+        len: u64,
+        unresolved: Vec<String>,
+        images: Vec<ImageScan>,
+    },
+    /// Not readable as glTF: why, and its text, searched like scene code.
+    Unparsed { why: String, text: String },
+}
+
+/// [`ModelScan`] of the model `rel` at `path`; `Err` when it can't be read.
+/// Only GLBs are kept between runs: a `.gltf` may read images through
+/// buffers in other files, whose changes its own time does not show.
+fn scan_model(
+    path: &Path,
+    rel: &str,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> std::result::Result<(Arc<ModelScan>, FileKey), String> {
+    static SCANS: OnceLock<Mutex<HashMap<PathBuf, (FileKey, Arc<ModelScan>)>>> = OnceLock::new();
+    let scans = SCANS.get_or_init(Default::default);
+    let key = file_key(path).ok_or_else(|| "model not readable".to_string())?;
+    if let Some((had, scan)) = scans
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(path)
+        && *had == key
+    {
+        return Ok((scan.clone(), key));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("model not readable: {e}"))?;
+    let scan = match gltf::Model::parse(&bytes) {
+        Err(e) => ModelScan::Unparsed {
+            why: format!("model not optimized: {e:#}"),
+            text: String::from_utf8_lossy(&bytes).to_lowercase(),
+        },
+        Ok(model) => {
+            let images = gltf::plan_images(&model)
+                .into_iter()
+                .enumerate()
+                .map(|(index, plan)| {
+                    let source = gltf::image_source(&model, rel, index, read).map(|s| match s {
+                        gltf::ImageSource::External(path) => ScanSource::External(path),
+                        gltf::ImageSource::Embedded(b) => ScanSource::Embedded {
+                            sha: encode::sha256_hex(&b),
+                            len: b.len() as u64,
+                        },
+                    });
+                    ImageScan { plan, source }
+                })
+                .collect();
+            ModelScan::Parsed {
+                len: bytes.len() as u64,
+                unresolved: gltf::unresolved_image_uris(&model, rel),
+                images,
+            }
+        }
+    };
+    let scan = Arc::new(scan);
+    if bytes.starts_with(b"glTF") {
+        scans
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_path_buf(), (key, scan.clone()));
+    }
+    Ok((scan, key))
+}
+
+/// A job's source bytes, checked against the hash the run planned with: a
+/// file changed since then is kept as it is this run and encoded the next.
+fn job_bytes(
+    job: &Job,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> std::result::Result<Vec<u8>, String> {
+    let bytes = match &job.source {
+        JobSource::File(path) => {
+            std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?
+        }
+        JobSource::Embedded { path, rel, index } => {
+            let raw = std::fs::read(path).map_err(|e| format!("reading {rel}: {e}"))?;
+            let model = gltf::Model::parse(&raw).map_err(|e| format!("{e:#}"))?;
+            match gltf::image_source(&model, rel, *index, read)? {
+                gltf::ImageSource::Embedded(b) => b,
+                gltf::ImageSource::External(_) => {
+                    return Err(format!("{rel} changed during the run"));
+                }
+            }
+        }
+    };
+    if encode::sha256_hex(&bytes) != job.sha {
+        return Err("the source changed during the run".to_string());
+    }
+    Ok(bytes)
 }
 
 fn ktx2_path(stage: &Path, sha: &str) -> PathBuf {
     stage.join("ktx2").join(format!("{sha}.ktx2"))
 }
 
+static WRITE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Written beside its final name and renamed into place, so a reader never
-/// sees half a file; skipped when the file already holds these bytes.
-fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if std::fs::read(path).is_ok_and(|have| have == bytes) {
-        return Ok(());
-    }
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// sees half a file.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -556,7 +815,7 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         ".{}.tmp-{}-{}",
         path.file_name().unwrap_or_default().to_string_lossy(),
         std::process::id(),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        WRITE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path).inspect_err(|_| {
@@ -564,19 +823,43 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     })
 }
 
+/// [`write_atomic`], skipped when the file already holds these bytes.
+fn write_if_changed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|have| have == bytes) {
+        return Ok(());
+    }
+    write_atomic(path, bytes)
+}
+
+/// [`write_atomic`] for a file named by the hash of its bytes: one that
+/// exists already holds them, and is not read back.
+fn write_content_addressed(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if path.is_file() {
+        return Ok(());
+    }
+    write_atomic(path, bytes)
+}
+
 fn is_sha_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
+
+/// What a cache entry holds for a texture kept as its source: the encode is
+/// not retried until the source, the encoder or the settings change.
+const KEPT_PREFIX: &str = "kept: ";
 
 fn cache_entry(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> PathBuf {
     let key = encode::cache_key(&job.sha, encoder.id(), job.mode, max_size);
     stage.join("cache").join(key)
 }
 
-/// One texture from the cache, when this encoder already encoded these
-/// source bytes this way.
+/// One texture from the cache, when this encoder already encoded these source
+/// bytes this way, or already found it can't gain from it.
 fn cached(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Option<Encoded> {
     let text = std::fs::read_to_string(cache_entry(stage, job, encoder, max_size)).ok()?;
+    if let Some(why) = text.strip_prefix(KEPT_PREFIX) {
+        return Some(Encoded::Failed(why.trim().to_string()));
+    }
     let sha = text.trim();
     if !is_sha_hex(sha) {
         return None;
@@ -590,19 +873,31 @@ fn cached(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Opti
 }
 
 /// One texture not in the cache: prepared and encoded, its KTX2 stored by
-/// content hash and the cache pointed at it.
-fn encode_one(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Encoded {
+/// content hash and the cache pointed at it. A texture the preparation or the
+/// encoder refuses (too small to gain, undecodable) is recorded as kept, so
+/// later runs don't retry it.
+fn encode_one(
+    stage: &Path,
+    job: &Job,
+    bytes: &[u8],
+    encoder: &dyn Encoder,
+    max_size: u32,
+) -> Encoded {
     let entry = cache_entry(stage, job, encoder, max_size);
-    let png = match encode::prepare(&job.bytes, max_size) {
+    let kept = |why: String| {
+        let _ = write_if_changed(&entry, format!("{KEPT_PREFIX}{why}").as_bytes());
+        Encoded::Failed(why)
+    };
+    let png = match encode::prepare(bytes, max_size) {
         Ok(png) => png,
-        Err(why) => return Encoded::Failed(why),
+        Err(why) => return kept(why),
     };
     let ktx2 = match encoder.encode(&png, job.mode) {
         Ok(ktx2) => ktx2,
-        Err(e) => return Encoded::Failed(format!("encoder failed: {e:#}")),
+        Err(e) => return kept(format!("encoder failed: {e:#}")),
     };
     let sha = encode::sha256_hex(&ktx2);
-    let stored = write_if_changed(&ktx2_path(stage, &sha), &ktx2)
+    let stored = write_content_addressed(&ktx2_path(stage, &sha), &ktx2)
         .and_then(|()| write_if_changed(&entry, sha.as_bytes()));
     match stored {
         Ok(()) => Encoded::Ok {
@@ -625,6 +920,66 @@ fn staged_model_path(stage: &Path, model_rel: &str, bytes: &[u8]) -> PathBuf {
     stage
         .join("models")
         .join(format!("{}.{ext}", encode::sha256_hex(bytes)))
+}
+
+/// Model `rel` (bytes at `path`, as `key` saw them) rewritten with
+/// `replacements` and staged. Kept per model size, time and replacements: an
+/// unchanged model is not read, parsed or serialized again while its staged
+/// copy exists. Returns the staged path, its size and whether the binary chunk
+/// was repacked.
+fn stage_model(
+    stage: &Path,
+    rel: &str,
+    path: &Path,
+    key: FileKey,
+    replacements: &BTreeMap<usize, String>,
+) -> Result<(PathBuf, u64, bool)> {
+    type RewriteKey = (PathBuf, FileKey, BTreeMap<usize, String>);
+    static REWRITES: OnceLock<Mutex<HashMap<RewriteKey, (PathBuf, u64, bool)>>> = OnceLock::new();
+    let rewrites = REWRITES.get_or_init(Default::default);
+    let memo_key = (path.to_path_buf(), key, replacements.clone());
+    if let Some(hit) = rewrites
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&memo_key)
+        .filter(|(staged, _, _)| staged.is_file())
+        .cloned()
+    {
+        return Ok(hit);
+    }
+    if file_key(path) != Some(key) {
+        anyhow::bail!("{rel} changed during the run; the next run stages it");
+    }
+    let raw = std::fs::read(path).with_context(|| format!("reading {rel}"))?;
+    let mut model = gltf::Model::parse(&raw).with_context(|| format!("parsing {rel}"))?;
+    let repacked = gltf::apply(&mut model, replacements);
+    let bytes = model.to_bytes();
+    let staged = staged_model_path(stage, rel, &bytes);
+    write_content_addressed(&staged, &bytes)
+        .with_context(|| format!("staging {}", staged.display()))?;
+    let hit = (staged, bytes.len() as u64, repacked);
+    rewrites
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(memo_key, hit.clone());
+    Ok(hit)
+}
+
+/// Deletes the KTX2 files and cache entries outside `keep` (what the run in
+/// place read or publishes), so a creator iterating on textures doesn't grow
+/// the stage without bound; called after the swap, under the stage lock.
+fn sweep_stage(stage: &Path, keep: &BTreeSet<PathBuf>) {
+    for dir in ["ktx2", "cache"] {
+        let Ok(rd) = std::fs::read_dir(stage.join(dir)) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.is_file() && !keep.contains(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 /// Deletes staged models the overlay now in place does not name; called
@@ -676,7 +1031,7 @@ pub(crate) fn optimize(
     rels: &[String],
     settings: Settings,
     encoder: &dyn Encoder,
-    payload: &dyn Fn(&str) -> PathBuf,
+    payload: &(dyn Fn(&str) -> PathBuf + Sync),
     run: &Run<'_>,
 ) -> Result<Outcome> {
     crate::scene::work_dir(root).context("creating .dcl-one")?;
@@ -693,55 +1048,71 @@ pub(crate) fn optimize(
     // it cannot resolve to a scene file (a Windows path a client may still read)
     let mut unparsed: Vec<(String, String)> = Vec::new();
     for rel in rels.iter().filter(|r| is_model(r)) {
-        let bytes = match std::fs::read(payload(rel)) {
-            Ok(b) => b,
-            Err(e) => {
-                kept.push((rel.clone(), format!("model not readable: {e}")));
+        let path = payload(rel);
+        let (scan, key) = match scan_model(&path, rel, &read) {
+            Ok(found) => found,
+            Err(why) => {
+                kept.push((rel.clone(), why));
                 continue;
             }
         };
-        let model = match gltf::Model::parse(&bytes) {
-            Ok(m) => m,
-            Err(e) => {
-                kept.push((rel.clone(), format!("model not optimized: {e:#}")));
-                unparsed.push((rel.clone(), String::from_utf8_lossy(&bytes).to_lowercase()));
+        let (len, unresolved, scans) = match &*scan {
+            ModelScan::Unparsed { why, text } => {
+                kept.push((rel.clone(), why.clone()));
+                unparsed.push((rel.clone(), text.clone()));
                 continue;
             }
+            ModelScan::Parsed {
+                len,
+                unresolved,
+                images,
+            } => (*len, unresolved, images),
         };
-        let rejected = gltf::unresolved_image_uris(&model, rel);
-        if !rejected.is_empty() {
-            unparsed.push((rel.clone(), rejected.join("\n").to_lowercase()));
+        if !unresolved.is_empty() {
+            unparsed.push((rel.clone(), unresolved.join("\n").to_lowercase()));
         }
-        let plans = gltf::plan_images(&model);
-        let mut images = Vec::with_capacity(plans.len());
-        for (index, plan) in plans.into_iter().enumerate() {
-            let source = gltf::image_source(&model, rel, index, &read);
-            let external = match &source {
-                Ok(gltf::ImageSource::External(path)) => published(path),
+        let mut images = Vec::with_capacity(scans.len());
+        for (index, image) in scans.iter().enumerate() {
+            let external = match &image.source {
+                Ok(ScanSource::External(path)) => published(path),
                 _ => None,
             };
-            let planned = match plan {
+            let planned = match &image.plan {
                 gltf::ImagePlan::Unused => Planned::Unused,
-                gltf::ImagePlan::Keep(why) => Planned::Keep(why),
+                gltf::ImagePlan::Keep(why) => Planned::Keep(why.clone()),
                 gltf::ImagePlan::Encode { mode } => {
-                    let bytes = match source {
-                        Ok(gltf::ImageSource::Embedded(b)) => Ok(b),
-                        Ok(gltf::ImageSource::External(path)) => external
+                    // the hash only: bytes are read for the textures the cache lacks
+                    let found = match &image.source {
+                        Ok(ScanSource::Embedded { sha, len }) => Ok((
+                            sha.clone(),
+                            *len,
+                            JobSource::Embedded {
+                                path: path.clone(),
+                                rel: rel.clone(),
+                                index,
+                            },
+                        )),
+                        Ok(ScanSource::External(given)) => external
                             .as_deref()
-                            .and_then(read)
-                            .ok_or_else(|| format!("{path} is not a published file of the scene")),
-                        Err(why) => Err(why),
+                            .map(payload)
+                            .and_then(|file| {
+                                file_sha(&file).map(|(sha, len)| (sha, len, JobSource::File(file)))
+                            })
+                            .ok_or_else(|| format!("{given} is not a published file of the scene")),
+                        Err(why) => Err(why.clone()),
                     };
-                    match bytes {
+                    match found {
                         Err(why) => Planned::Keep(why),
-                        Ok(bytes) => {
-                            let sha = encode::sha256_hex(&bytes);
-                            let source_len = bytes.len() as u64;
-                            let key = (sha.clone(), mode);
+                        Ok((sha, source_len, source)) => {
+                            let key = (sha.clone(), *mode);
                             let job = match job_of.get(&key) {
                                 Some(&job) => job,
                                 None => {
-                                    jobs.push(Job { sha, mode, bytes });
+                                    jobs.push(Job {
+                                        sha,
+                                        mode: *mode,
+                                        source,
+                                    });
                                     job_of.insert(key, jobs.len() - 1);
                                     jobs.len() - 1
                                 }
@@ -749,7 +1120,7 @@ pub(crate) fn optimize(
                             Planned::Encode {
                                 job,
                                 source_len,
-                                mode,
+                                mode: *mode,
                             }
                         }
                     }
@@ -763,8 +1134,9 @@ pub(crate) fn optimize(
         }
         models.push(ModelWork {
             rel: rel.clone(),
-            model,
-            original_len: bytes.len() as u64,
+            path,
+            key,
+            original_len: len,
             images,
         });
     }
@@ -786,14 +1158,18 @@ pub(crate) fn optimize(
         };
         report(done.load(std::sync::atomic::Ordering::Relaxed));
         let encoded = encode::run_pool(&missing, run.workers, |&i| {
-            let result = encode_one(&stage, &jobs[i], encoder, settings.max_size);
+            // one source in memory per worker, only while it is encoded
+            let result = match job_bytes(&jobs[i], &read) {
+                Ok(bytes) => encode_one(&stage, &jobs[i], &bytes, encoder, settings.max_size),
+                Err(why) => Encoded::Failed(why),
+            };
             if matches!(result, Encoded::Failed(_)) {
                 failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             report(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
             result
         });
-        for (i, result) in missing.into_iter().zip(encoded) {
+        for (i, result) in missing.iter().copied().zip(encoded) {
             results[i] = Some(result);
         }
     }
@@ -801,6 +1177,16 @@ pub(crate) fn optimize(
         .into_iter()
         .map(|r| r.expect("every job is cached or encoded"))
         .collect();
+    let mut stage_files: BTreeSet<PathBuf> = jobs
+        .iter()
+        .map(|job| cache_entry(&stage, job, encoder, settings.max_size))
+        .collect();
+    for result in &results {
+        if let Encoded::Ok { ktx2_sha, .. } = result {
+            stage_files.insert(ktx2_path(&stage, ktx2_sha));
+        }
+    }
+    let mut model_inputs: HashMap<String, FileKey> = HashMap::new();
 
     let mut overlay = Overlay::default();
     let mut summary = Summary {
@@ -896,15 +1282,12 @@ pub(crate) fn optimize(
         if replacements.is_empty() {
             continue;
         }
-        let mut model = work.model;
-        let repacked = gltf::apply(&mut model, &replacements);
-        let bytes = model.to_bytes();
-        let staged = staged_model_path(&stage, &work.rel, &bytes);
-        write_if_changed(&staged, &bytes)
-            .with_context(|| format!("staging {}", staged.display()))?;
+        let (staged, staged_len, repacked) =
+            stage_model(&stage, &work.rel, &work.path, work.key, &replacements)?;
+        model_inputs.insert(work.rel.clone(), work.key);
         summary.models += 1;
         summary.bytes_before += work.original_len;
-        summary.bytes_after += bytes.len() as u64;
+        summary.bytes_after += staged_len;
         model_entries.push(json!({
             "path": work.rel,
             "staged": staged
@@ -913,7 +1296,7 @@ pub(crate) fn optimize(
                 .to_string_lossy()
                 .replace('\\', "/"),
             "sourceBytes": work.original_len,
-            "optimizedBytes": bytes.len(),
+            "optimizedBytes": staged_len,
             "texturesReplaced": replacements.len(),
             "binaryChunkRepacked": repacked,
         }));
@@ -992,6 +1375,8 @@ pub(crate) fn optimize(
         overlay,
         summary,
         manifest,
+        stage_files,
+        model_inputs,
     })
 }
 

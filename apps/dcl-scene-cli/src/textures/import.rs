@@ -13,8 +13,8 @@
 //! instead, and the client decides when to reload.
 
 use super::{
-    Encoder, Entry, PREVIEW_MANIFEST, Progress, RUN_LOCK, Run, STAGE, Settings, optimize,
-    prune_models, registry, settings, stamps_of, swap, write_manifest,
+    Encoder, Entry, PREVIEW_MANIFEST, Progress, RUN_LOCK, Run, STAGE, Settings, lock_stage,
+    optimize, prune_models, registry, settings, stamps_of, swap, sweep_stage, write_manifest,
 };
 use crate::ux;
 use std::collections::HashMap;
@@ -292,8 +292,7 @@ pub(crate) fn import_once<'e>(
             Entry {
                 enabled: false,
                 settings,
-                overlay: None,
-                stamps: None,
+                ..Entry::default()
             },
         );
         if was_enabled {
@@ -325,6 +324,12 @@ pub(crate) fn import_once<'e>(
     if unchanged {
         return false;
     }
+    // the stage is shared with any other dcl-scene-cli on this project (a
+    // deploy in another terminal): held until the swap, prune and sweep are done
+    let _stage_lock = match lock_stage(root) {
+        Ok(lock) => lock,
+        Err(e) => return failed(anyhow::Error::new(e).context("locking the texture stage")),
+    };
     let encoder = match encoder() {
         Ok(encoder) => encoder,
         Err(e) => return failed(e),
@@ -368,9 +373,11 @@ pub(crate) fn import_once<'e>(
             settings,
             overlay: Some(overlay.clone()),
             stamps: Some(stamps),
+            model_inputs: Arc::new(outcome.model_inputs),
         },
     );
     prune_models(&root.join(STAGE), &overlay);
+    sweep_stage(&root.join(STAGE), &outcome.stage_files);
     if let Err(e) = write_manifest(root, PREVIEW_MANIFEST, &outcome.manifest) {
         tracing::warn!("{e:#}");
     }

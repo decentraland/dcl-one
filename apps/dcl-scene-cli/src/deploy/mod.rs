@@ -851,7 +851,7 @@ pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<Stri
 /// build alone emits, with the optimized-texture overlay applied when the
 /// project enables one. Read each through [`payload_path`].
 pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
-    crate::textures::publishable(root, tree_payload_files(root, rels))
+    crate::textures::payload_publishable(root, tree_payload_files(root, rels))
 }
 
 /// Where a payload path is read from. rustc keeps debug and release
@@ -864,7 +864,7 @@ pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
 /// deploy signs — goes through here, so they describe the same file. A
 /// model or KTX2 file the texture overlay staged is read from the stage.
 pub fn payload_path(root: &Path, rel: &str) -> PathBuf {
-    match crate::textures::staged_source(root, rel) {
+    match crate::textures::payload_source(root, rel) {
         Some(staged) => staged,
         None => tree_payload_path(root, rel),
     }

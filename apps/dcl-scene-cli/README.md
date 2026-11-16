@@ -647,7 +647,11 @@ blocks the preview, and queues one more run when changes arrive during a run. A 
 unchanged does nothing, and with the setting off a run encodes nothing; a deploy that turns it on
 queues the next run. Your files are never changed: rewritten models and KTX2 files are staged in
 `.dcl-one/optimized-textures/` with a `manifest.json` and a cache keyed by source bytes, encoder and
-settings.
+settings. A texture that can't gain (too small, undecodable) is recorded there too, so it isn't
+retried. A save that changes no image or model re-reads, re-hashes and re-encodes nothing, and
+KTX2 files and cache entries the current import no longer uses are deleted after it. One
+dcl-scene-cli at a time writes a project's stage: a `deploy` in another terminal waits for the
+preview's import, and the other way round.
 
 Serving and publishing them is a per-project setting in `.dcl-one/settings.json`
 (`{"optimizeTextures": true, "keepSourceTextures": false}`), off by default. `--optimize-textures`
@@ -659,7 +663,8 @@ KTX2 is not smaller, it fails to decode, or it is sampled both as colour and as 
 cannot be sRGB and linear at once).
 
 The preview applies a finished import in one swap: until then it serves the previous optimized
-files, never part of a run. Rewritten models are staged under names taken from their bytes, so a run
+files, never part of a run. A model you edit is served from your file, with the originals it names,
+until the import stages its new copy. Rewritten models are staged under names taken from their bytes, so a run
 never rewrites a file the preview is serving. `start` sends no reload when an import finishes. Each
 import sends its status on the live-reload socket instead, as a JSON text frame only:
 `{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled,replay}}`.
@@ -674,9 +679,11 @@ the size saved with a **Reload** button, or how many textures stay PNG. It shows
 setting is off. A replayed `READY` offers Reload only when the HUD showed that scene's progress
 before the socket dropped.
 
-`deploy` with the setting on finishes in the foreground whatever the cache lacks, with a progress
-line, before it reads the payload; a warm cache costs nothing. It never uploads a half-optimized
-scene: a texture that fails alone keeps its original, and a failed run stops the deploy.
+`deploy`, `pack` and `export-static` with the setting on finish in the foreground whatever the cache
+lacks, with a progress line, before they read the payload; a warm cache costs nothing. They read
+their payload through their own run's files, so a deploy from the preview page doesn't change what
+the preview serves. They never publish a half-optimized scene: a texture that fails alone keeps its
+original, and a failed run stops the command.
 
 An original image only GLB/glTF models used is left out of the upload when no published `.js`,
 `.json`, `main.crdt` or `.composite` names it. A name is its file name anywhere, or its bare stem in

@@ -266,7 +266,7 @@ fn a_disabled_overlay_is_not_applied() {
         enabled,
         settings: Settings::default(),
         overlay: Some(Arc::new(overlay.clone())),
-        stamps: None,
+        ..Entry::default()
     };
     let rels = vec!["a.glb".to_string(), "t.png".to_string()];
     assert!(
@@ -518,7 +518,7 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
     let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
     let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
     assert!(import::import_once(&root, &fake, 2, &send, false));
-    let before = overlay(&root).unwrap();
+    let before = overlay(&root).unwrap().0;
     let old_model = staged_source(&root, "models/a.glb").unwrap();
     sent.lock().unwrap().clear();
 
@@ -526,7 +526,7 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
     let checks = std::sync::atomic::AtomicUsize::new(0);
     let check = || {
         checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let current = overlay(&root).unwrap();
+        let current = overlay(&root).unwrap().0;
         assert!(
             Arc::ptr_eq(&current, &before),
             "no part of the new run is applied"
@@ -549,7 +549,7 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
         "one texture changed"
     );
 
-    let after = overlay(&root).unwrap();
+    let after = overlay(&root).unwrap().0;
     assert_ne!(*after, *before);
     let new_model = staged_source(&root, "models/a.glb").unwrap();
     assert_ne!(
@@ -654,7 +654,7 @@ fn deploy_payload_follows_the_overlay() {
             enabled: true,
             settings: Settings::default(),
             overlay: Some(Arc::new(out.overlay.clone())),
-            stamps: None,
+            ..Entry::default()
         },
     );
 
@@ -689,4 +689,162 @@ fn deploy_payload_follows_the_overlay() {
         off.files.iter().map(|(f, h, _)| (f, h)).collect::<Vec<_>>(),
         "with the project unregistered the payload is the tree's again"
     );
+}
+
+/// An encoder that refuses every texture, counting how often it is asked.
+struct Refusing(std::sync::atomic::AtomicUsize);
+
+impl Encoder for Refusing {
+    fn id(&self) -> &str {
+        "fake-refusing"
+    }
+
+    fn encode(&self, _png: &[u8], _mode: ColorMode) -> anyhow::Result<Vec<u8>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        anyhow::bail!("refused")
+    }
+}
+
+static REFUSING: Refusing = Refusing(std::sync::atomic::AtomicUsize::new(0));
+
+fn refusing() -> anyhow::Result<&'static dyn Encoder> {
+    Ok(&REFUSING)
+}
+
+/// A texture kept as its source is recorded in the cache: later runs don't
+/// retry it, and a save that changes only code sends nothing, so the HUD
+/// offers no Reload for it.
+#[test]
+fn a_texture_kept_as_its_source_is_not_retried() {
+    let (_t, root, _) = scene("textures-kept");
+    enable_in_settings(&root);
+    let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
+    let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
+    let before = REFUSING.0.load(std::sync::atomic::Ordering::Relaxed);
+    import::import_once(&root, &refusing, 2, &send, false);
+    let asked = REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before;
+    assert_eq!(asked, 3, "each distinct texture is tried once");
+    let last = *sent.lock().unwrap().last().unwrap();
+    assert_eq!((last.state, last.failed), (import::ImportState::Ready, 3));
+
+    // a code-only save: nothing retried, nothing sent
+    sent.lock().unwrap().clear();
+    std::fs::write(root.join("bin/index.js"), "'images/ui.png'; // edited").unwrap();
+    assert!(!import::import_once(&root, &refusing, 2, &send, false));
+    assert_eq!(
+        REFUSING.0.load(std::sync::atomic::Ordering::Relaxed) - before,
+        3
+    );
+    assert!(
+        sent.lock().unwrap().is_empty(),
+        "{:?}",
+        sent.lock().unwrap()
+    );
+    registry().remove(&root);
+}
+
+/// A deploy in progress reads its own overlay; the preview keeps serving its own.
+#[test]
+fn a_deploy_overlay_leaves_the_preview_alone() {
+    let root = Path::new("/nowhere/deploying");
+    let overlay = Overlay {
+        sources: BTreeMap::from([("a.glb".to_string(), PathBuf::from("/stage/a.glb"))]),
+        added: BTreeSet::new(),
+        removed: BTreeSet::from(["t.png".to_string()]),
+    };
+    swap(
+        root,
+        Entry {
+            enabled: true,
+            overlay: Some(Arc::new(overlay)),
+            ..Entry::default()
+        },
+    );
+    let rels = vec!["a.glb".to_string(), "t.png".to_string()];
+    // a deploy with the setting off
+    deploys().insert(root.to_path_buf(), None);
+    assert_eq!(payload_publishable(root, rels.clone()), rels);
+    assert_eq!(payload_source(root, "a.glb"), None);
+    assert_eq!(publishable(root, rels.clone()), ["a.glb"]);
+    assert_eq!(
+        staged_source(root, "a.glb"),
+        Some(PathBuf::from("/stage/a.glb"))
+    );
+    // done: the payload is the preview's again
+    deploys().remove(root);
+    assert_eq!(payload_publishable(root, rels.clone()), ["a.glb"]);
+    registry().remove(root);
+}
+
+/// A model edited after the run that staged it is served from its source,
+/// its originals with it, until the next run stages the new copy.
+#[test]
+fn an_edited_model_is_served_from_its_source_until_the_next_run() {
+    let (_t, root, glb) = scene("textures-edited");
+    enable_in_settings(&root);
+    let send = |_: import::ImportStatus| {};
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    let rels = crate::deploy::collect_publishable_files(&root).unwrap();
+    assert!(staged_source(&root, "models/a.glb").is_some());
+    assert!(!publishable(&root, rels.clone()).contains(&"images/wall.png".to_string()));
+
+    // re-exported: same bytes, a new modification time
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(root.join("models/a.glb"), &glb).unwrap();
+    assert_eq!(staged_source(&root, "models/a.glb"), None);
+    assert!(publishable(&root, rels.clone()).contains(&"images/wall.png".to_string()));
+
+    import::import_once(&root, &fake, 2, &send, false);
+    assert!(staged_source(&root, "models/a.glb").is_some());
+    assert!(!publishable(&root, rels).contains(&"images/wall.png".to_string()));
+    registry().remove(&root);
+}
+
+/// KTX2 files and cache entries the run in place doesn't use are swept.
+#[test]
+fn unused_ktx2_files_and_cache_entries_are_swept() {
+    let (_t, root, _) = scene("textures-sweep");
+    enable_in_settings(&root);
+    let send = |_: import::ImportStatus| {};
+    let count = |dir: &str| {
+        std::fs::read_dir(root.join(STAGE).join(dir))
+            .unwrap()
+            .count()
+    };
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    assert_eq!((count("ktx2"), count("cache")), (3, 3));
+
+    write(&root, "images/wall.png", &noise_png(64, 64, 9));
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    assert_eq!(
+        (count("ktx2"), count("cache")),
+        (3, 3),
+        "the old wall texture's KTX2 and cache entry went"
+    );
+    registry().remove(&root);
+}
+
+/// The stage's lock holds across processes; here two handles stand in for them.
+#[test]
+fn the_stage_lock_is_exclusive() {
+    let (_t, root, _) = scene("textures-lock");
+    let held = lock_stage(&root).unwrap();
+    assert!(try_lock_stage(&root).unwrap().is_none());
+    drop(held);
+    assert!(try_lock_stage(&root).unwrap().is_some());
+}
+
+/// A file's hash is read again only when its size or time moves.
+#[test]
+fn file_hashes_follow_size_and_time() {
+    let (_t, root, _) = scene("textures-hash");
+    let path = root.join("images/wall.png");
+    let (sha, len) = file_sha(&path).unwrap();
+    assert_eq!(sha, encode::sha256_hex(&std::fs::read(&path).unwrap()));
+    assert_eq!(len, std::fs::metadata(&path).unwrap().len());
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write(&root, "images/wall.png", &noise_png(64, 64, 11));
+    let (again, _) = file_sha(&path).unwrap();
+    assert_eq!(again, encode::sha256_hex(&std::fs::read(&path).unwrap()));
+    assert_ne!(again, sha);
 }
