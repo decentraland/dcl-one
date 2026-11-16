@@ -442,6 +442,7 @@ pub(super) async fn comms_states(
 
     let non_empty = Config::non_empty;
     let archipelago_settings = archipelago::Settings::resolve(archipelago::config::RawSettings {
+        ban_sweep_interval_ms: config.worlds.ban_sweep_interval_ms,
         max_sockets: config.worlds.ws_max_sockets,
         max_sockets_per_ip: config.worlds.ws_max_sockets_per_ip,
         trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
