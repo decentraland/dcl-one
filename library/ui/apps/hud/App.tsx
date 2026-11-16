@@ -15,6 +15,7 @@ import { NotificationToastHost } from './features/notifications/NotificationToas
 import { SkyboxMenu } from './features/skybox/SkyboxMenu'
 import { EmotesWheel } from './features/emotes/EmotesWheel'
 import { BackpackPage } from './features/backpack/BackpackPage'
+import { setGiftBackpackOpener } from './features/gifting/GiftReceivedPopup'
 import { CommunitiesPage } from './features/communities/CommunitiesPage'
 import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
@@ -362,6 +363,15 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   useEffect(() => {
     if (!session.backpack.open) setBackpackTab('wearables')
   }, [session.backpack.open])
+  // A gift-received popup's GO TO BACKPACK opens the Backpack on the gift's tab.
+  const backpack = session.backpack
+  useEffect(() => {
+    setGiftBackpackOpener((tab) => {
+      setBackpackTab(tab)
+      if (!backpack.open) backpack.toggle()
+    })
+    return () => setGiftBackpackOpener(null)
+  }, [backpack])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
   const viewMyProfile = (): void => {

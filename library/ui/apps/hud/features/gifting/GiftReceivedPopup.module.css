@@ -1,0 +1,24 @@
+/* The gift-received popup (unity-explorer GiftReceivedPopup): over the shared rays layout, a small caps line, the
+   sender in a large title, the item tile, its name, and CLOSE beside GO TO BACKPACK. */
+.subtitle {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.title {
+  margin: 0;
+  font-size: var(--font-title-xl);
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+.name {
+  margin: 0 0 8px;
+  font-size: var(--font-title-l);
+  font-weight: var(--fw-semibold);
+}
+.actions {
+  display: flex;
+  gap: 12px;
+}

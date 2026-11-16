@@ -70,37 +70,45 @@ export function clearRewardPopups(): void {
   close?.()
 }
 
+/** The rays-behind-a-column layout reward and gift popups share (unity-explorer's BackgroundRaysAnimation): rays
+ *  in the rarity's colour turn behind the content, which bounces in. */
+export function RaysPopup({ rarity = 'base', labelledBy, children }: { rarity?: string; labelledBy: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className={styles.root} data-rarity={rarity} role="dialog" aria-modal="true" aria-labelledby={labelledBy} onClick={(e) => e.stopPropagation()}>
+      <span className={styles.rays} aria-hidden="true" />
+      <div className={styles.content}>{children}</div>
+    </div>
+  )
+}
+
+/** An item on its rarity tile, with the category's corner flap. */
+export function ItemTile({ rarity, image, category }: { rarity: string; image?: string; category?: string }): React.JSX.Element {
+  return (
+    <div className={styles.item} style={{ backgroundImage: `url(${rarityTile(rarity)})` }}>
+      {image != null && image !== '' && <img className={styles.thumb} src={image} alt="" />}
+      {category != null && (
+        <span className={styles.flap} aria-hidden="true">
+          <span className={styles.flapTint} />
+          <span className={styles.flapIcon}>
+            <CategoryIcon category={category} size={20} />
+          </span>
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function RewardPopup({ reward, onCollect }: { reward: Reward; onCollect: () => void }): React.JSX.Element {
   return (
-    <div
-      className={styles.root}
-      data-rarity={reward.rarity}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="reward-popup-title"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <span className={styles.rays} aria-hidden="true" />
-      <div className={styles.content}>
-        <span className={styles.header}>Reward</span>
-        <h2 id="reward-popup-title" className={styles.title}>New Item Unlocked!</h2>
-        <div className={styles.item} style={{ backgroundImage: `url(${rarityTile(reward.rarity)})` }}>
-          {reward.image != null && <img className={styles.thumb} src={reward.image} alt="" />}
-          {reward.category != null && (
-            <span className={styles.flap} aria-hidden="true">
-              <span className={styles.flapTint} />
-              <span className={styles.flapIcon}>
-                <CategoryIcon category={reward.category} size={20} />
-              </span>
-            </span>
-          )}
-        </div>
-        {reward.name != null && <p className={styles.name}>{reward.name}</p>}
-        <p className={styles.note}>Processing may take a few minutes, but you&apos;ll be notified as soon as it&apos;s in your Backpack!</p>
-        <Button size="lg" onClick={onCollect}>
-          COLLECT
-        </Button>
-      </div>
-    </div>
+    <RaysPopup rarity={reward.rarity} labelledBy="reward-popup-title">
+      <span className={styles.header}>Reward</span>
+      <h2 id="reward-popup-title" className={styles.title}>New Item Unlocked!</h2>
+      <ItemTile rarity={reward.rarity} image={reward.image} category={reward.category} />
+      {reward.name != null && <p className={styles.name}>{reward.name}</p>}
+      <p className={styles.note}>Processing may take a few minutes, but you&apos;ll be notified as soon as it&apos;s in your Backpack!</p>
+      <Button size="lg" onClick={onCollect}>
+        COLLECT
+      </Button>
+    </RaysPopup>
   )
 }
