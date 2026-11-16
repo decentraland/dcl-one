@@ -109,6 +109,11 @@ pub const ROUTE_PREFIX: &str = "/scene-state";
 
 pub const DEFAULT_REALM_NAME: &str = "dcl-one";
 
+/// How long after a join reloaded a scene whose runtime had stopped another
+/// join may reload it again; joins in between are refused, so a scene that
+/// stops whenever a client is present does not reload on every reconnect.
+pub(crate) const STOPPED_RELOAD_COOLDOWN: Duration = Duration::from_secs(10);
+
 /// Which scene a `/ws/{scene}` (or admin) path names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SceneKey {
@@ -561,6 +566,9 @@ pub struct SceneHostState {
     shutdown: std::sync::OnceLock<tokio_util::sync::CancellationToken>,
     /// What a V8 OOM parked since start: refused until restart.
     parked: parking_lot::Mutex<ParkedScenes>,
+    /// When a join last reloaded each room key whose runtime had stopped
+    /// ([`STOPPED_RELOAD_COOLDOWN`]); entries older than that are dropped.
+    stopped_reloads: parking_lot::Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
 /// Scenes this host retired after a V8 OOM parked their isolate.
@@ -638,6 +646,7 @@ impl SceneHostState {
             loads: SceneLocks::default(),
             shutdown: std::sync::OnceLock::new(),
             parked: parking_lot::Mutex::new(ParkedScenes::default()),
+            stopped_reloads: parking_lot::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -725,7 +734,9 @@ impl SceneHostState {
     /// The lookup and the add happen under the membership lock unloads take,
     /// so a client never lands in an unloaded scene; only a missing scene
     /// waits, on its own key's load lock. A scene that is no longer hosted is
-    /// loaded again only if it sets `authoritativeMultiplayer`; a different
+    /// loaded again only if it sets `authoritativeMultiplayer`, as is one
+    /// whose runtime stopped (at most once per [`STOPPED_RELOAD_COOLDOWN`]
+    /// per key; joins in between are refused); a different
     /// deployment now hosted under the key refuses the join (the client was
     /// admitted for the old one).
     pub async fn join<R>(
@@ -744,10 +755,33 @@ impl SceneHostState {
             if let Some(joined) = self.try_join(identity, &mut add)? {
                 return Ok(joined);
             }
+            self.allow_stopped_reload(key)?;
             let _slot = self.reserve_slot(key)?;
             loader::load_scene(self, key, true).await?;
         }
         Err(anyhow!("{key} was not hosted after loading"))
+    }
+
+    /// Under `key`'s load lock: when the scene hosted under `key` has a
+    /// stopped runtime, refuses the reload if a join reloaded that key less
+    /// than [`STOPPED_RELOAD_COOLDOWN`] ago, and otherwise records this one.
+    fn allow_stopped_reload(&self, key: &SceneKey) -> anyhow::Result<()> {
+        let name = key.room_key();
+        let stopped = self
+            .scenes
+            .get(&name)
+            .is_some_and(|scene| !scene.runtime.is_running());
+        if !stopped {
+            return Ok(());
+        }
+        let now = std::time::Instant::now();
+        let mut reloads = self.stopped_reloads.lock();
+        reloads.retain(|_, at| now.duration_since(*at) < STOPPED_RELOAD_COOLDOWN);
+        if reloads.contains_key(&name) {
+            anyhow::bail!("{key} stopped again right after a reload; it is not reloaded again yet");
+        }
+        reloads.insert(name, now);
+        Ok(())
     }
 
     fn try_join<R, F: FnOnce(&Arc<scene::Scene>) -> R>(
@@ -757,6 +791,9 @@ impl SceneHostState {
     ) -> anyhow::Result<Option<(Arc<scene::Scene>, R)>> {
         let _membership = self.loads.membership.lock();
         match self.scenes.get(&identity.key.room_key()) {
+            // A stopped runtime is not joined: the load that follows replaces
+            // it, kicking whoever is left through `remove_hosted`.
+            Some(scene) if !scene.runtime.is_running() => Ok(None),
             Some(scene) if scene.identity.scene_id() == identity.scene_id() => {
                 let add = add.take().ok_or_else(|| anyhow!("client already added"))?;
                 let added = add(&scene);
