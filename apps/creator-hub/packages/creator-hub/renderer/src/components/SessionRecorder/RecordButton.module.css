@@ -28,11 +28,11 @@
 }
 
 .control:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: var(--white-10);
 }
 
 .control[data-live="true"]:hover:not(:disabled) {
-  background-color: #ec303a;
+  background-color: var(--palette-error-dark2);
 }
 
 .control:disabled {

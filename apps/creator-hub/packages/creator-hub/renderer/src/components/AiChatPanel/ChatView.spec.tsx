@@ -223,7 +223,7 @@ describe('ChatView asset mentions', () => {
         onToggleRecording: vi.fn(),
       });
       expect(screen.getByRole('button', { name: 'Stop recording' })).toBeTruthy();
-      expect(screen.getByText('Stop · 0:42')).toBeTruthy();
+      expect(screen.getByText('Stop · 0:42 / 10:00')).toBeTruthy();
     });
 
     it('should not start a recording while no assistant is available', () => {

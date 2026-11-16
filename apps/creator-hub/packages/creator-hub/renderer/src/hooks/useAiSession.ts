@@ -154,7 +154,7 @@ export function useAiSession(
           dispatch(aiActions.removeAssetMention(command.mention));
           break;
         case 'removeRecording':
-          dispatch(aiActions.setRecording(null));
+          void dispatch(aiActions.discardRecording());
           break;
         case 'toggleRecording':
           latest.current.onToggleRecording?.();

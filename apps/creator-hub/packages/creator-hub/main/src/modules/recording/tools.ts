@@ -2,12 +2,15 @@ import crypto from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { app } from 'electron';
 import log from 'electron-log/main';
 
 import type { RecordingToolsStatus } from '/shared/types/recording';
 
-import { run } from '../bin';
+import { exists, installLocked } from '../downloaded-tools';
 import basePackageJson from './tools/recording-tools.package.json?raw';
 
 // Speech-to-text for the session recorder: whisper.cpp through `@fugood/whisper.node` (prebuilt
@@ -118,15 +121,6 @@ function packageKey(): string {
 
 type Marker = { package?: string; models?: Partial<Record<ModelId, string>>; vad?: string };
 
-async function exists(file: string): Promise<boolean> {
-  try {
-    await fs.access(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function readMarker(): Promise<Marker> {
   try {
     return JSON.parse(await fs.readFile(path.join(getToolsDir(), INSTALLED_MARKER), 'utf8'));
@@ -199,34 +193,18 @@ async function withTimeout<T>(
 async function installPackage(dir: string): Promise<void> {
   const lockfile = platformLockfile();
   if (!lockfile) throw new Error(`Speech-to-text is not available on ${platformKey}.`);
-  await fs.writeFile(path.join(dir, 'package.json'), platformManifest());
-  await fs.writeFile(path.join(dir, 'package-lock.json'), lockfile);
   // --omit=optional drops the other platforms' and the CUDA/Vulkan builds the wrapper lists as
   // optional; this platform's CPU/Metal build is a direct dependency, so it stays.
-  // --ignore-scripts: the bindings are prebuilt, and downloaded code must not run on install.
-  const install = run('npm', 'npm', {
-    args: [
-      'ci',
-      '--omit=optional',
-      '--ignore-scripts',
-      '--no-audit',
-      '--no-fund',
-      '--loglevel',
-      'error',
-    ],
-    cwd: dir,
+  await installLocked({
+    dir,
+    packageJson: platformManifest(),
+    lockfile,
+    expected: Object.keys(JSON.parse(platformManifest()).dependencies),
+    timeoutMs: INSTALL_TIMEOUT_MS,
+    timeoutMessage: 'Downloading the speech-to-text tools took too long. Check your connection.',
+    what: 'The speech-to-text install',
+    omitOptional: true,
   });
-  await withTimeout(
-    install.wait(),
-    INSTALL_TIMEOUT_MS,
-    'Downloading the speech-to-text tools took too long. Check your connection.',
-    () => void install.kill(),
-  );
-  for (const pkg of Object.keys(JSON.parse(platformManifest()).dependencies)) {
-    if (!(await exists(path.join(dir, 'node_modules', pkg, 'package.json')))) {
-      throw new Error(`The speech-to-text install did not produce ${pkg}`);
-    }
-  }
 }
 
 async function sha256Of(file: string): Promise<string> {
@@ -242,38 +220,49 @@ async function sha256Of(file: string): Promise<string> {
 
 type Download = { url: string; target: string; sha256: string; bytes: number };
 
-async function downloadModel(
+// Counts bytes through and reports whole-percent steps.
+function progressCounter(total: number, onPercent: (percent: number) => void): Transform {
+  let received = 0;
+  let lastPercent = -1;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.byteLength;
+      const percent = Math.min(100, Math.floor((received / total) * 100));
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        onPercent(percent);
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
+// Exported for tests: the fetch is injectable, nothing else about it is.
+export async function downloadModel(
   { url, target, sha256, bytes }: Download,
   onPercent: (percent: number) => void,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   if ((await exists(target)) && (await sha256Of(target)) === sha256) return;
   await fs.mkdir(path.dirname(target), { recursive: true });
   const partial = `${target}.download`;
   const controller = new AbortController();
   const download = (async () => {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetchImpl(url, { signal: controller.signal });
     if (!response.ok || !response.body) {
+      // An unconsumed body keeps the connection and its buffers alive.
+      await response.body?.cancel().catch(() => undefined);
       throw new Error(`Downloading the speech model failed (HTTP ${response.status}).`);
     }
     const total = Number(response.headers.get('content-length')) || bytes;
-    const out = createWriteStream(partial);
-    let received = 0;
-    let lastPercent = -1;
-    try {
-      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-        received += chunk.byteLength;
-        if (!out.write(chunk)) await new Promise(resolve => out.once('drain', resolve));
-        const percent = Math.floor((received / total) * 100);
-        if (percent !== lastPercent) {
-          lastPercent = percent;
-          onPercent(percent);
-        }
-      }
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        out.end((e?: Error | null) => (e ? reject(e) : resolve())),
-      );
-    }
+    // pipeline() destroys every stage on the first error (a stalled socket, a full disk, EACCES
+    // on the target folder) and rejects with it, instead of leaving the write stream to throw
+    // 'error' with nobody listening.
+    await pipeline(
+      Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
+      progressCounter(total, onPercent),
+      createWriteStream(partial),
+    );
   })();
   try {
     await withTimeout(
@@ -304,14 +293,20 @@ async function removeStaleModels(): Promise<void> {
   }
 }
 
-let installing: { promise: Promise<void>; status: RecordingToolsStatus } | null = null;
+let installing: { model: ModelId; promise: Promise<void>; status: RecordingToolsStatus } | null =
+  null;
 
-// Idempotent and shared: a second caller while an install runs gets the same promise.
+// Idempotent and shared: a second caller while an install of the same model runs gets the same
+// promise. A different model (the app language changed mid-download) waits for the running
+// install and then runs its own, so "ready" is only ever reported for the model asked for.
 export function install(
   model: ModelId,
   onStatus: (status: RecordingToolsStatus) => void,
 ): Promise<void> {
-  if (installing) return installing.promise;
+  if (installing) {
+    if (installing.model === model) return installing.promise;
+    return installing.promise.catch(() => undefined).then(() => install(model, onStatus));
+  }
   const report = (status: RecordingToolsStatus) => {
     if (installing) installing.status = status;
     onStatus(status);
@@ -356,7 +351,7 @@ export function install(
     await removeStaleModels();
     log.info(`[Recording] speech-to-text ready (${MODELS[model].file})`);
   })();
-  installing = { promise, status: { state: 'installing', message: 'Preparing…' } };
+  installing = { model, promise, status: { state: 'installing', message: 'Preparing…' } };
   promise
     .then(() => onStatus({ state: 'ready' }))
     .catch(() => undefined)

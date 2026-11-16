@@ -55,19 +55,25 @@ export const RECORDING_TOOLS_PROGRESS_EVENT = 'recording.toolsProgress';
 // The recorder captures 16 kHz mono 16-bit PCM: what Whisper consumes, and ~32 KB/s.
 export const RECORDING_SAMPLE_RATE = 16_000;
 
-// The transcription worker (main/src/transcribe-worker.ts): job in TRANSCRIBE_JOB, one JSON
-// message per stdout line back.
+// A recording stops itself at this length. Ten minutes is ~19 MB of WAV, a transcript of a
+// couple of thousand words at most and well under the event cap, so stop() stays quick and the
+// SESSION.md the assistant may read stays a few hundred lines. The renderer stops the session at
+// the limit; main drops audio past it as a backstop.
+export const MAX_RECORDING_MS = 10 * 60_000;
+
+// The transcription worker (main/src/transcribe-worker.ts): the job is a JSON file whose path
+// arrives in TRANSCRIBE_JOB_FILE (not the job itself: an environment value is capped at 128 KiB
+// on Linux), one JSON message per stdout line back.
+export const TRANSCRIBE_JOB_FILE_ENV = 'TRANSCRIBE_JOB_FILE';
 export type TranscribeWorkerJob = {
   modelPath: string;
   wavPath: string;
   language: string;
   // Whisper's initial prompt: vocabulary to bias toward (entity names, editor terms).
   prompt?: string;
-  // Silero VAD model: when set, the worker finds the speech with it and `regions` is only the
-  // fallback for when the detector fails.
+  // Silero VAD model: when set, the worker finds the speech with it; its own loudness-based
+  // detection is the fallback for when the detector fails.
   vadModelPath?: string;
-  // Stretches of speech (ms) to transcribe one by one; the whole file when absent.
-  regions?: { start: number; end: number }[];
 };
 
 export type TranscribeWorkerMessage =

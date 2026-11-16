@@ -204,6 +204,8 @@ export interface Ipc {
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
   'electron.openExternal': (url: string) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
+  // Bring the calling window to the front (a dialog opened there from another window).
+  'electron.focusWindow': () => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
   'optimizer.run': (path: string, options: OptimizeOptions) => Promise<OptimizeResult>;
@@ -219,6 +221,8 @@ export interface Ipc {
   'recording.abort': (sessionId: string) => Promise<void>;
   'recording.toolsStatus': (language: string) => Promise<RecordingToolsStatus>;
   'recording.installTools': (language: string) => Promise<void>;
+  // Delete a finished session's folder (the user discarded it before sending).
+  'recording.discard': (dir: string) => Promise<void>;
   'metrics.request': (request: MetricsRequest) => Promise<MetricsResponse>;
   'inspector.start': () => Promise<number>;
   'inspector.attachSceneDebugger': (

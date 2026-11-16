@@ -16,3 +16,8 @@ export async function showSaveDialog(opts: Partial<SaveDialogOptions>) {
 export async function copyToClipboard(text: string) {
   await invoke('electron.copyToClipboard', text);
 }
+
+// Bring this window to the front.
+export async function focusWindow() {
+  await invoke('electron.focusWindow');
+}

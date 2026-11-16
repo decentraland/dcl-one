@@ -51,55 +51,63 @@ export async function startMicrophone(
     },
     video: false,
   });
-  const context = new AudioContext({ sampleRate: RECORDING_SAMPLE_RATE });
-  const workletUrl = URL.createObjectURL(
-    new Blob([WORKLET_SOURCE], { type: 'application/javascript' }),
-  );
-  try {
-    await context.audioWorklet.addModule(workletUrl);
-  } catch (error) {
+  // Once the stream is open, every failure below must release it: the OS keeps the microphone
+  // indicator on for as long as a track is live.
+  let context: AudioContext | undefined;
+  const release = () => {
     stream.getTracks().forEach(track => track.stop());
-    void context.close();
-    throw error;
-  } finally {
-    URL.revokeObjectURL(workletUrl);
-  }
-
-  const source = context.createMediaStreamSource(stream);
-  // No outputs: a sink, processed while it has input without being wired to the speakers.
-  // channelCount 1 + explicit downmixes a stereo device to mono.
-  const node = new AudioWorkletNode(context, 'pcm-capture', {
-    numberOfInputs: 1,
-    numberOfOutputs: 0,
-    channelCount: 1,
-    channelCountMode: 'explicit',
-  });
-  let first = true;
-  node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-    const pcm = new Uint8Array(event.data);
-    if (first) {
-      first = false;
-      // When the first sample of this chunk was heard: now, minus the chunk and the output
-      // latency the context reports. Close enough for ±0.5 s alignment.
-      const chunkMs = (pcm.byteLength / 2 / RECORDING_SAMPLE_RATE) * 1000;
-      onChunk(pcm, Date.now() - chunkMs - (context.baseLatency || 0) * 1000);
-    } else {
-      onChunk(pcm);
+    void context?.close().catch(() => undefined);
+  };
+  try {
+    context = new AudioContext({ sampleRate: RECORDING_SAMPLE_RATE });
+    const workletUrl = URL.createObjectURL(
+      new Blob([WORKLET_SOURCE], { type: 'application/javascript' }),
+    );
+    try {
+      await context.audioWorklet.addModule(workletUrl);
+    } finally {
+      URL.revokeObjectURL(workletUrl);
     }
-  };
-  source.connect(node);
 
-  let stopped = false;
-  return {
-    label: stream.getAudioTracks()[0]?.label ?? '',
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      node.port.onmessage = null;
-      source.disconnect();
-      node.disconnect();
-      stream.getTracks().forEach(track => track.stop());
-      void context.close();
-    },
-  };
+    const source = context.createMediaStreamSource(stream);
+    // No outputs: a sink, processed while it has input without being wired to the speakers.
+    // channelCount 1 + explicit downmixes a stereo device to mono.
+    const node = new AudioWorkletNode(context, 'pcm-capture', {
+      numberOfInputs: 1,
+      numberOfOutputs: 0,
+      channelCount: 1,
+      channelCountMode: 'explicit',
+    });
+    const baseLatency = context.baseLatency || 0;
+    let first = true;
+    node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+      const pcm = new Uint8Array(event.data);
+      if (first) {
+        first = false;
+        // When the first sample of this chunk was heard: now, minus the chunk and the output
+        // latency the context reports. Close enough for ±0.5 s alignment.
+        const chunkMs = (pcm.byteLength / 2 / RECORDING_SAMPLE_RATE) * 1000;
+        onChunk(pcm, Date.now() - chunkMs - baseLatency * 1000);
+      } else {
+        onChunk(pcm);
+      }
+    };
+    source.connect(node);
+
+    let stopped = false;
+    return {
+      label: stream.getAudioTracks()[0]?.label ?? '',
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        node.port.onmessage = null;
+        source.disconnect();
+        node.disconnect();
+        release();
+      },
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
 }

@@ -39,7 +39,7 @@ import { ConnectionStatus } from '/@/lib/connection';
 
 import EditorPng from '/assets/images/editor.png';
 
-import { ai, analytics, recording as recordingPreload } from '#preload';
+import { ai, analytics, misc, recording as recordingPreload } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { useAiSession } from '/@/hooks/useAiSession';
@@ -275,6 +275,8 @@ export function EditorPage() {
       .toolsStatus(locale)
       .catch(() => ({ state: 'missing' as const, downloadMb: 0 }));
     setRecordingConsent({ downloadMb: tools.state === 'missing' ? tools.downloadMb : 0 });
+    // The press may have come from the popped-out chat, which is in front of this window.
+    void misc.focusWindow().catch(() => undefined);
   }, [recorder, settings.recordingConsentAcknowledged, locale]);
   recordClickRef.current = () => void handleRecordClick();
   const handleRecordingConsentAccept = useCallback(() => {

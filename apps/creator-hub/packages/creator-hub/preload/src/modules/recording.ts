@@ -22,6 +22,11 @@ export async function abort(sessionId: string) {
   return invoke('recording.abort', sessionId);
 }
 
+// Delete a finished session's folder: the user discarded it before sending.
+export async function discard(dir: string) {
+  return invoke('recording.discard', dir);
+}
+
 export async function toolsStatus(language: string) {
   return invoke('recording.toolsStatus', language);
 }

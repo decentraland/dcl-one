@@ -1,6 +1,6 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import { ai } from '#preload';
+import { ai, recording as recordingPreload } from '#preload';
 import type {
   AiAssetMention,
   AiAttachment,
@@ -183,6 +183,22 @@ export function recordingAttachmentMeta(recording: AiPendingRecording): AiAttach
 
 // Kill the in-flight turn. Main suppresses the `done` event on an intentional stop, so
 // the reducer finalizes the current bubble itself.
+// "Discard recording": the pending recording leaves the composer and its folder (audio, actions,
+// transcript) leaves the disk. The chip goes first so the UI never waits on the delete.
+export const discardRecording = createAsyncThunk(
+  'ai/discardRecording',
+  async (_: void, { getState, dispatch }) => {
+    const pending = getState().ai.recording;
+    if (pending === null) return;
+    dispatch(actions.setRecording(null));
+    try {
+      await recordingPreload.discard(pending.dir);
+    } catch (error) {
+      console.warn('[Recording] could not delete the discarded recording:', error);
+    }
+  },
+);
+
 export const stop = createAsyncThunk('ai/stop', async (_: void, { dispatch }) => {
   await ai.stop();
   dispatch(actions.stopped());
@@ -633,6 +649,7 @@ export const actions = {
   recheckAfterTurn,
   send,
   stop,
+  discardRecording,
   answerPrompt,
   newChat,
   revertTurn,

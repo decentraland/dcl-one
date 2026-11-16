@@ -45,6 +45,15 @@ describe('trackDom', () => {
           <div class="InputContainer"><input id="token" /></div>
         </div>
         <input id="password" type="password" />
+        <div class="Text Field"><label class="Label">Dispenser Key</label>
+          <div class="InputContainer"><input id="dispenser-input" /></div>
+        </div>
+        <div class="TextArea"><label class="Label">Dispenser Key</label>
+          <textarea id="dispenser" data-sensitive="true"></textarea>
+        </div>
+        <div class="TextArea"><label class="Label">Stream</label>
+          <textarea id="masked" class="masked"></textarea>
+        </div>
       </div>
       <div class="Renderer"><canvas></canvas></div>`);
     stop = trackDom({
@@ -125,6 +134,23 @@ describe('trackDom', () => {
       const all = emitted.map(e => e.text).join('\n');
       expect(all).not.toContain('sk-example123');
       expect(all).not.toContain('hunter2-example');
+      expect(emitted.every(e => e.text.includes('(value hidden)'))).toBe(true);
+    });
+  });
+
+  describe('when the user types into a field the UI itself masks', () => {
+    beforeEach(() => {
+      type(root.querySelector<HTMLInputElement>('#dispenser-input')!, 'dk-example-1');
+      type(root.querySelector<HTMLInputElement>('#dispenser')!, 'dk-example-2');
+      type(root.querySelector<HTMLInputElement>('#masked')!, 'rtmp-example-3');
+      vi.advanceTimersByTime(700);
+    });
+
+    it('should record the edit but never the value', () => {
+      const all = emitted.map(e => e.text).join('\n');
+      expect(all).not.toContain('dk-example');
+      expect(all).not.toContain('rtmp-example');
+      expect(emitted).toHaveLength(3);
       expect(emitted.every(e => e.text.includes('(value hidden)'))).toBe(true);
     });
   });

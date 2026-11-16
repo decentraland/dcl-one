@@ -2,15 +2,21 @@ import { useEffect, useState } from 'react';
 import { CircularProgress, Tooltip } from 'decentraland-ui2';
 
 import type { RecorderStatus } from '/shared/types/ai';
-import type { RecordingToolsStatus } from '/shared/types/recording';
+import { MAX_RECORDING_MS, type RecordingToolsStatus } from '/shared/types/recording';
 
 import { t } from '/@/modules/store/translation/utils';
 import styles from './RecordButton.module.css';
 
-function elapsed(startedAt: number | null, now: number): string {
-  const seconds = startedAt === null ? 0 : Math.max(0, Math.floor((now - startedAt) / 1000));
+function clock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
+
+function elapsed(startedAt: number | null, now: number): string {
+  return clock(startedAt === null ? 0 : Math.min(MAX_RECORDING_MS, now - startedAt));
+}
+
+const LIMIT = clock(MAX_RECORDING_MS);
 
 function busyLabel(status: RecorderStatus, tools: RecordingToolsStatus | null): string {
   if (status === 'starting') return t('editor.recording.starting');
@@ -53,8 +59,9 @@ export function RecordButton({
   const tooltip = live
     ? t('editor.recording.tooltip_live', {
         mic: micLabel || t('editor.recording.default_mic'),
+        minutes: MAX_RECORDING_MS / 60_000,
       })
-    : t('editor.recording.tooltip_idle');
+    : t('editor.recording.tooltip_idle', { minutes: MAX_RECORDING_MS / 60_000 });
 
   return (
     <Tooltip title={tooltip}>
@@ -86,7 +93,10 @@ export function RecordButton({
             {busy
               ? busyLabel(status, tools)
               : live
-                ? t('editor.recording.stop_with_time', { time: elapsed(startedAt, now) })
+                ? t('editor.recording.stop_with_time', {
+                    time: elapsed(startedAt, now),
+                    limit: LIMIT,
+                  })
                 : fullWidth
                   ? t('editor.recording.record_panel')
                   : t('editor.recording.record')}

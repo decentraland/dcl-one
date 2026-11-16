@@ -20,6 +20,10 @@ export function DetachedPlaceholder({
   onToggleRecording: () => void;
 }) {
   const recorder = useSelector(state => state.ai.recorder);
+  // Same gate as the chat's own button: a recording goes to the assistant, so there must be one.
+  const available = useSelector(
+    state => state.ai.providers.find(p => p.id === state.ai.provider)?.available ?? false,
+  );
   return (
     <Panel
       panelWidth={width}
@@ -38,6 +42,7 @@ export function DetachedPlaceholder({
           micLabel={recorder.micLabel}
           tools={recorder.tools}
           onClick={onToggleRecording}
+          disabled={!available}
         />
       </div>
       <EmptyState>

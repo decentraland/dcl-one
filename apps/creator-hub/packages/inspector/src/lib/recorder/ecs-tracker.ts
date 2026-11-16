@@ -47,6 +47,34 @@ const NOISE = new Set([
   'inspector::CustomAsset',
 ]);
 const MAX_LISTED_ENTITIES = 3;
+// Component fields whose value is a credential: the log says they changed, never to what. The
+// per-component list covers fields whose name alone doesn't say so; the pattern catches the
+// obvious ones on any component, including a smart item added later.
+const SENSITIVE_FIELDS: Record<string, Set<string>> = {
+  'asset-packs::Rewards': new Set(['dispenserKey']),
+  'asset-packs::VideoControlState': new Set(['streamKey']),
+};
+const SENSITIVE_FIELD_NAME = /password|secret|token|apikey|privatekey|dispenserkey|mnemonic/i;
+const HIDDEN = '(hidden)';
+
+export function isSensitiveField(base: string, field: string): boolean {
+  return (
+    SENSITIVE_FIELDS[base]?.has(field) === true ||
+    SENSITIVE_FIELD_NAME.test(field.replace(/[-_\s]/g, ''))
+  );
+}
+
+// A copy with every sensitive top-level field blanked, for anything that renders the value.
+export function redactValue(base: string, value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const copy: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  for (const key of Object.keys(copy)) {
+    if (isSensitiveField(base, key) && copy[key] !== undefined && copy[key] !== '') {
+      copy[key] = HIDDEN;
+    }
+  }
+  return copy;
+}
 
 const GIZMO_NAMES: Record<number, string> = {
   [GizmoType.FREE]: 'Free movement',
@@ -84,7 +112,11 @@ type ValueChange = {
   oldName?: string;
 };
 
-function topLevelDiff(prevJson: string | undefined, value: unknown): string | undefined {
+function topLevelDiff(
+  base: string,
+  prevJson: string | undefined,
+  value: unknown,
+): string | undefined {
   if (!prevJson || !value || typeof value !== 'object') return undefined;
   let prev: Record<string, unknown>;
   try {
@@ -98,7 +130,9 @@ function topLevelDiff(prevJson: string | undefined, value: unknown): string | un
     key => shortJson(prev[key], 10_000) !== shortJson(next[key], 10_000),
   );
   if (changed.length === 0) return undefined;
-  return changed.map(key => `${key} ${shortJson(next[key], 60)}`).join(', ');
+  return changed
+    .map(key => `${key} ${isSensitiveField(base, key) ? HIDDEN : shortJson(next[key], 60)}`)
+    .join(', ');
 }
 
 /** Turns inspector-engine changes into selection, entity and component events. */
@@ -233,7 +267,7 @@ export function trackEcs({
         summary += `, parent ${label(transform.parent)}`;
       }
     } else {
-      summary = topLevelDiff(lastJson.get(key), value) ?? shortJson(value);
+      summary = topLevelDiff(base, lastJson.get(key), value) ?? shortJson(redactValue(base, value));
     }
     lastJson.set(key, shortJson(value, 1_000_000));
     const subject =

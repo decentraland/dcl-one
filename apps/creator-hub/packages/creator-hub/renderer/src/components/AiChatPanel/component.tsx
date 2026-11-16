@@ -80,7 +80,10 @@ export function AiChatPanel({
     [dispatch],
   );
   const onDraftConsumed = useCallback(() => dispatch(aiActions.consumeDraftPrompt()), [dispatch]);
-  const onRemoveRecording = useCallback(() => dispatch(aiActions.setRecording(null)), [dispatch]);
+  const onRemoveRecording = useCallback(
+    () => void dispatch(aiActions.discardRecording()),
+    [dispatch],
+  );
 
   return (
     <ChatView

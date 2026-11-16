@@ -75,3 +75,12 @@ export async function getAppVersion() {
 export async function copyToClipboard(text: string) {
   clipboard.writeText(text);
 }
+
+// A dialog opened in one window by a press in another (the detached chat's Record button) is
+// otherwise behind the window the user is looking at.
+export async function focusWindow(sender: Electron.WebContents) {
+  const window = BrowserWindow.fromWebContents(sender);
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.focus();
+}

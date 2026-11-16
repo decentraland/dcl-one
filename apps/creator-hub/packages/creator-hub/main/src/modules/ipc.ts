@@ -59,6 +59,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
   handle('electron.copyToClipboard', (_event, text) => electron.copyToClipboard(text));
+  handle('electron.focusWindow', event => electron.focusWindow(event.sender));
 
   // analytics API (fetched here because the renderer's `Origin: null` fails CORS)
   handle('metrics.request', (_event, request) => metrics.request(request));
@@ -236,6 +237,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('recording.toolsStatus', (_event, language) =>
     recordingTools.getStatus(recordingTools.modelFor(language)),
   );
+  handle('recording.discard', (_event, dir) => recording.discard(dir));
   handle('recording.installTools', (event, language) =>
     recordingTools.install(recordingTools.modelFor(language), status => {
       if (!event.sender.isDestroyed()) event.sender.send(RECORDING_TOOLS_PROGRESS_EVENT, status);

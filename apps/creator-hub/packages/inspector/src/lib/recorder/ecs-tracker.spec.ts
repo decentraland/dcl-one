@@ -1,9 +1,9 @@
-import type { Entity } from '@dcl/ecs';
+import { Schemas, type Entity } from '@dcl/ecs';
 import { Quaternion } from '@dcl/ecs-math';
 
 import { createInspectorEngine } from '../sdk/inspector-engine';
 import { GizmoType } from '../utils/gizmo';
-import { trackEcs } from './ecs-tracker';
+import { isSensitiveField, redactValue, trackEcs } from './ecs-tracker';
 import type { RecordedEventInput, StopTracker } from './types';
 
 type Context = ReturnType<typeof createInspectorEngine>;
@@ -108,6 +108,42 @@ describe('trackEcs', () => {
 
     it('should list them in one event', () => {
       expect(texts()).toEqual([`Selected 2 entities: Barrel_3 (#${barrel}), Crate (#${crate})`]);
+    });
+  });
+
+  describe('when the user edits a component holding a credential', () => {
+    beforeEach(async () => {
+      const Rewards = ctx.engine.defineComponent('asset-packs::Rewards', {
+        campaignId: Schemas.String,
+        dispenserKey: Schemas.String,
+        testMode: Schemas.Boolean,
+      });
+      Rewards.create(barrel, {
+        campaignId: 'camp-1',
+        dispenserKey: 'dk-example-1',
+        testMode: false,
+      });
+      await tick();
+      await vi.advanceTimersByTimeAsync(100);
+      for (const key of ['dk-example-2', 'dk-example-3']) {
+        Rewards.getMutable(barrel).dispenserKey = key;
+        await tick();
+        await vi.advanceTimersByTimeAsync(600);
+      }
+      Rewards.getMutable(barrel).campaignId = 'camp-2';
+      await tick();
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    it('should say the field changed, never what it holds', () => {
+      const all = texts().join('\n');
+      expect(all).not.toContain('dk-example');
+      expect(texts()).toEqual([
+        `Added Rewards to Barrel_3 (#${barrel})`,
+        `Changed Rewards of Barrel_3 (#${barrel}): {"campaignId":"camp-1","dispenserKey":"(hidden)","testMode":false}`,
+        `Changed Rewards of Barrel_3 (#${barrel}): dispenserKey (hidden)`,
+        `Changed Rewards of Barrel_3 (#${barrel}): campaignId "camp-2"`,
+      ]);
     });
   });
 
@@ -263,5 +299,27 @@ describe('trackEcs', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(emitted).toEqual([]);
     });
+  });
+});
+
+describe('isSensitiveField', () => {
+  it('should know the listed fields and credential-shaped names on any component', () => {
+    expect(isSensitiveField('asset-packs::Rewards', 'dispenserKey')).toBe(true);
+    expect(isSensitiveField('asset-packs::Rewards', 'campaignId')).toBe(false);
+    expect(isSensitiveField('asset-packs::VideoControlState', 'streamKey')).toBe(true);
+    expect(isSensitiveField('some::Item', 'api_key')).toBe(true);
+    expect(isSensitiveField('some::Item', 'password')).toBe(true);
+    expect(isSensitiveField('some::Item', 'key')).toBe(false);
+  });
+});
+
+describe('redactValue', () => {
+  it('should blank sensitive fields and leave the rest', () => {
+    expect(redactValue('asset-packs::Rewards', { campaignId: 'c', dispenserKey: 'd' })).toEqual({
+      campaignId: 'c',
+      dispenserKey: '(hidden)',
+    });
+    expect(redactValue('asset-packs::Rewards', { dispenserKey: '' })).toEqual({ dispenserKey: '' });
+    expect(redactValue('asset-packs::Rewards', 'text')).toBe('text');
   });
 });

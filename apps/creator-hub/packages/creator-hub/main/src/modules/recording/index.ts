@@ -6,6 +6,7 @@ import { app, systemPreferences, type WebContents } from 'electron';
 import log from 'electron-log/main';
 
 import {
+  MAX_RECORDING_MS,
   RECORDING_SAMPLE_RATE,
   type RecordedEvent,
   type RecordingResult,
@@ -17,7 +18,6 @@ import { dropNonSpeech } from './nonspeech';
 import { buildTimeline, renderContext, renderSessionMarkdown } from './timeline';
 import { install, isInstalled, modelFor } from './tools';
 import { transcribe } from './transcribe';
-import { speechRegions } from './vad';
 import { pcmPeak, wavHeader, WAV_HEADER_BYTES } from './wav';
 
 // The session recorder's host side. The renderer streams microphone PCM and event batches here
@@ -29,10 +29,17 @@ import { pcmPeak, wavHeader, WAV_HEADER_BYTES } from './wav';
 const KEEP_SESSIONS_PER_PROJECT = 20;
 // A runaway inspector must not grow the log without bound: ~4 h of busy editing.
 const MAX_EVENTS = 50_000;
+// The renderer stops at MAX_RECORDING_MS; audio past it is dropped here in case it doesn't.
+const MAX_AUDIO_BYTES = (RECORDING_SAMPLE_RATE * 2 * MAX_RECORDING_MS) / 1000;
 // Below this 16-bit peak the microphone heard nothing worth transcribing (Whisper invents
 // "Thank you." on silence).
 const SILENCE_PEAK = 600;
-const MAX_TEXT = 300;
+// The inspector's own cap (lib/recorder/types.ts MAX_TEXT_LENGTH); the same here so a line is
+// never cut differently on the two sides.
+const MAX_TEXT = 200;
+const MAX_KIND = 40;
+const MAX_NAME = 120;
+const MAX_AREA = 60;
 
 type Session = {
   id: string;
@@ -66,11 +73,19 @@ function projectFolder(projectPath: string): string {
   return `${slug}-${hash}`;
 }
 
-function timestampFolder(date: Date): string {
+// Readable and unique: two sessions started within the same second (an abort followed by a
+// restart) must not share a folder, since the files are opened for truncation.
+export function timestampFolder(
+  date: Date,
+  suffix = crypto.randomBytes(2).toString('hex'),
+): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(
     date.getHours(),
-  )}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+  )}-${pad(date.getMinutes())}-${pad(date.getSeconds())}.${String(date.getMilliseconds()).padStart(
+    3,
+    '0',
+  )}-${suffix}`;
 }
 
 // macOS gates the microphone per app; the first request shows the system prompt. Elsewhere the
@@ -164,6 +179,19 @@ function active(sessionId: string, senderId: number): Session | null {
   return session;
 }
 
+// A failed write (disk full, the folder gone) ends the session with what was captured, instead
+// of throwing inside an ipcMain listener ten times a second.
+function writeOrAbort(s: Session, write: () => void): boolean {
+  try {
+    write();
+    return true;
+  } catch (error) {
+    log.error('[Recording] could not write to the session folder:', error);
+    if (session === s) abort('the recording could not be written to disk');
+    return false;
+  }
+}
+
 export function appendAudio(
   senderId: number,
   sessionId: string,
@@ -172,15 +200,32 @@ export function appendAudio(
 ): void {
   const s = active(sessionId, senderId);
   if (!s || !(pcm instanceof Uint8Array) || pcm.byteLength % 2 !== 0) return;
+  const room = MAX_AUDIO_BYTES - s.audioBytes;
+  if (room <= 0) return;
+  const chunk = pcm.byteLength > room ? pcm.subarray(0, room - (room % 2)) : pcm;
   if (s.audioStartedAt === null) {
     s.audioStartedAt = typeof firstSampleAt === 'number' ? firstSampleAt : Date.now();
   }
-  fs.writeSync(s.audioFd, pcm);
-  s.audioBytes += pcm.byteLength;
-  s.peak = Math.max(s.peak, pcmPeak(pcm));
+  if (!writeOrAbort(s, () => fs.writeSync(s.audioFd, chunk))) return;
+  s.audioBytes += chunk.byteLength;
+  s.peak = Math.max(s.peak, pcmPeak(chunk));
 }
 
-function sanitizeEvent(raw: unknown): RecordedEvent | null {
+// Every string in an event comes from the inspector, which reads it off the scene: a mesh or
+// entity name in an imported glTF or a smart item is third-party text. One line each, no
+// control characters, so none of it can forge a timeline line (a "SAID:" line in particular).
+export function cleanText(text: string, max: number): string {
+  return (
+    text
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, max)
+  );
+}
+
+export function sanitizeEvent(raw: unknown): RecordedEvent | null {
   if (!raw || typeof raw !== 'object') return null;
   const e = raw as Record<string, unknown>;
   if (typeof e.t !== 'number' || typeof e.kind !== 'string' || typeof e.text !== 'string') {
@@ -188,17 +233,15 @@ function sanitizeEvent(raw: unknown): RecordedEvent | null {
   }
   const event: RecordedEvent = {
     t: e.t,
-    kind: e.kind.slice(0, 40),
-    text: e.text.slice(0, MAX_TEXT),
+    kind: cleanText(e.kind, MAX_KIND),
+    text: cleanText(e.text, MAX_TEXT),
   };
   const entity = e.entity as Record<string, unknown> | undefined;
   if (entity && typeof entity.id === 'number') {
-    event.entity = {
-      id: entity.id,
-      ...(typeof entity.name === 'string' && { name: entity.name.slice(0, 120) }),
-    };
+    const name = typeof entity.name === 'string' ? cleanText(entity.name, MAX_NAME) : '';
+    event.entity = { id: entity.id, ...(name && { name }) };
   }
-  if (typeof e.area === 'string') event.area = e.area.slice(0, 60);
+  if (typeof e.area === 'string') event.area = cleanText(e.area, MAX_AREA);
   if (typeof e.x === 'number') event.x = e.x;
   if (typeof e.y === 'number') event.y = e.y;
   return event;
@@ -211,8 +254,8 @@ export function appendEvents(senderId: number, sessionId: string, events: unknow
     if (s.events.length >= MAX_EVENTS) return;
     const event = sanitizeEvent(raw);
     if (!event) continue;
+    if (!writeOrAbort(s, () => fs.writeSync(s.eventsFd, `${JSON.stringify(event)}\n`))) return;
     s.events.push(event);
-    fs.writeSync(s.eventsFd, `${JSON.stringify(event)}\n`);
   }
 }
 
@@ -228,13 +271,6 @@ function finalizeFiles(s: Session): number {
     fs.closeSync(s.eventsFd);
   }
   return endedAt;
-}
-
-function readPcm(wavPath: string): Int16Array {
-  const data = fs.readFileSync(wavPath).subarray(WAV_HEADER_BYTES);
-  const aligned = new Uint8Array(data.byteLength - (data.byteLength % 2));
-  aligned.set(data.subarray(0, aligned.byteLength));
-  return new Int16Array(aligned.buffer);
 }
 
 // Distinct entity names the user worked with: Whisper's initial prompt, so "Barrel_3" comes out
@@ -332,21 +368,16 @@ export async function stop(senderId: number, sessionId: string): Promise<Recordi
     try {
       const model = modelFor(s.language);
       await install(model, () => {});
-      const wavPath = path.join(s.dir, 'audio.wav');
-      // The worker finds the speech with Silero; these loudness-based regions are its fallback.
-      const regions = speechRegions(readPcm(wavPath), RECORDING_SAMPLE_RATE);
-      words =
-        regions.length > 0
-          ? dropNonSpeech(
-              await transcribe(
-                wavPath,
-                model,
-                s.language.slice(0, 2),
-                vocabularyPrompt(s.events),
-                regions,
-              ),
-            )
-          : [];
+      // The worker finds the speech (Silero, or loudness when that fails) and transcribes each
+      // stretch; nothing of the audio is read on this thread.
+      words = dropNonSpeech(
+        await transcribe(
+          path.join(s.dir, 'audio.wav'),
+          model,
+          s.language.slice(0, 2),
+          vocabularyPrompt(s.events),
+        ),
+      );
     } catch (error) {
       transcriptionError = error instanceof Error ? error.message : String(error);
       log.error('[Recording] transcription failed:', error);
@@ -374,4 +405,21 @@ async function prune(projectDir: string): Promise<void> {
 
 export function isRecording(): boolean {
   return session !== null;
+}
+
+// The user discarded a finished recording before sending it: nothing of it stays on disk. Only
+// a session folder under the recordings dir qualifies, never the one still being written.
+export async function discard(dir: string): Promise<void> {
+  const root = getRecordingsDir();
+  const target = path.resolve(dir);
+  const relative = path.relative(root, target);
+  const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (!inside || relative.split(path.sep).length !== 2) {
+    throw new Error('Not a session recording folder.');
+  }
+  if (session && path.resolve(session.dir) === target) {
+    throw new Error('This recording is still running.');
+  }
+  await fsp.rm(target, { recursive: true, force: true });
+  log.info(`[Recording] discarded ${target}`);
 }

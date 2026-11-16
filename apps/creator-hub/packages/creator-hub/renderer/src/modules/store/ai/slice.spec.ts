@@ -5,6 +5,7 @@ import type { AiProviderInfo } from '/shared/types/ai';
 import {
   actions,
   assetMentionsContext,
+  discardRecording,
   fetchProviders,
   persistConversation,
   recheckAfterTurn,
@@ -20,10 +21,12 @@ const preloadAi = vi.hoisted(() => ({
   detectProviders: vi.fn(),
   revertTurn: vi.fn(),
 }));
+const preloadRecording = vi.hoisted(() => ({ discard: vi.fn() }));
 
 vi.mock('#preload', async importOriginal => ({
   ...(await importOriginal<object>()),
   ai: preloadAi,
+  recording: preloadRecording,
 }));
 
 describe('when sending while main is still running a turn', () => {
@@ -511,5 +514,50 @@ describe('when reverting a turn fails for another reason', () => {
     const rejected = dispatched.find(a => a.type === revertTurn.rejected.type);
     expect(rejected).toBeDefined();
     expect(rejected?.payload).toBeUndefined();
+  });
+});
+
+describe('when discarding a pending session recording', () => {
+  let ai: ReturnType<typeof reducer>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    preloadRecording.discard.mockResolvedValue(undefined);
+    ai = reducer(
+      undefined,
+      actions.setRecording({
+        durationMs: 65_000,
+        actionCount: 4,
+        dir: '/rec/p/s1',
+        context: '[Session recording]',
+      }),
+    );
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
+    await discardRecording()(dispatch as never, getState as never, undefined);
+  });
+
+  it('should drop it from the composer', () => {
+    expect(ai.recording).toBeNull();
+  });
+
+  it('should delete its files', () => {
+    expect(preloadRecording.discard).toHaveBeenCalledWith('/rec/p/s1');
+  });
+});
+
+describe('when discarding with no recording pending', () => {
+  it('should delete nothing', async () => {
+    vi.clearAllMocks();
+    const getState = () => ({
+      editor: { project: { path: '/scene' } },
+      ai: reducer(undefined, { type: 'init' }),
+      workspace: {},
+    });
+    await discardRecording()(vi.fn() as never, getState as never, undefined);
+    expect(preloadRecording.discard).not.toHaveBeenCalled();
   });
 });

@@ -37,7 +37,11 @@ const SPECIAL_KEYS =
   /^(Delete|Backspace|Escape|Enter|F\d{1,2}|ArrowUp|ArrowDown|ArrowLeft|ArrowRight)$/;
 const TEXT_EDITING_KEYS = /^(Delete|Backspace|ArrowUp|ArrowDown|ArrowLeft|ArrowRight)$/;
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
-const SECRET_FIELD = /pass(word)?|secret|token|api[-_ ]?key|private[-_ ]?key|mnemonic|seed phrase/i;
+const SECRET_FIELD =
+  /pass(word)?|secret|token|api[-_ ]?key|private[-_ ]?key|dispenser[-_ ]?key|mnemonic|seed phrase/i;
+// A field whose value the UI itself hides: `data-sensitive` (the ui TextArea's `masked`) or a
+// masked text area. Its value never reaches the log, shown or not.
+const SENSITIVE_SELECTOR = '[data-sensitive], textarea.masked';
 const NON_TEXT_INPUTS = new Set([
   'button',
   'checkbox',
@@ -74,6 +78,7 @@ function isViewportSurface(el: Element): boolean {
 
 function isSecretField(el: Element, label: string): boolean {
   if ((el as HTMLInputElement).type === 'password') return true;
+  if (el.matches(SENSITIVE_SELECTOR) || el.closest('[data-sensitive]')) return true;
   const hints = [
     label,
     el.getAttribute('name'),
