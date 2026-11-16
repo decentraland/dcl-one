@@ -120,6 +120,25 @@ impl Pass {
 /// Batches one tick drains at most per source before yielding.
 const MAX_BATCHES_PER_TICK: usize = 50;
 
+/// Runs `batch` (one transaction: rows passed, a full batch was passed) until
+/// it reports no more rows or the tick's budget is spent; returns the rows
+/// passed. An error stops the drain; the batches before it stay committed.
+async fn drain<F, Fut>(mut batch: F) -> Result<u64, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(u64, bool), sqlx::Error>>,
+{
+    let mut passed = 0;
+    for _ in 0..MAX_BATCHES_PER_TICK {
+        let (n, more) = batch().await?;
+        passed += n;
+        if !more {
+            break;
+        }
+    }
+    Ok(passed)
+}
+
 /// Gap ranges an id cursor keeps at most; at the cap it passes no row that
 /// would open another until gaps resolve (it holds, never skips).
 const MAX_GAPS: usize = 5_000;
@@ -651,10 +670,6 @@ fn spawn_one(
         move |ctx| {
             let pass = pass.clone();
             async move {
-                // A restore hold keeps every social write back, these too.
-                if crate::shared::writes::refusal(true).is_some() {
-                    return Ok(());
-                }
                 let written = run(pass).await?;
                 if written > 0 {
                     ctx.progress(format!("{written} rows passed"));

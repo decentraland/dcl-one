@@ -5,7 +5,7 @@ import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { renderSettled, fakeSession } from '@hud/test/harness'
-import { PopupHost } from '@hud/design/popups'
+import { DebugPanelHost } from '@hud/features/debug/DebugPanel'
 import { requestDebugPanel } from '@hud/features/debug/useDebugPanel'
 import * as boot from '../lib/bootMode'
 
@@ -29,7 +29,7 @@ it.each([true, false])('routes the Session support action through the host that 
   const open = vi.spyOn(window, 'open').mockReturnValue(null)
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line) => line === '/debug_panel' ? '[]' : 'false')
-  await renderSettled(<><Sidebar session={session} /><PopupHost /></>)
+  await renderSettled(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   act(() => requestDebugPanel('Session', vi.fn()))
   const panel = within(await screen.findByRole('dialog', { name: 'Debug panel' }))
   await userEvent.click(await panel.findByRole('button', { name: 'Report a bug' }))

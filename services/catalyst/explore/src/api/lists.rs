@@ -31,7 +31,7 @@ pub fn routes() -> Router<Shared> {
 }
 
 /// The served set: mirrored values plus local additions, minus local removals, sorted.
-pub async fn values(pool: &PgPool, list: &str) -> sqlx::Result<Vec<String>> {
+pub async fn values<'e>(pool: impl sqlx::PgExecutor<'e>, list: &str) -> sqlx::Result<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT value FROM (
              SELECT value FROM explore_api.lists WHERE list = $1

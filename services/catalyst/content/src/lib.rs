@@ -58,6 +58,7 @@ pub mod write_deployer;
 // the upstream forwarding of local deploys (CONTENT_FORWARD_UPSTREAM_URL).
 pub mod create_entity;
 pub mod denylist;
+pub mod failed_deployments_store;
 pub mod forward;
 pub mod land_publish;
 pub mod partial_deployments;
@@ -78,7 +79,7 @@ pub mod time_range;
 // (READ_THROUGH_ENABLED).
 pub mod read_through;
 
-// A sync-only node's history prune: the superseded deployments, their
+// The history prune: superseded deployments (local scenes excepted), their
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
 

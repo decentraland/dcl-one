@@ -7,7 +7,6 @@ import StProfileCreationsTab from "@ui/web/pages/StProfileCreationsTab";
 import StProfileMyAssetsTab from "@ui/web/pages/StProfileMyAssetsTab";
 import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
 import StProfilePhotosTab from "@ui/web/pages/StProfilePhotosTab";
-import StProfilePlacesTab from "@ui/web/pages/StProfilePlacesTab";
 
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
@@ -17,12 +16,12 @@ import { canReadProfile } from "@/data/lib/profile/queries";
 
 import { ProfileRouteError } from "./errors";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
+import { ProfilePlacesScreen } from "./ProfilePlacesScreen";
 import {
   useMyCommunities,
   useProfileAssets,
   useProfileCreations,
   useProfilePhotos,
-  useProfilePlaces,
   useRequiredProfile,
 } from "./hooks";
 import { isOwnProfile, profileHref, profileTabs, readProfileTab, type ProfileTab } from "./tabs";
@@ -69,26 +68,44 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
 
+  const navigation = {
+    tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
+    active: activeTab,
+    onTab,
+  };
+
+  // Overview and Places have the profile site's layout: its own tab bar (scrollable on narrow
+  // screens) and no section side panel, so they stay outside the context the Sites chrome turns
+  // into that panel.
   if (activeTab === "overview") {
     return (
       <ProfileOverviewScreen
         profile={profile}
+        hasProfile={Boolean(query.data)}
         own={own}
-        tabs={tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) }))}
+        tabs={navigation.tabs}
         onTab={onTab}
+      />
+    );
+  }
+
+  if (activeTab === "places") {
+    return (
+      <ProfilePlacesScreen
+        profile={profile}
+        // A failed background re-read keeps the profile; only a first read still running is unknown.
+        profileReady={query.data !== undefined}
+        own={own}
+        tabs={navigation.tabs}
+        onTab={onTab}
+        sid={sid}
       />
     );
   }
 
   return (
     <div className="landings-profile">
-      <ProfileNavigationContext
-        value={{
-          tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
-          active: activeTab,
-          onTab,
-        }}
-      >
+      <ProfileNavigationContext value={navigation}>
         <ActiveTab tab={activeTab} address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
       </ProfileNavigationContext>
     </div>
@@ -100,8 +117,6 @@ function ActiveTab({ tab, ...props }: TabProps & { tab: ProfileTab }) {
   switch (tab) {
     case "creations":
       return <CreationsTab {...props} />;
-    case "places":
-      return <PlacesTab {...props} />;
     case "photos":
       return <PhotosTab {...props} />;
     case "communities":
@@ -125,11 +140,6 @@ function CreationsTab({ address, profile, own, tabs }: TabProps) {
       emotes={data?.emotes ?? []}
     />
   );
-}
-
-function PlacesTab({ address, profile, own }: TabProps) {
-  const { data } = useProfilePlaces(address, profile.name);
-  return <StProfilePlacesTab profile={profile as never} isOwnProfile={own} places={data ?? []} />;
 }
 
 function PhotosTab({ address, profile, own }: TabProps) {

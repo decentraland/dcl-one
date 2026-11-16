@@ -11,7 +11,7 @@ The HUD shared with the Sites `/play` host lives in two layers. The UI is
 reads. Write shared code there, not in `src/`; the core never imports the UI. It imports nothing from a host: a behaviour the hosts do
 differently comes from `@hud-host` (`src/host.ts` here, implementing
 `library/explorer-core/hostContract.ts`). These guidelines apply to it as to `src/`, and
-`npm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
+`pnpm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
 
 Design source of truth: the checked-in tokens and design primitives, together with the Explorer design system supplied through authorized project context. Keep private design-file identifiers outside this public tree.
 
@@ -87,7 +87,7 @@ server holds.
 
 ## 6. Checks
 
-- `npm run typecheck` must pass.
+- `pnpm run typecheck` must pass.
 - No new hardcoded brand/status colors, radii, or type sizes — grep your diff for raw
   `#` hex and `rgba(` and justify each (most should be a token).
 

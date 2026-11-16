@@ -21,6 +21,9 @@ type Socket =
 async fn server(cap: u32) -> (u16, AppState) {
     let mut settings = Settings::for_tests();
     settings.server.max_sockets = cap;
+    server_with(settings).await
+}
+async fn server_with(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
         state.clone(),
@@ -36,7 +39,14 @@ async fn server(cap: u32) -> (u16, AppState) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        use catalyst::comms::archipelago::ws::raw_transport;
+        let app = app.layer(axum::middleware::from_fn(raw_transport::connection_info));
+        axum::serve(
+            raw_transport::Listener(listener),
+            app.into_make_service_with_connect_info::<raw_transport::Connection>(),
+        )
+        .await
+        .unwrap();
     });
     (port, state)
 }
@@ -619,6 +629,10 @@ async fn claimed_deny_and_verified_deny_or_ban_fail_before_admission() {
 }
 
 async fn raw_upgrade(port: u16) -> Socket {
+    raw_upgrade_with_prefix(port, &[]).await
+}
+
+async fn raw_upgrade_with_prefix(port: u16, prefix: &[u8]) -> Socket {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
@@ -627,7 +641,9 @@ async fn raw_upgrade(port: u16) -> Socket {
         "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
     );
     eprintln!("CLOSE_WIRE request={request:?}");
-    tcp.write_all(request.as_bytes()).await.unwrap();
+    let mut request = request.into_bytes();
+    request.extend_from_slice(prefix);
+    tcp.write_all(&request).await.unwrap();
     let mut response = vec![];
     tokio::time::timeout(Duration::from_secs(3), async {
         while !response.ends_with(b"\r\n\r\n") {
@@ -648,6 +664,39 @@ async fn raw_upgrade(port: u16) -> Socket {
         None,
     )
     .await
+}
+
+#[tokio::test]
+async fn initial_http_read_ahead_preserves_partial_frame_and_ordinary_challenge() {
+    use tokio::io::AsyncWriteExt;
+    let (port, state) = server(1).await;
+    // The request and first frame byte enter the same HTTP read-ahead buffer.
+    let mut socket = raw_upgrade_with_prefix(port, &[0x89]).await;
+    let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = socket.get_mut() else {
+        panic!("plaintext test transport expected")
+    };
+    // Complete a masked Ping only after receiving the HTTP upgrade response.
+    tcp.write_all(&[0x81, 1, 2, 3, 4, b'p' ^ 1]).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Pong(b"p".to_vec().into())
+    );
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: "0x0000000000000000000000000000000000000001".into(),
+            },
+        )))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive(&mut socket).await,
+        server_packet::Message::ChallengeResponse(_)
+    ));
+    let (bytes, ended) = raw_peer_close(&mut socket, "read-ahead").await;
+    assert_eq!(&bytes[..2], &[0x88, 12]);
+    assert!(ended.is_ok());
+    wait(|| state.sockets.available_permits() == 1).await;
 }
 
 // Write the masked control frame directly and keep TCP open until the server ends it.
@@ -741,7 +790,7 @@ async fn clean_peer_close_echoes_exact_reason_and_ends_tcp_at_each_application_s
                 socket
                     .send(packet(client_packet::Message::ChallengeRequest(
                         ChallengeRequestMessage {
-                            address: "0x0000000000000000000000000000000000000001".into(),
+                            address: "0x0000000000000000000000000000000000000101".into(),
                         },
                     )))
                     .await
@@ -1115,7 +1164,7 @@ async fn pending_contract(port: u16, delegated: bool) -> (Socket, String, String
     pending_contract_as(
         port,
         delegated,
-        "0x0000000000000000000000000000000000000001".into(),
+        "0x0000000000000000000000000000000000000101".into(),
         PrivateKeySigner::random(),
     )
     .await
@@ -1130,7 +1179,7 @@ async fn pending_contract_as(
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
         .await
         .unwrap();
-    let address = "0x0000000000000000000000000000000000000001".to_string();
+    let address = "0x0000000000000000000000000000000000000101".to_string();
     socket
         .send(packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage { address: claim },
@@ -1248,7 +1297,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 let (socket, _, session, _, _) = pending_contract_as(
                     port,
                     true,
-                    "0x0000000000000000000000000000000000000001".into(),
+                    "0x0000000000000000000000000000000000000101".into(),
                     if index == 0 || same_session {
                         device.clone()
                     } else {
@@ -1260,7 +1309,7 @@ async fn local_registration_follows_successful_completion_and_preserves_other_de
                 sockets.push(socket);
                 sessions.push(session);
             }
-            let address = "0x0000000000000000000000000000000000000001";
+            let address = "0x0000000000000000000000000000000000000101";
             assert_eq!(state.registry.authenticated_count(), 0);
             validator.gates[order[0]].add_permits(1);
             assert!(matches!(
@@ -1435,6 +1484,7 @@ fn heartbeat(x: f32) -> Message {
 #[ignore = "requires PULSE_NATS_SERVER_BIN; real broker and Pulse statistics publisher"]
 async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     use catalyst::comms::gatekeeper::bus::{BrokerBus, NatsBus};
+    use catalyst::comms::protocol::bus::statistics::{ProducerReply, ProducerRequest};
     use catalyst::comms::pulse::cluster::nats::{NatsClusterFeed, NatsFeedOptions};
     use std::sync::Arc;
     let broker = nats_broker::Broker::start(&std::env::var("PULSE_NATS_SERVER_BIN").unwrap(), None);
@@ -1461,6 +1511,23 @@ async fn orderly_shutdown_drains_authenticated_disconnect_to_live_pulse() {
     })
     .await
     .unwrap();
+    // The connector drops an observation when Pulse does not answer its producer Status request,
+    // and Pulse subscribes asynchronously after spawn. A Status reply proves the producer subject
+    // (installed after the observation subject) is live before the only heartbeat is sent.
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let status = ProducerRequest::Status.encode().unwrap();
+        while !matches!(
+            bus.statistics_control(status.clone())
+                .await
+                .ok()
+                .and_then(|reply| ProducerReply::decode(&reply)),
+            Some(ProducerReply::Status { .. })
+        ) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Pulse never answered the producer Status request");
     let port = archipelago::serve(state.clone()).await;
     let (mut socket, address) = authenticated(port).await;
     socket.send(heartbeat(42.)).await.unwrap();
@@ -1595,6 +1662,101 @@ async fn upgrade_cap_is_shared_across_paths_and_mounts_and_released_after_transp
     wait(|| state.sockets.available_permits() == 1).await;
 }
 #[tokio::test]
+async fn a_full_pending_share_evicts_its_oldest_handshake_instead_of_refusing_new_joins() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 5;
+    settings.server.max_pending_handshakes = 2;
+    let (port, state) = server_with(settings).await;
+    let closed = |mut socket: Socket| async move {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await
+        .expect("the evicted handshake closes");
+    };
+
+    let oldest = raw_upgrade(port).await;
+    let mut held = raw_upgrade(port).await;
+    wait(|| state.pending_handshakes.held() == 2).await;
+    // The share is full, yet a new client joins: the oldest pending handshake makes room.
+    let (first, _) = authenticated(port).await;
+    closed(oldest).await;
+    // Sockets that completed the handshake no longer hold a pending place.
+    wait(|| state.pending_handshakes.held() == 1).await;
+    wait(|| state.sockets.available_permits() == 3).await;
+    // The next-oldest handshake was not evicted and still completes.
+    let wallet = PrivateKeySigner::random();
+    held.send(packet(client_packet::Message::ChallengeRequest(
+        ChallengeRequestMessage {
+            address: format!("{:#x}", wallet.address()),
+        },
+    )))
+    .await
+    .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut held).await else {
+        panic!("challenge expected")
+    };
+    send_eoa_chain(&mut held, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(_) = receive(&mut held).await else {
+        panic!("welcome expected")
+    };
+    wait(|| state.pending_handshakes.held() == 0).await;
+    drop((first, held));
+    wait(|| state.sockets.available_permits() == 5).await;
+}
+
+#[tokio::test]
+async fn a_socket_must_request_its_challenge_before_the_signing_deadline_starts() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 2;
+    settings.auth.challenge_request_timeout_ms = 300;
+    settings.auth.handshake_timeout_ms = 60_000;
+    let (port, state) = server_with(settings).await;
+
+    let mut silent = raw_upgrade(port).await;
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match silent.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(other)) => panic!("unexpected frame before the challenge: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("a socket silent before its challenge request closes at the shorter deadline");
+    assert!(started.elapsed() >= Duration::from_millis(250));
+    wait(|| state.sockets.available_permits() == 2).await;
+
+    // The signing stage keeps the full `HANDSHAKE_TIMEOUT`.
+    let wallet = PrivateKeySigner::random();
+    let mut socket = raw_upgrade(port).await;
+    socket
+        .send(packet(client_packet::Message::ChallengeRequest(
+            ChallengeRequestMessage {
+                address: format!("{:#x}", wallet.address()),
+            },
+        )))
+        .await
+        .unwrap();
+    let server_packet::Message::ChallengeResponse(response) = receive(&mut socket).await else {
+        panic!("challenge expected")
+    };
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    send_eoa_chain(&mut socket, &wallet, None, &response.challenge_to_sign).await;
+    let server_packet::Message::Welcome(welcome) = receive(&mut socket).await else {
+        panic!("welcome expected")
+    };
+    assert_eq!(welcome.peer_id, format!("{:#x}", wallet.address()));
+}
+
+#[tokio::test]
 async fn baseline_v4_authentication_is_not_exposed() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let (port, _) = server(2).await;
@@ -1623,7 +1785,7 @@ async fn baseline_v4_authentication_is_not_exposed() {
     // Echoing a protocol name does not enable extended offer or typed-auth fields.
     // ChallengeRequest.address followed by the reserved ConnectionOffer tag.
     let mut challenge = vec![0x0a, 42];
-    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000001");
+    challenge.extend_from_slice(b"0x0000000000000000000000000000000000000101");
     challenge.extend_from_slice(&[0x12, 0]);
     let mut frame = vec![0x0a, challenge.len() as u8];
     frame.extend(challenge);
@@ -1771,7 +1933,7 @@ async fn source_contract_challenge_has_32_random_bytes() {
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1828,7 +1990,7 @@ async fn source_contract_text_data_uses_the_same_protobuf_decoder() {
         .unwrap();
     let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
         ChallengeRequestMessage {
-            address: "0x0000000000000000000000000000000000000001".into(),
+            address: "0x0000000000000000000000000000000000000101".into(),
         },
     )) else {
         unreachable!()
@@ -1903,7 +2065,7 @@ async fn source_contract_negotiates_first_offered_protocol_without_selecting_aut
         socket
             .send(packet(client_packet::Message::ChallengeRequest(
                 ChallengeRequestMessage {
-                    address: "0x0000000000000000000000000000000000000001".into(),
+                    address: "0x0000000000000000000000000000000000000101".into(),
                 },
             )))
             .await
@@ -1951,7 +2113,7 @@ async fn source_contract_inbound_message_limit_is_16_kib() {
             .unwrap();
         let Message::Binary(bytes) = packet(client_packet::Message::ChallengeRequest(
             ChallengeRequestMessage {
-                address: "0x0000000000000000000000000000000000000001".into(),
+                address: "0x0000000000000000000000000000000000000101".into(),
             },
         )) else {
             unreachable!()
@@ -1979,9 +2141,14 @@ async fn per_source_server() -> u16 {
     settings.server.max_sockets_per_ip = 1;
     settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
     settings.auth.handshake_timeout_ms = 300;
+    proxied_server(settings).await.0
+}
+
+/// A server that sees each request's peer, so `X-Real-IP` from a trusted proxy names the client.
+async fn proxied_server(settings: Settings) -> (u16, AppState) {
     let state = archipelago::state(settings).await;
     let mounts = catalyst::comms::archipelago::mounts(
-        state,
+        state.clone(),
         true,
         Default::default(),
         catalyst::comms::stats::http::test_support::matcher(),
@@ -1998,7 +2165,7 @@ async fn per_source_server() -> u16 {
         .await
         .unwrap();
     });
-    port
+    (port, state)
 }
 
 async fn connect_from(port: u16, client: &str) -> Result<Socket, (u16, Option<String>)> {
@@ -2033,6 +2200,39 @@ async fn wait_admitted(port: u16, client: &str) -> Socket {
     })
     .await
     .expect("the source's slot was never released")
+}
+
+#[tokio::test]
+async fn a_client_source_holds_at_most_its_share_of_pending_handshakes() {
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets = 20;
+    settings.server.max_pending_handshakes = 10;
+    settings.server.max_sockets_per_ip = 0;
+    settings.server.max_pending_handshakes_per_ip = 2;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.1/32".parse().unwrap()];
+    let (port, state) = proxied_server(settings).await;
+    let busy = "203.0.113.7";
+    let first = connect_from(port, busy).await.unwrap();
+    let _second = connect_from(port, busy).await.unwrap();
+    // The source's pending share is full; other sources still join.
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
+    let _other = connect_from(port, "203.0.113.8").await.unwrap();
+    assert_eq!(state.pending_handshakes.held(), 3);
+    // A socket that completes its handshake gives its source's share back.
+    let (_first, _) = authenticate(
+        first,
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+    )
+    .await;
+    let _third = wait_admitted(port, busy).await;
+    assert_eq!(
+        connect_from(port, busy).await.err(),
+        Some((429, Some("5".into())))
+    );
 }
 
 #[tokio::test]
