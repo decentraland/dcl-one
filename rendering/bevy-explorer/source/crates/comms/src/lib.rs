@@ -16,13 +16,13 @@ pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
 pub mod profile;
-pub mod public_voice;
 pub mod pulse;
 pub mod recovery;
 pub mod room_connection;
 pub mod scene_rooms;
 pub mod scene_topics;
 pub mod signed_login;
+pub mod speaking;
 #[cfg(test)]
 mod test;
 mod traffic;
@@ -120,6 +120,7 @@ impl Plugin for CommsPlugin {
             automation::CommsAutomationPlugin,
             nearby_mutes::NearbyMutesPlugin,
             scene_topics::SceneTopicsPlugin,
+            speaking::SpeakingPlugin,
         ));
 
         #[cfg(feature = "livekit")]

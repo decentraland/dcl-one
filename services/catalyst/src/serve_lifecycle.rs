@@ -1,39 +1,10 @@
 //! Root HTTP server lifecycle.
-use crate::{comms, config::Config, jobs, shared};
+use crate::{comms, jobs};
 use anyhow::Context;
 use std::{sync::Arc, time::Duration};
 
 /// How long the workers get to stop (flush, persist cursors) before they are aborted.
 const JOBS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// `WRITES_RESTORE_STAMP_DIR`: from here on every write gate checks the
-/// stamps live; the startup verdict is only logged, so a node that boots
-/// with a stale stamp serves its reads and takes writes once a backup and a
-/// drill land.
-pub(super) fn install_restore_stamps(config: &Config) -> anyhow::Result<()> {
-    let Some(dir) = config.restore_stamp_dir() else {
-        tracing::info!("WRITES_RESTORE_STAMP_DIR unset: the write switches alone decide");
-        return Ok(());
-    };
-    let stamps = shared::writes::RestoreStamps::from_settings(
-        dir,
-        config.writes.writes_backup_max_age_hours,
-        config.writes.writes_drill_max_age_days,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let on = config.write_switches_on().join(",");
-    match stamps.check() {
-        Ok(()) => tracing::info!(dir, switches_on = %on, "restore stamps are fresh"),
-        Err(hold) if on.is_empty() => {
-            tracing::info!(dir, "restore stamps: {hold} (every write switch is off)")
-        }
-        Err(hold) => tracing::warn!(dir, switches_on = %on, "writes are held: {hold}"),
-    }
-    if !shared::writes::restore::install(stamps) {
-        anyhow::bail!("the restore stamps were installed twice in one process");
-    }
-    Ok(())
-}
 
 pub(super) fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();

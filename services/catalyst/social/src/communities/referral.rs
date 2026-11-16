@@ -337,12 +337,6 @@ impl Referral {
         today: Option<chrono::NaiveDate>,
         event: Option<(uuid::Uuid, i64)>,
     ) -> Result<(), CommError> {
-        if crate::shared::writes::refusal(true).is_some() {
-            return Err(CommError::MessageOnly(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Social writes are held".into(),
-            ));
-        }
         if !crate::auth::is_eth_address(invited) {
             return Err(CommError::bad_request("Invalid invitedUser address"));
         }
@@ -485,9 +479,6 @@ impl Referral {
     /// Resume a bounded due set without requiring another login. Requests with
     /// no confirmed response stay quarantined for provider reconciliation.
     pub async fn drain_pending_rewards(&self) -> Result<(), CommError> {
-        if crate::shared::writes::refusal(true).is_some() {
-            return Ok(());
-        }
         if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) AND received_at <= timezone('UTC',clock_timestamp()) - interval '24 hours' ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await {
             tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
@@ -503,11 +494,6 @@ impl Referral {
         .await
         .map_err(database_error)?;
         for (referrer, invited, tier) in rows {
-            // The restore hold is live: a long batch must stop before its next
-            // grant if the stamps expire or are withdrawn during the pass.
-            if crate::shared::writes::refusal(true).is_some() {
-                break;
-            }
             // The request path checks this too; a later ban also stops retries.
             if let Err(error) = self.assert_not_banned(&referrer, None).await {
                 tracing::warn!(?error, "pending referral reward is blocked");
@@ -770,7 +756,7 @@ pub async fn get_referral_progress(
     .into_iter()
     .map(|(tier, url)| ReferralRewardImage { tier, url })
     .collect();
-    if crate::comms::writes::side_refusal(switch).is_none() {
+    if crate::comms::writes::side_writes_on(switch) {
         sqlx::query(
             "INSERT INTO social.referral_progress_viewed (referrer, invites_accepted_viewed) \
              VALUES ($1, $2) \

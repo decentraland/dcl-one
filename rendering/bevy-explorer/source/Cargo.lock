@@ -1420,6 +1420,7 @@ dependencies = [
  "alloy-core",
  "anyhow",
  "assets",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -1447,7 +1448,6 @@ dependencies = [
  "texture_camera",
  "tokio",
  "ui_core",
- "world_ui",
 ]
 
 [[package]]
@@ -3580,6 +3580,7 @@ dependencies = [
  "system_bridge",
  "tokio",
  "ui_core",
+ "unicode-properties",
  "wallet",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -10672,7 +10673,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-core",
  "anyhow",
- "avatar",
  "bevy",
  "bevy_console",
  "bevy_dui",

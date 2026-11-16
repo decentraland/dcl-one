@@ -12,12 +12,6 @@ than once. Check here before correcting something surprising.
   pass cheap. The repeated mistake is to assume the pass renders the full cubemap each frame
   and "optimise" by running it less often, which only starves the progressive update and
   makes the sky lag. The pass must run every frame.
-- **Repeatable cloud captures.** `/cloud_motion false` selects noise seed 1 and phase zero,
-  while retaining cloud coverage, color, scene time and authored speed settings. The Skybox
-  debug section exposes this toggle. The sky needs 64 rendered frames to refresh;
-  the E2E suite waits 128 CPU sky updates as a conservative refresh window, not a GPU fence. Repeating `false` resets the reported
-  `pinnedFrames` counter. `/cloud_motion true` restores the prior daily noise and live phase.
-  This affects cloud motion only; normal rendering starts enabled.
 - **Our bevy is not stock bevy.** The fork page has the detail; the differences a reader will
   trip over are: the engine runs on web workers with a multi-threaded task pool on web; the
   transparent pass has a second attachment (the focus target) when depth of field is on, and
@@ -31,10 +25,14 @@ than once. Check here before correcting something surprising.
 - **bevy 0.16 ignores `Changed<MeshTag>`** in GPU mesh extraction. A tag that changes on its own
   stays stale in the mesh uniform. After writing the tag, call `set_changed` on the `Mesh3d`
   so the entity re-extracts. The particle system does this every frame.
-- **Nametags are drawn by the system UI scene**, as canvas planes packed into a per-scene
-  atlas, not by the `world_ui` crate. `world_ui`'s nametag path is the fallback when no UI
-  scene provides them. Tags come from player identity, so scene `AvatarShape` NPCs never get
-  one.
+- **Nametags are drawn by the engine**, not by the system UI scene: `crates/avatar/src/nametag`
+  gives each player a tag entity as a child, with one mesh drawn by one shared material in the
+  main pass. The tag's transform is only its player's name-tag anchor: the vertex shader turns
+  it to the camera, scales it to keep its size on screen and fades it with distance, so its
+  `Aabb` is a cube sized for the far end of its range, not its mesh's bounds. A name that
+  should not show is hidden, never despawned. A tag is a transparent mesh that tests depth, so
+  it is hidden behind walls and is tonemapped and bloomed with the frame. Tags come from player profiles, so scene `AvatarShape` NPCs never
+  get one.
 - **The imposter store is multi-realm by design.** The fetch URL carries the realm's about
   URL, and each tile's CRC is derived from the scene set at bake time. A CRC mismatch after a
   publish falls back to an empty imposter on purpose; that is staleness handling, not silent

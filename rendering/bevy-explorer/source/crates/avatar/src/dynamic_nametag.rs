@@ -1,23 +1,26 @@
-use std::collections::VecDeque;
-
-use bevy::{math::FloatOrd, prelude::*, render::primitives::Aabb};
-use common::{sets::PostUpdateSets, structs::AttachPoints};
-
-use crate::{attach::AvatarAttachment, ghost::AvatarGhost};
-use bevy_console::ConsoleCommand;
-use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
-use dcl_component::proto_components::sdk::components::AvatarAnchorPointType;
-use scene_runner::{
-    initialize_scene::SuperUserScene,
-    update_world::{
-        scene_ui::UiCanvas,
-        transform_and_parent::{AvatarAttachStage, ParentPositionSync},
-    },
-    SceneEntity,
+use bevy::{math::FloatOrd, prelude::*};
+use common::{
+    sets::PostUpdateSets,
+    structs::{AttachPoints, AvatarDynamicState, MoveKind},
 };
+
+use crate::ghost::AvatarGhost;
+use bevy_console::ConsoleCommand;
+use console::DoAddConsoleCommand;
 
 /// where the nametag sits while a player's ghost stands in for their avatar
 const GHOST_NAMETAG_HEIGHT: f32 = 2.0;
+/// the gap between the top of what a player wears and their nametag
+const HEAD_OFFSET_BUFFER: f32 = 0.025;
+/// a measured offset above this is taken for a broken model, and replaced
+const HEAD_OFFSET_MAX: f32 = 2.0;
+const HEAD_OFFSET_BOUNDED: f32 = 1.0;
+/// the least a head reaches above its bone
+const HEAD_TOP_MIN: f32 = 0.1;
+/// the offset of an avatar whose meshes gave no bounds
+const HEAD_OFFSET_DEFAULT: f32 = 0.4;
+/// how much higher the nametag sits over a glider
+const GLIDE_OFFSET: f32 = 0.8;
 
 pub struct DynamicNametagPlugin;
 
@@ -25,35 +28,19 @@ impl Plugin for DynamicNametagPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            dynamic_nametag_position
-                .chain()
-                .in_set(PostUpdateSets::Nametag),
+            dynamic_nametag_position.in_set(PostUpdateSets::Nametag),
         );
 
-        app.add_observer(add_nametag_height_history);
         app.insert_resource(NametagsVisible(true))
-            .add_console_command::<Nametags, _>(nametags_command)
-            .add_debug_section(DebugSection {
-                title: "Nametags",
-                query: "/nametags",
-                fields: &[],
-                actions: &[],
-                inputs: &[DebugInput {
-                    label: "Show nametags",
-                    field: "visible",
-                    command: "/nametags {value}",
-                    kind: DebugInputKind::Toggle,
-                }],
-            })
-            .add_systems(Update, sync_nametag_visibility);
+            .add_console_command::<Nametags, _>(nametags_command);
     }
 }
 
-/// Visibility of the HUD's world-space nametags; photo mode flips it on its nametags key.
+/// Visibility of the nametags; photo mode flips it on its nametags key.
 #[derive(Resource)]
 pub struct NametagsVisible(pub bool);
 
-/// Read or set visibility of the HUD's world-space nametags.
+/// Read or set visibility of the nametags.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/nametags")]
 struct Nametags {
@@ -70,199 +57,152 @@ fn nametags_command(mut cmd: ConsoleCommand<Nametags>, mut visible: ResMut<Namet
     cmd.reply_ok(serde_json::json!({"visible": visible.0}).to_string());
 }
 
-#[derive(Component)]
-struct HiddenNametag(Visibility);
+/// On a player: how far above the head bone their nametag sits, clear of what they wear.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct NametagHeadOffset(pub f32);
 
-/// The HUD's label is a UiCanvas plane immediately beneath its name-tag anchor.
-/// Hide only that plane. SDK attachments share the anchor on the avatar skeleton.
-///
-/// The label is hidden when nametags are off, and when its player is hidden (a modifier area,
-/// a block or a scene ban): the HUD sets the label's visibility itself, so it does not follow
-/// the anchor's as other attachments do.
+impl NametagHeadOffset {
+    /// From how far the avatar's meshes reach above the head bone, in metres. A reach that
+    /// doesn't clear a bare head is not a measurement of one: the default stands in.
+    pub fn above_head(top: f32) -> Self {
+        let offset = top + HEAD_OFFSET_BUFFER;
+        Self(if !offset.is_finite() || top < HEAD_TOP_MIN {
+            HEAD_OFFSET_DEFAULT
+        } else if offset <= HEAD_OFFSET_MAX {
+            offset
+        } else {
+            HEAD_OFFSET_BOUNDED
+        })
+    }
+}
+
+/// How high above the avatar's root its nametag goes: over the head, or over whichever of the
+/// toes and hips an animation has lifted above it. `head_scale` is the head bone's own scale,
+/// which enlarges what the head wears with it.
+fn nametag_height(head: f32, head_scale: f32, others: [f32; 3], offset: f32, gliding: bool) -> f32 {
+    let other = others.into_iter().map(FloatOrd).max().map_or(head, |y| y.0);
+    let height = if head >= other {
+        head + offset * head_scale
+    } else {
+        other + offset
+    };
+    if gliding {
+        height + GLIDE_OFFSET
+    } else {
+        height
+    }
+}
+
 #[allow(clippy::type_complexity)]
-fn sync_nametag_visibility(
-    mut commands: Commands,
-    visible: Res<NametagsVisible>,
-    hud: Query<(), With<SuperUserScene>>,
-    attachments: Query<(
-        &AvatarAttachment,
-        &SceneEntity,
-        Option<&ParentPositionSync<AvatarAttachStage>>,
+pub(crate) fn dynamic_nametag_position(
+    players: Query<(
+        &AttachPoints,
+        Option<&AvatarGhost>,
+        Option<&NametagHeadOffset>,
+        Option<&AvatarDynamicState>,
     )>,
-    anchors: Query<&InheritedVisibility>,
-    mut canvases: Query<
-        (Entity, &ChildOf, &mut Visibility, Option<&HiddenNametag>),
-        With<UiCanvas>,
-    >,
-) {
-    for (entity, parent, mut visibility, hidden) in &mut canvases {
-        let hide = attachments
-            .get(parent.parent())
-            .is_ok_and(|(a, scene, sync)| {
-                a.0.anchor_point_id() == AvatarAnchorPointType::AaptNameTag
-                    && hud.contains(scene.root)
-                    && (!visible.0
-                        || sync.is_some_and(|sync| {
-                            anchors.get(sync.sync_to).is_ok_and(|anchor| !anchor.get())
-                        }))
-            });
-        if hide {
-            if hidden.is_none() {
-                commands.entity(entity).insert(HiddenNametag(*visibility));
-            }
-            visibility.set_if_neq(Visibility::Hidden);
-        } else if let Some(hidden) = hidden {
-            *visibility = hidden.0;
-            commands.entity(entity).remove::<HiddenNametag>();
-        }
-    }
-}
-
-#[derive(Default, Component)]
-struct NametagHeightHistory {
-    timestamps: VecDeque<f32>,
-    heights: VecDeque<f32>,
-    max: usize,
-}
-
-impl NametagHeightHistory {
-    fn insert(&mut self, new_height: f32, new_timestamp: f32) {
-        let index = self.heights.len();
-        let old_height = self.heights.get(self.max).copied().unwrap_or(0.);
-
-        self.heights.push_back(new_height);
-        self.timestamps.push_back(new_timestamp);
-        if new_height > old_height || self.max > index {
-            self.max = index;
-        }
-    }
-
-    fn pop_old(&mut self, threshold: f32) {
-        while self
-            .timestamps
-            .front()
-            .filter(|front| *front < &threshold)
-            .is_some()
-        {
-            self.timestamps.pop_front();
-            self.heights.pop_front();
-            if self.max == 0 {
-                let (max, _) = self
-                    .heights
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, height)| FloatOrd(**height))
-                    .unwrap_or((usize::MAX, &0.));
-                self.max = max;
-            } else {
-                self.max -= 1;
-            }
-        }
-    }
-
-    fn max(&self) -> f32 {
-        self.heights.get(self.max).copied().unwrap_or(0.)
-    }
-
-    fn clear(&mut self) {
-        self.heights.clear();
-        self.timestamps.clear();
-        self.max = 0;
-    }
-}
-
-fn dynamic_nametag_position(
-    attach_points_query: Query<(Entity, &AttachPoints)>,
-    ghosts: Query<&AvatarGhost>,
-    mut nametags: Query<(&mut Transform, &mut NametagHeightHistory)>,
+    mut transforms: Query<&mut Transform>,
+    parents: Query<&ChildOf>,
     global_transforms: Query<&GlobalTransform>,
-    aabbs: Query<&Aabb>,
-    time: Res<Time<Real>>,
 ) {
-    let new_timestamp = time.elapsed_secs_wrapped();
-    let threshold = new_timestamp - 0.25;
-
-    for (player, attach_points) in attach_points_query {
-        let Ok((mut nametag_transform, mut nametag_height_history)) =
-            nametags.get_mut(attach_points.nametag)
-        else {
-            panic!("Nametag must have Transform and NametagHeightHistory.");
-        };
+    for (attach_points, ghost, head_offset, dynamic_state) in &players {
         let Ok(position_gt) = global_transforms.get(attach_points.position) else {
             continue;
         };
         let position = position_gt.compute_transform();
-
-        nametag_height_history.pop_old(threshold);
-
-        let head_position_gt = global_transforms
+        let head_position = global_transforms
             .get(attach_points.head)
-            .unwrap_or(position_gt);
-        let head_position = head_position_gt.compute_transform();
-        let head_aabb = aabbs.get(attach_points.head).ok();
+            .unwrap_or(position_gt)
+            .translation();
+        let height_of = |point: Entity| {
+            global_transforms
+                .get(point)
+                .map_or(0.0, |gt| gt.translation().y - position.translation.y)
+        };
 
         // the head attach point only reaches the head once the avatar is built; the ghost stands
         // in for it at a fixed height until then
-        if ghosts.get(player).is_ok_and(AvatarGhost::showing) {
-            nametag_height_history.clear();
-            nametag_height_history.insert(GHOST_NAMETAG_HEIGHT, new_timestamp);
+        let height = if ghost.is_some_and(AvatarGhost::showing) {
+            GHOST_NAMETAG_HEIGHT
         } else {
-            let Some(highest_y) = [
-                FloatOrd(nametag_offset(
-                    head_position_gt,
-                    &position.translation,
-                    head_aabb,
-                )),
-                // TODO extend with the heights of headgear
-            ]
-            .into_iter()
-            .max() else {
-                unreachable!("List is never empty.");
-            };
+            // the attach point hangs off the head bone once the avatar is built
+            let head_scale = parents
+                .get(attach_points.head)
+                .ok()
+                .and_then(|parent| transforms.get(parent.parent()).ok())
+                .map_or(1.0, |bone| bone.scale.y);
+            nametag_height(
+                height_of(attach_points.head),
+                head_scale,
+                [
+                    attach_points.left_toe_base,
+                    attach_points.right_toe_base,
+                    attach_points.hip,
+                ]
+                .map(height_of),
+                head_offset.map_or(HEAD_OFFSET_DEFAULT, |offset| offset.0),
+                dynamic_state.is_some_and(|state| state.move_kind == MoveKind::Glide),
+            )
+        };
 
-            nametag_height_history.insert(highest_y.0, new_timestamp);
-        }
-
+        let Ok(mut nametag_transform) = transforms.get_mut(attach_points.nametag) else {
+            continue;
+        };
         let position_rotation = {
             let (axis, angle) = position.rotation.to_axis_angle();
             Quat::from_axis_angle(axis, -angle)
         };
         nametag_transform.translation = position_rotation
             * Vec3::new(
-                head_position.translation.x - position.translation.x,
-                nametag_height_history.max(),
-                head_position.translation.z - position.translation.z,
+                head_position.x - position.translation.x,
+                height,
+                head_position.z - position.translation.z,
             );
     }
 }
 
-fn add_nametag_height_history(
-    trigger: Trigger<OnInsert, AttachPoints>,
-    mut commands: Commands,
-    attach_points_query: Query<&AttachPoints>,
-) {
-    let entity = trigger.target();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let Ok(attach_points) = attach_points_query.get(entity) else {
-        unreachable!("Infallible query.");
-    };
+    #[test]
+    fn the_offset_clears_what_the_avatar_wears() {
+        assert_eq!(
+            NametagHeadOffset::above_head(0.3).0,
+            0.3 + HEAD_OFFSET_BUFFER
+        );
+        // a model reaching absurdly high is not followed
+        assert_eq!(NametagHeadOffset::above_head(5.0).0, HEAD_OFFSET_BOUNDED);
+        // no meshes measured, or nothing that reaches over the head
+        for unmeasured in [f32::NEG_INFINITY, f32::NAN, -1.4, 0.02] {
+            assert_eq!(
+                NametagHeadOffset::above_head(unmeasured).0,
+                HEAD_OFFSET_DEFAULT
+            );
+        }
+    }
 
-    commands
-        .entity(attach_points.nametag)
-        .insert(NametagHeightHistory::default());
-}
-
-fn nametag_offset(
-    global_transform: &GlobalTransform,
-    root_position: &Vec3,
-    maybe_aabb: Option<&Aabb>,
-) -> f32 {
-    let transform = global_transform.compute_transform();
-    let y = transform.translation.y - root_position.y;
-    if let Some(aabb) = maybe_aabb {
-        let model_radius = global_transform.radius_vec3a(aabb.half_extents);
-        y + model_radius + 0.125
-    } else {
-        y + 40. * transform.scale.y
+    #[test]
+    fn the_nametag_follows_the_highest_of_head_toes_and_hips() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        // standing: over the head, by the scaled offset
+        assert!(close(
+            nametag_height(1.6, 1.0, [0.1, 0.1, 0.9], 0.3, false),
+            1.9
+        ));
+        assert!(close(
+            nametag_height(1.6, 2.0, [0.1, 0.1, 0.9], 0.3, false),
+            2.2
+        ));
+        // a handstand: over the toes, by the unscaled offset
+        assert!(close(
+            nametag_height(0.2, 2.0, [1.7, 1.5, 0.9], 0.3, false),
+            2.0
+        ));
+        // gliding lifts it over the glider
+        assert!(close(
+            nametag_height(1.6, 1.0, [0.1, 0.1, 0.9], 0.3, true),
+            1.9 + GLIDE_OFFSET
+        ));
     }
 }

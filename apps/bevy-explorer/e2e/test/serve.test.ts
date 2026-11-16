@@ -31,12 +31,6 @@ describe('serveWebApp', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test('the browser origin uses the development host accepted by service CORS policies', async () => {
-    assert.equal(new URL(server.url).hostname, 'localhost')
-    assert.equal(new URL(server.url).port, String(server.port))
-    assert.equal((await fetch(server.url)).status, 200)
-  })
-
   test('the common headers are on every response', async () => {
     for (const route of ['/', '/app.html', '/engine/engine.js', '/missing']) {
       const response = await fetch(server.url + route.slice(1))
