@@ -77,7 +77,11 @@ impl Plugin for VisualsPlugin {
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
             .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-            .add_systems(Update, apply_global_light)
+            .add_systems(
+                Update,
+                apply_global_light
+                    .before(scene_runner::update_world::lights::update_directional_light),
+            )
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
 
@@ -307,17 +311,17 @@ fn apply_global_light(
         .iter()
         .find_map(|(maybe_primary, _)| maybe_primary.map(|camera| camera.distance))
         .unwrap_or(0.0);
-    // a (re)inserted DistanceFog fires `is_added` and must be written even when the light has
-    // settled. reading the tick through the existing `&mut` access avoids the query conflict an
-    // `Added<DistanceFog>` filter would have with `cameras`; `is_added` (not `is_changed`) is used
-    // because our own per-frame fog writes set `changed`, which would otherwise never let the gate
-    // re-engage.
     // an authored nadir: the envmap generates the lower hemisphere, and the pbr lookups stop
     // mirroring it (flagged in the ambient alpha below)
     let authored_lower = environment.nadir.is_some();
     if envmap_settings.authored_lower_hemisphere != authored_lower {
         envmap_settings.authored_lower_hemisphere = authored_lower;
     }
+    // a (re)inserted DistanceFog fires `is_added` and must be written even when the light has
+    // settled. reading the tick through the existing `&mut` access avoids the query conflict an
+    // `Added<DistanceFog>` filter would have with `cameras`; `is_added` (not `is_changed`) is used
+    // because our own per-frame fog writes set `changed`, which would otherwise never let the gate
+    // re-engage.
     let fog_added = cameras
         .iter_mut()
         .any(|(_, fog)| fog.is_some_and(|fog| fog.is_added()));

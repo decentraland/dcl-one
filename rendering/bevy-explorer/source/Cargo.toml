@@ -585,7 +585,7 @@ naga = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7
 
 # Forked crates the workspace names by crates.io version. Each rev is the commit that
 # ../patches/<name>/source.toml names: the upstream commit plus the patch series there.
-bevy_atmosphere = { git = "https://github.com/decentraland/dcl-one", rev = "2c731aeaffe15dac2e3879b32532b34e1594658a" }
+bevy_atmosphere = { git = "https://github.com/decentraland/dcl-one", rev = "1fae5e5ea2909a84f635f7f179edec04363cfa57" }
 bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "b841a83d0218ecf450541baeb6b94b4e331c7bb9" }
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "652832a640d681076cb208b30409abab4e4f17d4" }
 bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "787966139b4616afaae2fc63901b1c06a0d60ea5" }

@@ -34,7 +34,7 @@ index 46d4ded31ccff361344d242a3169b9055e0688ef..d8de081740e345f0601101ea7029ce5c
  ) -> @location(0) vec4<f32> {
 +#ifdef PANORAMA
 +    let ray = normalize(in.world_normal);
-+    let uv = vec2<f32>(atan2(-ray.x, -ray.z) / 6.28318530718 + 0.5, acos(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
++    let uv = vec2<f32>(atan2(ray.x, -ray.z) / 6.28318530718 + 0.5, acos(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
 +    let color = textureSample(panorama_texture, panorama_sampler, uv).xyz;
 +#else
      let color = textureSample(sky_texture, sky_sampler, in.world_normal).xyz;

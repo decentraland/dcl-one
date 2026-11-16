@@ -268,13 +268,11 @@ impl ColorRamp {
                 ))
             })
             .collect();
-        keys.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // a stable sort keeps keys at the same time (-0 and 0 included) in their given order
+        keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         let mut ramp = Self(Vec::with_capacity(keys.len()));
         for key in keys {
-            if ramp.0.last().is_some_and(|previous| {
-                (previous.0 - key.0).abs()
-                    < (1e-6 * previous.0.abs().max(key.0.abs())).max(f32::from_bits(8))
-            }) {
+            if ramp.0.last().is_some_and(|previous| previous.0 == key.0) {
                 ramp.0.pop();
             }
             ramp.0.push(key);
@@ -496,8 +494,13 @@ pub fn update_directional_light(
 
         if let Some(sun) = maybe_sun {
             if let Some(color) = &sun.color {
+                // as for LightSource: colours > 1 are rescaled to 1, and the light is
+                // multiplied by pow(max, 2.2), so the sky gets the hue only
                 let color = color.sample(day_fraction);
+                let color_scale = color.max_element().max(1.0);
+                let color = color / color_scale;
                 global_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
+                global_light.dir_illuminance *= color_scale.powf(2.2);
             }
             // the light only: the sky keeps its time-of-day brightness
             if let Some(intensity) = sun.intensity {

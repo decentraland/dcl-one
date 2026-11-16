@@ -1754,7 +1754,7 @@ dependencies = [
 [[package]]
 name = "bevy_atmosphere"
 version = "0.13.0"
-source = "git+https://github.com/decentraland/dcl-one?rev=2c731aeaffe15dac2e3879b32532b34e1594658a#2c731aeaffe15dac2e3879b32532b34e1594658a"
+source = "git+https://github.com/decentraland/dcl-one?rev=1fae5e5ea2909a84f635f7f179edec04363cfa57#1fae5e5ea2909a84f635f7f179edec04363cfa57"
 dependencies = [
  "bevy",
  "bevy_atmosphere_macros",
@@ -1764,7 +1764,7 @@ dependencies = [
 [[package]]
 name = "bevy_atmosphere_macros"
 version = "0.8.0"
-source = "git+https://github.com/decentraland/dcl-one?rev=2c731aeaffe15dac2e3879b32532b34e1594658a#2c731aeaffe15dac2e3879b32532b34e1594658a"
+source = "git+https://github.com/decentraland/dcl-one?rev=1fae5e5ea2909a84f635f7f179edec04363cfa57#1fae5e5ea2909a84f635f7f179edec04363cfa57"
 dependencies = [
  "bevy_macro_utils 0.16.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "proc-macro-crate",
