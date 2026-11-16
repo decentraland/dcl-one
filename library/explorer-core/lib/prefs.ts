@@ -32,7 +32,8 @@ export const PREF = {
   voiceVolume: 'nearbyVoiceVolume',
   voiceUsed: 'nearbyVoiceUsed',
   launchCount: 'launchCount',
-  gpuGuideSeen: 'hud.gpuGuideSeen'
+  gpuGuideSeen: 'hud.gpuGuideSeen',
+  loginMusicMuted: 'hud.loginMusicMuted'
 } as const
 
 const DB = 'hud-prefs'
