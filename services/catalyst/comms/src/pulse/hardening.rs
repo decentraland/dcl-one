@@ -1973,6 +1973,235 @@ mod tests {
         );
     }
 
+    /// The wallet, source and whitelisted counts as the table implies them.
+    fn counts_from_table(
+        policy: &HandshakeReplayPolicy,
+    ) -> (
+        std::collections::HashMap<String, usize>,
+        std::collections::HashMap<String, usize>,
+    ) {
+        let mut by_wallet = std::collections::HashMap::new();
+        let mut by_source = std::collections::HashMap::new();
+        for ((wallet, _), entry) in &policy.seen {
+            *by_wallet.entry(wallet.clone()).or_default() += 1;
+            for source in &entry.sources {
+                *by_source.entry(source.clone()).or_default() += 1;
+            }
+        }
+        (by_wallet, by_source)
+    }
+
+    #[tokio::test]
+    async fn wallet_quota_refusal_while_a_write_is_pending_issues_and_counts_nothing() {
+        let path = ReplayPath::new("quota-pending");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        policy.set_max_entries_per_wallet(2);
+        let ts = SIGNED.to_string();
+        assert_eq!(
+            policy.try_admit(SIGNED, Some("192.0.2.1"), "0xw", &ts),
+            Ok(())
+        );
+        let ts2 = (SIGNED + 1).to_string();
+        assert_eq!(policy.try_admit(SIGNED + 1, None, "0xw", &ts2), Ok(()));
+        let issued = policy.journal_issued();
+        assert_eq!(issued, 2);
+        assert_eq!(
+            policy.journal_progress(),
+            JournalProgress::default(),
+            "both admitted pairs are still waiting for their sync"
+        );
+        let wallets = policy.entries_by_wallet.clone();
+        let sources = policy.entries_by_source.clone();
+        assert_eq!(wallets.get("0xw"), Some(&2));
+        assert_eq!(sources.get("192.0.2.1"), Some(&1));
+        assert_eq!(sources.get(WHITELISTED_REPLAY_SOURCE), Some(&1));
+
+        let refused = (SIGNED + 2).to_string();
+        for ip in [Some("192.0.2.1"), Some("192.0.2.2"), None] {
+            assert_eq!(
+                policy.try_admit(SIGNED + 2, ip, "0xW", &refused),
+                Err(ReplayRejection::WalletQuota),
+                "{ip:?}"
+            );
+        }
+        assert_eq!(
+            policy.journal_issued(),
+            issued,
+            "a refusal issues no record"
+        );
+        assert_eq!(policy.seen.len(), 2);
+        assert!(
+            !policy
+                .seen
+                .contains_key(&("0xw".to_string(), refused.clone()))
+        );
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_source, sources);
+
+        gate.send(WriterStep::Write).unwrap();
+        let progress = settle(&mut policy, |progress| progress.durable_through >= issued).await;
+        assert_eq!(
+            progress,
+            JournalProgress {
+                durable_through: issued,
+                failed: false
+            }
+        );
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        assert!(journal.contains(&format!("\t0xw\t{ts}\n")), "{journal}");
+        assert!(journal.contains(&format!("\t0xw\t{ts2}\n")), "{journal}");
+        assert!(
+            !journal.contains(&format!("\t0xw\t{refused}\n")),
+            "{journal}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_keeps_quota_counts_matching_the_table_until_they_expire() {
+        let path = ReplayPath::new("quota-failed");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        policy.set_max_entries_per_wallet(2);
+        let ts = SIGNED.to_string();
+        let ts2 = (SIGNED + 1).to_string();
+        assert_eq!(
+            policy.try_admit(SIGNED, Some("192.0.2.1"), "0xw", &ts),
+            Ok(())
+        );
+        assert_eq!(policy.try_admit(SIGNED + 1, None, "0xw", &ts2), Ok(()));
+        let issued = policy.journal_issued();
+        gate.send(WriterStep::Fail).unwrap();
+        let progress = settle(&mut policy, |progress| progress.failed).await;
+        assert!(progress.durable_through < issued);
+
+        // The admitted entries stay in the table, counted exactly once each.
+        let (wallets, sources) = counts_from_table(&policy);
+        assert_eq!(policy.seen.len(), 2);
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_wallet.get("0xw"), Some(&2));
+        assert_eq!(policy.entries_by_source, sources);
+        assert_eq!(policy.entries_by_source.get("192.0.2.1"), Some(&1));
+        assert_eq!(
+            policy.entries_by_source.get(WHITELISTED_REPLAY_SOURCE),
+            Some(&1)
+        );
+
+        // Admission is closed, for this wallet and every other, and a refusal changes nothing.
+        for wallet in ["0xw", "0xother"] {
+            assert_eq!(
+                policy.try_admit(
+                    SIGNED + 2,
+                    Some("192.0.2.2"),
+                    wallet,
+                    &(SIGNED + 2).to_string()
+                ),
+                Err(ReplayRejection::Storage)
+            );
+        }
+        let later = SIGNED + 1 + SKEW + 1;
+        assert_eq!(
+            policy.try_admit(later, None, "0xother", &later.to_string()),
+            Err(ReplayRejection::Storage)
+        );
+        assert_eq!(policy.seen.len(), 2);
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_source, sources);
+
+        // A sweep after the window drops both entries and every count reaches zero and is removed.
+        policy.sweep_expired(later);
+        assert!(policy.seen.is_empty());
+        assert!(
+            policy.entries_by_wallet.is_empty(),
+            "{:?}",
+            policy.entries_by_wallet
+        );
+        assert!(
+            policy.entries_by_source.is_empty(),
+            "{:?}",
+            policy.entries_by_source
+        );
+        assert_eq!(policy.forgotten_through_ms, SIGNED + 1);
+        assert_eq!(policy.oldest_signed_ms, i64::MAX);
+        assert!(policy.journal_progress().failed);
+        assert_eq!(
+            policy.try_admit(later, None, "0xw", &later.to_string()),
+            Err(ReplayRejection::Storage),
+            "the failure stays latched after the counts drain"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wallet_quota_refusal_whose_sweep_journals_a_floor_still_records_nothing() {
+        let path = ReplayPath::new("quota-sweep-floor");
+        let fresh = SIGNED + SKEW;
+        let refused_at = fresh + 1;
+        let refused = refused_at.to_string();
+        {
+            let (mut policy, gate) =
+                HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+            policy.set_max_entries_per_wallet(1);
+            assert_eq!(
+                policy.try_admit(SIGNED, Some("192.0.2.9"), "0xold", &SIGNED.to_string()),
+                Ok(())
+            );
+            assert_eq!(
+                policy.try_admit(fresh, Some("192.0.2.1"), "0xw", &fresh.to_string()),
+                Ok(())
+            );
+            let issued = policy.journal_issued();
+            gate.send(WriterStep::Write).unwrap();
+            settle(&mut policy, |progress| progress.durable_through >= issued).await;
+
+            // The wallet is full, so the refusal sweeps; the sweep drops the other wallet's
+            // expired entry and issues its floor, and the wallet is still full.
+            assert_eq!(
+                policy.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+                Err(ReplayRejection::WalletQuota)
+            );
+            assert_eq!(
+                policy.journal_issued(),
+                issued + 1,
+                "the floor is the only record the refusal issues"
+            );
+            assert_eq!(policy.forgotten_through_ms, SIGNED);
+            assert_eq!(policy.seen.len(), 1);
+            assert!(
+                !policy
+                    .seen
+                    .contains_key(&("0xw".to_string(), refused.clone()))
+            );
+            let (wallets, sources) = counts_from_table(&policy);
+            assert_eq!(policy.entries_by_wallet, wallets);
+            assert_eq!(policy.entries_by_source, sources);
+            assert_eq!(policy.entries_by_wallet.get("0xold"), None);
+            assert_eq!(policy.entries_by_source.get("192.0.2.9"), None);
+
+            // The floor's write fails: the refusal has already been answered as a refusal, and
+            // the pair it refused was never recorded.
+            gate.send(WriterStep::Fail).unwrap();
+            settle(&mut policy, |progress| progress.failed).await;
+            assert_eq!(policy.seen.len(), 1);
+            assert_eq!(policy.entries_by_wallet.get("0xw"), Some(&1));
+            assert_eq!(
+                policy.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+                Err(ReplayRejection::Storage)
+            );
+        }
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        assert!(!journal.contains(&format!("\t{refused}\n")), "{journal}");
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 16, &path.0, refused_at)
+                .unwrap();
+        assert_eq!(
+            restarted.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+            Ok(()),
+            "the refused pair was never recorded, so it is still a first use"
+        );
+        assert_eq!(
+            restarted.try_admit(refused_at, None, "0xw", &fresh.to_string()),
+            Err(ReplayRejection::Duplicate)
+        );
+    }
+
     #[test]
     fn attempt_throttle_rejects_after_max() {
         let p = HandshakeAttemptPolicy::new(2);
