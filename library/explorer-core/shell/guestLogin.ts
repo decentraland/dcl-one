@@ -7,7 +7,7 @@ import { resumeGuestLogin, rootAddress, storeGuestLogin } from '../features/auth
 export async function playAsGuest(backend: GuestBackend): Promise<GuestLogin> {
   const kept = resumeGuestLogin()
   if (kept != null) return { ...kept, wallet: null }
-  const wallet = backend.keptSessionId?.() ? 'existing' : 'new'
+  const wallet = (await backend.keptSessionId?.()) ? 'existing' : 'new'
   const identity = await createGuestIdentity(backend)
   storeGuestLogin(identity)
   return { address: rootAddress(identity).toLowerCase(), identity, guest: true, wallet }

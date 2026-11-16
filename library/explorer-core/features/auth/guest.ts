@@ -20,7 +20,7 @@ export interface GuestBackend {
   login(sessionId: string): Promise<GuestWallet>
   sign(token: string, message: string): Promise<string>
   /** This device's guest session id, kept from an earlier `login`: it reaches the same wallet again. */
-  keptSessionId?(): string | null
+  keptSessionId?(): string | null | Promise<string | null>
 }
 
 export const webGuestBackend: GuestBackend = {
@@ -102,7 +102,7 @@ export function signedIdentity(delegation: EphemeralDelegation, signer: string, 
 /** An identity signed by this device's guest wallet: the kept session's, so the guest that signed out
  *  comes back the same, as unity-explorer's does; a new wallet when there is none. */
 export async function createGuestIdentity(backend: GuestBackend): Promise<AuthIdentity> {
-  const sessionId = backend.keptSessionId?.() || bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+  const sessionId = (await backend.keptSessionId?.()) || bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
   const { token, walletAddress } = await backend.login(sessionId)
 
   const delegation = newEphemeralDelegation()

@@ -323,7 +323,9 @@ The HUD and input:
 - `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
   flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
   again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
-  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`.
+  `/logout --forget` also drops the sign-in the engine keeps, so the next start opens on sign-in;
+  the HUD's Sign Out sends it, and a cancelled sign-in sends `/logout` alone. A sign-in
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and

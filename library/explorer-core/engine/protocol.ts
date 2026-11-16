@@ -66,7 +66,7 @@ export type RpcMethod =
   | 'logout'
   | 'guestLogin'
   | 'guestSign'
-  | 'guestDiscard'
+  | 'guestSession'
   | 'emailStart'
   | 'emailComplete'
 

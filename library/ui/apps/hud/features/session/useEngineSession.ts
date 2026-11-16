@@ -4068,7 +4068,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
-    driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
+    driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
       setStored(null)

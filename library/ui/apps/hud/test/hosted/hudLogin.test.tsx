@@ -358,6 +358,15 @@ describe('/hud_login through the session', () => {
     await expect(first).resolves.toMatchObject({ phase: 'lobby' })
   })
 
+  it('Sign Out drops the sign-in the engine keeps; a cancelled sign-in keeps it', async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    act(() => h.session().login.cancelSignIn())
+    expect(driver.logouts).toEqual([false])
+    act(() => h.session().logout())
+    expect(driver.logouts).toEqual([false, true])
+  })
+
   it('answers a pending sign-in that a sign-out ended, and says so until the engine has answered it', async () => {
     const driver = new IdentityDriver()
     driver.hold = true

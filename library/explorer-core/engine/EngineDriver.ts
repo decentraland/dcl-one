@@ -78,8 +78,8 @@ export class EngineDriver implements LoginDriver {
     // SSO login is a redirect/console-command; there is no in-engine flow to cancel.
   }
 
-  async logout(): Promise<void> {
-    await this.rpc.command('/logout')
+  async logout(forget?: boolean): Promise<void> {
+    await this.rpc.command(forget === true ? '/logout --forget' : '/logout')
   }
 
   // The engine fetches the profile from the catalyst it boots with, the one the auth site deploys a

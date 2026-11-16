@@ -56,8 +56,11 @@ export class FakeDriver implements LoginDriver {
   async autopilotFailed(reason: string): Promise<void> {
     this.autopilotFailures.push(reason)
   }
-  async logout(): Promise<void> {
+  /** Each `logout`: whether it dropped the stored sign-in (a Sign Out) or not (a Cancel). */
+  readonly logouts: boolean[] = []
+  async logout(forget?: boolean): Promise<void> {
     this.calls.push('logout')
+    this.logouts.push(forget === true)
   }
   /** What `loginWithIdentity` was handed, in order (a `/hud_login`'s identity and pick). */
   readonly identityLogins: { identity: AuthIdentity; defaultOnError?: boolean; guest?: boolean; pick?: NewAccountPick }[] = []
