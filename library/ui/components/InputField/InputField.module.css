@@ -104,6 +104,11 @@
   .root[data-surface='explorer'] .field[data-invalid] {
     box-shadow: 0 0 0 3px var(--dcl-feedback-error);
   }
+  .root[data-surface='explorer'] .field[data-invalid]:focus-within {
+    box-shadow:
+      0 0 0 3px var(--dcl-feedback-error),
+      0 0 0 6px color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+  }
   .root[data-surface='explorer'] .input {
     box-sizing: border-box;
     min-height: 45px;
@@ -166,6 +171,11 @@
   }
   .root[data-surface='web'] .field[data-invalid] {
     box-shadow: inset 0 0 0 2px var(--dcl-feedback-error);
+  }
+  .root[data-surface='web'] .field[data-invalid]:focus-within {
+    box-shadow:
+      inset 0 0 0 2px var(--dcl-feedback-error),
+      0 0 0 2px var(--dcl-neutrals-snow);
   }
   .root[data-surface='web'] .status {
     min-height: 18px;

@@ -47,3 +47,9 @@ for (const [target, rel, expected] of [
     else expect(link).toHaveAttribute('rel', expected)
     expect(link).toHaveAttribute('href', '/profile')
   })
+
+for (const modifier of [{ ctrlKey: true }, { metaKey: true }])
+  it(`should preserve native modified navigation without a caller handler for ${Object.keys(modifier)[0]}`, () => {
+    render(<Tabs mode="navigation" href="#profile" label="Overview" />)
+    expect(fireEvent.click(screen.getByRole('link'), modifier)).toBe(true)
+  })

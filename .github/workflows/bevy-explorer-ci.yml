@@ -29,7 +29,6 @@
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - .github/actions/bevy-explorer-tools/**
-      - .github/actions/bevy-explorer-sources/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -77,7 +76,6 @@
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - .github/actions/bevy-explorer-tools/**
-      - .github/actions/bevy-explorer-sources/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -137,8 +135,8 @@ jobs:
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
-      # The two online guards run for what the change touches; the daily upstream workflow runs
-      # both for the whole tree.
+      # The online guards run for what the change touches; the daily upstream workflow runs
+      # them for the whole tree.
       - name: Select the online guards from the change
         id: guards
         env:
@@ -151,6 +149,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PINS: ${{ steps.guards.outputs.pins }}
         run: python3 tooling/upstream-drift.py check $PINS
+      # Rebuilds each selected source from its upstream commit and patch series and proves the `tree`
+      # and the `rev` that Cargo takes. The upstream commits come from the cache that the daily
+      # upstream workflow saves on main; the tool fetches a commit that the cache does not hold.
+      - name: Identify the upstream commits
+        id: bases
+        if: steps.guards.outputs.verify != ''
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      - name: Restore the upstream commits
+        if: steps.guards.outputs.verify != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+      - name: Prove each changed patch series against its upstream commit, tree and revision
+        if: steps.guards.outputs.verify != ''
+        env:
+          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
+          NAMES: ${{ steps.guards.outputs.verify }}
+        run: python3 tooling/patched-sources.py verify $NAMES
       - name: Prove the in-tree crates against their public repositories
         if: steps.guards.outputs.provenance == 'true'
         run: python3 tooling/vendor-provenance.py
@@ -174,6 +193,18 @@ jobs:
       images: ${{ steps.consumers.outputs.images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Offline. Cargo takes each patched source from this repository by `rev`: every `rev` in Cargo.toml
+      # and Cargo.lock must be the one a source.toml records.
+      - name: Check the pinned revisions of the patched sources
+        run: python3 tooling/patched-sources.py pins
+      # Read-only. Cargo fetches each `rev` from this repository: without its ref every build fails
+      # at the fetch. A maintainer publishes the refs by hand; no workflow writes them.
+      - name: Check that this repository has a ref for each pinned revision
+        run: |
+          python3 tooling/patched-sources.py publish --check || {
+            echo '::error::A pinned revision has no ref in this repository. A maintainer with push rights runs `python3 tooling/patched-sources.py publish`.'
+            exit 1
+          }
       - name: Select engine builds from their inputs
         id: plan
         env:
@@ -227,8 +258,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
+      # The tool reads TOML with the standard library of Python 3.11 or later. This step runs before
+      # the tool steps: it replaces PKG_CONFIG_PATH, which the FFmpeg step sets on macOS.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      # The upstream commit of Bevy comes from the cache that the daily upstream workflow saves on
+      # main; the tool fetches the commit when the cache does not hold it. The cache directory is
+      # relative to the workspace and the key names no system, so each system restores the archive
+      # that the Linux job saves.
+      - name: Identify the upstream commits
+        id: bases
+        working-directory: .
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      - name: Restore the upstream commits
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+          # Without this input a Windows job reads only archives that a Windows job saved.
+          enableCrossOsArchive: true
+      # The Bevy crate tests below build this tree as path dependencies; it is written before the
+      # file times are restored, so an unchanged tree keeps its cached times.
+      - name: Rebuild the patched Bevy tree
+        env:
+          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
+        run: python "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy
       - name: Install protoc from the flake
         if: runner.os == 'Linux'
         uses: ./.github/actions/bevy-explorer-tools
@@ -326,7 +383,7 @@ jobs:
             rendering/bevy-explorer/source/target/
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
       - name: Restore the Windows compiler cache tool
@@ -352,11 +409,12 @@ jobs:
           key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
       - name: Test the texture decoder boundaries
         run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
-      # the patched Bevy crates are path dependencies, not workspace members, so `cargo test --all`
+      # the patched Bevy crates are git dependencies, not workspace members, so `cargo test --all`
       # never compiles their tests, and cargo tests a non-member with dev-dependencies only from
-      # its own workspace, which has no lock file: it starts from this one, so the dependencies
-      # both share keep their versions. These are the crates the explorer patches for KTX2 and
-      # glTF loading, with the features the explorer enables on them.
+      # its own workspace. Only this job rebuilds that workspace, at ../bevy. It has no lock file:
+      # it starts from this one, so the crates.io dependencies both share keep their versions.
+      # These are the crates the explorer patches for KTX2 and glTF loading, with the features the
+      # explorer enables on them.
       - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
@@ -430,7 +488,7 @@ jobs:
             export RUSTC_WRAPPER=
             cargo build --package benchmark --release --locked
           fi
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Name the benchmark runner
         id: benchmark
@@ -499,8 +557,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install build dependencies
@@ -525,11 +581,11 @@ jobs:
             rendering/bevy-explorer/source/target/
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Strip the Linux distribution before testing
         run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
@@ -678,8 +734,6 @@ jobs:
         with:
           toolchain: 1.99.1
       - run: rustup component add clippy
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
@@ -705,11 +759,11 @@ jobs:
             rendering/bevy-explorer/source/target/
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - run: cargo clippy --locked -- -D warnings
         shell: bash
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Prune the native build cache
         if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
@@ -817,9 +871,6 @@ jobs:
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
-      - name: Rebuild the patched sources
-        if: steps.engine-cache.outputs.cache-matched-key == ''
-        uses: ./.github/actions/bevy-explorer-sources
       # Main saves optimised builds (codegen-units 1). An unoptimised PR build compiles at 16
       # units, which changes every crate's hash, so that cache would serve it nothing.
       - name: Restore wasm target cache
@@ -833,9 +884,9 @@ jobs:
             ~/.cargo/git/db/
             rendering/bevy-explorer/source/target/
           key: bevy-explorer-web-${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
-            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/patches/**', 'rendering/bevy-explorer/vendor/**') }}
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/vendor/**') }}
           restore-keys: bevy-explorer-web-
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
@@ -867,7 +918,7 @@ jobs:
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - name: Test the checked shared-input generator
         run: cd react-web && pnpm run test:shared-inputs
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
@@ -1100,6 +1151,7 @@ jobs:
           deployment-environments: '["zone"]'
     timeout-minutes: 10
     needs:
+      - source
       - publish-web
   headless-packages:
     name: Headless packages
