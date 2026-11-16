@@ -108,6 +108,14 @@ pub async fn export_static(opts: &ExportStaticOptions) -> Result<Exported> {
             })
             .await?;
         }
+        // the project's texture setting, as `deploy` applies it
+        let _textures = crate::textures::stage_for_deploy(
+            &project.root,
+            crate::textures::Overrides::default(),
+            false,
+        )
+        .await?;
+        // held through the export, which checks payload paths against the destination
         let mut prepared = deploy::prepare_checked(project, false)?;
         // A static export is addressed by URN, never by parcel: the entity
         // carries no pointers, as upstream's does.

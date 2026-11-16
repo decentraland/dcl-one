@@ -47,6 +47,7 @@ export type ButtonProps = NativeProps &
     startIcon?: ReactNode
     endIcon?: ReactNode
     forceState?: 'hover' | 'pressed' | 'focus'
+    contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
   ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
 
@@ -64,9 +65,11 @@ export function Button({
   iconOnly = false,
   forceState,
   className,
+  contentLayout = 'intrinsic',
   disabled = false,
   ...native
 }: ButtonProps) {
+  const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
@@ -81,7 +84,11 @@ export function Button({
           : variant
   const content = (
     <>
-      <span className={styles.content} data-loading={loading || undefined}>
+      <span
+        className={styles.content}
+        data-loading={loading || undefined}
+        data-content-layout={compact ? 'intrinsic' : layout}
+      >
         {(leadingIcon ?? startIcon) != null && (
           <span className={styles.icon} aria-hidden="true">
             {leadingIcon ?? startIcon}
