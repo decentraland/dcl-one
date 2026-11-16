@@ -1071,93 +1071,114 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for OwnerReads {
 }
 
 #[tokio::test]
-async fn fenced_heartbeats_read_the_realm_owner_at_most_once_per_position_interval() {
-    use catalyst::comms::protocol::bus::control_position::{ControlPosition, SUBJECT};
+async fn configured_heartbeats_coalesce_legacy_intents_without_per_heartbeat_owner_reads() {
+    use catalyst::comms::protocol::bus::control_position::{LegacyRoomIntent, SUBJECT};
     use tracing_subscriber::layer::SubscriberExt;
-    let Some(fixture) = Fixture::new().await else {
-        return;
-    };
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
     let server = Server::start(&fixture).await;
     let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
     let mut socket = server.connect().await;
     admit_legacy(&mut socket, &wallet).await;
-    let old = current_owner(&server, &fixture, &wallet).await;
-    let heartbeat = packet(
-        0,
-        pb::client_packet::Message::Heartbeat(pb::Heartbeat {
-            position: Some(common::Position {
-                x: 1.0,
-                y: 2.0,
-                z: 3.0,
+    let owner = server
+        .select_native_owner(&wallet, &address, "island-native")
+        .await;
+    let heartbeat = |x| {
+        packet(
+            0,
+            pb::client_packet::Message::Heartbeat(pb::Heartbeat {
+                position: Some(common::Position { x, y: 2.0, z: 3.0 }),
+                desired_room: Some("test-realm".into()),
+                sample_sequence: None,
             }),
-            desired_room: Some("test-realm".into()),
-            sample_sequence: None,
-        }),
-    );
-    let positions = |epoch: u64| {
+        )
+    };
+    let positions = || {
         server
             .bus
             .published()
             .into_iter()
-            .filter(|(subject, _)| subject == SUBJECT)
-            .filter_map(|(_, payload)| ControlPosition::decode(&payload))
-            .filter(|record| record.epoch == epoch && record.position.is_some())
-            .count()
+            .filter(|(subject, _)| subject == LegacyRoomIntent::SUBJECT)
+            .filter_map(|(_, payload)| LegacyRoomIntent::decode(&payload))
+            .filter(|record| record.wallet == address && record.position.is_some())
+            .collect::<Vec<_>>()
     };
 
-    // The server runs on this test's thread: a thread-local capture sees its queries. A second
-    // live dispatcher keeps another test's thread from caching the callsite as uninteresting.
+    // The server runs on this test's thread; capture the old owner snapshot query,
+    // not the independent selected-assignment poll that must remain in place.
     let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let capture = tracing::subscriber::set_default(
         tracing_subscriber::registry().with(OwnerReads(reads.clone())),
     );
-    // One second at the heartbeat rate a socket may sustain.
-    for _ in 0..20 {
-        send(&mut socket, &heartbeat).await;
+    for sample in 0..20 {
+        send(&mut socket, &heartbeat(sample as f32)).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    drop(capture);
-    let reads = reads.load(std::sync::atomic::Ordering::Relaxed);
-    // Positions apply at most every 500 ms and the ownership poll runs every 2 s.
-    assert!(
-        (1..=8).contains(&reads),
-        "20 heartbeats read the realm owner {reads} times"
-    );
+    legacy_barrier(&mut socket, 20).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
     drained(&server).await;
+    drop(capture);
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "heartbeats must not read the realm owner snapshot"
+    );
+    let records = positions();
     assert!(
-        positions(old.epoch) > 0,
-        "the current owner's position publishes"
+        (1..=8).contains(&records.len()),
+        "20 heartbeats must coalesce into bounded legacy intents: {}",
+        records.len()
+    );
+    assert_eq!(records.last().unwrap().position, Some([19.0, 2.0, 3.0]));
+    assert!(
+        records
+            .iter()
+            .all(|record| record.session == address && record.candidate_epoch > 0)
+    );
+    assert!(
+        records
+            .windows(2)
+            .all(|pair| pair[1].sequence > pair[0].sequence)
+    );
+    let after_heartbeats = current_owner(&server, &fixture, &wallet).await;
+    assert_eq!(
+        (after_heartbeats.session, after_heartbeats.epoch),
+        (owner.session, owner.epoch)
+    );
+    assert!(
+        !server
+            .bus
+            .published()
+            .iter()
+            .any(|(subject, _)| subject == SUBJECT)
     );
 
-    // A newer owner of the realm: the poll kicks the old socket, which publishes nothing more.
-    let mut newer = server.connect().await;
-    admit_legacy(&mut newer, &wallet).await;
-    let next = current_owner(&server, &fixture, &wallet).await;
-    assert!(next.epoch > old.epoch);
-    drained(&server).await;
-    let published = positions(old.epoch);
-    let _ = socket.send(Message::Binary(heartbeat.clone().into())).await;
-    tokio::time::timeout(Duration::from_secs(4), async {
-        loop {
-            match socket.next().await {
-                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
-                Some(Ok(Message::Binary(bytes))) => {
-                    let packet = pb::ServerPacket::decode(bytes.as_ref()).unwrap();
-                    if matches!(packet.message, Some(pb::server_packet::Message::Kicked(_))) {
-                        break;
-                    }
-                }
-                Some(Ok(_)) => {}
-            }
-        }
-    })
-    .await
-    .expect("a superseded fenced socket is kicked within the poll interval");
-    drained(&server).await;
-    assert_eq!(positions(old.epoch), published);
-    drop((socket, newer, server));
+    // A different native owner retains priority; it does not revoke authenticated signaling.
+    let native_session = "0x1111111111111111111111111111111111111111";
+    let next = server
+        .select_native_owner(&wallet, native_session, "island-next-native")
+        .await;
+    assert!(next.epoch > owner.epoch);
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    send(&mut socket, &heartbeat(99.0)).await;
+    legacy_barrier(&mut socket, 21).await;
+    let current = current_owner(&server, &fixture, &wallet).await;
+    assert_eq!(
+        (current.session, current.epoch),
+        (native_session.to_owned(), next.epoch)
+    );
+    assert!(
+        !server
+            .bus
+            .published()
+            .iter()
+            .any(|(subject, _)| subject == SUBJECT)
+    );
+    socket.close(None).await.unwrap();
+    drop((socket, server));
     fixture.finish().await;
 }
 

@@ -5,6 +5,7 @@ use sqlx::PgPool;
 pub struct LostCommitProxy {
     pub pool: PgPool,
     armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    dropped_commits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
 impl LostCommitProxy {
@@ -17,14 +18,19 @@ impl LostCommitProxy {
         let proxy_port = listener.local_addr().unwrap().port();
         let armed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fault = armed.clone();
+        let dropped_commits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let dropped = dropped_commits.clone();
         let task = tokio::spawn(async move {
             let mut connections = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     accepted = listener.accept(), if connections.len()<4 => {
-                        let (client,_) = accepted.unwrap(); let host=host.clone(); let fault=fault.clone();
+                        let (client,_) = accepted.unwrap();
+                        client.set_nodelay(true).unwrap();
+                        let host=host.clone(); let fault=fault.clone(); let dropped=dropped.clone();
                         connections.spawn(async move {
                             let server=tokio::net::TcpStream::connect((host.as_str(),port)).await.unwrap();
+                            server.set_nodelay(true).unwrap();
                             let (mut client_read,mut client_write)=client.into_split();
                             let (mut server_read,mut server_write)=server.into_split();
                             let upstream=tokio::io::copy(&mut client_read,&mut server_write);
@@ -34,8 +40,15 @@ impl LostCommitProxy {
                                     let size=u32::from_be_bytes(header[1..5].try_into().unwrap()) as usize;
                                     assert!((4..=256*1024).contains(&size)); let mut body=vec![0;size-4];
                                     if server_read.read_exact(&mut body).await.is_err(){return;}
-                                    if header[0]==b'C' && body==b"COMMIT\0" && fault.swap(false,std::sync::atomic::Ordering::SeqCst){return;}
-                                    if client_write.write_all(&header).await.is_err() || client_write.write_all(&body).await.is_err(){return;}
+                                    if header[0]==b'C' && body==b"COMMIT\0" && fault.swap(false,std::sync::atomic::Ordering::SeqCst){
+                                        dropped.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+                                        return;
+                                    }
+                                    // Forward a complete response frame without a header/body delay.
+                                    let mut frame=Vec::with_capacity(header.len()+body.len());
+                                    frame.extend_from_slice(&header);
+                                    frame.extend_from_slice(&body);
+                                    if client_write.write_all(&frame).await.is_err(){return;}
                                 }
                             };
                             tokio::select! { _=upstream=>{}, _=downstream=>{} }
@@ -56,7 +69,16 @@ impl LostCommitProxy {
             .connect_with(redirected)
             .await
             .unwrap();
-        Self { pool, armed, task }
+        Self {
+            pool,
+            armed,
+            dropped_commits,
+            task,
+        }
+    }
+    pub fn dropped_commits(&self) -> usize {
+        self.dropped_commits
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
     pub fn lose_next_commit(&self) {
         self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
