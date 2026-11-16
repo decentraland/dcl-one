@@ -8,7 +8,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { fetchCatalogItems, fetchShopItems, type ShopSort } from '@shop/discovery/api'
 import { SUBCAT_MAP } from '@shop/discovery/lib/categories'
 // The design's ALL pill: the icon library's 3×3 `apps` grid (16px of 4px squares in the 26px slot).
-import allIcon from '../../assets/shop/all.svg'
+import allIcon from './assets/all.svg'
 import hairIcon from '@hud/assets/category-icons/hair.png'
 import upperBodyIcon from '@hud/assets/category-icons/upper_body.png'
 import handsWearIcon from '@hud/assets/category-icons/hands_wear.png'
@@ -17,7 +17,7 @@ import feetIcon from '@hud/assets/category-icons/feet.png'
 import accessoriesIcon from '@hud/assets/category-icons/earring.png'
 import skinIcon from '@hud/assets/category-icons/skin.png'
 import { listingTypeFor } from '@shop/market/access-rule'
-import { shopReads } from '../../../shop/discovery/reads'
+import { shopReads } from '@shop-host'
 
 export const SHOP_PAGE_SIZE = 48
 

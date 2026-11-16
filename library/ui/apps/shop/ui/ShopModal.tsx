@@ -2,8 +2,8 @@
 // corner and another under its bottom edge, a centred 396px column, and its CTA row. Presentational: the
 // host draws the scrim, places the card and owns focus and Escape.
 
-import glowBottom from '../../../assets/shop/modal/glow-bottom.svg'
-import glowTop from '../../../assets/shop/modal/glow-top.svg'
+import glowBottom from '../assets/modal/glow-bottom.svg'
+import glowTop from '../assets/modal/glow-top.svg'
 import styles from './ShopModal.module.css'
 
 export interface ShopModalProps {

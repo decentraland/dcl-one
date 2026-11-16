@@ -3,12 +3,12 @@
 // warm and a cool glow, with the corner flap holding the claimed badge. Below it, the NAME, "Decentraland
 // Name" and its price. Hovered or focused it takes the shop card's ring; clicking it is the page's to say.
 
-import nameIcon from '../../../assets/shop/names/card/name-icon.svg'
-import glowWarm from '../../../assets/shop/names/card/glow-warm.svg'
-import glowCool from '../../../assets/shop/names/card/glow-cool.svg'
-import flap from '../../../assets/shop/names/card/flap.svg'
-import flapShadow from '../../../assets/shop/names/card/flap-shadow.svg'
-import verifiedOutline from '../../../assets/shop/names/card/verified-outline.svg'
+import nameIcon from '../assets/names/card/name-icon.svg'
+import glowWarm from '../assets/names/card/glow-warm.svg'
+import glowCool from '../assets/names/card/glow-cool.svg'
+import flap from '../assets/names/card/flap.svg'
+import flapShadow from '../assets/names/card/flap-shadow.svg'
+import verifiedOutline from '../assets/names/card/verified-outline.svg'
 import styles from './ShopNameCard.module.css'
 
 export interface ShopNameCardProps {

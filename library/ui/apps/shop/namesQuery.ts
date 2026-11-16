@@ -9,12 +9,12 @@ import { pageCount } from './catalogueQuery'
 import type { ChainId } from '@shop/model/chain'
 import { creditsCeil, parseManaWei, type ManaWei } from '@shop/model/money'
 import { fetchNameResales, nameOf, NAMES_PAGE_SIZE, quoteNameCredits } from '@shop/names/api'
-import { readBannedNames } from '../../../shop/names/reads'
-import { landChainId } from '../../../shop/land/chain'
-import { rpcReader } from '../../../shop/land/evm'
+import { readBannedNames } from '@shop-host'
+import { landChainId } from '@shop-host'
+import { rpcReader } from '@shop-host'
 import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '@shop/names/name'
 import type { ShopNameStatus } from './ui'
-import { shopClient } from '../../../shop/api/host'
+import { shopClient } from '@shop-host'
 
 export const nameQueries = {
   banned: () =>

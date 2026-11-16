@@ -1,16 +1,16 @@
 // CreditsIcon — the New Shop's credit mark (its "credits-icon" component): the octagon, its rim and the C,
 // layered as the design draws them, in a square box of any size (the mark fills 79% by 83% of it).
 
-import c from '../../../assets/shop/credits-icon/c.svg'
-import v0 from '../../../assets/shop/credits-icon/v0.svg'
-import v1 from '../../../assets/shop/credits-icon/v1.svg'
-import v2 from '../../../assets/shop/credits-icon/v2.svg'
-import v3 from '../../../assets/shop/credits-icon/v3.svg'
-import v4 from '../../../assets/shop/credits-icon/v4.svg'
-import v5 from '../../../assets/shop/credits-icon/v5.svg'
-import v6 from '../../../assets/shop/credits-icon/v6.svg'
-import v7 from '../../../assets/shop/credits-icon/v7.svg'
-import v8 from '../../../assets/shop/credits-icon/v8.svg'
+import c from '../assets/credits-icon/c.svg'
+import v0 from '../assets/credits-icon/v0.svg'
+import v1 from '../assets/credits-icon/v1.svg'
+import v2 from '../assets/credits-icon/v2.svg'
+import v3 from '../assets/credits-icon/v3.svg'
+import v4 from '../assets/credits-icon/v4.svg'
+import v5 from '../assets/credits-icon/v5.svg'
+import v6 from '../assets/credits-icon/v6.svg'
+import v7 from '../assets/credits-icon/v7.svg'
+import v8 from '../assets/credits-icon/v8.svg'
 import styles from './CreditsIcon.module.css'
 
 const LAYERS: [string, string][] = [

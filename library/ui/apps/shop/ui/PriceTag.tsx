@@ -2,7 +2,7 @@
 // their mark, MANA with its glyph, or the reason there is no price.
 
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import CreditMark from '../../../../shop/credits/components/CreditMark'
+import { CreditMark } from '@shop-host'
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana } from '@shop/model/money'
 import { ManaIcon } from '@hud/design'

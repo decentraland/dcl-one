@@ -8,7 +8,7 @@ const shop = vi.hoisted(() => ({ request: vi.fn() }))
 vi.mock('../shell/shop/purchase', () => ({ createShellShop: () => ({ request: shop.request }) }))
 vi.mock('../shell/shop/overlay', () => ({ createShopOverlay: () => ({}) }))
 
-import { SHOP_BUSY, shopBusy } from '../lib/shopProtocol'
+import { SHOP_BUSY, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { mountPlayShell } from '../shell/mount'
 
 let app: Window

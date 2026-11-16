@@ -17,8 +17,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '@shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '@shop/detail/lib/bodyShape'
-import { hostOr } from '../../../shop/discovery/flags'
-import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
+import { hostOr } from '@shop-host'
+import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names/name'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
 import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
@@ -36,8 +36,8 @@ import upperBodyIcon from '@hud/assets/category-icons/upper_body.png'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
 import filterIcon from '@hud/assets/backpack/icon-filter.webp'
 import emptySearchArt from '@hud/assets/backpack/empty-search.webp'
-import cartIcon from '../../assets/shop/cart.svg'
-import namesIcon from '../../assets/shop/names/names-tab.svg'
+import cartIcon from './assets/cart.svg'
+import namesIcon from './assets/names/names-tab.svg'
 import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWorldCart } from './cartStore'
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
@@ -67,7 +67,7 @@ const NAME_TYPED_MAX = NAME_MAX_LENGTH + 1
 const SEARCH_DEBOUNCE_MS = 350
 /** The design's scroll thumb: 203px, whatever the page's length. */
 const THUMB_LENGTH = 203
-/** The stage image (assets/shop/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
+/** The stage image (assets/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
 const STAGE = { width: 1920, height: 1080, top: 70 }
 /** How long "1 Item Added to Cart" stays up. */
 const TOAST_MS = 3000
@@ -364,8 +364,11 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     emote(urn)
   }
   const toggleTryOn = (item: CatalogItem): void => {
-    if (item.category === 'emote') playing === item.id ? stopEmote() : playEmote(item)
-    else tryingOn === item.id ? takeOff() : wearOn(item)
+    if (item.category === 'emote') {
+      if (playing === item.id) stopEmote()
+      else playEmote(item)
+    } else if (tryingOn === item.id) takeOff()
+    else wearOn(item)
   }
   // An outfit dresses the avatar in what of it fits the player's body shape, over nothing else.
   const wearOutfit = async (outfit: OutfitSummary): Promise<void> => {

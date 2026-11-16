@@ -3,7 +3,7 @@
 // claimed badge, as it will read once it is the player's; the caret while it is being typed; the design's
 // "YourName" placeholder while nothing is. The page places it and says what it reads.
 
-import verifiedIcon from '../../../assets/shop/names/verified.svg'
+import verifiedIcon from '../assets/names/verified.svg'
 import styles from './AvatarNametag.module.css'
 
 /** What an empty nametag reads. */

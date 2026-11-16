@@ -27,7 +27,7 @@ import {
   type ShopLine,
   type ShopNamesMode,
   type ShopOperation
-} from '../../lib/shopProtocol'
+} from './shopProtocol'
 import { inWorldCart } from './cartStore'
 import type { PressedWith } from './ui/pressedWith'
 

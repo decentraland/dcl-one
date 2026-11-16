@@ -2,19 +2,12 @@
 // outfit's page there; and a NAME's.
 
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
-import { itemUrn } from '@shop/detail/lib/urn'
-import { landChainId } from '../../../shop/land/chain'
+export { tryOnUrn } from '@shop/detail/lib/tryOn'
+import { landChainId } from '@shop-host'
 import { landNetwork } from '@shop/land/contracts'
-import { CHAIN } from '@shop/model/chain'
 import { nameTokenIdOf } from '@shop/names/name'
 import { siteUrl } from '@hud-host'
 import { withUtm } from '@explorer-core/lib/utm'
-
-/** The item a try-on puts on: its own URN, else its collections-v2 URN where one exists (Polygon). */
-export function tryOnUrn(item: CatalogItem): string | null {
-  if (item.urn) return item.urn
-  return item.chainId === CHAIN.POLYGON || item.chainId === CHAIN.AMOY ? itemUrn(item) : null
-}
 
 /** The item's page on the web Shop, where a resale or a MANA-only sale is bought; none without an item id. */
 export function webShopUrl(item: CatalogItem): string | null {

@@ -1,4 +1,4 @@
-// The in-world Shop's cart (the design's Cart flow): what the buyer added with ADD TO CART and how many of
+// The in-world Shop's cart model (the design's Cart flow): what the buyer added with ADD TO CART and how many of
 // each, in this browser. It is its own, apart from the web Shop's cart (another design, another store).
 // Each line keeps what identifies the item and a snapshot to draw it with (its name, art and the card's
 // price when it was added), never a price authority: CHECKOUT sends only the items and how many of each,
@@ -21,12 +21,13 @@
 // `storage` event). The scope: Web Locks order the writes of the origin's tabs; how localStorage itself is
 // shared between them is the browser's (the HTML standard leaves it undefined across agent clusters).
 // Without Web Locks, only this page's own changes go one at a time.
+//
+// Its host passes in storage, the storage events of other tabs, the lock and ids (`InWorldCartHost`).
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { cardPrice } from '@shop/discovery/cardPrice'
-import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
-import { SIGNED_OUT } from '@shop/model/settlement'
-import { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine } from '../../lib/shopProtocol'
+import { cardPrice } from '../discovery/cardPrice'
+import type { CatalogItem } from '../discovery/lib/catalogItem'
+import { SIGNED_OUT } from '../model/settlement'
+import { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine } from './lines'
 
 export interface InWorldCartLine {
   /** Lowercase. */
@@ -50,7 +51,12 @@ export interface InWorldCartLine {
 /** What ADD TO CART takes of an item. */
 export type InWorldCartInput = Omit<InWorldCartLine, 'quantity' | 'addedAt'>
 
-export type CartStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+/** The part of Web Storage the cart uses. */
+export interface CartStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
 
 const KEY_PREFIX = 'dcl-inworld-shop:cart:v2:'
 const RECORD_VERSION = 2
@@ -160,38 +166,39 @@ export interface InWorldCart {
 /** Calls back with the storage key another tab wrote (null: it cleared storage); returns the unsubscribe. */
 export type StorageWatch = (onChange: (key: string | null) => void) => () => void
 
-const windowStorageEvents: StorageWatch = (onChange) => {
-  if (typeof window === 'undefined') return () => {}
-  const listener = (e: StorageEvent): void => onChange(e.key)
-  window.addEventListener('storage', listener)
-  return () => window.removeEventListener('storage', listener)
-}
-
 /** Runs `fn` holding the cart's lock, which every tab's cart writes take; resolves with what it returns. */
 export type CartLock = <T>(fn: () => T) => Promise<T>
 
-const LOCK = 'dcl-inworld-shop:cart'
-
-/** Web Locks across the origin's tabs; without them, this page's own writes still go one at a time. */
-function cartLock(): CartLock {
+/**
+ * One page's lock: its own writes go one at a time. A host with Web Locks takes the origin's instead,
+ * with `CART_LOCK` as the lock's name.
+ */
+export function localCartLock(): CartLock {
   let chain: Promise<unknown> = Promise.resolve()
-  const local: CartLock = (fn) => {
+  return (fn) => {
     const run = chain.then(fn)
     chain = run.catch(() => {})
     return run
   }
-  return <T,>(fn: () => T): Promise<T> => {
-    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
-    // `fn` is synchronous: the lock is held from the read to the write, and goes as it returns.
-    return locks ? (locks.request(LOCK, () => fn()) as Promise<T>) : local(fn)
-  }
 }
 
-export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch; lock?: CartLock; newId?: () => string } = {}): InWorldCart {
-  const storage = opts.storage ?? defaultStorage
-  const newId = opts.newId ?? (() => crypto.randomUUID())
-  const now = opts.now ?? Date.now
-  const lock = opts.lock ?? cartLock()
+/** The Web Lock every tab's cart writes take. */
+export const CART_LOCK = 'dcl-inworld-shop:cart'
+
+/** What the cart takes from its host: storage, another tab's writes, the lock, ids and the clock. */
+export interface InWorldCartHost {
+  storage: () => CartStorage | null
+  watch: StorageWatch
+  lock: CartLock
+  newId: () => string
+  now?: () => number
+}
+
+export function createInWorldCart(host: InWorldCartHost): InWorldCart {
+  const storage = host.storage
+  const newId = host.newId
+  const now = host.now ?? Date.now
+  const lock = host.lock
   const listeners = new Set<() => void>()
   let account: string | null = null
   /** The active account's record; its lines are the snapshot. */
@@ -337,13 +344,14 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       const took: Taken[] = []
       for (const g of guest.lines) {
         const at = merged.findIndex((l) => sameItem(l, g))
-        const had = at >= 0 ? merged[at].quantity : 0
+        const prev = at >= 0 ? merged[at] : undefined
+        const had = prev?.quantity ?? 0
         // The merged line keeps the larger stock it knows of, so its own cap never cuts what it now holds.
-        const available = at < 0 ? g.available : merged[at].available == null || g.available == null ? null : Math.max(merged[at].available!, g.available)
+        const available = prev === undefined ? g.available : prev.available == null || g.available == null ? null : Math.max(prev.available, g.available)
         const quantity = Math.max(had, Math.min(had + g.quantity, capFor({ available }, cartUnits(merged) - had)))
         if (quantity === had) continue
         took.push({ contract: g.contract, itemId: g.itemId, units: quantity - had })
-        if (at >= 0) merged[at] = { ...merged[at], quantity, available }
+        if (prev !== undefined) merged[at] = { ...prev, quantity, available }
         else merged.push({ ...g, quantity })
       }
       // Nothing fits: the signed-out cart waits, held as offered to this account.
@@ -392,8 +400,8 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   /** Lines with a line's quantity set, within its cap, or null when that changes nothing. */
   const withQuantity = (record: CartRecord, item: { contract: string; itemId: string }, quantity: number): CartRecord | null => {
     const at = record.lines.findIndex((l) => sameItem(l, item))
-    if (at < 0) return null
-    const line = record.lines[at]
+    const line = at >= 0 ? record.lines[at] : undefined
+    if (line === undefined) return null
     const q = Math.min(Math.max(1, Math.floor(quantity)), capFor(line, cartUnits(record.lines) - line.quantity))
     if (q < 1 || q === line.quantity) return null
     const lines = [...record.lines]
@@ -405,7 +413,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
 
   // Another tab wrote: the active account's record is shown again as it stands (with this page's untaken
   // changes on it); any other is read when next needed.
-  ;(opts.watch ?? windowStorageEvents)((key) => {
+  ;host.watch((key) => {
     if (key !== null && !key.startsWith(KEY_PREFIX)) return
     if (key === null || key === keyOf(account)) refresh()
   })
@@ -439,12 +447,13 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       const item = { ...input, contract: input.contract.toLowerCase() }
       return mutate(account, (record) => {
         const at = record.lines.findIndex((l) => sameItem(l, item))
-        const others = cartUnits(record.lines) - (at >= 0 ? record.lines[at].quantity : 0)
-        if ((at >= 0 ? record.lines[at].quantity : 0) + 1 > capFor(item, others)) return null
-        if (at < 0) return { ...record, lines: [...record.lines, { ...item, quantity: 1, addedAt: now() }] }
+        const prev = at >= 0 ? record.lines[at] : undefined
+        const others = cartUnits(record.lines) - (prev?.quantity ?? 0)
+        if ((prev?.quantity ?? 0) + 1 > capFor(item, others)) return null
+        if (prev === undefined) return { ...record, lines: [...record.lines, { ...item, quantity: 1, addedAt: now() }] }
         const lines = [...record.lines]
         // The newer snapshot (its price and stock as the listing reads them now), one more of it.
-        lines[at] = { ...record.lines[at], ...item, quantity: record.lines[at].quantity + 1 }
+        lines[at] = { ...prev, ...item, quantity: prev.quantity + 1 }
         return { ...record, lines }
       })
     },
@@ -472,24 +481,6 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     }
   }
   return cart
-}
-
-function defaultStorage(): CartStorage | null {
-  try {
-    return typeof localStorage !== 'undefined' ? localStorage : null
-  } catch {
-    return null
-  }
-}
-
-/** The page's cart. */
-export const inWorldCart = createInWorldCart()
-
-/** The cart's lines for `account`, kept current. */
-export function useInWorldCart(account: string | null, cart: InWorldCart = inWorldCart): readonly InWorldCartLine[] {
-  const subscribe = useCallback((listener: () => void) => cart.subscribe(listener), [cart])
-  useEffect(() => cart.scopeTo(account), [cart, account])
-  return useSyncExternalStore(subscribe, cart.getSnapshot)
 }
 
 /** What ADD TO CART keeps of a listing: a primary sale in Credits only (anything else is bought on the web). */

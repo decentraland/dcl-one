@@ -9,10 +9,12 @@
 // of operations (events and shop.status alike) goes through parseOperationEvent, which refuses a mix of the
 // two. A HUD built before NAMEs reads `items: []` as no operation at all and drops it.
 
-import { MAX_CREDIT_LINES_PER_GROUP } from '@shop/model/settlement'
+import { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine } from '@shop/cart/lines'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '@shop/names/name'
-import type { WalletKind } from '../../shop/wallet/session'
 import { ShellError } from '@explorer-core/lib/shellReply'
+
+// The line rules are the Shop core's (@shop/cart/lines); this protocol names them as it always has.
+export { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine }
 
 export const SHOP_PROTOCOL = 1
 
@@ -50,7 +52,8 @@ export const shopBusy = (): ShellError => new ShellError(SHOP_BUSY, LEGACY_SHOP_
 export const SHOP_EVENT = 'bevy-shell:shop'
 
 /** The web Shop's own wallet kinds: a browser wallet, or an in-app (managed) one. */
-export type ShopWalletKind = WalletKind
+/** How the buyer signed in, as the web Shop's wallet session names it. */
+export type ShopWalletKind = 'web3' | 'managed'
 
 /**
  * How this shell buys a NAME. `simulation`: the whole flow is rehearsed (the real price, balance and
@@ -89,15 +92,6 @@ export interface ShopBalance {
   credits: number
 }
 
-/** An item, and how many of it (a wearable or an emote can be minted more than once). */
-export interface ShopLine {
-  contract: string
-  itemId: string
-  quantity: number
-}
-
-/** The most a purchase buys at once: the web Shop's cap on a Credits group (one credit pays them all). */
-export const MAX_PURCHASE_UNITS = MAX_CREDIT_LINES_PER_GROUP
 
 export interface ShopBuyRequest {
   v: typeof SHOP_PROTOCOL
@@ -172,17 +166,9 @@ export type ShopOperation = ShopItemOperation | ShopNameOperation
 
 export type ShopOperationEvent = ShopOperation & { type: typeof SHOP_EVENT }
 
-/** An EVM address, in any case. */
-export const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 /** A NAME exactly as registered: 2 to 15 ASCII letters or digits, nothing around them. */
 export const NAME = new RegExp(`^[A-Za-z0-9]{${NAME_MIN_LENGTH},${NAME_MAX_LENGTH}}$`)
-/** A uint256 in decimal: at most 78 digits, no leading zeros. */
-export const UINT = /^(0|[1-9][0-9]{0,77})$/
 
-/** Whether two references name the same item (contracts as given: lowercase, as parsed). */
-export const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
-/** How many units lines hold in all. */
-export const unitsOf = (lines: readonly { quantity: number }[]): number => lines.reduce((n, l) => n + l.quantity, 0)
 
 function object(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null

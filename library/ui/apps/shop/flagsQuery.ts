@@ -10,7 +10,8 @@
 // answer changes. Transitional: it goes when those fetchers take the flag as an input.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { primeRemoteFlags, readRemoteFlags, type RemoteFlag } from '../../../shop/discovery/lib/remoteFlags'
+import type { RemoteFlag } from '@shop/discovery/lib/rolloutFlags'
+import { primeRemoteFlags, readRemoteFlags } from '@shop-host'
 
 const READ_TIMEOUT_MS = 3_000
 

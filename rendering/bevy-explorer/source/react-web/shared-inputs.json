@@ -909,6 +909,10 @@
           "kind": "directory"
         },
         {
+          "name": "shop",
+          "kind": "directory"
+        },
+        {
           "name": "sites",
           "kind": "directory"
         }

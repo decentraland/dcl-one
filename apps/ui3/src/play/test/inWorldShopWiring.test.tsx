@@ -11,7 +11,7 @@ vi.mock('@explorer-core/engine/engineRpc', () => ({ EngineRpc: class {} }))
 vi.mock('@explorer-core/lib/isMobile', async (original) => ({ ...await original<typeof import('@explorer-core/lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
 vi.mock('@explorer-core/lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
 // The new Shop reads server data, so it needs the HUD's query client: useQueryClient throws without one.
-vi.mock('../features/shop/InWorldShop', () => ({
+vi.mock('@dcl/one-ui/apps/shop/InWorldShop', () => ({
   default: () => {
     useQueryClient()
     return <div data-testid="in-world-shop" />

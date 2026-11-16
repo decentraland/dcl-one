@@ -2,7 +2,7 @@
 // it is on), then BUY when it is bought in-world, else VIEW on the web Shop.
 
 import { Button, MaskIcon } from '@hud/design'
-import externalIcon from '../../../assets/shop/external.svg'
+import externalIcon from '../assets/external.svg'
 import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopCardActions.module.css'
 

@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPos, sliderPosToPrice } from '@shop/discovery/lib/price-slider'
 import { formatCreditsFull } from '@shop/checkout/lib/currency'
-import CreditMark from '../../../../shop/credits/components/CreditMark'
+import { CreditMark } from '@shop-host'
 import styles from './ShopFilters.module.css'
 
 /** In the order the design lists them. */
