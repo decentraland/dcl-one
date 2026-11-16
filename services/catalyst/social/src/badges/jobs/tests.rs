@@ -455,6 +455,63 @@ async fn an_imported_document_resumes() {
     assert!(granted(&pool, a).await.is_empty(), "no tier newly reached");
 }
 
+#[tokio::test]
+async fn a_height_reached_without_a_height_completes_vertical_voyager() {
+    let Some(pool) = private_pool("badges_client_height_unity").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    client_event(&pool, a, "vertical-height-reached", None, now(), json!({})).await;
+    // an explicit null is not a missing height
+    let b = fresh_address();
+    client_event(
+        &pool,
+        b.as_str(),
+        "vertical-height-reached",
+        None,
+        now(),
+        json!({"height": null}),
+    )
+    .await;
+    drain_client_events(&p).await;
+    assert_eq!(
+        progress(&pool, a, "vertical_voyager").await,
+        Some((1, json!({"steps": 1}), true))
+    );
+    assert_eq!(progress(&pool, b.as_str(), "vertical_voyager").await, None);
+}
+
+#[tokio::test]
+async fn emote_minutes_follow_the_receive_time_not_the_client_clock() {
+    let Some(pool) = private_pool("badges_client_received_at").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    let received = now();
+    // one burst a client stamped a minute apart each
+    for back in [2, 1, 0] {
+        sqlx::query(
+            "INSERT INTO social.client_events (key, source, sub_type, address, session_id, reported_at, received_at, metadata) \
+             VALUES ($1, 'client', 'used-emote', $2, NULL, $3, $4, '{}'::jsonb)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(a)
+        .bind(received - ChronoDuration::minutes(back))
+        .bind(received)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    drain_client_events(&p).await;
+    assert_eq!(progress(&pool, a, "moves_master").await.unwrap().0, 1);
+}
+
 async fn deploy(
     conn: impl sqlx::PgExecutor<'_>,
     entity_type: &str,
@@ -1007,6 +1064,31 @@ async fn off_chain_goods_are_credited_to_their_beneficiaries() {
     }
 }
 
+/// A `transfer` of the token from `from` to `to`.
+async fn forward(
+    pool: &PgPool,
+    block: i64,
+    log: i32,
+    contract: &str,
+    item_id: i64,
+    from: &str,
+    to: &str,
+) {
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+         VALUES ('matic', $1, $2, 1700000000, 'transfer', $3, $3, $4::numeric * 105312291668557186697918027683670432318895095400549111254310977536 + 1, $5, $6)",
+    )
+    .bind(block)
+    .bind(log)
+    .bind(contract)
+    .bind(item_id)
+    .bind(from)
+    .bind(to)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn nft_event(
     pool: &PgPool,
@@ -1070,12 +1152,12 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
         Some(&tx2),
     )
     .await;
-    nft_event(&pool, 103, 2, "transfer", &other, 1, user.as_str(), None).await;
+    forward(&pool, 103, 2, &other, 1, relay, user.as_str()).await;
     // a relay buys and forwards the token only in a later block: nobody counts
     let tx3 = format!("0x{}", "c".repeat(64));
     nft_event(&pool, 104, 0, "transfer", &c, 1, relay, None).await;
     nft_event(&pool, 104, 1, "order_successful", &c, 1, relay, Some(&tx3)).await;
-    nft_event(&pool, 105, 0, "transfer", &c, 1, user.as_str(), None).await;
+    forward(&pool, 105, 0, &c, 1, relay, user.as_str()).await;
     chain_ready(&pool, "nft", 105).await;
     assert_eq!(sales::batch(&p, Log::Order).await.unwrap().0, 5);
     let emotes = progress(&pool, b, "emotionista").await.unwrap();
@@ -1093,6 +1175,48 @@ async fn legacy_orders_count_per_transaction_and_resolve_relays() {
         json!([{"transactionHash": tx2, "saleAt": 1_700_000_000_000_i64}])
     );
     assert_eq!(progress(&pool, relay, "emotionista").await, None);
+}
+
+#[tokio::test]
+async fn credits_manager_legacy_orders_credit_the_credits_user() {
+    let Some(pool) = private_pool("badges_sales_credits_manager").await else {
+        return;
+    };
+    let p = pass(&pool);
+    chain_ready(&pool, "nft", 100).await;
+    sales::batch(&p, Log::Order).await.unwrap();
+    let c = contract();
+    item(&pool, &c, 1, "wearable_v2", fresh_address().as_str()).await;
+    // useCredits: the order pays the seller and hands the token to the
+    // CreditsManager, which forwards it to the user later in the transaction
+    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let user = fresh_address();
+    let tx = format!("0x{}", "d".repeat(64));
+    nft_event(&pool, 101, 0, "transfer", &c, 1, credits_manager, None).await;
+    nft_event(
+        &pool,
+        101,
+        1,
+        "order_successful",
+        &c,
+        1,
+        credits_manager,
+        Some(&tx),
+    )
+    .await;
+    forward(&pool, 101, 2, &c, 1, credits_manager, user.as_str()).await;
+    // the user hands it on in the same block: the gift earns nothing
+    let friend = fresh_address();
+    forward(&pool, 101, 3, &c, 1, user.as_str(), friend.as_str()).await;
+    chain_ready(&pool, "nft", 101).await;
+    sales::batch(&p, Log::Order).await.unwrap();
+    let bought = progress(&pool, user.as_str(), "fashionista").await.unwrap();
+    assert_eq!(
+        bought.1["transactions_wearable_purchase"],
+        json!([{"transactionHash": tx, "saleAt": 1_700_000_000_000_i64}])
+    );
+    assert_eq!(progress(&pool, credits_manager, "fashionista").await, None);
+    assert_eq!(progress(&pool, friend.as_str(), "fashionista").await, None);
 }
 
 async fn mirror_ready(pool: &PgPool, mirror: &str) {
