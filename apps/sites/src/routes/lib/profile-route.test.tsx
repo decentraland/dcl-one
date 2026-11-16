@@ -429,7 +429,7 @@ describe("profile route, creations and assets", () => {
     mount(`/profile/${A}/creations`);
 
     expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/item/0xabc/0");
-    expect(screen.getByText("By Alice")).toBeTruthy();
+    expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
   });
 
   it("shows the owner's assets on their own profile", async () => {

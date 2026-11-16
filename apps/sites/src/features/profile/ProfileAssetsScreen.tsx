@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button } from "@dcl/one-ui";
+import { Button, ShopCard, ShopCardPrice } from "@dcl/one-ui";
 import {
   BackpackUpperBody,
   GeneralGrid,
@@ -15,8 +15,8 @@ import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
 import {
   catalogueTotal,
-  CollectibleBadges,
-  CollectibleCard,
+  categoryGlyph,
+  collectibleBadges,
   CollectiblesItem,
   CollectiblesPanel,
   loadedRows,
@@ -26,6 +26,7 @@ import {
   unreadyState,
   useFocusNewRows,
   useRouterClick,
+  ShopCardRouterLink,
   type CategoryOption,
   type CollectiblesState,
 } from "./collectibles";
@@ -82,12 +83,12 @@ function NameActions({ asset }: { asset: ProfileAsset }) {
         href={MANAGE_NAMES_HREF}
         onClick={routerClick(MANAGE_NAMES_HREF)}
         variant="secondary"
-        size="sm"
+        size="md"
         aria-label={`Edit ${asset.name}`}
       >
         Edit
       </Button>
-      <Button href={transfer} onClick={routerClick(transfer)} size="sm" aria-label={`Transfer ${asset.name}`}>
+      <Button href={transfer} onClick={routerClick(transfer)} size="md" aria-label={`Transfer ${asset.name}`}>
         Transfer
       </Button>
     </>
@@ -98,20 +99,24 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
   const routerClick = useRouterClick();
   const href = tokenHref(asset);
   return (
-    <CollectibleCard
-      title={asset.name}
-      imageUrl={asset.image}
+    <ShopCard
+      name={asset.name}
+      image={asset.image}
       // The catalogue has no image for a NAME.
       placeholder={asset.category === "ens" ? <GeneralName size={64} /> : undefined}
-      href={href}
       rarity={asset.rarity}
-      price={asset.price ? { currency: "mana", amount: asset.price, network: asset.network } : undefined}
-      badges={<CollectibleBadges {...asset.traits} />}
-      action={
+      price={asset.price ? <ShopCardPrice kind="mana" amount={asset.price} network={asset.network} /> : undefined}
+      categoryIcon={categoryGlyph(asset.traits.category)}
+      badges={collectibleBadges(asset.traits)}
+      href={href}
+      linkComponent={ShopCardRouterLink}
+      variant="catalogue"
+      headingLevel={3}
+      actions={
         asset.category === "ens" ? (
           <NameActions asset={asset} />
         ) : (
-          <Button href={href} onClick={routerClick(href)} size="sm" aria-label={`View ${asset.name}`}>
+          <Button href={href} onClick={routerClick(href)} size="md" aria-label={`View ${asset.name}`}>
             View
           </Button>
         )

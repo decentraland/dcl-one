@@ -1,0 +1,450 @@
+/* The design system's ExplorerShopCard (DCL-ONE UI Style Guide, Shop page), as the in-world Shop drew
+   it (decentraland/dcl-one#346): a dark card at radius/lg with the ItemCard thumbnail and the info
+   below it. The info is 113px high, so a 203px card is the design's 316px in every state; the card
+   takes its grid cell's width. --shop-card-rarity and --shop-card-rarity-light come from data-rarity
+   (the foundations' Rarities; `base` is Neutrals/Gray). The ring sits 4px off the card, 4px wide.
+   The flap's 45px corner, the shine's conic stops, the 2.5px shine and the 1.429px face border keep
+   the design's sizes; they have no tokens. */
+@layer dcl.components {
+  .card {
+    --shop-card-rarity: var(--dcl-neutrals-gray);
+    --shop-card-rarity-light: var(--dcl-neutrals-gray);
+
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    flex-direction: column;
+    width: 100%;
+    margin: 0;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-text-primary);
+    isolation: isolate;
+  }
+
+  .card[data-rarity='common'] {
+    --shop-card-rarity: var(--dcl-rarities-common);
+    --shop-card-rarity-light: var(--dcl-rarities-common-light);
+  }
+
+  .card[data-rarity='uncommon'] {
+    --shop-card-rarity: var(--dcl-rarities-uncommon);
+    --shop-card-rarity-light: var(--dcl-rarities-uncommon-light);
+  }
+
+  .card[data-rarity='rare'] {
+    --shop-card-rarity: var(--dcl-rarities-rare);
+    --shop-card-rarity-light: var(--dcl-rarities-rare-light);
+  }
+
+  .card[data-rarity='epic'] {
+    --shop-card-rarity: var(--dcl-rarities-epic);
+    --shop-card-rarity-light: var(--dcl-rarities-epic-light);
+  }
+
+  .card[data-rarity='legendary'] {
+    --shop-card-rarity: var(--dcl-rarities-legendary);
+    --shop-card-rarity-light: var(--dcl-rarities-legendary-light);
+  }
+
+  .card[data-rarity='exotic'] {
+    --shop-card-rarity: var(--dcl-rarities-exotic);
+    --shop-card-rarity-light: var(--dcl-rarities-exotic-light);
+  }
+
+  .card[data-rarity='mythic'] {
+    --shop-card-rarity: var(--dcl-rarities-mythic);
+    --shop-card-rarity-light: var(--dcl-rarities-mythic-light);
+  }
+
+  .card[data-rarity='unique'] {
+    --shop-card-rarity: var(--dcl-rarities-unique);
+    --shop-card-rarity-light: var(--dcl-rarities-unique-light);
+  }
+
+  /* The ring: a ruby to lavender gradient 4px off the card, on hover, keyboard focus and selection. */
+  .card::after {
+    content: '';
+    position: absolute;
+    z-index: 3;
+    inset: -8px;
+    padding: 4px;
+    border-radius: var(--dcl-radius-xl);
+    background: linear-gradient(180deg, var(--dcl-brand-ruby) 0%, var(--dcl-brand-lavender) 100%);
+    mask:
+      linear-gradient(var(--dcl-neutrals-black) 0 0) content-box,
+      linear-gradient(var(--dcl-neutrals-black) 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .card:hover::after,
+  .card:has(:focus-visible)::after,
+  .selected::after {
+    opacity: 1;
+  }
+
+  /* The whole card opens or selects; the actions sit above it. */
+  .hit {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    padding: 0;
+    border: none;
+    border-radius: var(--dcl-radius-lg);
+    background: none;
+    cursor: pointer;
+  }
+
+  .hit:focus-visible {
+    outline: none;
+  }
+
+  /* ItemCard: Brand/Purple under two radial glows, the rarity's Light from the top left and the rarity
+     from the bottom right (exotic uses its Light for both), and a shine of the Light along the rim. */
+  .thumb {
+    --shop-card-glow: var(--shop-card-rarity);
+
+    position: relative;
+    z-index: 0;
+    display: flex;
+    overflow: hidden;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--dcl-radius-lg);
+    background:
+      radial-gradient(78% 78% at 8% 4%, var(--shop-card-rarity-light) 0%, transparent 100%),
+      radial-gradient(100% 100% at 70% 68%, var(--shop-card-glow) 0%, transparent 100%),
+      var(--dcl-brand-purple);
+  }
+
+  .card[data-rarity='exotic'] > .thumb {
+    --shop-card-glow: var(--shop-card-rarity-light);
+  }
+
+  .thumb::after {
+    content: '';
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    padding: 2.5px;
+    border-radius: inherit;
+    background: conic-gradient(
+      from 220.7deg at 52.74% 52.49%,
+      var(--shop-card-rarity-light) 0deg,
+      transparent 131.44deg,
+      transparent 154.86deg,
+      var(--shop-card-rarity-light) 180deg,
+      color-mix(in srgb, var(--shop-card-rarity-light) 50%, transparent) 218.62deg,
+      color-mix(in srgb, var(--shop-card-rarity-light) 50%, transparent) 308.73deg,
+      var(--shop-card-rarity-light) 360deg
+    );
+    mask:
+      linear-gradient(var(--dcl-neutrals-black) 0 0) content-box,
+      linear-gradient(var(--dcl-neutrals-black) 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .image {
+    width: 92%;
+    height: 92%;
+    object-fit: contain;
+    pointer-events: none;
+  }
+
+  .placeholder {
+    display: flex;
+    color: var(--dcl-text-primary);
+  }
+
+  /* The CategoryFlap: the rarity's corner with its shadow, and the category glyph 4px in. */
+  .flap {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    width: 45.28px;
+    height: 45.12px;
+    padding: var(--dcl-space-4) 0 0 var(--dcl-space-4);
+    color: var(--dcl-text-primary);
+  }
+
+  .flapShape {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .flapSolid {
+    fill: var(--shop-card-rarity);
+  }
+
+  .flapShadow {
+    fill: var(--dcl-neutrals-shadow);
+    opacity: 0.2;
+  }
+
+  .flapIcon {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    width: 16px;
+    height: 16px;
+  }
+
+  .discount {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
+
+    position: absolute;
+    z-index: 3;
+    bottom: 6px;
+    left: 6px;
+    padding: 2px 6px;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-feedback-error-subtle);
+    color: var(--dcl-brand-ruby);
+  }
+
+  /* It fills a card stretched to its grid row, so a row of cards ends level. */
+  .info {
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    flex: 1 0 auto;
+    flex-direction: column;
+    gap: var(--dcl-space-8);
+    min-height: 113px;
+    padding: var(--dcl-space-16);
+  }
+
+  .name {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+
+    overflow: hidden;
+    margin: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .creator {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+
+  /* ProfilePic at 20: Transparencies/White 60 around the snapshot. */
+  .face {
+    flex: none;
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    border: 1.429px solid var(--dcl-transparencies-white-60);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-10);
+    object-fit: cover;
+  }
+
+  .creatorName {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+
+    overflow: hidden;
+    color: var(--creator-color, var(--dcl-text-primary));
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .meta,
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+  }
+
+  .tags {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+
+  /* RarityLabel: label/tag caps in the rarity on a 20% tint of it, radius/xs. */
+  .rarity {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
+
+    padding: var(--dcl-space-4) var(--dcl-space-8);
+    border-radius: var(--dcl-radius-xs);
+    background: color-mix(in srgb, var(--shop-card-rarity) 20%, transparent);
+    color: var(--shop-card-rarity);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+  }
+
+  .price {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    max-width: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .price > span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+  }
+
+  /* Hover or keyboard focus: the name stays on top and the 40px actions take the bottom of the same
+     info (a click's focus leaves a selected card as the design draws it). The rows swap by opacity, so
+     the price stays in the accessibility tree and the actions stay in the focus order. */
+  .actions {
+    position: absolute;
+    z-index: 2;
+    right: var(--dcl-space-16);
+    bottom: var(--dcl-space-16);
+    left: var(--dcl-space-16);
+    height: 40px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .actions > * {
+    flex: 1;
+  }
+
+  .hasActions:hover .creator,
+  .hasActions:has(:focus-visible) .creator,
+  .hasActions:hover .meta,
+  .hasActions:has(:focus-visible) .meta {
+    opacity: 0;
+  }
+
+  .hasActions:hover .actions,
+  .hasActions:has(:focus-visible) .actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* The catalogue variant (web grids): a price too long to share the row wraps under the label, and a
+     touch screen, which has no hover, always shows the actions under the info. */
+  .catalogue .meta {
+    flex-wrap: wrap;
+    row-gap: var(--dcl-space-4);
+  }
+
+  .catalogue .price {
+    margin-left: auto;
+  }
+
+  @media (hover: none) {
+    .catalogue .actions {
+      position: static;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .catalogue.hasActions:hover .creator,
+    .catalogue.hasActions:has(:focus-visible) .creator,
+    .catalogue.hasActions:hover .meta,
+    .catalogue.hasActions:has(:focus-visible) .meta {
+      opacity: 1;
+    }
+  }
+
+  .visuallyHidden {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* Loading: the thumbnail and two bars (179×20 and 140×14) under the Skeleton's purple sweep. */
+  .skeleton {
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-transparencies-black-40);
+  }
+
+  .sheen {
+    background: linear-gradient(
+      90deg,
+      var(--dcl-brand-purple-dark) 0%,
+      var(--dcl-brand-purple) 50%,
+      var(--dcl-brand-purple-dark) 100%
+    );
+    background-size: 300% 100%;
+    animation: shop-card-sweep 1500ms linear infinite;
+  }
+
+  .skeletonTile {
+    flex: none;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--dcl-radius-lg);
+  }
+
+  .skeletonInfo {
+    display: flex;
+    box-sizing: border-box;
+    flex-direction: column;
+    gap: var(--dcl-space-8);
+    min-height: 113px;
+    padding: var(--dcl-space-16);
+  }
+
+  .skeletonBar {
+    flex: none;
+    width: 179px;
+    max-width: 100%;
+    height: 20px;
+    border-radius: var(--dcl-radius-full);
+  }
+
+  .skeletonBarShort {
+    width: 140px;
+    height: 14px;
+  }
+
+  @keyframes shop-card-sweep {
+    from {
+      background-position-x: 100%;
+    }
+
+    to {
+      background-position-x: 0%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sheen {
+      animation: none;
+    }
+
+    .card::after {
+      transition: none;
+    }
+  }
+}

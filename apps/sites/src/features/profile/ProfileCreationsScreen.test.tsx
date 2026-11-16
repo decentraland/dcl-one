@@ -86,9 +86,11 @@ describe("profile creations", () => {
     expect(net.fetchProfileCreations.mock.calls[0]?.[0]).toBe(A);
     expect(net.fetchProfileCreations.mock.calls[0]?.[1]).toMatchObject({ category: "wearable", skip: 0, first: PROFILE_COLLECTIBLES_PAGE });
     const hat = card("Hat 0");
-    expect(within(hat).getByText("By Billyjuice")).toBeTruthy();
-    expect(within(hat).getByText("Legendary")).toBeTruthy();
-    expect(within(hat).getByText((_, node) => node?.tagName === "P" && node.textContent === "Price: 369 MANA")).toBeTruthy();
+    expect(within(hat).getByRole("heading", { level: 3, name: "Hat 0" })).toBeTruthy();
+    // The creator in the profile's own name colour.
+    expect(within(hat).getByText("Billyjuice").style.getPropertyValue("--creator-color")).toBe("#ff8362");
+    expect(within(hat).getByText("legendary")).toBeTruthy();
+    expect(hat.textContent).toContain("Price: 369 MANA");
     expect(within(hat).getByRole("img", { name: "Hat" })).toBeTruthy();
     expect(within(hat).getByRole("img", { name: "Unisex" })).toBeTruthy();
     expect(within(hat).getByRole("img", { name: "Smart wearable" })).toBeTruthy();
@@ -119,7 +121,7 @@ describe("profile creations", () => {
     show();
 
     const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
-    expect(within(hat).getByText((_, node) => node?.tagName === "P" && node.textContent === "Price: 12 credits")).toBeTruthy();
+    expect(hat.textContent).toContain("Price: 12 credits");
     expect(within(hat).queryByText(/MANA/)).toBeNull();
     expect(within(hat).getByRole("link", { name: "Buy Hat 0" })).toBeTruthy();
   });
@@ -166,7 +168,7 @@ describe("profile creations", () => {
 
     const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
     expect(hat.querySelector("img")).toBeNull();
-    expect(within(hat).queryByText("Common")).toBeNull();
+    expect(within(hat).queryByText("common")).toBeNull();
     expect(within(hat).queryAllByRole("img")).toHaveLength(0);
   });
 
@@ -175,7 +177,7 @@ describe("profile creations", () => {
 
     show(emptyProfile(A));
 
-    expect(await screen.findByText("By 0x09bc\u2026ab6b")).toBeTruthy();
+    expect(await screen.findByText("0x09bc\u2026ab6b")).toBeTruthy();
   });
 
   it("switches to emotes, reading that category", async () => {

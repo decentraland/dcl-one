@@ -1,4 +1,4 @@
-// The page's cards and item panel: the Shop UI (./ui) fed from the HUD — the creator's profile, the item's
+// The page's cards and item panel: the public ShopCard and the Shop UI (./ui) fed from the HUD — the creator's profile, the item's
 // entity (description, hides), its price as the web Shop's card rule sets it and its category glyph.
 
 import { cardPrice } from '@shop/discovery/cardPrice'
@@ -6,6 +6,7 @@ import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { MAX_SUPPLY } from '@shop/discovery/lib/rarity'
 import { saleDiscountPct } from '@shop/discovery/lib/sale'
 import { SIGNED_OUT } from '@shop/model/settlement'
+import { ShopCard as CatalogueCard } from '@dcl/one-ui'
 import { MaskIcon } from '@hud/design'
 import { shortAddr, userColor } from '@explorer-core/lib/identity'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
@@ -13,7 +14,7 @@ import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { useProfile } from '@hud/features/session/profileStore'
 import { useItemEntity } from './itemEntity'
 import { tryOnUrn, webShopUrl } from './itemLinks'
-import { buyableInWorld, PriceTag, ShopCardActions, ShopItemCard, ShopItemPanel, type PressedWith } from './ui'
+import { buyableInWorld, PriceTag, ShopCardActions, ShopItemPanel, type PressedWith } from './ui'
 
 const CATEGORY_NAMES: Record<string, string> = { hands_wear: 'Handwear', body_shape: 'Body shape', upper_body: 'Upper body', lower_body: 'Lower body', top_head: 'Top head', facial_hair: 'Facial hair' }
 const categoryName = (c: string): string => CATEGORY_NAMES[c] ?? c.replace(/[_-]+/g, ' ')
@@ -57,12 +58,11 @@ export function ShopCard({
   const discount = price.kind === 'credits' && price.compareAt != null ? `-${saleDiscountPct(price.compareAt, price.credits)}%` : undefined
   const emote = item.category === 'emote'
   return (
-    <ShopItemCard
+    <CatalogueCard
       name={item.name}
-      thumbnail={item.thumbnail}
-      rarity={item.rarity}
-      creator={creatorName}
-      creatorPicture={creator?.picture}
+      image={item.thumbnail}
+      rarity={item.rarity ?? 'base'}
+      creator={{ name: creatorName, picture: creator?.picture }}
       price={<PriceTag price={price} size={16} />}
       discount={discount}
       categoryIcon={item.category === 'emote' || item.wearableCategory != null ? itemIcon(item, 16) : undefined}

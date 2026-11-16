@@ -46,7 +46,8 @@ import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, w
 import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
 import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
-import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
+import { ShopCardSkeleton } from '@dcl/one-ui'
+import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
 import { inShell } from '@explorer-core/lib/shell'
 
@@ -669,7 +670,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                         {resales.isPending ? (
                           <div className={styles.nameGrid} role="status" aria-label="Loading the NAMEs on resale">
                             {Array.from({ length: 12 }, (_, i) => (
-                              <ShopItemSkeleton key={i} />
+                              <ShopCardSkeleton key={i} />
                             ))}
                           </div>
                         ) : resales.isError && resales.data == null ? (
@@ -779,7 +780,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 {grid.isPending ? (
                   <div className={styles.grid} role="status" aria-label="Loading the catalogue">
                     {Array.from({ length: 18 }, (_, i) => (
-                      <ShopItemSkeleton key={i} />
+                      <ShopCardSkeleton key={i} />
                     ))}
                   </div>
                 ) : grid.isError && items.length === 0 ? (
