@@ -131,6 +131,7 @@ addEventListener('message', async (e: MessageEvent) => {
         // the stored sign-in is still there, so a reload would sign the same account in again
         signedOut = false
         console.error('sign-out: the stored sign-in could not be removed', error)
+        f.contentWindow?.postMessage({ type: 'bevy-shell:sign-out-failed' }, location.origin)
         break
       }
       dropDestination()

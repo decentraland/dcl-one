@@ -30,9 +30,13 @@ export type DclEvent = Pick<EventData, 'id' | 'name' | 'x' | 'y'> & { start_at: 
     >
   >
 
-export async function fetchEvents(list: EventsList, signal?: AbortSignal): Promise<DclEvent[]> {
-  const res = await fetch(`${EVENTS_API}?list=${list}`, { signal })
-  if (!res.ok) throw new Error(`Events service returned ${res.status}`)
+/** `connected` asks for who is at each event now (`connected_addresses`); without it the service sends none. */
+export async function fetchEvents(list: EventsList, { signal, connected = false }: { signal?: AbortSignal; connected?: boolean } = {}): Promise<DclEvent[]> {
+  const res = await fetch(`${EVENTS_API}?list=${list}${connected ? '&with_connected_users=true' : ''}`, { signal })
+  if (!res.ok) {
+    void res.body?.cancel()
+    throw new Error(`Events service returned ${res.status}`)
+  }
   const body = (await res.json()) as { ok?: boolean; data?: DclEvent[] }
   if (body.ok === false || !Array.isArray(body.data)) throw new Error('Events service returned an unexpected response')
   return body.data
@@ -51,7 +55,12 @@ export function eventLocation(e: DclEvent): string {
   return e.world ? (e.server ?? '') : `${e.x},${e.y}`
 }
 
+/** When the event starts next. `start_at` is the first date of a series; the lists select and order on the next one. */
+export function eventStartAt(e: Pick<DclEvent, 'start_at' | 'next_start_at'>): string {
+  return e.next_start_at ?? e.start_at
+}
+
 export function eventWhen(e: DclEvent): string {
   if (e.live) return 'Happening now'
-  return new Date(e.start_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return new Date(eventStartAt(e)).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }

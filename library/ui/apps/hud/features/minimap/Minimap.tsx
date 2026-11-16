@@ -243,17 +243,17 @@ export const Minimap = memo(function Minimap({
   const swallow = useCallback((e: React.MouseEvent) => e.stopPropagation(), [])
 
   // The place's jump link, as the site takes it: a world by its name, a Genesis City parcel by its
-  // coordinates. A preview or a local realm has no link.
-  const place = minimap.donatePlace
-  const inWorld = place != null && 'world' in place
+  // coordinates. A preview or a local realm has no link. The realm tells, so a parcel with no scene has one too.
+  const { linkRealm } = minimap
+  const inWorld = linkRealm != null && linkRealm !== DEFAULT_REALM
   const copyLink = useCallback(() => {
-    const query = inWorld ? `realm=${encodeURIComponent(place.world)}` : `position=${map.x},${map.y}`
+    const query = inWorld ? `realm=${encodeURIComponent(linkRealm)}` : `position=${map.x},${map.y}`
     setSettingsOpen(false)
     const failed = (): void => showToast('Could not copy the link', { tone: 'error' })
     // no clipboard outside a secure context, or in a host that withholds it
     if (navigator.clipboard == null) return failed()
     navigator.clipboard.writeText(siteUrl(`/jump/?${query}`)).then(() => showToast('Link copied'), failed)
-  }, [inWorld, place, map.x, map.y])
+  }, [inWorld, linkRealm, map.x, map.y])
   const { changeRealm } = map
 
   const tiles = useMemo(() => {
@@ -310,7 +310,7 @@ export const Minimap = memo(function Minimap({
                 hideStyle={!inGenesis}
                 markers={markerCategories}
                 onMarkers={pickMarkers}
-                onCopyLink={place != null ? copyLink : undefined}
+                onCopyLink={linkRealm != null ? copyLink : undefined}
               />
             )}
           </div>

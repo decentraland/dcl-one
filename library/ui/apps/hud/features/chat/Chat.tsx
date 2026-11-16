@@ -1249,7 +1249,7 @@ export function Chat({
                       onClick={() => accept(sug, i)}
                     >
                       <span className={styles.suggestGlyph}>{e.emoji}</span>
-                      <span className={styles.suggestName}>{e.expression}</span>
+                      <span>{e.expression}</span>
                     </button>
                   </li>
                 ))

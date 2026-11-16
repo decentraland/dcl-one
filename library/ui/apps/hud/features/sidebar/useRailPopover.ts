@@ -11,8 +11,11 @@ const GAP = 1 / 3
  *  Without `rise` (scene permissions, portable experiences, nearby voice) the panel is centred on
  *  the button: its CSS adds translateY(-50%) around its top (PermissionsPopover.module.css
  *  `.panel`). With `rise` (the Me, Discover, Shop and System panels) the panel's top lies `rise`
- *  reference px above the button's top, and its CSS adds no translate. */
-export function useRailPopover(anchor: HTMLElement | null, onClose: () => void, rise?: number): { ref: RefObject<HTMLDivElement | null>; style: CSSProperties } {
+ *  reference px above the button's top, and its CSS adds no translate.
+ *
+ *  `closer` selects a control outside the panel whose own press closes it (the Map button): a
+ *  press there is not an outside press, or that control would read a state its press had changed. */
+export function useRailPopover(anchor: HTMLElement | null, onClose: () => void, rise?: number, closer?: string): { ref: RefObject<HTMLDivElement | null>; style: CSSProperties } {
   const ref = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState<number | null>(null)
   const [left, setLeft] = useState(0)
@@ -39,6 +42,7 @@ export function useRailPopover(anchor: HTMLElement | null, onClose: () => void, 
     const onDown = (e: PointerEvent): void => {
       const t = e.target as Node
       if (ref.current?.contains(t) || anchor?.contains(t)) return
+      if (closer != null && t instanceof Element && t.closest(closer) != null) return
       // a dialog over the panel (the Me panel's sign-out question) takes the press: it is not one outside
       if (hasOpenPopup()) return
       onClose()
@@ -49,7 +53,7 @@ export function useRailPopover(anchor: HTMLElement | null, onClose: () => void, 
       document.removeEventListener('pointerdown', onDown, true)
       off()
     }
-  }, [anchor, onClose])
+  }, [anchor, onClose, closer])
 
   return { ref, style: { top: top ?? -9999, left } }
 }

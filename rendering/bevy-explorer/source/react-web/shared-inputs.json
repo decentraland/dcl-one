@@ -1816,19 +1816,11 @@
       "path": "library/ui/apps/hud/assets/sidebar-rail",
       "entries": [
         {
-          "name": "backpack.webp",
-          "kind": "regular"
-        },
-        {
           "name": "bell-on.svg",
           "kind": "regular"
         },
         {
           "name": "bell.svg",
-          "kind": "regular"
-        },
-        {
-          "name": "bug.webp",
           "kind": "regular"
         },
         {
@@ -1856,14 +1848,6 @@
           "kind": "regular"
         },
         {
-          "name": "chat.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "communities.webp",
-          "kind": "regular"
-        },
-        {
           "name": "discover-communities.svg",
           "kind": "regular"
         },
@@ -1888,10 +1872,6 @@
           "kind": "regular"
         },
         {
-          "name": "events.webp",
-          "kind": "regular"
-        },
-        {
           "name": "friends-on.svg",
           "kind": "regular"
         },
@@ -1900,15 +1880,7 @@
           "kind": "regular"
         },
         {
-          "name": "friends.webp",
-          "kind": "regular"
-        },
-        {
           "name": "gallery.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "help.webp",
           "kind": "regular"
         },
         {
@@ -1917,10 +1889,6 @@
         },
         {
           "name": "map.svg",
-          "kind": "regular"
-        },
-        {
-          "name": "marketplace.webp",
           "kind": "regular"
         },
         {
@@ -1945,18 +1913,6 @@
         },
         {
           "name": "me-sign-out.svg",
-          "kind": "regular"
-        },
-        {
-          "name": "notifications.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "places.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "settings.webp",
           "kind": "regular"
         },
         {
@@ -2005,18 +1961,6 @@
         },
         {
           "name": "voice-face.svg",
-          "kind": "regular"
-        },
-        {
-          "name": "voice-hearing.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "voice-off.webp",
-          "kind": "regular"
-        },
-        {
-          "name": "voice-speaking.webp",
           "kind": "regular"
         },
         {
@@ -4986,7 +4930,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
-      "sha256": "396569915d0a556da844d0f9e3fd821a0a3398f8fa4a20e178df9fcee0e8e511"
+      "sha256": "73b1f2854e4eb9972a5c9911f909044159a52809b5192f8f969e35a5b863ee92"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
@@ -5138,7 +5082,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
-      "sha256": "3a571fa1c8c7f60f2cdc9388bf0a19b6caf36c470ade3847f75f500529acab4b"
+      "sha256": "92469cc14300dee9fbfd25156636ab41ac678488737c086e94122cd70956384b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
@@ -5324,7 +5268,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "263c0014e2e276f8754b45759128ee654a5855cfd858596b89c9f7be9363f141"
+      "sha256": "a5d884dbb337003c8a30d535d091744fcb33d25c64f4a9a7be6121ad1692c08d"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -5464,7 +5408,7 @@
     },
     {
       "path": "library/explorer-core/features/events/eventsApi.ts",
-      "sha256": "a1ffb2bedb5c74c391ede3d25f895ae95af3eb12c7fdb95f111b147bde3e60d1"
+      "sha256": "6b3ffbc2810c5ccc23dde17dc50840ef365e5129a11eeb17fee4f5508c393664"
     },
     {
       "path": "library/explorer-core/features/friends/friendEvents.ts",
@@ -5576,7 +5520,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "62f4cd5685aeff7cb19b7082fcee8f685740abd5f8bdb21e8d25cf1fa58afd09"
+      "sha256": "e8b933805487a1e9b7591d98dcfcc97d0b0570a2e756d4331c4459e22818bd8e"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -5620,11 +5564,11 @@
     },
     {
       "path": "library/explorer-core/lib/prefs.ts",
-      "sha256": "fa5e94ab4a8b130d1aa78bb1a6e7dfef7ac9fe6a0087090ccbf2151e2eb8e651"
+      "sha256": "411fbec674f889dfb031ce99341bd01764cc85ed5d6c6e4320a1488e5a5c636c"
     },
     {
       "path": "library/explorer-core/lib/realmCheck.ts",
-      "sha256": "85b5331163cf4d1b50ec56198b6c4e10f9d84497048c6d6910d1110f9925d13d"
+      "sha256": "d2dc9cafc533608ee34756dfef466631eb42bb1e15add1de9bf7689a05bf0529"
     },
     {
       "path": "library/explorer-core/lib/relationship.ts",
@@ -7388,7 +7332,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "1c8b62544a16bd6cb861b9612cb887b01d2d41b37f33aadef376ba0ff0493298"
+      "sha256": "223dbd5536e9b4368583676dbb005f715b560a27f2e60728358eb4f6150dfddb"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -7692,7 +7636,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/useLiveEventCount.ts",
-      "sha256": "ac816e12560b8aea7b2625f3dfac59447d401a46d5bb00ab9b739ba12458ff1d"
+      "sha256": "b3e84ccc32a8d47c20cfafae388b5c8ce4b5ec38a8d2984c4eca04f8528c9bfc"
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendRequestPopup.module.css",
@@ -7780,7 +7724,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
-      "sha256": "65aa7a3e6bb0edae1f1d8ee4e2725e297742111162b8e19240c33e8460b1c2d3"
+      "sha256": "c8d417c2f2c44f515a561714f7f064f4b4ccc588ef9b1c2277071ec86abe0898"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/Lobby.module.css",
@@ -7792,7 +7736,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "sha256": "2d29271ef2c200af2f09c0a217f4e08befe4d9f8e031379fd315c2cbddd0231a"
+      "sha256": "9a277dd538fb5e67efe348a0806c1ce7c27c34f41ab4c449335ab0ff3c16555d"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyGoto.module.css",
@@ -7804,15 +7748,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "f5908d23499798a2a28923f3a1ce103aa1045b043d81636a9d7f14761d7b8428"
+      "sha256": "cee6bddd12fcc424eade2d8f023b5fb03671f46d3e97ee8d84d8a6eee8a730af"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
-      "sha256": "607dd4e835e7631dcd920a5348a33569fb785b77dc78796bce0b17d8138f43b8"
+      "sha256": "9b2a47fe9abdb85e575a89c077de0a52cfb2b8e922e126cd2806faad1553890f"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useAvatarTurn.ts",
-      "sha256": "ad67939544455da1fb6afcd4cdc69d5c83f4a75ecdf09b1aadc779cb81c3d23c"
+      "sha256": "c79ed94ea5828ed5125182eed2af09d630f10454b457b99a3fe99aa253452715"
     },
     {
       "path": "library/ui/apps/hud/features/login/useStoredProfile.ts",
@@ -7864,7 +7808,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "a4579075c507e274dd26c0c6639fb8fdb98274110d45de7c95f6f16372b48b9d"
+      "sha256": "0f2f2bd89c7c9e2f308b95c5fc6ddda20f0b35083fb45ecb14157b46ec212bcc"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -8068,7 +8012,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "7f7a2d569353d3cd9f687374a02df7085e31de51b078758a5af01aebcbf7c5db"
+      "sha256": "c268ecead17f007d8d96e8ba5d9ca72ef095dd8503ec2d8e5c311d47b73eb7cb"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8100,7 +8044,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "da18502fc3745d8f6e08e55e27e8b5074a85a180915e2e48748f13d44f0166aa"
+      "sha256": "ff18c0d38bb0dfa172ac800cb082a91f2eac6f3035ffb48e2badb726b97aef6c"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -8144,7 +8088,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
-      "sha256": "756dc6d4bda3e1005d813fca75ccce683b894e5b18ac9ef4d47a684f18956c4f"
+      "sha256": "b7c19d7cbe5aea195c9daf7843a4363a79d5fa5eb9377418f035b86aeba527d3"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
@@ -8368,7 +8312,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "65b83fcef58904d3d0403e35ed950113b8b488ac3ee7f219b8802acec1419dc9"
+      "sha256": "cb529ccfffd9be054d89e49357c6b68e425a37c6e98bb842ada66572a1ea035b"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -8524,7 +8468,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
-      "sha256": "a0639f4dba27a62ff225bfcc0bb7d0b14e07d5f198df2ec95b3eeea0db4c3d62"
+      "sha256": "68dc92dc95b2da836e889320fc281637c9bcdd80840e2d055ecb37776cb43d56"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
@@ -8552,7 +8496,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
-      "sha256": "d58e894fd4a9fa3e394824509b9b9dc20d3664ce51490e033a8fd9e06f8fe368"
+      "sha256": "160151e579fed4d0168e89e6f4145e8515d76e29032dc16d35abbc4b2dd31df3"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/keyBindingsApply.test.ts",
@@ -8568,7 +8512,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "95a78684e2ea1330627e617ac9b3033d145887c88639b1f44214db07167b8420"
+      "sha256": "b3157a07609ec2e85c494a9ff2f486ed6717448a61c97608bc52d5617a8bc5e6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyTravel.test.tsx",
@@ -8592,7 +8536,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "17c0d20acfe049a2ab0e1dd932f03a1923bbfbfa8d8fd4b82fb5b9a014f98c1d"
+      "sha256": "75120da841984833c2d8c24814f6806350a021cffcc1a410c6431bfed02787f1"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -8692,7 +8636,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "f38ab7c520078576941eb01d4d4524a42c34880df80e392236aa676261991a31"
+      "sha256": "52fb9eff4fa4a404907f8928e89eff645c65d62d474c55b67b60395fc61a0ffe"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -8816,7 +8760,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/signOutOfWorld.test.ts",
-      "sha256": "c97da8488df8f572c2311b8d75d521523e8d4c8446b333ac3b5eeab65008f647"
+      "sha256": "2e3717aca42abcf0c961807281a495d9b33ab16fc7d1735c37d272fcb72cd7be"
     },
     {
       "path": "library/ui/apps/hud/test/startupScreen.test.ts",
@@ -20476,6 +20420,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/explorer-core/features/events/eventsApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/friends-empty.webp",
       "kind": "native:runtime"
@@ -20807,6 +20781,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/assets/lobby/background.jpg",
       "kind": "native:runtime"
     },
@@ -21133,6 +21122,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfile.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
       "kind": "test:runtime"
     },
     {

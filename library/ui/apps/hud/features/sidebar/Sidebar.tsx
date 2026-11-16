@@ -16,7 +16,7 @@ import type { PassportTab } from '../profile/ProfilePassport'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
 import { useLiveEventCount } from '../events/useLiveEventCount'
-import { exitApplication } from '../gate/exitApplication'
+import { canExit, exitApplication } from '../gate/exitApplication'
 import { signOutOfWorld } from '../gate/signOutOfWorld'
 import { useAutoHide } from './useAutoHide'
 import { useRailPopover } from './useRailPopover'
@@ -90,9 +90,12 @@ function RasterButton({ src, size, ...props }: Omit<React.ComponentProps<typeof 
   )
 }
 
+// The Map button closes the open panel itself (toggleMap) and decides from what shows when pressed.
+const MAP_BUTTON = '[data-rail-map]'
+
 /** Places what a button opens beside the column, and closes it on an outside press or Cancel. */
 function PanelHost({ anchor, rise, onClose, children }: { anchor: HTMLElement; rise?: number; onClose: () => void; children: React.ReactNode }): React.JSX.Element {
-  const { ref, style } = useRailPopover(anchor, onClose, rise)
+  const { ref, style } = useRailPopover(anchor, onClose, rise, MAP_BUTTON)
   return (
     <div ref={ref} className={`${styles.panelHost} ${rise == null ? styles.centred : ''}`.trim()} style={style}>
       {children}
@@ -249,7 +252,7 @@ export function Sidebar({
             quiet={isOpen('me')}
             onClick={togglePanel('me')}
           />
-          <IconButton icon="map" art={glyph(mapVisible ? mapOnArt : mapArt)} label="Map" active={mapVisible} quiet={mapVisible} onClick={toggleMap} />
+          <IconButton icon="map" art={glyph(mapVisible ? mapOnArt : mapArt)} label="Map" active={mapVisible} quiet={mapVisible} onClick={toggleMap} data-rail-map="" />
           <IconButton
             icon="places"
             art={glyph(isOpen('discover') ? discoverOnArt : discoverArt)}
@@ -394,7 +397,7 @@ export function Sidebar({
               onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}
               onGallery={session.gallery.toggle}
               onSignOut={signOutOffered ? signOutOfWorld : undefined}
-              onExit={exitApplication}
+              onExit={canExit() ? exitApplication : undefined}
               onClose={closePanel}
             />
           )}

@@ -53,15 +53,21 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   let mounting = false
   // Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
   let signedOut = false
-  // Back, a closed tab or a typed address would drop the session: once the app runs, the browser
-  // asks first. The page's own exits (sign-in, the untrusted-link gate) go through leave().
+  // Back, a closed tab or a typed address would drop the session: while the app says one runs
+  // (bevy-shell:session), the browser asks first. The page's own exits (sign-in, the untrusted-link
+  // gate) go through leave().
+  let live = false
   let leaving = false
   function leave(go: () => void): void {
     leaving = true
     go()
   }
+  // Back from the sign-in site can show this page again as it was left: it asks again from then on.
+  addEventListener('pageshow', () => {
+    leaving = false
+  })
   function confirmLeave(e: BeforeUnloadEvent): void {
-    if (leaving) return
+    if (leaving || !live) return
     e.preventDefault()
     e.returnValue = ''
   }
@@ -189,6 +195,10 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
           location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
         )
         break
+      // a sign-in is under way or landed, or the app is back on its start screen
+      case 'bevy-shell:session':
+        live = m.live === true
+        break
       // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
       // back to the app for Segment
       case 'bevy-shell:in-world':
@@ -213,6 +223,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
           // the stored sign-in is still there, so a reload would sign the same account in again
           signedOut = false
           console.error('sign-out: the stored sign-in could not be removed', error)
+          f.contentWindow?.postMessage({ type: 'bevy-shell:sign-out-failed' }, location.origin)
           break
         }
         dropDestination()

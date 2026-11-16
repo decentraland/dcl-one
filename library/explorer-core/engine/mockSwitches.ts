@@ -1,7 +1,8 @@
 // The entry-link switches the mock bridge (engine/mockBridge.ts) reads besides `mock` itself. One
 // list, so both HUD hosts accept the same ones (their lib/entryParams.ts spread it) and a link
-// carrying one is not told it was ignored. Apart from the bridge so a host's entry-param table does
-// not pull the mock's fixtures in with it.
+// carrying one is not told it was ignored. Apart from the bridge so a host's entry-param table,
+// which the shell page loads too, does not pull the mock's fixtures in with it. The app itself
+// loads the bridge.
 export const MOCK_SWITCHES = [
   // the stored account the mock starts with, and its welcome page
   'previousLogin',

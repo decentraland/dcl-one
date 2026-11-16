@@ -23,10 +23,11 @@ import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { BASE, podiumRect } from '@explorer-core/engine/lobbyStage'
 import { clickButton } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import { clip } from '../backpack/BackpackModal'
 import { holeClip } from '@explorer-core/lib/holeClip'
 import { EngineViewport } from '../engine/EngineViewport'
-import { eventDestination, fetchEvents, type DclEvent, type EventDestination } from '@explorer-core/features/events/eventsApi'
+import { eventDestination, eventStartAt, fetchEvents, type DclEvent, type EventDestination } from '@explorer-core/features/events/eventsApi'
 import { friendsAtEvent, openShareMenu } from '../events/EventCard'
 import type { EventLinkSource } from '../events/eventFormat'
 import { useEventActions } from '../events/useEventActions'
@@ -39,7 +40,7 @@ import { FriendCard, FriendsEmpty, FriendsNoneOnline, LandingCard, LiveEventCard
 import { LobbyGoto, type GotoTarget } from './LobbyGoto'
 import { LobbyProfile } from './LobbyProfile'
 import { useAvatarTurn } from './useAvatarTurn'
-import { exitApplication } from '../gate/exitApplication'
+import { canExit, exitApplication } from '../gate/exitApplication'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchHighlighted, fetchHomePlace, fetchRecents } from '@explorer-core/features/lobby/lobbyApi'
 import styles from './Lobby.module.css'
@@ -67,19 +68,25 @@ function useLoad<T>(load: () => Promise<T>, fallback: T): { data: T; loading: bo
 const UPCOMING_SHOWN = 10
 const LIVE_SHOWN = 10
 
-/** The events on now, in the service's order. */
+const eventPeople = (e: DclEvent): number => e.connected_addresses?.length ?? 0
+
+/** The events on now with who is there, busiest first; equal ones keep the service's order. */
 async function fetchLive(): Promise<DclEvent[]> {
-  const events = await fetchEvents('live')
-  return events.filter((e) => e.live !== false).slice(0, LIVE_SHOWN)
+  const events = await fetchEvents('live', { connected: true })
+  return events
+    .filter((e) => e.live !== false)
+    .sort((a, b) => eventPeople(b) - eventPeople(a))
+    .slice(0, LIVE_SHOWN)
 }
 
-/** The next events to start, soonest first. */
+/** The next events to start, soonest first. A series counts from its next date, as the list does. */
 async function fetchUpcoming(): Promise<DclEvent[]> {
   const now = Date.now()
+  const startsAt = (e: DclEvent): number => new Date(eventStartAt(e)).getTime()
   const events = await fetchEvents('upcoming')
   return events
-    .filter((e) => !e.live && new Date(e.start_at).getTime() > now)
-    .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
+    .filter((e) => !e.live && startsAt(e) > now)
+    .sort((a, b) => startsAt(a) - startsAt(b))
     .slice(0, UPCOMING_SHOWN)
 }
 
@@ -94,7 +101,7 @@ function eventLinks(e: DclEvent): EventLinkSource {
     server: e.server ?? null,
     x: e.x,
     y: e.y,
-    next_start_at: e.next_start_at ?? e.start_at,
+    next_start_at: eventStartAt(e),
     next_finish_at: e.next_finish_at ?? e.finish_at ?? null,
     duration: e.duration ?? null,
     highlighted: e.highlighted === true
@@ -123,11 +130,10 @@ const WIDGET_ICONS: Record<Widget, (props: IconProps) => React.JSX.Element> = {
   recommended: GeneralStar
 }
 const WIDGET_IDS = Object.keys(WIDGETS) as Widget[]
-const HIDDEN_KEY = 'dcl.lobby.hiddenWidgets'
 
 function readHidden(): Widget[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '[]') as unknown
+    const raw = JSON.parse(getPref(PREF.lobbyHiddenWidgets) ?? '[]') as unknown
     return Array.isArray(raw) ? WIDGET_IDS.filter((w) => raw.includes(w)) : []
   } catch {
     return []
@@ -135,11 +141,7 @@ function readHidden(): Widget[] {
 }
 
 function writeHidden(hidden: Widget[]): void {
-  try {
-    localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden))
-  } catch {
-    // not remembered: the layout still holds for this visit
-  }
+  setPref(PREF.lobbyHiddenWidgets, JSON.stringify(hidden))
 }
 
 // The Backpack's preview runs past its modal's edge; only the part inside the modal is a hole.
@@ -228,6 +230,9 @@ export function LobbyHome({
   const editing = draft != null
   // a pick releases the held world, so none until sign-in has finished
   const waiting = session.login.busy
+  // a detail card stays open across renders: its Jump In reads the sign-in state of the press
+  const waitingRef = useRef(waiting)
+  waitingRef.current = waiting
   const openPage = (button: string, open: () => void) => (): void => {
     clickButton(button, 'LOBBY')
     open()
@@ -246,7 +251,7 @@ export function LobbyHome({
     count: placePlayers(p),
     disabled: waiting,
     onJumpIn: () => pickPlace(p),
-    onOpen: () => openDestinationCard(placeInfo(p), () => !session.login.busy && pickPlace(p))
+    onOpen: () => openDestinationCard(placeInfo(p), () => !waitingRef.current && pickPlace(p))
   })
   const pickEvent = (e: DclEvent, dest: EventDestination): void => {
     clickButton('JUMP_IN', 'LOBBY', { kind: 'event', event_id: e.id })
@@ -312,8 +317,8 @@ export function LobbyHome({
         aria-label="Customize"
         disabled={!session.playerReady || editing}
         {...avatarTurn.handlers}
-        onClick={() => {
-          if (avatarTurn.wasDrag()) return
+        onClick={(e) => {
+          if (avatarTurn.wasDrag(e)) return
           clickButton('CUSTOMIZE', 'LOBBY')
           setTooltip(false)
           session.backpack.toggle()
@@ -383,7 +388,7 @@ export function LobbyHome({
             onViewProfile={() => profile && openPassport(profile.address)}
             onSettings={openPage('SETTINGS', () => session.settings.toggle())}
             onSignOut={onClose ? undefined : session.logout}
-            onExit={onClose ?? exitApplication}
+            onExit={onClose ?? (canExit() ? exitApplication : undefined)}
           />
           {onClose && (
             <button
@@ -413,7 +418,7 @@ export function LobbyHome({
             loading={landing.loading || home == null}
             disabled={waiting}
             onJumpIn={jumpLanding}
-            onOpen={landingPlace ? () => openDestinationCard(placeInfo(landingPlace), () => !session.login.busy && jumpLanding()) : undefined}
+            onOpen={landingPlace ? () => openDestinationCard(placeInfo(landingPlace), () => !waitingRef.current && jumpLanding()) : undefined}
           />
         </section>
       )}
@@ -466,7 +471,7 @@ export function LobbyHome({
                   friends={friendsAtEvent({ connected_addresses: here }, session.friends.list)}
                   disabled={dest == null || waiting}
                   onJumpIn={() => dest != null && pickEvent(e, dest)}
-                  onOpen={dest == null ? undefined : () => openDestinationCard(eventInfo(e, here.length), () => !session.login.busy && pickEvent(e, dest))}
+                  onOpen={dest == null ? undefined : () => openDestinationCard(eventInfo(e, here.length), () => !waitingRef.current && pickEvent(e, dest))}
                 />
               )
             })}
@@ -481,7 +486,7 @@ export function LobbyHome({
           <Pages perPage={1} gap={0}>
             {upcoming.data.map((e) => {
               const dest = eventDestination(e)
-              const go = dest == null || waiting ? null : () => openDestinationCard(eventInfo(e), () => pickEvent(e, dest))
+              const go = dest == null || waiting ? null : () => openDestinationCard(eventInfo(e), () => !waitingRef.current && pickEvent(e, dest))
               return (
                 <UpcomingEventCard
                   key={e.id}

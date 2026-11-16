@@ -10,7 +10,7 @@
 // | TestOpenBackpackFromSidebar     | rail Me, its Backpack row opens the Backpack page        | Port    |
 // | TestOpenGalleryFromSidebar      | rail Me, its Gallery row opens the Gallery page          | Port    |
 // | TestOpenSettingsFromSidebar     | rail System, its Settings row opens the Settings page    | Port    |
-// | TestSwitchBetweenAllTabs        | the top bar switches Events, Places, Map, Backpack, Gallery, Settings; Communities has no tab | Partial |
+// | TestSwitchBetweenAllTabs        | the top bar switches Events, Places, Communities, Map, Backpack, Gallery, Settings; Shop is not a page of these | Partial |
 import assert from 'node:assert/strict'
 import { spec } from '../driver/index.ts'
 import { PAGES, closePage, openFromRail, switchTab, type PageName } from './pages.ts'
@@ -29,7 +29,7 @@ for (const page of FROM_RAIL) {
 
 scenario('the top bar switches between every page that has a tab', async ({ explorer }) => {
   await openFromRail(explorer, 'events')
-  for (const page of ['places', 'map', 'backpack', 'gallery', 'settings', 'events'] as const) {
+  for (const page of ['places', 'communities', 'map', 'backpack', 'gallery', 'settings', 'events'] as const) {
     await switchTab(explorer, page)
     assert.ok(await explorer.hud.isVisible(PAGES[page].marker), `${page} should be open after its tab`)
   }

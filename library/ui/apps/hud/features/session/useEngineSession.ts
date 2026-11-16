@@ -432,6 +432,9 @@ export interface MinimapState {
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
+  /** The realm the player is in, as the place's link names it: a World's name, `DEFAULT_REALM` in Genesis City;
+   *  null in a preview or a local realm. Unlike `donatePlace`, a parcel with no scene has one. */
+  linkRealm: string | null
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
@@ -1472,6 +1475,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [sceneTitle, setSceneTitle] = useState('')
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  const [linkRealm, setLinkRealm] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
@@ -2337,6 +2341,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           {
+            const here = donatePlaceOf(msg)
+            setLinkRealm(here == null ? null : 'world' in here ? here.world : DEFAULT_REALM)
             // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
             // every parcel), so the host is asked once per scene; a parcel with no scene names none.
             const sceneKey = donateSceneKey(msg)
@@ -4358,6 +4364,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     settleHudLogin(new Error(fatalError.message))
   }, [fatalError, settleHudLogin, restoreHudSignIn])
 
+  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session: the
+  // start screen has none to lose.
+  const sessionLive = phase !== 'login'
+  useEffect(() => {
+    if (inShell) postToShell({ type: 'bevy-shell:session', live: sessionLive })
+  }, [sessionLive])
+
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).
   const prevPhase = useRef<SessionPhase | null>(null)
@@ -4638,8 +4651,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, donatePlaceKey, setMinimapConfig]
+    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, linkRealm, setConfig: setMinimapConfig }),
+    [satelliteView, sceneTitle, donatePlaceKey, linkRealm, setMinimapConfig]
   )
 
   return {

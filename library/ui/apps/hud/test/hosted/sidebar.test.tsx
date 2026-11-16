@@ -3,7 +3,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { PopupHost, resetPopups, topPopupOrder } from '../../design/popups'
-import { PREF, setPref } from '@explorer-core/lib/prefs'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import { renderSettled, fakeSession } from '../harness'
@@ -165,7 +165,8 @@ describe('sidebar panels', () => {
       await renderSettled(<Sidebar session={session} />)
       await press('Me')
       expect(rowsOf('Me').includes('Sign Out')).toBe(shown)
-      expect(rowsOf('Me')).toContain('Exit')
+      // the desktop client cannot be quit from the page
+      expect(rowsOf('Me').includes('Exit')).toBe(!isNative)
     })
 
     const ask = async (): Promise<{ session: EngineSession; row: HTMLElement; question: HTMLElement }> => {
@@ -350,6 +351,19 @@ describe('sidebar map', () => {
     // the Camera panel opens lower down, clear of the minimap
     await press('Camera')
     expect(map()).not.toBeNull()
+  })
+
+  it('Map, pressed while a panel lies over the minimap, closes the panel and shows the minimap', async () => {
+    setPref(PREF.sidebarMap, '1')
+    await renderSettled(<Sidebar session={fakeSession()} />)
+    await press('Discover')
+    expect(barButton('Map')).toHaveAttribute('aria-pressed', 'false')
+    // a pointer press: the panel must not close before the button reads what shows
+    await press('Map')
+    expect(panel('Discover')).toBeNull()
+    expect(map()).not.toBeNull()
+    expect(barButton('Map')).toHaveAttribute('aria-pressed', 'true')
+    expect(getPref(PREF.sidebarMap)).toBe('1')
   })
 
   it('the minimap gives its place to the notifications', async () => {

@@ -94,10 +94,18 @@ describe('lobby controls', () => {
     fireEvent.pointerMove(avatar, { pointerId: 1, clientX: 130 })
     expect(vi.mocked(session.turnLobbyAvatar).mock.calls).toEqual([[-20], [5]])
     fireEvent.pointerUp(avatar, { pointerId: 1 })
-    fireEvent.click(avatar)
+    // the click the browser sends at the end of the drag
+    fireEvent.click(avatar, { detail: 1 })
     expect(session.backpack.toggle).not.toHaveBeenCalled()
     fireEvent.pointerMove(avatar, { pointerId: 1, clientX: 90 })
     expect(session.turnLobbyAvatar).toHaveBeenCalledTimes(2)
+    // Enter or Space on the button (a click with no press) opens it, also when the drag sent no click
+    fireEvent.pointerDown(avatar, { pointerId: 3, button: 0, clientX: 100 })
+    fireEvent.pointerMove(avatar, { pointerId: 3, clientX: 140 })
+    fireEvent.pointerUp(avatar, { pointerId: 3 })
+    fireEvent.click(avatar, { detail: 0 })
+    expect(session.backpack.toggle).toHaveBeenCalledOnce()
+    vi.mocked(session.backpack.toggle).mockClear()
 
     fireEvent.pointerDown(avatar, { pointerId: 2, button: 0, clientX: 100 })
     fireEvent.pointerUp(avatar, { pointerId: 2 })
@@ -136,10 +144,11 @@ describe('lobby controls', () => {
     const friends = ['0xA1', '0xa2', '0xa3', '0xa4', '0xff'].map((address, i): Friend => ({ address, name: `Friend${i}`, status: 'online' }))
     const session = { ...base, friends: { ...base.friends, list: friends } }
     const onPick = vi.fn()
+    // the busiest event comes first, whatever the service's order
     listEvents({
       live: [
-        { id: 'mic', name: 'Open Mic', start_at: new Date(Date.now() - 3_600_000).toISOString(), x: 10, y: -4, live: true, user_name: 'The Host', connected_addresses: ['0xa1', '0xA2', '0xa3', '0xa4', '0xb5', '0xb6'] },
-        { id: 'quiz', name: 'Quiz Night', start_at: new Date(Date.now() - 60_000).toISOString(), x: 0, y: 0, live: true }
+        { id: 'quiz', name: 'Quiz Night', start_at: new Date(Date.now() - 60_000).toISOString(), x: 0, y: 0, live: true },
+        { id: 'mic', name: 'Open Mic', start_at: new Date(Date.now() - 3_600_000).toISOString(), x: 10, y: -4, live: true, user_name: 'The Host', connected_addresses: ['0xa1', '0xA2', '0xa3', '0xa4', '0xb5', '0xb6'] }
       ]
     })
     render(
@@ -148,6 +157,8 @@ describe('lobby controls', () => {
       </SessionProvider>
     )
     const widget = within((await screen.findByRole('heading', { name: 'Live Events' })).closest('section')!)
+    // the service sends who is at an event only when asked
+    expect(fetchEvents).toHaveBeenCalledWith('live', { connected: true })
     // one event a page: its name, its host, how many are there, and the friends among them
     expect(widget.getByText('Open Mic')).toBeInTheDocument()
     expect(widget.getByText('The Host')).toBeInTheDocument()
@@ -168,6 +179,33 @@ describe('lobby controls', () => {
     expect(widget.queryByText('Open Mic')).not.toBeInTheDocument()
     fireEvent.click(widget.getByRole('button', { name: 'View all' }))
     expect(session.events.toggle).toHaveBeenCalledWith('start_menu')
+  })
+
+  it('lists an event of a series by its next date: it stays in Upcoming Events, in order, with that countdown', async () => {
+    const session = fakeSession()
+    const at = (hours: number): string => new Date(Date.now() + hours * 3_600_000 + 60_000).toISOString()
+    listEvents({
+      upcoming: [
+        { id: 'once', name: 'One Night', start_at: at(5), x: 0, y: 0 },
+        // a weekly event: its first date is past, its next one is the soonest of the list
+        { id: 'weekly', name: 'Weekly Jam', start_at: at(-24 * 30), next_start_at: at(2), x: 1, y: 1 },
+        { id: 'over', name: 'Old Series', start_at: at(-24 * 60), next_start_at: at(-24), x: 2, y: 2 }
+      ]
+    })
+    render(
+      <SessionProvider value={session}>
+        <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+      </SessionProvider>
+    )
+    const widget = within((await screen.findByRole('heading', { name: 'Upcoming Events' })).closest('section')!)
+    // one event a page, the soonest first
+    const shown = (): string | null => within(widget.getByRole('article')).getByRole('button', { name: /In \d/ }).textContent
+    expect(shown()).toBe('Weekly JamIn 2 hours')
+    fireEvent.click(widget.getByRole('button', { name: 'Next page' }))
+    expect(shown()).toBe('One NightIn 5 hours')
+    // two pages: the series whose next date is past is not in the list
+    fireEvent.click(widget.getByRole('button', { name: 'Next page' }))
+    expect(shown()).toBe('Weekly JamIn 2 hours')
   })
 
   it("puts an upcoming event in the player's calendar and shares it from its card, without opening it", async () => {
@@ -413,6 +451,30 @@ describe('lobby controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize lobby' }))
     expect(screen.getByRole('button', { name: 'Back [Esc]' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole('button', { name: /jump in/i })).toBeInTheDocument())
+  })
+
+  it('asks before the profile menu signs out: Cancel keeps the session, the confirmed Sign Out ends it', async () => {
+    const session = fakeSession()
+    const profile = { address: '0xb8c4df381c6c305758f806c3aa71f37aabbcbd92', name: 'Mojito', hasClaimedName: false, isGuest: false }
+    render(
+      <SessionProvider value={{ ...session, profile: { ...session.profile, data: profile } }}>
+        <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+        <PopupHost />
+      </SessionProvider>
+    )
+    const signOut = async (answer: string): Promise<void> => {
+      fireEvent.click(screen.getByRole('button', { name: /^M ?Mojito$/ }))
+      // the address in the menu is the short form
+      expect(screen.getByRole('menu', { name: 'Profile' })).toHaveTextContent('0xb8c4…bd92')
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Sign Out' }))
+      const question = within(await screen.findByRole('dialog', { name: 'Sign out?' }))
+      fireEvent.click(question.getByRole('button', { name: answer }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sign out?' })).not.toBeInTheDocument())
+    }
+    await signOut('Cancel')
+    expect(session.logout).not.toHaveBeenCalled()
+    await signOut('Sign Out')
+    expect(session.logout).toHaveBeenCalledOnce()
   })
 
   it('greets the player by name and marks a claimed name in the profile pill without renaming it', async () => {

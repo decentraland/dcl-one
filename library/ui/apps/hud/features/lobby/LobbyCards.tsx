@@ -14,7 +14,7 @@ import {
 } from '../../../../foundations/icons/general'
 import { MenusShare } from '../../../../foundations/icons/menus'
 import { NavbarFriends } from '../../../../foundations/icons/navbar'
-import type { DclEvent } from '@explorer-core/features/events/eventsApi'
+import { eventStartAt, type DclEvent } from '@explorer-core/features/events/eventsApi'
 import { FriendFaces } from '../events/EventCard'
 import { useCreatorName } from '../places/useCreatorName'
 import type { Friend } from '@explorer-core/engine/protocol'
@@ -285,7 +285,7 @@ export function UpcomingEventCard({
         )}
         <span className={styles.eventWhen}>
           <GeneralTime size={20} aria-hidden="true" />
-          {startsIn(event.start_at, Date.now())}
+          {startsIn(eventStartAt(event), Date.now())}
         </span>
       </button>
       <span className={styles.eventImage}>{event.image && <img src={event.image} alt="" />}</span>

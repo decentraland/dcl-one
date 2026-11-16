@@ -10,8 +10,9 @@ const DRAG_SLOP = 4
 type Press = React.PointerEvent<HTMLElement>
 
 export function useAvatarTurn(turn: (degrees: number) => void): {
-  /** The press that ended in the click now handled turned the avatar: not a click on it. */
-  wasDrag: () => boolean
+  /** The press that ended in this click turned the avatar: not a click on it. A click from the
+   *  keyboard (`detail` 0) has no press, and each drag cancels one click only. */
+  wasDrag: (click: { detail: number }) => boolean
   handlers: Record<'onPointerDown' | 'onPointerMove' | 'onPointerUp' | 'onPointerCancel' | 'onLostPointerCapture', (e: Press) => void>
 } {
   const press = useRef<{ pointer: number; x: number } | null>(null)
@@ -20,7 +21,11 @@ export function useAvatarTurn(turn: (degrees: number) => void): {
     if (press.current?.pointer === e.pointerId) press.current = null
   }
   return {
-    wasDrag: () => dragged.current,
+    wasDrag: (click) => {
+      const was = dragged.current
+      dragged.current = false
+      return was && click.detail !== 0
+    },
     handlers: {
       onPointerDown: (e) => {
         if (e.button !== 0) return

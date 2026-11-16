@@ -186,13 +186,13 @@ test is in the spec file's header. Port 46, Partial 35, Gap 6, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
-| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar has no Communities tab |
+| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
 | Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
 | Minimap (5) | `minimap` | 2 | 1 | 2 | | The rail's Map button shows the minimap; no favourite heart or kebab menu; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
-| Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the destination card, which no scenario opens yet |
 | Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
@@ -357,13 +357,7 @@ change on the left updates what is on the right in the same change, then runs th
 
 | Changed | Update | Check |
 | --- | --- | --- |
-<<<<<<< HEAD
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `npm run typecheck`; the scenarios in CI |
-||||||| parent of 3fb97bc9d6 (feat(hud): the Me panel can sign the player out)
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`, `specs/map.ts`, `specs/passport.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
-=======
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`); a row added to or removed from a rail panel (Me, Discover, System), or the title of the question a row asks | `RAIL_ROWS` and the row's selectors in `specs/navbar.test.ts` for a rail row; the selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`, `specs/map.ts`, `specs/passport.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
->>>>>>> 3fb97bc9d6 (feat(hud): the Me panel can sign the player out)
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`); a row added to or removed from a rail panel (Me, Discover, System), or the title of the question a row asks | `RAIL_ROWS` and the row's selectors in `specs/navbar.test.ts` for a rail row; the selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `npm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |

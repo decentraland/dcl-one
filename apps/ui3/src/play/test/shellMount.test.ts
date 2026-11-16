@@ -17,6 +17,11 @@ import { mountPlayShell } from '../shell/mount'
 let app: Window
 let nextId = 1
 
+/** The app says a session runs or not: only the question before the page goes reads it. */
+function sessionLive(live: boolean): void {
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:session', live }, origin: location.origin, source: app }))
+}
+
 /** Posts a request from the app's frame, as the app does, and returns the response the shell posts back to it. */
 async function ask(method: string, params: unknown = {}): Promise<unknown> {
   const posted = vi.spyOn(app, 'postMessage').mockImplementation(() => {})
@@ -42,6 +47,9 @@ beforeAll(async () => {
 afterEach(() => {
   shop.request.mockReset()
   page.reload.mockReset()
+  sessionLive(false)
+  // one shell for the file: an exit of one test must not hold the question of the next
+  window.dispatchEvent(new Event('pageshow'))
   localStorage.clear()
   vi.restoreAllMocks()
 })
@@ -71,7 +79,38 @@ describe('the shell’s answers to the app', () => {
   })
 })
 
-// The Me panel's Sign Out in world (library/ui/apps/hud/features/gate/signOutOfWorld.ts).
+describe('the question before the page goes', () => {
+  /** True when the browser would ask before it leaves the page. */
+  const asks = (): boolean => !window.dispatchEvent(new Event('beforeunload', { cancelable: true }))
+  const fromApp = (type: string): void => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type }, origin: location.origin, source: app }))
+  }
+
+  it('comes only while the app says a session runs: the start screen has none to lose', () => {
+    expect(asks()).toBe(false)
+    sessionLive(true)
+    expect(asks()).toBe(true)
+    sessionLive(false)
+    expect(asks()).toBe(false)
+  })
+
+  it('takes the word of the app’s frame only', () => {
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:session', live: true }, origin: location.origin, source: window }))
+    expect(asks()).toBe(false)
+  })
+
+  it('does not come on the page’s own exit, and comes again when Back shows the page as it was left', () => {
+    sessionLive(true)
+    vi.spyOn(window, 'close').mockImplementation(() => {})
+    // jsdom has no navigation: the exit's replace() only logs
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    fromApp('bevy-shell:exit')
+    expect(asks()).toBe(false)
+    window.dispatchEvent(new Event('pageshow'))
+    expect(asks()).toBe(true)
+  })
+})
+
 describe('the app’s sign-out in world', () => {
   const ACCOUNT_KEY = 'single-sign-on-0x00000000000000000000000000000000000000aa'
   const signOut = (source: Window): void => {
@@ -97,9 +136,12 @@ describe('the app’s sign-out in world', () => {
     vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
       throw new Error('storage is blocked')
     })
+    const posted = vi.spyOn(app, 'postMessage').mockImplementation(() => {})
     signOut(app)
     await vi.waitFor(() => expect(failed).toHaveBeenCalledTimes(1))
     expect(page.reload).not.toHaveBeenCalled()
+    // the app tells the player: its menu is closed and the player is still in world
+    expect(posted).toHaveBeenCalledWith({ type: 'bevy-shell:sign-out-failed' }, location.origin)
     urlSync('?realm=main&position=9%2C20')
     expect(location.search).toBe('?realm=main&position=9%2C20')
   })
@@ -114,6 +156,9 @@ describe('the app’s sign-out in world', () => {
     urlSync('?realm=main&position=11%2C20&preview=1')
     await vi.waitFor(() => expect(page.reload).toHaveBeenCalledTimes(1))
     expect(localStorage.getItem(ACCOUNT_KEY)).toBeNull()
+    // the page goes at once: the session ended on the player's own word
+    sessionLive(true)
+    expect(!window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
     urlSync('?realm=main&position=12%2C20&preview=1')
     expect(location.search).toBe('?preview=1')
   })

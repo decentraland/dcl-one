@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from 'react'
 import { siteUrl } from '@hud-host'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
-import { Avatar, VerifiedBadge } from '../../design'
+import { shortAddr } from '@explorer-core/lib/identity'
+import { Avatar, VerifiedBadge, showConfirm } from '../../design'
 import { knownUserColor } from '../session/profileStore'
 import styles from './Lobby.module.css'
 
@@ -115,6 +116,12 @@ export function LobbyProfile({
     setOpen(false)
     act()
   }
+  // Sign Out asks first, as the Me panel's row does in world.
+  const askSignOut = (signOut: () => void) => (): void => {
+    void showConfirm({ title: 'Sign out?', body: 'You return to the start screen.', cancelLabel: 'Cancel', confirmLabel: 'Sign Out' }).then((confirmed) => {
+      if (confirmed) signOut()
+    })
+  }
 
   const color = knownUserColor(address ?? '', name)
   return (
@@ -144,7 +151,7 @@ export function LobbyProfile({
                 <>
                   <div className={styles.menuLabel}>User ID</div>
                   <button type="button" className={styles.menuAddress} onClick={copy} title="Copy address">
-                    {address.length > 14 ? `${address.slice(0, 6)}...${address.slice(-5)}` : address}
+                    {shortAddr(address)}
                     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" {...stroke}>
                       <rect x="4" y="8" width="12" height="12" rx="2" />
                       <path d="M8 5h10a2 2 0 0 1 2 2v9" />
@@ -162,7 +169,7 @@ export function LobbyProfile({
           </div>
           {(onSignOut || onExit) && (
             <div className={styles.menuGroup}>
-              {onSignOut && <Item glyph="signOut" label="Sign Out" onClick={pick(onSignOut)} />}
+              {onSignOut && <Item glyph="signOut" label="Sign Out" onClick={pick(askSignOut(onSignOut))} />}
               {onExit && <Item glyph="exit" label="Exit" onClick={pick(onExit)} />}
             </div>
           )}

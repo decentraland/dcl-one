@@ -10,6 +10,9 @@ vi.mock('@explorer-core/lib/shell', async (original) => ({
 }))
 vi.mock('@explorer-core/lib/reloadPage', () => ({ reloadPage }))
 
+const showToast = vi.hoisted(() => vi.fn())
+vi.mock('../design', async (original) => ({ ...(await original<object>()), showToast }))
+
 const { signOutOfWorld } = await import('../features/gate/signOutOfWorld')
 
 const ACCOUNT_KEY = 'single-sign-on-0x00000000000000000000000000000000000000aa'
@@ -19,6 +22,7 @@ beforeEach(() => {
   shell.inside = false
   postToShell.mockReset()
   reloadPage.mockReset()
+  showToast.mockReset()
   localStorage.clear()
   history.replaceState(null, '', '/play/')
 })
@@ -33,6 +37,19 @@ describe('signing out in world', () => {
     expect(postToShell).toHaveBeenCalledWith({ type: 'bevy-shell:sign-out' })
     expect(reloadPage).not.toHaveBeenCalled()
     expect(localStorage.getItem(ACCOUNT_KEY)).toBe('{}')
+  })
+
+  it('inside the shell it tells the player when the shell could not sign out, once for each failure', () => {
+    shell.inside = true
+    const failed = (source: Window): void => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'bevy-shell:sign-out-failed' }, origin: location.origin, source }))
+    }
+    signOutOfWorld()
+    signOutOfWorld()
+    expect(showToast).not.toHaveBeenCalled()
+    failed(window.parent)
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(showToast).toHaveBeenCalledWith('Could not sign out. Try again in a moment.', { tone: 'error' })
   })
 
   it('with no shell it removes the stored account sign-in, keeps a stored guest, and loads the page again', () => {
