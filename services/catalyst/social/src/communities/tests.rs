@@ -241,7 +241,7 @@ impl Rig {
     }
 
     /// On `pool`, e.g. an owned database that no other fixture's voice poll
-    /// sweeps (`rpc::tests::fanout::OwnedDatabase`).
+    /// sweeps (`db::scratch::OwnedDatabase`).
     async fn with_pool(
         settings: Settings,
         explore: impl FnOnce(&PgPool) -> crate::explore::SharedState,
@@ -1115,6 +1115,24 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "not accepted friends");
+    sqlx::query("INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2)")
+        .bind(friend.address.as_str())
+        .bind(user.address.as_str())
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    let (status, _) = hit(app, Case::new("get", &messages).signed(&user).await).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a block closes the friend DM"
+    );
+    sqlx::query("DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2")
+        .bind(friend.address.as_str())
+        .bind(user.address.as_str())
+        .execute(&rig.pool)
+        .await
+        .unwrap();
 
     let (status, _) = hit(
         app,

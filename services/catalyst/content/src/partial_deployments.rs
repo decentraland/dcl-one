@@ -76,10 +76,10 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::pool::PoolConnection;
 
-use super::entity::{Entity, EntityType};
+use super::entity::{Entity, EntityType, is_ipfs_v2};
 use super::write_deployer::{
-    DeployFailure, REQUEST_TTL_FORWARDS_MS, UPLOAD_HASH_JOBS, WriteDeployer, bounded_upload_hash,
-    is_pointer_conflict_message,
+    DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, WriteDeployer,
+    bounded_upload_hash,
 };
 use crate::auth::{AuthChain, hash_bytes_v1};
 use crate::config::Config;
@@ -307,7 +307,7 @@ impl Refusal {
 
     fn from_deploy(failure: DeployFailure) -> Self {
         match failure {
-            DeployFailure::Rejected(errors) => Refusal::Invalid {
+            DeployFailure::Rejected(_, errors) => Refusal::Invalid {
                 errors,
                 retry_after: None,
             },
@@ -478,14 +478,6 @@ fn check_pointer_quotas(
         ));
     }
     None
-}
-
-/// Upstream `IPFSv2.validate` (`@dcl/schemas`): a CIDv1 in base32, as the
-/// entity files the SDK hashes (`bafk...`/`bafy...`, 59 characters).
-fn is_ipfs_v2(id: &str) -> bool {
-    id.len() == 59
-        && (id.starts_with("bafy") || id.starts_with("bafk"))
-        && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// The upload row as a batch reads it.
@@ -811,7 +803,7 @@ async fn prepare(
         .validate_staging(&entity, &staging_files, auth_chain, !resume_by_creator)
         .await
         .map_err(|failure| match failure {
-            DeployFailure::Rejected(errors) if errors.is_empty() => {
+            DeployFailure::Rejected(_, errors) if errors.is_empty() => {
                 Refusal::invalid("The staging validation was not successful.")
             }
             other => Refusal::from_deploy(other),
@@ -1550,9 +1542,8 @@ async fn finalize(
             )
             .await;
         match &result {
-            Err(DeployFailure::Rejected(errors))
-                if attempt < FINALIZE_POINTER_CONFLICT_RETRIES
-                    && errors.iter().any(|e| is_pointer_conflict_message(e)) =>
+            Err(DeployFailure::Rejected(RejectionKind::PointerContention, _))
+                if attempt < FINALIZE_POINTER_CONFLICT_RETRIES =>
             {
                 attempt += 1;
                 tokio::time::sleep(FINALIZE_POINTER_CONFLICT_DELAY).await;
@@ -1597,11 +1588,7 @@ async fn finalize(
             errors,
             retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
         }),
-        DeployFailure::Rejected(errors)
-            if errors
-                .first()
-                .is_some_and(|e| e.starts_with("Entity rate limited (")) =>
-        {
+        DeployFailure::Rejected(RejectionKind::RateLimited, errors) => {
             let retry_after = deployer
                 .rate_limit_retry_after(entity.entity_type.as_str(), &entity.pointers)
                 .unwrap_or(1);
@@ -1610,20 +1597,14 @@ async fn finalize(
                 retry_after: Some(retry_after),
             })
         }
-        DeployFailure::Rejected(errors)
-            if errors.iter().any(|e| is_pointer_conflict_message(e)) =>
-        {
+        DeployFailure::Rejected(RejectionKind::PointerContention, errors) => {
             Err(Refusal::Invalid {
                 errors,
                 retry_after: Some(POINTER_CONFLICT_RETRY_AFTER_SECS),
             })
         }
         // Only an overtaken upload is released: other refusals may clear.
-        DeployFailure::Rejected(errors)
-            if errors
-                .iter()
-                .any(|e| super::write_deployer::is_newer_entity_message(e)) =>
-        {
+        DeployFailure::Rejected(RejectionKind::Superseded, errors) => {
             release_upload(pool, deployer.storage(), limits, entity_id).await;
             Err(Refusal::Invalid {
                 errors,

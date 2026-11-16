@@ -820,6 +820,31 @@ mod stream_access {
     use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
     use catalyst::worlds::rooms::SceneResolver;
 
+    /// An active Genesis scene on one parcel.
+    async fn deploy_scene(pool: &sqlx::PgPool, entity_id: &str, parcel: &str) {
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+             entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, \
+             timezone('UTC', now()), '[]'::json)",
+        )
+        .bind(entity_id)
+        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel, "parcels": [parcel] } })))
+        .bind(vec![parcel.to_string()])
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'scene') \
+             ON CONFLICT (pointer) DO UPDATE SET entity_id = EXCLUDED.entity_id",
+        )
+        .bind(parcel)
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     /// A stub LiveKit Ingress service: `ListIngress` answers empty,
     /// `CreateIngress` mints `IN_<n>`/`sk_<n>`, `DeleteIngress` records the id.
     async fn ingress_stub() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
@@ -978,7 +1003,9 @@ mod stream_access {
             .add_admin(&place_id, &admin, &admin)
             .await
             .unwrap();
-        let metadata = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": "bafkreistreamscene" }).to_string();
+        let scene_id = format!("bafkreistream{}", Uuid::new_v4().simple());
+        deploy_scene(&pool, &scene_id, &parcel).await;
+        let metadata = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": scene_id }).to_string();
 
         let (status, body) = call(&app, &admin_key, "GET", &metadata).await;
         assert_eq!(
@@ -1012,7 +1039,25 @@ mod stream_access {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(room, "scene:main:bafkreistreamscene");
+        assert_eq!(room, format!("scene:main:{scene_id}"));
+
+        // A scene deployed elsewhere cannot be streamed into from this parcel.
+        let victim_parcel = format!("{},{}", if x < 0 { x + 151 } else { x - 151 }, y);
+        let victim_scene = format!("bafkreivictim{}", Uuid::new_v4().simple());
+        deploy_scene(&pool, &victim_scene, &victim_parcel).await;
+        let foreign = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": victim_scene }).to_string();
+        for method in ["GET", "POST", "PUT"] {
+            let (status, body) = call(&app, &admin_key, method, &foreign).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method}: {body}");
+        }
+        let victim_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.scene_stream_access WHERE room_id = $1",
+        )
+        .bind(format!("scene:main:{victim_scene}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(victim_rows, 0);
 
         let event = serde_json::to_vec(&serde_json::json!({
             "id": Uuid::new_v4().to_string(), "createdAt": chrono::Utc::now().timestamp(),
@@ -1072,6 +1117,69 @@ mod stream_access {
             (status, body["error"].as_str()),
             (StatusCode::FORBIDDEN, Some(NOT_AUTHORIZED_TO_STREAM_MSG))
         );
+        // Overlapping catalogue rows (one based elsewhere, one disabled) never authorize.
+        let stranger_address = Address::parse(&address_of(&stranger)).unwrap();
+        for (base, positions, disabled) in [
+            (
+                victim_parcel.clone(),
+                vec![parcel.clone(), victim_parcel.clone()],
+                false,
+            ),
+            (parcel.clone(), vec![parcel.clone()], true),
+        ] {
+            let stale = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, raw, disabled) VALUES ($1, $2, $3::jsonb, $4)",
+            )
+            .bind(&stale)
+            .bind(&base)
+            .bind(serde_json::json!({ "world": false, "positions": positions }))
+            .bind(disabled)
+            .execute(&pool)
+            .await
+            .unwrap();
+            state
+                .moderation
+                .add_admin(&stale, &stranger_address, &stranger_address)
+                .await
+                .unwrap();
+        }
+        let (status, body) = call(&app, &stranger, "POST", &metadata).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::FORBIDDEN, Some(NOT_AUTHORIZED_TO_STREAM_MSG))
+        );
+        // A redeploy the catalogue has not caught up with: no place is based on
+        // the new scene's base, so another scene's admins are never lent to it.
+        let moved_parcel = format!("{},{}", x, if y < 0 { y + 151 } else { y - 151 });
+        let moved_scene = format!("bafkreimoved{}", Uuid::new_v4().simple());
+        deploy_scene(&pool, &moved_scene, &moved_parcel).await;
+        let old_place = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
+        )
+        .bind(&old_place)
+        .bind(&victim_parcel)
+        .bind(serde_json::json!({ "world": false, "positions": [moved_parcel, victim_parcel] }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        state
+            .moderation
+            .add_admin(&old_place, &admin, &admin)
+            .await
+            .unwrap();
+        let moved = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": moved_parcel, "sceneId": moved_scene }).to_string();
+        let (status, body) = call(&app, &admin_key, "POST", &moved).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        let moved_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.scene_stream_access WHERE room_id = $1",
+        )
+        .bind(format!("scene:main:{moved_scene}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(moved_rows, 0);
 
         let device = format!("stream-device-{}", Uuid::new_v4().simple());
         state
@@ -1103,7 +1211,9 @@ mod stream_access {
                 "{method}"
             );
         }
-        let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
+        // Remove needs only the place: a scene id no longer deployed still revokes.
+        let stale_scene = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": "bafkreinolongerdeployed" }).to_string();
+        let (status, _) = call(&app, &admin_key, "DELETE", &stale_scene).await;
         assert_eq!(
             status,
             StatusCode::NO_CONTENT,

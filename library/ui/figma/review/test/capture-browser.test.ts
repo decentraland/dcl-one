@@ -135,12 +135,15 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.equal(diagnostic.phase, 'port-file')
   })
 
-  it('should retain the last filesystem error when the unchanged polling budget expires', async (t) => {
+  it('should retain the last filesystem error when the start limit expires', async (t) => {
     const log = t.mock.method(console, 'error', () => {})
     const { file } = await script(
       'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").mkdirSync(dir+"/DevToolsActivePort");setInterval(()=>{},1000)'
     )
-    await assert.rejects(openSession(file), /did not start/)
+    const started = performance.now()
+    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
+    const waited = performance.now() - started
+    assert.ok(waited >= 500 && waited < 5000, `waited ${waited} ms`)
     const diagnostic = report(log.mock.calls)
     assert.equal(diagnostic.port.lastFsError, 'EISDIR')
     assert.equal(diagnostic.port.validObserved, false)
@@ -354,7 +357,7 @@ async function stubbedOpenSession(): Promise<typeof openSession> {
   }
 }
 
-const startupBuiltins = { readFile: fs.readFile, setTimeout: timers.setTimeout, error: console.error }
+const startupBuiltins = { readFile: fs.readFile, setTimeout: timers.setTimeout, error: console.error, now: performance.now }
 
 describe('when capture startup waits for a usable port record', () => {
   class StartupBrowser extends EventEmitter {
@@ -373,6 +376,8 @@ describe('when capture startup waits for a usable port record', () => {
   }
   let serial = 0
   async function startup(t: TestContext, records: string[]) {
+    const clock = { now: 0 }
+    t.mock.method(performance, 'now', () => clock.now)
     const browser = new StartupBrowser()
     let profile = ''
     let reads = 0
@@ -390,6 +395,7 @@ describe('when capture startup waits for a usable port record', () => {
     }) as unknown as typeof fs.readFile)
     const setTimeout = t.mock.method(timers, 'setTimeout', (async (ms: number) => {
       delays.push(ms)
+      clock.now += ms
     }) as typeof timers.setTimeout)
     const error = t.mock.method(console, 'error', (...args: unknown[]) => diagnostics.push(args))
     syncBuiltinESMExports()
@@ -414,6 +420,7 @@ describe('when capture startup waits for a usable port record', () => {
     }
     return {
       open,
+      clock,
       readFile,
       setTimeout,
       error,
@@ -463,8 +470,8 @@ describe('when capture startup waits for a usable port record', () => {
         assert.equal(error.code, undefined)
         return true
       })
-      assert.equal(fixture.reads(), 100)
-      assert.deepEqual(fixture.delays, Array(100).fill(100))
+      assert.equal(fixture.reads(), 300)
+      assert.deepEqual(fixture.delays, Array(300).fill(100))
       assert.deepEqual(fixture.endpoints, [])
       const diagnostic = JSON.parse(String(fixture.diagnostics[0][1]))
       assert.equal(diagnostic.phase, 'port-file')
@@ -473,23 +480,37 @@ describe('when capture startup waits for a usable port record', () => {
       await cleaned(fixture)
     })
 
+  it('should count file reads against the elapsed startup deadline', async (t) => {
+    const fixture = await startup(t, [''])
+    let reads = 0
+    fixture.readFile.mock.mockImplementation((async () => {
+      reads += 1
+      fixture.clock.now += 7000
+      return ''
+    }) as unknown as typeof fs.readFile)
+    syncBuiltinESMExports()
+    await assert.rejects(fixture.open('capture-fixture'), /did not start/)
+    assert.equal(reads, 5)
+    assert.deepEqual(fixture.delays, Array(5).fill(100))
+    assert.equal(fixture.clock.now, 35_500)
+    await cleaned(fixture)
+  })
+
   it('should distinguish missing-port startup from cleanup with monotonic diagnostics', async (t) => {
-    let now = 0
-    t.mock.method(performance, 'now', () => now)
     const fixture = await startup(t, [])
     let polls = 0
     fixture.readFile.mock.mockImplementation((async () => {
-      now += 2
+      fixture.clock.now += 2
       if (++polls === 1) fixture.browser.stderr.write('launch warning\n')
       throw Object.assign(new Error('absent'), { code: 'ENOENT' })
     }) as unknown as typeof fs.readFile)
     fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
       fixture.delays.push(ms)
-      now += ms
+      fixture.clock.now += ms
     }) as typeof timers.setTimeout)
     const kill = fixture.browser.kill.bind(fixture.browser)
     t.mock.method(fixture.browser, 'kill', (signal: NodeJS.Signals) => {
-      now += 7
+      fixture.clock.now += 7
       return kill(signal)
     })
     syncBuiltinESMExports()
@@ -499,12 +520,12 @@ describe('when capture startup waits for a usable port record', () => {
       return true
     })
     const diagnostic = JSON.parse(String(fixture.diagnostics[0][1]))
-    assert.equal(polls, 100)
-    assert.deepEqual(fixture.delays, Array(100).fill(100))
-    assert.equal(diagnostic.polls, 100)
+    assert.equal(polls, 295)
+    assert.deepEqual(fixture.delays, Array(295).fill(100))
+    assert.equal(diagnostic.polls, 295)
     assert.deepEqual(diagnostic.timingMs, {
-      startup: 10_200,
-      portPolling: 10_200,
+      startup: 30_090,
+      portPolling: 30_090,
       firstStderr: 2,
       cleanup: 7
     })
@@ -544,7 +565,8 @@ describe('when capture startup waits for a usable port record', () => {
     }) as unknown as typeof fs.readFile)
     fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
       fixture.delays.push(ms)
-      if (fixture.delays.length === 100) fixture.browser.exitCode = 7
+      fixture.clock.now += ms
+      if (fixture.delays.length === 300) fixture.browser.exitCode = 7
     }) as typeof timers.setTimeout)
     syncBuiltinESMExports()
     await assert.rejects(fixture.open('capture-fixture'), (error: NodeJS.ErrnoException) => {
@@ -560,7 +582,8 @@ describe('when capture startup waits for a usable port record', () => {
     const reason = Object.freeze(new Error('final startup failure'))
     fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
       fixture.delays.push(ms)
-      if (fixture.delays.length === 100) fixture.browser.emit('error', reason)
+      fixture.clock.now += ms
+      if (fixture.delays.length === 300) fixture.browser.emit('error', reason)
     }) as typeof timers.setTimeout)
     syncBuiltinESMExports()
     await assert.rejects(fixture.open('capture-fixture'), (error) => error === reason)
@@ -574,15 +597,16 @@ describe('when capture startup waits for a usable port record', () => {
       const reason = Object.freeze(new Error('cancelled final startup delay'))
       fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
         fixture.delays.push(ms)
-        if (fixture.delays.length === 100) controller.abort(reason)
+        fixture.clock.now += ms
+        if (fixture.delays.length === 300) controller.abort(reason)
       }) as typeof timers.setTimeout)
       syncBuiltinESMExports()
       await assert.rejects(
         fixture.open('capture-fixture', { signal: controller.signal }),
         (error) => error === reason
       )
-      assert.equal(fixture.reads(), 100)
-      assert.deepEqual(fixture.delays, Array(100).fill(100))
+      assert.equal(fixture.reads(), 300)
+      assert.deepEqual(fixture.delays, Array(300).fill(100))
       assert.deepEqual(fixture.endpoints, [])
       assert.deepEqual(fixture.diagnostics, [])
       await cleaned(fixture)
@@ -610,6 +634,7 @@ it('should restore startup fixture builtins before later sessions', () => {
   assert.equal(fs.readFile, startupBuiltins.readFile)
   assert.equal(timers.setTimeout, startupBuiltins.setTimeout)
   assert.equal(console.error, startupBuiltins.error)
+  assert.equal(performance.now, startupBuiltins.now)
 })
 
 // A browser that publishes a DevTools port in its profile and then stays up until it is stopped.

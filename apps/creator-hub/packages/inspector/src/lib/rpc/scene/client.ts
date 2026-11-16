@@ -1,0 +1,191 @@
+import type { Transport } from '@dcl/mini-rpc';
+import { RPC } from '@dcl/mini-rpc';
+import type { NotificationRequest } from '../../../hooks/useSnackbar';
+
+enum Method {
+  OPEN_FILE = 'open_file',
+  OPEN_DIRECTORY = 'open_directory',
+  PUSH_NOTIFICATION = 'push_notification',
+  BROADCAST_MOBILE_DEBUG_COMMAND = 'broadcast_mobile_debug_command',
+  GET_FEATURE_FLAGS = 'get_feature_flags',
+  UPDATE_SDK = 'update_sdk',
+  SET_UI_DESIGNER_MODE = 'set_ui_designer_mode',
+  INSTALL_MULTIPLAYER = 'install_multiplayer',
+  UNINSTALL_MULTIPLAYER = 'uninstall_multiplayer',
+  GET_PROFILES = 'get_profiles',
+  OPTIMIZE_SCENE = 'optimize_scene',
+  PROMPT_ASSISTANT = 'prompt_assistant',
+  MENTION_ASSET = 'mention_asset',
+  COPY_TO_CLIPBOARD = 'copy_to_clipboard',
+  SET_CONSOLE_WINDOW_OPEN = 'set_console_window_open',
+  NOTIFY_SCENE_METADATA = 'notify_scene_metadata',
+  NOTIFY_READY = 'notify_ready',
+}
+
+export type ProfileSummary = {
+  address: string;
+  /** Absolute URL, composed host-side — see the host's `resolveProfiles`. */
+  faceUrl?: string;
+  name?: string;
+};
+
+type Params = {
+  [Method.OPEN_FILE]: { path: string };
+  [Method.OPEN_DIRECTORY]: { path: string; createIfNotExists?: boolean };
+  [Method.PUSH_NOTIFICATION]: { notification: NotificationRequest };
+  [Method.BROADCAST_MOBILE_DEBUG_COMMAND]: { cmd: string; args: Record<string, unknown> };
+  [Method.GET_FEATURE_FLAGS]: Record<string, never>;
+  [Method.UPDATE_SDK]: Record<string, never>;
+  [Method.SET_UI_DESIGNER_MODE]: { open: boolean };
+  [Method.INSTALL_MULTIPLAYER]: Record<string, never>;
+  [Method.UNINSTALL_MULTIPLAYER]: Record<string, never>;
+  [Method.GET_PROFILES]: { addresses: string[] };
+  [Method.OPTIMIZE_SCENE]: Record<string, never>;
+  [Method.PROMPT_ASSISTANT]: { text: string };
+  [Method.MENTION_ASSET]: AssetMention;
+  [Method.COPY_TO_CLIPBOARD]: { text: string };
+  [Method.SET_CONSOLE_WINDOW_OPEN]: { open: boolean };
+  [Method.NOTIFY_SCENE_METADATA]: SceneMetadataNotice;
+  [Method.NOTIFY_READY]: Record<string, never>;
+};
+
+// A scene file (scene-relative path) or a built-in avatar animation, which has no file.
+export type AssetMention = { path: string } | { builtInEmote: string };
+
+export type SceneMetadataNotice = {
+  title: string;
+  scene: { base: string; parcels: string[] };
+};
+
+type Result = {
+  [Method.OPEN_FILE]: void;
+  [Method.OPEN_DIRECTORY]: void;
+  [Method.PUSH_NOTIFICATION]: void;
+  [Method.BROADCAST_MOBILE_DEBUG_COMMAND]: {
+    ok: boolean;
+    results: { sessionId: number; ok: boolean; data: unknown }[];
+  };
+  [Method.GET_FEATURE_FLAGS]: { flags: Record<string, boolean> };
+  [Method.UPDATE_SDK]: { ok: boolean };
+  [Method.SET_UI_DESIGNER_MODE]: void;
+  [Method.INSTALL_MULTIPLAYER]: { ok: boolean };
+  [Method.UNINSTALL_MULTIPLAYER]: { ok: boolean };
+  [Method.GET_PROFILES]: { profiles: ProfileSummary[] };
+  [Method.OPTIMIZE_SCENE]: void;
+  [Method.PROMPT_ASSISTANT]: void;
+  [Method.MENTION_ASSET]: void;
+  [Method.COPY_TO_CLIPBOARD]: void;
+  [Method.SET_CONSOLE_WINDOW_OPEN]: void;
+  [Method.NOTIFY_SCENE_METADATA]: void;
+  [Method.NOTIFY_READY]: void;
+};
+
+export class SceneClient extends RPC<Method, Params, Result> {
+  constructor(transport: Transport) {
+    super('SceneRpcOutbound', transport);
+  }
+
+  openFile = (path: string) => {
+    return this.request('open_file', { path });
+  };
+
+  openDirectory = (path: string, createIfNotExists = false) => {
+    return this.request('open_directory', { path, createIfNotExists });
+  };
+
+  pushNotification = (notification: NotificationRequest) => {
+    return this.request('push_notification', { notification });
+  };
+
+  broadcastMobileDebugCommand = (cmd: string, args: Record<string, unknown> = {}) => {
+    return this.request('broadcast_mobile_debug_command', { cmd, args });
+  };
+
+  /**
+   * Pull the host's current feature flags. The host also PUSHES flags via
+   * `set_feature_flags`, but that races a slow-to-boot inspector: building the
+   * renderer is async, so the scene server can come up after the host's initial
+   * push and the flags would be lost. Pulling on server-ready closes that race;
+   * the push still covers flags that change afterwards.
+   */
+  getFeatureFlags = () => {
+    return this.request('get_feature_flags', {});
+  };
+
+  updateSdk = () => {
+    return this.request('update_sdk', {});
+  };
+
+  /**
+   * Install the authoritative-server SDK into the scene. The host owns the
+   * package list; this takes no parameters so the iframe can never hand npm
+   * an arbitrary spec.
+   */
+  installMultiplayer = () => {
+    return this.request('install_multiplayer', {});
+  };
+
+  /**
+   * Put the scene back on the latest SDK release, replacing the authoritative-server
+   * build. Parameterless for the same reason as `installMultiplayer`.
+   */
+  uninstallMultiplayer = () => {
+    return this.request('uninstall_multiplayer', {});
+  };
+
+  /**
+   * Resolve wallet addresses to Decentraland profiles through the host, which
+   * owns the lookup and its cache. Returns one entry per accepted address in
+   * every failure mode; an unresolved address comes back with no name and no
+   * face. The host ignores anything that is not address-shaped and caps the
+   * batch, so an address it ignored has no entry at all — key the response by
+   * address rather than by position, and read a missing entry as unresolved.
+   */
+  getProfiles = (addresses: string[]) => {
+    return this.request('get_profiles', { addresses });
+  };
+
+  setUiDesignerMode = (open: boolean) => {
+    return this.request('set_ui_designer_mode', { open });
+  };
+
+  optimizeScene = () => {
+    return this.request('optimize_scene', {});
+  };
+
+  // Ask the host to pop the debug console out into a separate window (#1272), or to close it
+  // (dock it back into the inline tab).
+  setConsoleWindowOpen = (open: boolean) => {
+    return this.request('set_console_window_open', { open });
+  };
+
+  notifySceneMetadata = (metadata: SceneMetadataNotice) => {
+    return this.request('notify_scene_metadata', metadata);
+  };
+
+  // Tell the host the scene RPC server is up and can take its pushes. A host push sent before
+  // this (e.g. right at the iframe's load event) times out on a slow-booting renderer, and the
+  // host has no other way to learn that a reloaded iframe needs its state (debug console,
+  // selected tabs) applied again.
+  notifyReady = () => {
+    return this.request('notify_ready', {});
+  };
+
+  // Open the AI assistant panel in the host and seed its composer with `text` (without
+  // sending). Used by the Trigger Area inspector to hand a "when a player enters…" prompt
+  // to the assistant.
+  promptAssistant = (text: string) => {
+    return this.request('prompt_assistant', { text });
+  };
+
+  // Mention a local asset in the AI assistant's next prompt. The host ignores it unless the
+  // assistant is already open.
+  mentionAsset = (mention: AssetMention) => {
+    return this.request('mention_asset', mention);
+  };
+
+  // The browser clipboard API is denied inside the Electron host, so copies go through it.
+  copyToClipboard = (text: string) => {
+    return this.request('copy_to_clipboard', { text });
+  };
+}

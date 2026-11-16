@@ -15,6 +15,8 @@ pub mod code {
     pub const INVALID_CONTRACT_ADDRESS: &str = "invalid_contract_address";
     pub const SALE_PRICE_TOO_LOW: &str = "sale_price_too_low";
     pub const QUOTA_REACHED: &str = "quota_reached";
+    /// The relayer's daily budget for free (non-sale) calls is spent.
+    pub const RELAY_BUDGET_SPENT: &str = "relay_budget_spent";
     pub const HIGH_CONGESTION: &str = "high_congestion";
     pub const CONFLICT: &str = "conflict";
     pub const PAYMENT_RULE: &str = crate::guards::ERROR_CODE;
@@ -32,6 +34,8 @@ pub enum ApiError {
     InvalidTransaction(String),
     #[error("{0}")]
     QuotaReached(String),
+    #[error("{0}")]
+    RelayBudgetSpent(String),
     #[error("{0}")]
     HighCongestion(String),
     #[error("{0}")]
@@ -73,6 +77,7 @@ impl ApiError {
             ApiError::InvalidTransaction(_) => (400, Some(code::INVALID_TRANSACTION)),
             ApiError::RelayReverted(_) => (400, Some(code::INVALID_TRANSACTION)),
             ApiError::QuotaReached(_) => (429, Some(code::QUOTA_REACHED)),
+            ApiError::RelayBudgetSpent(_) => (429, Some(code::RELAY_BUDGET_SPENT)),
             ApiError::HighCongestion(_) => (503, Some(code::HIGH_CONGESTION)),
             ApiError::RelayerUnavailable(_) => (503, Some(code::UNKNOWN)),
             ApiError::RelayerTimeout(_) => (504, Some(code::UNKNOWN)),

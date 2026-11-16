@@ -1,0 +1,1396 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ChainId } from '@dcl/schemas';
+import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
+import { editor } from '#preload';
+import { FetchError } from '/shared/fetch';
+import { AuthServerProvider } from '../../../lib/auth';
+import { createTestStore } from '../../../../tests/utils/testStore';
+import { FeatureFlag, fetchFeatureFlags } from '../featureFlags';
+import { DeploymentError } from '../../../lib/deploy';
+import { accountChanged } from '../account';
+import { actions, cancelDeployment, executeDeployment, initializeDeployment } from './slice';
+
+const TEST_PATH = '/test/path';
+const TEST_WALLET = '0x123';
+const NEXT_WALLET = '0x456';
+const TEST_CHAIN_ID = ChainId.ETHEREUM_MAINNET;
+const TEST_PORT = 3000;
+const TEST_SCENE_INFO = {
+  id: 'test-id',
+  name: 'Test Scene',
+  rootCID: 'QmTest123',
+  isWorld: false,
+};
+
+vi.mock('@dcl/single-sign-on-client', () => ({
+  localStorageGetIdentity: vi.fn(() => ({
+    ephemeralIdentity: { address: '0xtest' },
+    expiration: 9999999999999,
+    authChain: [],
+  })),
+}));
+
+vi.mock('../../../lib/auth', () => ({
+  AuthServerProvider: {
+    hasValidIdentity: vi.fn(() => true),
+    deactivate: vi.fn(),
+    getAccount: vi.fn(),
+  },
+}));
+
+vi.mock('@sentry/electron/renderer', () => ({
+  captureException: vi.fn(() => 'sentry-event-id'),
+}));
+
+vi.mock('@dcl/crypto', () => ({
+  Authenticator: {
+    signPayload: vi.fn().mockResolvedValue({}),
+  },
+}));
+
+vi.mock('./utils', async () => {
+  const actual = await vi.importActual('./utils');
+  return {
+    ...actual,
+    getDeploymentUrl: vi.fn((port: number) => `http://localhost:${port}/api`),
+    deploy: vi.fn().mockResolvedValue(undefined),
+    checkDeploymentStatus: vi.fn(),
+    fetchDeploymentStatus: vi.fn().mockResolvedValue({}),
+    fetchFiles: vi.fn().mockResolvedValue([]),
+    fetchInfo: vi.fn().mockResolvedValue({}),
+  };
+});
+
+vi.mock('./deploy-api', async importOriginal => ({
+  ...((await importOriginal()) as object),
+  deployWithProgress: vi.fn(),
+  isDeployResourceAvailable: vi.fn(),
+  requestDeploymentCancel: vi.fn(),
+}));
+
+import { deploy, checkDeploymentStatus, fetchDeploymentStatus, fetchInfo } from './utils';
+import {
+  deployWithProgress,
+  isDeployResourceAvailable,
+  requestDeploymentCancel,
+} from './deploy-api';
+
+describe('deployment slice', () => {
+  let store: ReturnType<typeof createTestStore>;
+  let mockDate: number;
+
+  const initDeploymentStore = async () => {
+    const store = createTestStore();
+    await store
+      .dispatch(
+        initializeDeployment({
+          path: TEST_PATH,
+          port: TEST_PORT,
+          chainId: TEST_CHAIN_ID,
+          wallet: TEST_WALLET,
+          supportsDeployResource: false,
+          hasCancelToken: false,
+        }),
+      )
+      .unwrap();
+    return store;
+  };
+
+  const mockDeploySuccess = () => {
+    vi.mocked(deploy).mockResolvedValue(undefined);
+  };
+
+  const mockDeployWithRetryOnce = () => {
+    let called = false;
+    vi.mocked(deploy).mockImplementation(() => {
+      if (!called) {
+        called = true;
+        throw new Error('Failed');
+      }
+      return Promise.resolve();
+    });
+  };
+
+  const mockCheckStatus = (status = 'complete') => {
+    vi.mocked(checkDeploymentStatus).mockResolvedValue({ status });
+  };
+
+  const advanceRetryTimers = async (times = 1, delay = 1000) => {
+    for (let i = 0; i < times; i++) {
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+  };
+
+  beforeEach(() => {
+    mockDate = 1000000000000;
+    vi.spyOn(Date, 'now').mockReturnValue(mockDate);
+    // Reset fetchInfo mock because some tests override it with mockRejectedValue
+    // and those overrides persist across tests even after vi.clearAllMocks()
+    vi.mocked(fetchInfo).mockResolvedValue(TEST_SCENE_INFO);
+    vi.mocked(editor.publishScene).mockResolvedValue({
+      port: TEST_PORT,
+      supportsDeployResource: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  describe('initializeDeployment', () => {
+    describe('when initializing a new deployment', () => {
+      beforeEach(async () => {
+        store = createTestStore();
+      });
+
+      it('should create a deployment with a unique id', async () => {
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.id).toBeDefined();
+        expect(typeof deployment?.id).toBe('string');
+      });
+
+      it('should set createdAt timestamp to current time', async () => {
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.createdAt).toBe(mockDate);
+      });
+
+      it('should set lastUpdated timestamp equal to createdAt', async () => {
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.lastUpdated).toBe(deployment?.createdAt);
+      });
+    });
+
+    describe('when a deployment already exists for the path', () => {
+      let firstDeploymentId: string;
+      let firstCreatedAt: number;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        store = await initDeploymentStore();
+        const firstDeployment = store.getState().deployment.deployments[TEST_PATH];
+        firstDeploymentId = firstDeployment!.id;
+        firstCreatedAt = firstDeployment!.createdAt;
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('should move the existing deployment to history', async () => {
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const history = store.getState().deployment.history[TEST_PATH];
+        expect(history).toBeDefined();
+        expect(history?.length).toBe(1);
+        expect(history?.[0]?.id).toBe(firstDeploymentId);
+      });
+
+      it('should create a new deployment with a different id', async () => {
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.id).not.toBe(firstDeploymentId);
+      });
+
+      it('should set a new createdAt timestamp', async () => {
+        const newMockDate = mockDate + 100;
+        vi.spyOn(Date, 'now').mockReturnValue(newMockDate);
+
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.createdAt).toBe(newMockDate);
+        expect(deployment?.createdAt).toBeGreaterThan(firstCreatedAt);
+      });
+    });
+
+    describe('when initialization fails', () => {
+      beforeEach(() => {
+        store = createTestStore();
+        vi.mocked(fetchInfo).mockRejectedValue(new Error('Initialization failed'));
+      });
+
+      afterEach(() => {
+        vi.mocked(fetchInfo).mockReset();
+      });
+
+      describe('and no deployment exists', () => {
+        it('should create a failed deployment with createdAt', async () => {
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .catch(() => {});
+
+          const deployment = store.getState().deployment.deployments[TEST_PATH];
+          expect(deployment?.status).toBe('failed');
+          expect(deployment?.createdAt).toBe(mockDate);
+        });
+
+        it('should set lastUpdated to current time', async () => {
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .catch(() => {});
+
+          const deployment = store.getState().deployment.deployments[TEST_PATH];
+          expect(deployment?.lastUpdated).toBe(mockDate);
+        });
+      });
+
+      describe('and a deployment already exists', () => {
+        let existingCreatedAt: number;
+
+        beforeEach(async () => {
+          vi.useFakeTimers();
+          vi.mocked(fetchInfo).mockResolvedValueOnce({
+            id: 'test-id',
+            name: 'Test Scene',
+          });
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .unwrap();
+
+          const existingDeployment = store.getState().deployment.deployments[TEST_PATH];
+          existingCreatedAt = existingDeployment!.createdAt;
+
+          vi.mocked(fetchInfo).mockRejectedValue(new Error('Initialization failed'));
+        });
+
+        afterEach(() => {
+          vi.useRealTimers();
+          vi.mocked(fetchInfo).mockReset();
+        });
+
+        it('should preserve the original createdAt timestamp', async () => {
+          const newMockDate = mockDate + 100;
+          vi.spyOn(Date, 'now').mockReturnValue(newMockDate);
+
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .catch(() => {});
+
+          const deployment = store.getState().deployment.deployments[TEST_PATH];
+          expect(deployment?.createdAt).toBe(existingCreatedAt);
+        });
+
+        it('should update lastUpdated to current time', async () => {
+          const newMockDate = mockDate + 100;
+          vi.spyOn(Date, 'now').mockReturnValue(newMockDate);
+
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .catch(() => {});
+
+          const deployment = store.getState().deployment.deployments[TEST_PATH];
+          expect(deployment?.lastUpdated).toBe(newMockDate);
+          expect(deployment?.lastUpdated).toBeGreaterThan(existingCreatedAt);
+        });
+      });
+    });
+  });
+
+  describe('executeDeployment', () => {
+    describe('when deployment exists', () => {
+      beforeEach(async () => {
+        store = await initDeploymentStore();
+        mockDeploySuccess();
+        mockCheckStatus();
+      });
+
+      it('should execute deployment successfully', async () => {
+        const result = await store.dispatch(executeDeployment(TEST_PATH)).unwrap();
+        expect(result.componentsStatus).toEqual({ status: 'complete' });
+        expect(result.info.id).toBe(TEST_SCENE_INFO.id);
+        expect(result.info.name).toBe(TEST_SCENE_INFO.name);
+      });
+
+      it('should not retry on success', async () => {
+        await store.dispatch(executeDeployment(TEST_PATH)).unwrap();
+        expect(deploy).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('when the account changes before the deployment completes', () => {
+      beforeEach(async () => {
+        vi.mocked(AuthServerProvider.getAccount).mockReturnValue(TEST_WALLET);
+        store = await initDeploymentStore();
+        mockDeploySuccess();
+        vi.mocked(checkDeploymentStatus).mockImplementation(async () => {
+          store.dispatch(accountChanged());
+          vi.mocked(AuthServerProvider.getAccount).mockReturnValue(NEXT_WALLET);
+          return { status: 'complete' } as never;
+        });
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should still complete the deployment', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.status).toBe('complete');
+      });
+
+      it("should keep the previous account's refetch out of the NAMEs, LANDs and Manage lists", () => {
+        const { ens, land, management } = store.getState();
+        expect([ens.status, land.status, management.status]).toEqual(['idle', 'idle', 'idle']);
+        expect(ens.data).toEqual({});
+        expect(land.data).toEqual([]);
+        expect(management.projects).toEqual([]);
+      });
+    });
+
+    describe('when deployment fails and needs retry', () => {
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        store = await initDeploymentStore();
+        mockDeployWithRetryOnce();
+        mockCheckStatus();
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('should retry with new server', async () => {
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        const result = await resultPromise.unwrap();
+
+        expect(result.componentsStatus).toEqual({ status: 'complete' });
+        expect(result.info.id).toBe(TEST_SCENE_INFO.id);
+        expect(result.info.name).toBe(TEST_SCENE_INFO.name);
+        expect(deploy).toHaveBeenCalledTimes(2);
+      });
+
+      it('should track deployment attempts', async () => {
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await resultPromise;
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.status).toBe('complete');
+      });
+
+      it('should update lastUpdated timestamp on completion', async () => {
+        const initialDeployment = store.getState().deployment.deployments[TEST_PATH];
+        const initialLastUpdated = initialDeployment!.lastUpdated;
+        const newMockDate = mockDate + 1000;
+
+        vi.spyOn(Date, 'now').mockReturnValue(newMockDate);
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await resultPromise;
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.lastUpdated).toBe(newMockDate);
+        expect(deployment?.lastUpdated).toBeGreaterThan(initialLastUpdated);
+      });
+
+      it('should preserve createdAt timestamp during execution', async () => {
+        const initialDeployment = store.getState().deployment.deployments[TEST_PATH];
+        const initialCreatedAt = initialDeployment!.createdAt;
+
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await resultPromise;
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.createdAt).toBe(initialCreatedAt);
+      });
+    });
+
+    describe('when a retry rebuilds the scene under a new rootCID', () => {
+      const REBUILT_SCENE_INFO = { ...TEST_SCENE_INFO, rootCID: 'QmRebuilt456' };
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        store = await initDeploymentStore();
+        // Retrying against another catalyst respawns the CLI server, which rebuilds the
+        // scene and produces a different rootCID than the one we started with.
+        vi.mocked(fetchInfo).mockResolvedValue(REBUILT_SCENE_INFO);
+        mockDeployWithRetryOnce();
+        mockCheckStatus();
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('should poll the status of the rootCID that was actually deployed', async () => {
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await resultPromise.unwrap();
+
+        // checkDeploymentStatus receives fetchStatus as its 3rd arg; invoking it reveals
+        // which entity the poller is asking the asset-bundle-registry about.
+        const fetchStatus = vi.mocked(checkDeploymentStatus).mock.calls[0][2];
+        await fetchStatus();
+
+        expect(vi.mocked(fetchDeploymentStatus)).toHaveBeenCalledWith(
+          expect.objectContaining({ rootCID: REBUILT_SCENE_INFO.rootCID }),
+          expect.anything(),
+          false,
+        );
+      });
+
+      it('should return the rebuilt info rather than the initial one', async () => {
+        const resultPromise = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        const result = await resultPromise.unwrap();
+
+        expect(result.info.rootCID).toBe(REBUILT_SCENE_INFO.rootCID);
+      });
+    });
+
+    describe('when the abgen pipeline flag is on', () => {
+      beforeEach(async () => {
+        store = await initDeploymentStore();
+        store.dispatch(
+          fetchFeatureFlags.fulfilled(
+            { flags: { [FeatureFlag.ABGEN_PIPELINE]: true }, variants: {} },
+            'test-request-id',
+            undefined,
+          ),
+        );
+        mockDeploySuccess();
+        mockCheckStatus();
+
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should poll the abgen registry for the conversion status', async () => {
+        const fetchStatus = vi.mocked(checkDeploymentStatus).mock.calls[0][2];
+        await fetchStatus();
+
+        expect(vi.mocked(fetchDeploymentStatus)).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          true,
+        );
+      });
+    });
+
+    describe('when deployment not found', () => {
+      beforeEach(() => {
+        store = createTestStore(); // not initialized
+      });
+
+      it('should reject with appropriate error', async () => {
+        const result = await store.dispatch(executeDeployment(TEST_PATH));
+        expect(result.type).toBe('deployment/execute/rejected');
+        expect(result.payload.name).toBe('DEPLOYMENT_NOT_FOUND');
+      });
+    });
+
+    describe('when identity is invalid', () => {
+      beforeEach(async () => {
+        store = await initDeploymentStore();
+      });
+
+      it('should reject with INVALID_IDENTITY when hasValidIdentity returns false', async () => {
+        vi.mocked(AuthServerProvider.hasValidIdentity).mockReturnValueOnce(false);
+
+        const result = await store.dispatch(executeDeployment(TEST_PATH));
+
+        expect(result.type).toBe('deployment/execute/rejected');
+        expect(result.payload.name).toBe('INVALID_IDENTITY');
+        expect(AuthServerProvider.deactivate).toHaveBeenCalled();
+      });
+
+      it('should reject with INVALID_IDENTITY when identity is not found', async () => {
+        vi.mocked(localStorageGetIdentity).mockReturnValueOnce(null);
+
+        const result = await store.dispatch(executeDeployment(TEST_PATH));
+
+        expect(result.type).toBe('deployment/execute/rejected');
+        expect(result.payload.name).toBe('INVALID_IDENTITY');
+        expect(AuthServerProvider.deactivate).toHaveBeenCalled();
+      });
+
+      it('should update deployment status to failed when identity is invalid', async () => {
+        vi.mocked(AuthServerProvider.hasValidIdentity).mockReturnValueOnce(false);
+
+        await store.dispatch(executeDeployment(TEST_PATH));
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.status).toBe('failed');
+        expect(deployment?.error?.name).toBe('INVALID_IDENTITY');
+      });
+
+      it('should keep the Sentry event id of the failure', async () => {
+        vi.mocked(AuthServerProvider.hasValidIdentity).mockReturnValueOnce(false);
+
+        await store.dispatch(executeDeployment(TEST_PATH));
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.error?.eventId).toBe('sentry-event-id');
+      });
+    });
+
+    describe('when the catalyst reports the deployment failed', () => {
+      beforeEach(async () => {
+        store = await initDeploymentStore();
+        mockDeploySuccess();
+        mockCheckStatus('failed');
+      });
+
+      it('should keep the Sentry event id of the failure', async () => {
+        const result = await store.dispatch(executeDeployment(TEST_PATH));
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(result.type).toBe('deployment/execute/rejected');
+        expect(deployment?.error?.name).toBe('DEPLOYMENT_FAILED');
+        expect(deployment?.error?.eventId).toBe('sentry-event-id');
+      });
+    });
+
+    describe('when the deploy request fails for good', () => {
+      beforeEach(async () => {
+        store = await initDeploymentStore();
+        vi.mocked(deploy).mockRejectedValue(new Error('The deployment is too big'));
+      });
+
+      it('should keep the Sentry event id of the failure', async () => {
+        await store.dispatch(executeDeployment(TEST_PATH));
+
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.error?.name).toBe('MAX_POINTER_SIZE_EXCEEDED');
+        expect(deployment?.error?.eventId).toBe('sentry-event-id');
+      });
+    });
+  });
+
+  describe('deployment history', () => {
+    describe('when multiple deployments are created for the same path', () => {
+      let firstDeploymentId: string;
+      let secondDeploymentId: string;
+
+      beforeEach(async () => {
+        store = createTestStore();
+
+        // First deployment
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+        firstDeploymentId = store.getState().deployment.deployments[TEST_PATH]!.id;
+
+        // Second deployment
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+        secondDeploymentId = store.getState().deployment.deployments[TEST_PATH]!.id;
+      });
+
+      it('should keep the latest deployment as active', () => {
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.id).toBe(secondDeploymentId);
+      });
+
+      it('should store the first deployment in history', () => {
+        const history = store.getState().deployment.history[TEST_PATH];
+        expect(history).toBeDefined();
+        expect(history?.length).toBe(1);
+        expect(history?.[0]?.id).toBe(firstDeploymentId);
+      });
+
+      it('should preserve all properties in history', () => {
+        const history = store.getState().deployment.history[TEST_PATH];
+        const historicDeployment = history?.[0];
+
+        expect(historicDeployment).toBeDefined();
+        expect(historicDeployment?.path).toBe(TEST_PATH);
+        expect(historicDeployment?.wallet).toBe(TEST_WALLET);
+        expect(historicDeployment?.chainId).toBe(TEST_CHAIN_ID);
+        expect(historicDeployment?.createdAt).toBeDefined();
+        expect(historicDeployment?.lastUpdated).toBeDefined();
+      });
+    });
+
+    describe('when three deployments are created for the same path', () => {
+      let deploymentIds: string[];
+
+      beforeEach(async () => {
+        store = createTestStore();
+        deploymentIds = [];
+
+        // Create three deployments with time progression
+        for (let i = 0; i < 3; i++) {
+          vi.spyOn(Date, 'now').mockReturnValue(mockDate + i * 100);
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .unwrap();
+          deploymentIds.push(store.getState().deployment.deployments[TEST_PATH]!.id);
+        }
+      });
+
+      it('should keep only the latest deployment as active', () => {
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.id).toBe(deploymentIds[2]);
+      });
+
+      it('should store previous deployments in history', () => {
+        const history = store.getState().deployment.history[TEST_PATH];
+        expect(history?.length).toBe(2);
+        expect(history?.[0]?.id).toBe(deploymentIds[0]);
+        expect(history?.[1]?.id).toBe(deploymentIds[1]);
+      });
+
+      it('should maintain chronological order in history', () => {
+        const history = store.getState().deployment.history[TEST_PATH];
+        expect(history?.[0]?.createdAt).toBeLessThan(history![1]!.createdAt);
+      });
+    });
+
+    describe('when deployments exist for multiple paths', () => {
+      const TEST_PATH_2 = '/test/path2';
+      let path1DeploymentId: string;
+      let path2DeploymentId: string;
+
+      beforeEach(async () => {
+        store = createTestStore();
+
+        // Deployment for first path
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+        path1DeploymentId = store.getState().deployment.deployments[TEST_PATH]!.id;
+
+        // Deployment for second path
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH_2,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+        path2DeploymentId = store.getState().deployment.deployments[TEST_PATH_2]!.id;
+      });
+
+      it('should maintain separate active deployments', () => {
+        const deployment1 = store.getState().deployment.deployments[TEST_PATH];
+        const deployment2 = store.getState().deployment.deployments[TEST_PATH_2];
+
+        expect(deployment1?.id).toBe(path1DeploymentId);
+        expect(deployment2?.id).toBe(path2DeploymentId);
+      });
+
+      it('should maintain separate history arrays', async () => {
+        // Create second deployment for first path
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+              supportsDeployResource: false,
+              hasCancelToken: false,
+            }),
+          )
+          .unwrap();
+
+        const history1 = store.getState().deployment.history[TEST_PATH];
+        const history2 = store.getState().deployment.history[TEST_PATH_2];
+
+        expect(history1?.length).toBe(1);
+        expect(history2).toBeUndefined();
+      });
+    });
+  });
+
+  describe('deploy resource', () => {
+    const UPLOADING_STATE = {
+      phase: 'uploading' as const,
+      upload: {
+        stage: 'uploading' as const,
+        sentBytes: 25,
+        totalBytes: 100,
+        completedBatches: 1,
+        totalBatches: 4,
+      },
+      result: null,
+      error: null,
+    };
+
+    const initResourceDeploymentStore = async (supportsDeployResource: boolean) => {
+      const store = createTestStore();
+      await store
+        .dispatch(
+          initializeDeployment({
+            path: TEST_PATH,
+            port: TEST_PORT,
+            supportsDeployResource,
+            hasCancelToken: supportsDeployResource,
+            chainId: TEST_CHAIN_ID,
+            wallet: TEST_WALLET,
+          }),
+        )
+        .unwrap();
+      return store;
+    };
+
+    afterEach(() => {
+      vi.mocked(isDeployResourceAvailable).mockReset();
+      vi.mocked(deployWithProgress).mockReset();
+      vi.mocked(deploy).mockReset();
+      vi.useRealTimers();
+    });
+
+    describe('when the CLI serves it', () => {
+      beforeEach(async () => {
+        store = await initResourceDeploymentStore(true);
+      });
+
+      it('should flag the deployment as supporting it', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.supportsDeployResource).toBe(
+          true,
+        );
+      });
+    });
+
+    describe('when executing a deployment the CLI serves through the resource', () => {
+      let progressDuringUpload: unknown;
+
+      beforeEach(async () => {
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockImplementation(async (_url, _payload, onState) => {
+          onState(UPLOADING_STATE);
+          progressDuringUpload = store.getState().deployment.deployments[TEST_PATH]?.upload;
+        });
+        mockCheckStatus();
+        store = await initResourceDeploymentStore(true);
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should deploy through the resource instead of the blocking request', () => {
+        expect(deployWithProgress).toHaveBeenCalledWith(
+          `http://localhost:${TEST_PORT}/api`,
+          expect.objectContaining({ address: TEST_WALLET, chainId: TEST_CHAIN_ID }),
+          expect.any(Function),
+        );
+        expect(deploy).not.toHaveBeenCalled();
+      });
+
+      it('should store the reported upload progress', () => {
+        expect(progressDuringUpload).toEqual(UPLOADING_STATE.upload);
+      });
+
+      it('should go on polling the deployment status', () => {
+        expect(checkDeploymentStatus).toHaveBeenCalled();
+      });
+
+      it('should complete the deployment', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.status).toBe('complete');
+      });
+    });
+
+    describe('when the CLI reports a cancellation under way', () => {
+      let cancelRequested: unknown;
+
+      beforeEach(async () => {
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockImplementation(async (_url, _payload, onState) => {
+          onState({ ...UPLOADING_STATE, cancelRequested: true });
+          cancelRequested = store.getState().deployment.deployments[TEST_PATH]?.cancelRequested;
+        });
+        mockCheckStatus();
+        store = await initResourceDeploymentStore(true);
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should store it', () => {
+        expect(cancelRequested).toBe(true);
+      });
+    });
+
+    describe('when the probe finds the resource unavailable despite the static check', () => {
+      beforeEach(async () => {
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(false);
+        mockDeploySuccess();
+        mockCheckStatus();
+        store = await initResourceDeploymentStore(true);
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should fall back to the blocking request', () => {
+        expect(deploy).toHaveBeenCalledTimes(1);
+        expect(deployWithProgress).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('when the CLI does not serve it', () => {
+      beforeEach(async () => {
+        mockDeploySuccess();
+        mockCheckStatus();
+        store = await initResourceDeploymentStore(false);
+        await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should not probe the resource', () => {
+        expect(isDeployResourceAvailable).not.toHaveBeenCalled();
+      });
+
+      it('should use the blocking request', () => {
+        expect(deploy).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('when the deployment state is lost after the CLI accepted it', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockRejectedValue(
+          new DeploymentError(
+            'DEPLOY_STATE_LOST',
+            { catalyst: 'idle', assetBundle: 'idle' },
+            new Error('Failed to fetch'),
+          ),
+        );
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(3);
+        result = await running;
+      });
+
+      it('should reject with the lost state', () => {
+        expect(result.error.name).toBe('DEPLOY_STATE_LOST');
+      });
+
+      it('should not deploy again to another catalyst', () => {
+        expect(deployWithProgress).toHaveBeenCalledTimes(1);
+        expect(editor.publishScene).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('when a regular failure is retried against a CLI that serves it', () => {
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(deploy).mockRejectedValue(new Error('Failed'));
+        vi.mocked(editor.publishScene).mockResolvedValue({
+          port: TEST_PORT + 1,
+          supportsDeployResource: true,
+          deployToken: 'token-example-123',
+        });
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockResolvedValue(undefined);
+        mockCheckStatus();
+        store = await initResourceDeploymentStore(false);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await running;
+      });
+
+      it('should deploy the retry through the resource of the new CLI', () => {
+        expect(deployWithProgress).toHaveBeenCalledWith(
+          `http://localhost:${TEST_PORT + 1}/api`,
+          expect.anything(),
+          expect.any(Function),
+        );
+      });
+
+      it('should flag the deployment on the new CLI as holding its cancel token', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.hasCancelToken).toBe(true);
+      });
+    });
+
+    describe('when the blocking request times out', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.mocked(deploy).mockRejectedValue(new FetchError('REQUEST_TIMEOUT'));
+        store = await initResourceDeploymentStore(false);
+        result = await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should reject with a timeout of the CLI, not of the connection', () => {
+        expect(result.error.name).toBe('DEPLOY_REQUEST_TIMEOUT');
+      });
+    });
+
+    describe('when the user cancels the deployment', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockImplementation(async (_url, _payload, onState) => {
+          onState(UPLOADING_STATE);
+          throw new DeploymentError('DEPLOYMENT_CANCELLED', {
+            catalyst: 'idle',
+            assetBundle: 'idle',
+          });
+        });
+        store = await initResourceDeploymentStore(true);
+        result = await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should reject with a cancelled outcome', () => {
+        expect(result.error.name).toBe('DEPLOYMENT_CANCELLED');
+      });
+
+      it('should not retry against another catalyst', () => {
+        expect(deployWithProgress).toHaveBeenCalledTimes(1);
+      });
+
+      it('should mark the deployment as cancelled without an error', () => {
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect(deployment?.status).toBe('cancelled');
+        expect(deployment?.error).toBeUndefined();
+        expect(deployment?.upload).toBeNull();
+      });
+
+      it('should not poll the deployment status', () => {
+        expect(checkDeploymentStatus).not.toHaveBeenCalled();
+      });
+
+      describe('and a new deployment starts', () => {
+        beforeEach(async () => {
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+                supportsDeployResource: false,
+                hasCancelToken: false,
+              }),
+            )
+            .unwrap();
+        });
+
+        it('should leave the cancelled deployment out of the history', () => {
+          expect(store.getState().deployment.history[TEST_PATH]).toBeUndefined();
+        });
+      });
+    });
+
+    describe('when cancelling a deployment', () => {
+      let result: unknown;
+
+      beforeEach(async () => {
+        vi.mocked(requestDeploymentCancel).mockResolvedValue('too-early');
+        store = await initDeploymentStore();
+        result = await store.dispatch(cancelDeployment(TEST_PATH)).unwrap();
+      });
+
+      it('should ask the CLI serving the deployment to cancel it', () => {
+        expect(requestDeploymentCancel).toHaveBeenCalledWith(`http://localhost:${TEST_PORT}/api`);
+      });
+
+      it('should resolve with why the CLI turned it down', () => {
+        expect(result).toEqual({
+          deploymentId: store.getState().deployment.deployments[TEST_PATH]?.id,
+          rejection: 'too-early',
+        });
+      });
+
+      it('should not mark the cancel as accepted', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.cancelAccepted).toBeFalsy();
+      });
+    });
+
+    describe('when the CLI fails after it accepted the cancellation', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.mocked(requestDeploymentCancel).mockResolvedValue(null);
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockImplementation(async () => {
+          await store.dispatch(cancelDeployment(TEST_PATH));
+          throw new Error('Deployment failed');
+        });
+        store = await initResourceDeploymentStore(true);
+        result = await store.dispatch(executeDeployment(TEST_PATH));
+      });
+
+      it('should reject with a cancelled outcome', () => {
+        expect(result.error.name).toBe('DEPLOYMENT_CANCELLED');
+      });
+
+      it('should not start a CLI to deploy again', () => {
+        expect(editor.publishScene).not.toHaveBeenCalled();
+      });
+
+      it('should mark the deployment as cancelled', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.status).toBe('cancelled');
+      });
+    });
+
+    describe('when the answer to a cancel arrives just after the CLI failed', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(requestDeploymentCancel).mockResolvedValue(null);
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockRejectedValue(new Error('Deployment failed'));
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await vi.advanceTimersByTimeAsync(0);
+        await store.dispatch(cancelDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        result = await running;
+      });
+
+      it('should reject with a cancelled outcome', () => {
+        expect(result.error.name).toBe('DEPLOYMENT_CANCELLED');
+      });
+
+      it('should not start a CLI to deploy again', () => {
+        expect(editor.publishScene).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('when the answer to a cancel arrives while the next CLI is being built', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(requestDeploymentCancel).mockResolvedValue(null);
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockRejectedValue(new Error('Deployment failed'));
+        vi.mocked(editor.publishScene).mockImplementation(async () => {
+          await store.dispatch(cancelDeployment(TEST_PATH));
+          return { port: TEST_PORT + 1, supportsDeployResource: true, deployToken: 'token-2' };
+        });
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        result = await running;
+      });
+
+      it('should reject with a cancelled outcome', () => {
+        expect(result.error.name).toBe('DEPLOYMENT_CANCELLED');
+      });
+
+      it('should not deploy through the new CLI', () => {
+        expect(deployWithProgress).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('when the user starts publishing again while a retry waits', () => {
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockRejectedValue(new Error('Deployment failed'));
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await vi.advanceTimersByTimeAsync(0);
+        store.dispatch(actions.markDeploymentReplaced({ path: TEST_PATH }));
+        await advanceRetryTimers(1);
+        await running;
+      });
+
+      it('should not start a CLI that would stop the new one', () => {
+        expect(editor.publishScene).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('when a cancel is accepted while the next CLI is being probed', () => {
+      let result: Awaited<ReturnType<ReturnType<typeof executeDeployment>>>;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(requestDeploymentCancel).mockResolvedValue(null);
+        vi.mocked(deployWithProgress).mockRejectedValueOnce(new Error('Deployment failed'));
+        vi.mocked(editor.publishScene).mockResolvedValue({
+          port: TEST_PORT + 1,
+          supportsDeployResource: true,
+          deployToken: 'token-2',
+        });
+        vi.mocked(isDeployResourceAvailable)
+          .mockResolvedValueOnce(true)
+          .mockImplementationOnce(async () => {
+            await store.dispatch(cancelDeployment(TEST_PATH));
+            return true;
+          });
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        result = await running;
+      });
+
+      it('should reject with a cancelled outcome', () => {
+        expect(result.error.name).toBe('DEPLOYMENT_CANCELLED');
+      });
+
+      it('should not deploy through the new CLI', () => {
+        expect(deployWithProgress).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('when the user publishes again while a retry is building its CLI', () => {
+      let newDeploymentId: string | undefined;
+
+      beforeEach(async () => {
+        vi.useFakeTimers();
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockRejectedValue(new Error('Deployment failed'));
+        vi.mocked(editor.publishScene).mockImplementation(async () => {
+          await store
+            .dispatch(
+              initializeDeployment({
+                path: TEST_PATH,
+                port: TEST_PORT + 2,
+                supportsDeployResource: true,
+                hasCancelToken: true,
+                chainId: TEST_CHAIN_ID,
+                wallet: TEST_WALLET,
+              }),
+            )
+            .unwrap();
+          newDeploymentId = store.getState().deployment.deployments[TEST_PATH]?.id;
+          return { port: TEST_PORT + 1, supportsDeployResource: true, deployToken: 'token-old' };
+        });
+        store = await initResourceDeploymentStore(true);
+        const running = store.dispatch(executeDeployment(TEST_PATH));
+        await advanceRetryTimers(1);
+        await running;
+      });
+
+      it('should leave the newer deployment on its own CLI', () => {
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect({ id: deployment?.id, url: deployment?.url, status: deployment?.status }).toEqual({
+          id: newDeploymentId,
+          url: `http://localhost:${TEST_PORT + 2}/api`,
+          status: 'idle',
+        });
+      });
+    });
+
+    describe('when cancelling a deployment that has no CLI', () => {
+      let result: unknown;
+
+      beforeEach(async () => {
+        vi.mocked(fetchInfo).mockRejectedValueOnce(new Error('CLI unreachable'));
+        store = createTestStore();
+        await store.dispatch(
+          initializeDeployment({
+            path: TEST_PATH,
+            port: TEST_PORT,
+            supportsDeployResource: true,
+            hasCancelToken: true,
+            chainId: TEST_CHAIN_ID,
+            wallet: TEST_WALLET,
+          }),
+        );
+        result = await store.dispatch(cancelDeployment(TEST_PATH)).unwrap();
+      });
+
+      it('should turn the cancellation down without asking any CLI', () => {
+        expect({ result, asked: vi.mocked(requestDeploymentCancel).mock.calls.length }).toEqual({
+          result: {
+            deploymentId: store.getState().deployment.deployments[TEST_PATH]?.id,
+            rejection: 'unauthorized',
+          },
+          asked: 0,
+        });
+      });
+
+      it('should not mark the cancel as accepted', () => {
+        expect(store.getState().deployment.deployments[TEST_PATH]?.cancelAccepted).toBeFalsy();
+      });
+    });
+
+    describe('when the user publishes again while an earlier run is still following its CLI', () => {
+      let failEarlierRun: (error: Error) => void;
+      let earlierRun: Promise<unknown>;
+
+      beforeEach(async () => {
+        vi.mocked(isDeployResourceAvailable).mockResolvedValue(true);
+        vi.mocked(deployWithProgress).mockImplementation(
+          () =>
+            new Promise((_, reject) => {
+              failEarlierRun = reject;
+            }),
+        );
+        store = await initResourceDeploymentStore(true);
+        earlierRun = store.dispatch(executeDeployment(TEST_PATH));
+        await vi.waitFor(() => expect(deployWithProgress).toHaveBeenCalled());
+        await store
+          .dispatch(
+            initializeDeployment({
+              path: TEST_PATH,
+              port: TEST_PORT + 1,
+              supportsDeployResource: true,
+              hasCancelToken: true,
+              chainId: TEST_CHAIN_ID,
+              wallet: TEST_WALLET,
+            }),
+          )
+          .unwrap();
+        failEarlierRun(
+          new DeploymentError('DEPLOY_STATE_LOST', { catalyst: 'idle', assetBundle: 'idle' }),
+        );
+        await earlierRun;
+      });
+
+      it('should leave the newer deployment untouched', () => {
+        const deployment = store.getState().deployment.deployments[TEST_PATH];
+        expect({ status: deployment?.status, error: deployment?.error }).toEqual({
+          status: 'idle',
+          error: undefined,
+        });
+      });
+
+      it('should not start a CLI to deploy again', () => {
+        expect(editor.publishScene).not.toHaveBeenCalled();
+      });
+    });
+  });
+});
