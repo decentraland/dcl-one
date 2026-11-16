@@ -39,7 +39,7 @@
 .discriminator {
   margin: 0;
   font-family: 'Inter', sans-serif;
-  font-size: 18px;
+  font-size: var(--dcl-font-size-heading-5);
   font-weight: 500;
   line-height: 1.334;
 }
@@ -61,13 +61,6 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--dcl-radius-full);
-  background: var(--name-color);
-  color: var(--dcl-neutrals-pale-black);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .addressRow {
@@ -112,6 +105,15 @@
   outline-offset: 2px;
 }
 
+.copiedHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .copied {
   position: absolute;
   bottom: calc(100% + var(--dcl-space-8));
@@ -151,7 +153,7 @@
 
   .name,
   .discriminator {
-    font-size: 24px;
+    font-size: var(--dcl-font-size-heading-2);
   }
 
   .actions {

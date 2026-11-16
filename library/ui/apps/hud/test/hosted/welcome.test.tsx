@@ -156,6 +156,26 @@ describe('welcome page', () => {
     })
   })
 
+  // a link (or, on desktop, the realm the engine puts in the address) still shows Verifying, and a
+  // new account its look and name, before the world: never the loading screen first
+  it('a sign-in with a link shows Verifying, then a new account its page, then goes to the link', async () => {
+    await withUrl('/?position=10,20', async () => {
+      const driver = new LaunchRecordingDriver(false)
+      const h = renderSession({ userId: null }, driver)
+      await signIn(h)
+      expect(h.session().phase).toBe('welcome')
+      expect(h.session().welcome.pending).toBe(true)
+      h.driver.emit({ kind: 'welcome', terms: true, newProfile: true })
+      await waitFor(() => expect(h.session().welcome.newProfile).toBe(true))
+      expect(h.session().phase).toBe('welcome')
+      expect(h.driver.sentOf('teleport')).toHaveLength(0)
+      act(() => h.session().welcome.accept('NovaRiver'))
+      h.driver.emit({ kind: 'welcomeAccepted', ok: true })
+      await waitFor(() => expect(h.session().phase).toBe('entering'))
+      expect(h.driver.last('teleport')).toMatchObject({ x: 10, y: 20 })
+    })
+  })
+
   it('holds a web link for terms not yet accepted, and goes there once they are', async () => {
     await withUrl('/?position=10,20', async () => {
       const driver = new LaunchRecordingDriver(false)

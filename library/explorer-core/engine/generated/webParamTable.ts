@@ -183,6 +183,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Log the frame rate to the console"
   },
   {
+    "name": "portables",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
+  },
+  {
     "name": "contentServer",
     "kind": "string",
     "delivery": "launch",
@@ -193,12 +199,6 @@ export const WEB_PARAMS: WebParam[] = [
     "kind": "string",
     "delivery": "launch",
     "doc": "Super-user ui scene source, or `none` for no ui scene. The engine trusts it completely. Absent = the default bridge scene for the react HUD; any explicit value opts out of the HUD"
-  },
-  {
-    "name": "portables",
-    "kind": "string",
-    "delivery": "launch",
-    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
   },
   {
     "name": "gpuBytesPerFrame",

@@ -5,9 +5,8 @@
 // beside the column, one at a time; Map shows and hides the minimap.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Toggle } from '../../design'
-import { useDebugPanel } from '../debug/useDebugPanel'
+import { toggleDebugPanel, useDebugPanelState, useDevelopmentBuild } from '../debug/useDebugPanel'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { userColor } from '@explorer-core/lib/identity'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
@@ -152,7 +151,8 @@ export function Sidebar({
   const [configOpen, setConfigOpen] = useState(false)
   // The debug panel: the configuration menu's last entry opens it, and a development build shows
   // its launcher at the screen's corner.
-  const debugPanel = useDebugPanel(session)
+  const debugPanelOpen = useDebugPanelState() != null
+  const developmentBuild = useDevelopmentBuild(session.runDebugCommand)
   const [panel, setPanel] = useState<{ id: PanelId; anchor: HTMLElement } | null>(null)
   const [mapShown, setMapShown] = useState(() => getPref(PREF.sidebarMap) === '1')
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
@@ -209,18 +209,17 @@ export function Sidebar({
   // Sign Out is for an account on the web. A guest's stored identity is its one way back and the
   // sign-out keeps it, and the desktop client cannot end its engine session from the page.
   const signOutOffered = session.login.signedInAs === 'fully_registered' && !isNativeHud()
-  const voiceState = !nearby.hearing ? 'off' : nearby.speaking ? 'speaking' : 'hearing'
+  const voiceState = nearby.blocked ? 'blocked' : !nearby.hearing ? 'off' : nearby.speaking ? 'speaking' : 'hearing'
   const voiceOn = voiceState === 'hearing' || voiceState === 'speaking'
-  const launcher = debugPanel.developmentBuild && (
+  const launcher = developmentBuild && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
-      title="Toggle debug panel" active={debugPanel.launcherLayer != null} onClick={() => debugPanel.toggle()}>
+      title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />
     </ControlButton>
   )
   return (
     <>
-      {/* Keep the toggle clickable and inside the popup's focus trap while the panel is open. */}
-      {debugPanel.launcherLayer ? createPortal(launcher, debugPanel.launcherLayer) : launcher}
+      {launcher}
       {autoHide.hidden && <div className={styles.reveal} data-testid="sidebar-reveal" onPointerEnter={autoHide.onPointerEnter} />}
       <nav
         ref={hudInsetRef}
@@ -463,6 +462,7 @@ export function Sidebar({
           speaking={nearby.speaking}
           talking={nearby.talking}
           micAvailable={nearby.micAvailable}
+          blocked={nearby.blocked}
           onSpeakToggle={nearby.toggleSpeak}
           talkKey={keyHintFor(snap, 'Microphone')}
           onClose={closeVoice}
@@ -500,7 +500,7 @@ export function Sidebar({
           {/* `/debug` in the chat opens the same panel. */}
           <button type="button" className={styles.configExtra} onClick={() => {
             setConfigOpen(false)
-            debugPanel.toggle()
+            toggleDebugPanel()
           }}>Debug panel</button>
         </Panel>
       )}

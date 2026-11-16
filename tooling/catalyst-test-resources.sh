@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Source before launching test binaries, including inventory/provisioned checks.
+# Source before launching the explicitly provisioned auth stress test.
 # The 3,000-verifier loopback workload owns both socket ends and retains idle and
 # background connections across links; verifier concurrency is not a descriptor cap.
 # Only the explicit workflow provisioning step calls this function. Developer
-# machines retain the read-only kernel checks in prepare_catalyst_test_resources.
+# machines are never provisioned by the ordinary backend suite.
 provision_hosted_macos_test_resources() {
   local per_process system value required=65536 system_required=1048576
   if [ "${GITHUB_ACTIONS:-}:${RUNNER_ENVIRONMENT:-}:${RUNNER_OS:-}:$(uname -s)" != true:github-hosted:macOS:Darwin ]; then
@@ -20,7 +20,9 @@ provision_hosted_macos_test_resources() {
     esac
   done
   echo "catalyst-test: hosted descriptors before kern.maxfilesperproc=$per_process kern.maxfiles=$system"
-  # Sixteen concurrent binaries can each inherit the 65536-descriptor budget.
+  # The single auth stress binary needs both loopback socket ends and background
+  # connections. Retain the conservative system floor of 1048576; it is an
+  # operational prerequisite, not a measured bound for this workload.
   # Preserve a higher per-process ceiling and keep the system ceiling above it.
   [ "$per_process" -le "$system_required" ] || system_required="$per_process"
   if [ "$system" -lt "$system_required" ]; then
@@ -67,8 +69,8 @@ prepare_catalyst_test_resources() {
     echo "catalyst-test: descriptors kern.maxfilesperproc=$kernel required=$required"
     if ! [ "$kernel" -ge "$required" ] 2>/dev/null; then
       echo "catalyst-test: descriptor prerequisite: kernel per-process limit $kernel is below $required" >&2
-      echo 'catalyst-test: the full backend suite includes 3,000 concurrent RPC verifiers; use hosted CI or have an administrator provision and verify adequate kernel and inherited descriptor limits' >&2
-      echo 'catalyst-test: this check does not change developer kernel limits; individual Cargo targets can be run separately' >&2
+      echo 'catalyst-test: the explicit auth stress tier includes 3,000 concurrent RPC verifiers; use hosted CI or have an administrator provision and verify adequate kernel and inherited descriptor limits' >&2
+      echo 'catalyst-test: the ordinary backend suite does not require this stress descriptor budget' >&2
       echo "catalyst-test: to raise the limit until the next reboot, an administrator can run: sudo sysctl -w kern.maxfilesperproc=$required (and kern.maxfiles if it is lower)" >&2
       return 1
     fi

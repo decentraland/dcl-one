@@ -1,23 +1,27 @@
-// React Gallery (camera reel) — a full-screen page inside the shared MainMenuShell,
-// matching the Unity Camera Reel: a month-grouped grid of the local player's in-world
-// photos with a storage indicator, opening a full-screen PhotoDetail lightbox on click.
-// Data comes from the bridge relay of camera-reel-service (see bridge-scene/domains/gallery).
-
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { EmptyState, Icon, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PhotoDetail } from './PhotoDetail'
-import { photoTime, type GalleryState, type ProfileState } from '../session/useEngineSession'
-import type { GalleryPhoto } from '@explorer-core/engine/protocol'
+import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
+import { useReelList } from './useReelList'
+import { useOwnReelActions } from './useOwnReelActions'
+import type { GalleryState, ProfileState } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 
-function monthLabel(ms: number): string {
-  return new Date(ms).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+// Six columns of 306x230 fill the 1920 canvas with its 30 px padding.
+const GALLERY_LAYOUT: ReelGridLayout = {
+  columns: 6,
+  tileWidth: 306,
+  tileHeight: 230,
+  groupByMonth: true,
+  paddingTop: 30,
+  paddingBottom: 30,
+  paddingLeft: 30,
+  monthSpacing: 20,
+  optionButtonHeight: 41
 }
-
-type Group = { key: string; items: { photo: GalleryPhoto; index: number }[] }
 
 export function GalleryPage({
   gallery,
@@ -35,27 +39,26 @@ export function GalleryPage({
   onViewProfile?: (user: ChatUser) => void
 }): React.JSX.Element | null {
   const [index, setIndex] = useState<number | null>(null)
-
-  // gallery.list is already sorted newest-first by the session; bucket into month sections.
-  const groups = useMemo(() => {
-    const out: Group[] = []
-    gallery.list.forEach((photo, i) => {
-      const key = photo.dateTime ? monthLabel(photoTime(photo.dateTime)) : 'Undated'
-      let g = out[out.length - 1]
-      if (g == null || g.key !== key) {
-        g = { key, items: [] }
-        out.push(g)
-      }
-      g.items.push({ photo, index: i })
-    })
-    return out
-  }, [gallery.list])
+  // The page stays mounted while closed, so each open resets it and reads the reel from the top:
+  // photos taken since the last open show up.
+  const [opened, setOpened] = useState(0)
+  const [wasOpen, setWasOpen] = useState(gallery.open)
+  if (gallery.open !== wasOpen) {
+    setWasOpen(gallery.open)
+    if (gallery.open) {
+      setOpened((n) => n + 1)
+      setIndex(null)
+    }
+  }
+  const list = useReelList(gallery.open ? `own:${opened}` : null, gallery.fetchPage)
+  const actions = useOwnReelActions(gallery, list)
+  const menu: ReelGridMenu = { showDelete: true, onSetPublic: actions.setPublic, onDelete: (photo) => void actions.remove(photo) }
 
   if (!gallery.open) return null
 
   const p = profile.data
-  const selected = index != null ? gallery.list[index] : null
-  const pct = gallery.max > 0 ? Math.min(100, (gallery.current / gallery.max) * 100) : 0
+  const selected = index != null ? list.photos[index] : null
+  const pct = list.max > 0 ? Math.min(100, (list.total / list.max) * 100) : 0
 
   return (
     <MainMenuShell
@@ -72,55 +75,65 @@ export function GalleryPage({
       <MenuBackdrop />
       <div className={styles.head}>
         <h1 className={styles.title}>Gallery</h1>
-        {gallery.loaded && gallery.max > 0 && (
-          <div className={styles.storage} title={`${gallery.current} of ${gallery.max} photos used`}>
+        {list.loaded && list.max > 0 && (
+          <div className={styles.storage} title={`${list.total} of ${list.max} photos used`}>
             <span className={styles.storageText}>
-              Storage {gallery.current}/{gallery.max} photos taken
+              Storage {list.total}/{list.max} photos taken
             </span>
             <div className={styles.storageBar}>
-              <div className={styles.storageFill} style={{ width: `${pct}%` }} />
+              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
             </div>
           </div>
         )}
       </div>
 
-      {!gallery.loaded ? (
+      {!list.loaded ? (
         <div className={styles.center}>
           <Spinner />
         </div>
-      ) : gallery.list.length === 0 ? (
+      ) : list.error && list.photos.length === 0 ? (
+        <EmptyState
+          variant="screen"
+          tone="error"
+          title="Your photos couldn't be loaded"
+          subtitle="Check your connection and try again."
+          actions={[{ label: 'RETRY', onClick: list.retry }]}
+        />
+      ) : list.photos.length === 0 ? (
         <EmptyState
           variant="screen"
           iconWash
           icon={<Icon name="gallery" size={56} />}
           title="There are no photos yet"
-          subtitle="Use the camera to save incredible memories with your friends!"
+          subtitle={
+            <span className={styles.emptyBody}>
+              Use the <span className={styles.emptyCamera}>camera</span> to save incredible memories with your friends!
+            </span>
+          }
         />
       ) : (
-        <div className={styles.scroll}>
-          {groups.map((g) => (
-            <section key={g.key} className={styles.group}>
-              <h2 className={styles.month}>{g.key}</h2>
-              <div className={styles.grid}>
-                {g.items.map(({ photo, index: i }) => (
-                  <button key={photo.id} type="button" aria-label="Open photo" className={styles.thumb} onClick={() => setIndex(i)}>
-                    <img className={styles.thumbImg} src={photo.thumbnailUrl ?? photo.url} alt="" loading="lazy" />
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        <ReelGrid
+          photos={list.photos}
+          layout={GALLERY_LAYOUT}
+          menu={menu}
+          onOpen={setIndex}
+          onVisibleIndex={list.loadMore}
+          onRetry={list.error ? list.retry : undefined}
+          aria-label="Photos"
+        />
       )}
       </div>
 
       {selected && index != null && (
         <PhotoDetail
-          photos={gallery.list}
+          photos={list.photos}
           index={index}
           meta={gallery.metas[selected.id]}
           isSelf
-          onIndex={setIndex}
+          onIndex={(i) => {
+            setIndex(i)
+            list.loadMore(i)
+          }}
           onLoadMeta={gallery.loadPhoto}
           onClose={() => setIndex(null)}
           onTeleport={(x, y) => {
@@ -128,10 +141,11 @@ export function GalleryPage({
             gallery.toggle() // close the gallery so the teleport lands in-world
             onTeleport(x, y)
           }}
-          onDelete={(id) => {
-            gallery.remove(id)
-            setIndex(null)
-          }}
+          onDelete={(photo) =>
+            void actions.remove(photo).then((removed) => {
+              if (removed) setIndex(null)
+            })
+          }
           onViewPerson={onViewProfile}
         />
       )}

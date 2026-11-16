@@ -25,7 +25,7 @@ import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { entryRealm } from '@hud-host'
 import { color3ToHex, hexToColor3 } from '@explorer-core/lib/color'
 import { closeTopPopup, hasOpenPopup, showToast, subscribePopups, topPopupOrder } from '../../design'
-import { requestDebugPanel } from '../debug/useDebugPanel'
+import { closeDebugPanel, isDebugPanelOpen, requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
@@ -78,6 +78,7 @@ import type {
   CommunityInvitesMessage,
   CommunityMemberSection,
   CommunityMemberSectionMessage,
+  CommunityPost,
   InvitableCommunitiesMessage,
   CommunityChannel,
   CommunityMember,
@@ -86,8 +87,11 @@ import type {
   Friend,
   FriendAction,
   FriendRequest,
+  GalleryMessage,
   GalleryPhoto,
   GalleryPhotoMeta,
+  GalleryWriteMessage,
+  ExternalUrlOpenedMessage,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -95,6 +99,7 @@ import type {
   NearbyMember,
   OutfitSlot,
   OutfitsMetadata,
+  PageToScene,
   PermissionLevelChoice,
   PermissionRequestMessage,
   PermissionRuleLevel,
@@ -142,12 +147,18 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   // answers to invites and requests
   acceptInvite: 'There was an error accepting community invitation. Please try again.',
   rejectInvite: 'There was an error rejecting community invitation. Please try again.',
-  manageRequest: 'There was an error managing the user request. Please try again.'
+  manageRequest: 'There was an error managing the user request. Please try again.',
+  // the Announcements tab's
+  fetchPosts: 'There was an error fetching the community announcements. Please try again.',
+  createPost: 'There was an error creating the community announcement. Please try again.',
+  deletePost: 'There was an error deleting the community announcement. Please try again.',
+  likePost: 'There was an error sending the like status to the community announcement. Please try again.'
 }
 
 // Answers to invites and requests, and an unban, are toasted rather than shown on a card: the
 // Invites & Requests section has none.
-const TOASTED_COMMUNITY_ACTIONS: ReadonlySet<CommunityAction> = new Set(['acceptInvite', 'rejectInvite', 'manageRequest', 'unban'])
+// The Announcements tab's failures are toasts too.
+const TOASTED_COMMUNITY_ACTIONS: ReadonlySet<CommunityAction> = new Set(['acceptInvite', 'rejectInvite', 'manageRequest', 'unban', 'fetchPosts', 'createPost', 'deletePost', 'likePost'])
 
 // The texts for the Invites & Requests section's reads and the Invite to Community submenu.
 export const INVITES_LOAD_ERROR: Record<CommunityInvitesMessage['failed'][number], string> = {
@@ -168,6 +179,8 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 // Fallbacks only: the menu reads the live clock with `/time` when it opens.
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
+
+const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
 // "speed <S> (elapsed: <seconds since midnight>)".
@@ -304,6 +317,29 @@ export const BROWSE_ERROR = 'There was an error loading Communities. Please try 
 
 const NO_BROWSE: CommunityBrowse = { search: '', items: [], total: 0, loading: false, loadingMore: false }
 
+/** The open card's Announcements tab: the pages read so far, newest first. */
+export interface CommunityPosts {
+  /** The community they belong to. */
+  id: string
+  posts: CommunityPost[]
+  /** Every announcement the community has (the service's total). */
+  total: number
+  /** The first page is being read. */
+  loading: boolean
+  /** A further page is being read. */
+  loadingMore: boolean
+  /** An announcement is being posted. */
+  posting: boolean
+  /** How many announcements were posted from this card, so the composer clears after each. */
+  posted: number
+  /** The announcements whose like or unlike is on its way. */
+  liking: readonly string[]
+  /** The announcements whose delete is on its way. */
+  deleting: readonly string[]
+  /** The first page could not be read: the tab shows no empty state. */
+  failed?: boolean
+}
+
 export interface CommunitiesState {
   /** My Communities: every community the user is a member of. */
   list: Community[]
@@ -383,6 +419,18 @@ export interface CommunitiesState {
   invite: (id: string, address: string) => void
   /** Lift a member's ban (the card's Banned section); the section is read again after it. */
   unban: (id: string, address: string) => void
+  /** The open card's announcements, null until its first page is asked for. */
+  posts: CommunityPosts | null
+  /** Read a community's first page of announcements (the card opening). */
+  loadPosts: (id: string) => void
+  /** Read the next page, when the list's end comes into view. */
+  loadMorePosts: () => void
+  /** Post an announcement (owners and moderators). */
+  createPost: (id: string, content: string) => void
+  /** Delete an announcement (the owner any, an author their own). */
+  deletePost: (id: string, postId: string) => void
+  /** Like or unlike an announcement; one request at a time for each. */
+  likePost: (id: string, postId: string, like: boolean) => void
 }
 
 /** What a travel asked from a menu page came to. `sent`: an ordinary travel, and the page that asked
@@ -429,6 +477,8 @@ export interface MinimapState {
    *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
    *  another scene — unlike the entry overlay's title, which never does. */
   sceneTitle: string
+  /** What the scene the player is standing in turns off, for the header's restrictions list. */
+  restrictions: string[]
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
@@ -496,22 +546,35 @@ export interface PhotoModeState {
   take: () => void
 }
 
-export interface GalleryState {
-  /** The local player's camera-reel photos (newest first by dateTime). */
-  list: GalleryPhoto[]
-  /** Storage usage — `current` of `max` photos (0 until the gallery first loads). */
-  current: number
+/** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
+ *  the owner's storage limit. `received` counts the images the service sent, url-less ones included
+ *  (`photos.length` when absent). */
+export interface ReelPage {
+  ok: boolean
+  photos: GalleryPhoto[]
+  total: number
   max: number
-  /** False until the first gallery response arrives (spinner vs empty state). */
-  loaded: boolean
+  received?: number
+}
+
+/** The outcome of a camera-reel write; a delete also reports the storage usage that follows it. */
+export interface ReelWrite {
+  ok: boolean
+  current?: number
+  max?: number
+}
+
+export interface GalleryState {
   open: boolean
   toggle: () => void
+  /** One page of the local player's own reel (signed, so private photos are included). */
+  fetchPage: (offset: number, limit: number) => Promise<ReelPage>
   /** Per-photo metadata cache (place + people), filled lazily when a detail view opens. */
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
-  /** Delete one of the player's photos (re-emits the gallery). */
-  remove: (id: string) => void
+  setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
+  remove: (id: string) => Promise<ReelWrite>
 }
 
 export interface EmotesState {
@@ -853,6 +916,11 @@ const EMAIL_SUCCESS_MS = 600
 /** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
 export const VERIFY_TIMED_OUT = 'verifying timed out'
 const AUTH_PROFILE_WAIT_MS = 30_000
+export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+// camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
+export const GALLERY_DELETE_TIMEOUT_MS = 60_000
+
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1050,13 +1118,15 @@ export interface EngineSession {
   /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
   portables: PortablesState
   editor: EditorHostState
-  mic: { enabled: boolean; available: boolean; toggle: () => void }
+  mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; refusals: number; toggle: () => void }
   /** Saved mutes for nearby voice: lowercased addresses the user hushed, kept per account by the engine. */
   nearbyMutes: { muted: ReadonlySet<string>; set: (address: string, muted: boolean) => void }
   /** Private calls and community streams. */
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
+  /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
+  openExternalUrl: (url: string) => Promise<boolean>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: EngineViewportRegion,
@@ -1388,7 +1458,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
-  const [mic, setMic] = useState({ enabled: false, available: false })
+  const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
@@ -1420,6 +1490,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const updateCommunityBrowse = useCallback((next: (prev: CommunityBrowse) => CommunityBrowse) => {
     communityBrowseRef.current = next(communityBrowseRef.current)
     setCommunityBrowse(communityBrowseRef.current)
+  }, [])
+  // The open card's announcements, and the page read last (0: none yet).
+  const [communityPosts, setCommunityPosts] = useState<CommunityPosts | null>(null)
+  const communityPostsRef = useRef<CommunityPosts | null>(null)
+  const communityPostsPage = useRef(0)
+  const updateCommunityPosts = useCallback((next: (prev: CommunityPosts | null) => CommunityPosts | null) => {
+    communityPostsRef.current = next(communityPostsRef.current)
+    setCommunityPosts(communityPostsRef.current)
   }, [])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   // read by the bridge handler, which outlives each render
@@ -1486,9 +1564,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
-  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
-  const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
-  const [galleryLoaded, setGalleryLoaded] = useState(false)
+  const bridgeRequestRef = useRef(0)
+  const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
@@ -1976,7 +2053,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setEmotes(msg.emotes)
           break
         case 'mic':
-          setMic({ enabled: msg.enabled, available: msg.available })
+          setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
         case 'nearbyMutes':
           applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
@@ -2065,7 +2142,40 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         }
+        case 'communityPosts': {
+          const current = communityPostsRef.current
+          if (current == null || current.id !== msg.id) break
+          communityPostsPage.current = msg.page
+          seedProfiles(msg.posts.map((p) => ({ address: p.authorAddress, name: p.hasClaimedName || p.author.includes('#') ? p.author : `${p.author}#${p.authorAddress.slice(-4)}`, picture: p.authorPicture, claimed: p.hasClaimedName })))
+          updateCommunityPosts((prev) => {
+            if (prev == null || prev.id !== msg.id) return prev
+            // a page that arrives after a post moved the list keeps each announcement once
+            const posts = msg.page === 1 ? msg.posts : [...prev.posts, ...msg.posts.filter((p) => !prev.posts.some((q) => q.id === p.id))]
+            // a first page answers every delete: the list starts over
+            return { ...prev, posts, total: msg.total, loading: false, loadingMore: false, failed: false, deleting: msg.page === 1 ? [] : prev.deleting }
+          })
+          break
+        }
+        case 'communityPostCreated':
+          updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, posting: false, posted: prev.posted + (msg.ok ? 1 : 0) }))
+          if (!msg.ok) showToast(COMMUNITY_ERROR.createPost, { tone: 'error' })
+          break
+        case 'communityPostLiked':
+          updateCommunityPosts((prev) => {
+            if (prev == null || prev.id !== msg.id) return prev
+            const liking = prev.liking.filter((p) => p !== msg.postId)
+            if (!msg.ok) return { ...prev, liking }
+            // only a change counts: a first page read since may already carry the service's count
+            const posts = prev.posts.map((p) => (p.id === msg.postId && p.likedByMe !== msg.liked ? { ...p, likedByMe: msg.liked, likes: Math.max(0, p.likes + (msg.liked ? 1 : -1)) } : p))
+            return { ...prev, liking, posts }
+          })
+          if (!msg.ok) showToast(COMMUNITY_ERROR.likePost, { tone: 'error' })
+          break
         case 'communityActionFailed':
+          if (msg.action === 'fetchPosts') updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, loading: false, loadingMore: false, failed: prev.posts.length === 0 }))
+          // a failed delete releases that announcement only; the others still being deleted stay so
+          if (msg.action === 'deletePost')
+            updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, deleting: msg.postId == null ? [] : prev.deleting.filter((p) => p !== msg.postId) }))
           if (TOASTED_COMMUNITY_ACTIONS.has(msg.action)) showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
           else {
             setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
@@ -2379,10 +2489,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
           break
         case 'gallery':
-          setGalleryPhotos([...msg.photos].sort((a, b) => photoTime(b.dateTime) - photoTime(a.dateTime)))
-          setGalleryStorage({ current: msg.current, max: msg.max })
-          setGalleryLoaded(true)
+        case 'galleryWrite':
+        case 'externalUrlOpened': {
+          const resolve = bridgePendingRef.current.get(msg.requestId)
+          bridgePendingRef.current.delete(msg.requestId)
+          resolve?.(msg)
           break
+        }
         case 'galleryPhoto':
           setGalleryMetas((prev) => ({ ...prev, [msg.id]: msg.meta }))
           break
@@ -2674,7 +2787,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // re-emit fresh data through the relay, so we never need to re-pull on reopen. Avoids
   // hammering the catalyst every time a menu is reopened.
   const ensure = useCallback(
-    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities' | 'getGallery') => {
+    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities') => {
       if (fetchedRef.current.has(kind)) return
       fetchedRef.current.add(kind)
       driverRef.current?.send({ kind })
@@ -2996,7 +3109,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       clearInterval(id)
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
-  const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
   }, [])
@@ -3006,12 +3119,61 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
-  const removeGalleryPhoto = useCallback((id: string) => {
-    driverRef.current?.send({ kind: 'deleteGalleryPhoto', id })
-    // Optimistically drop it; the bridge re-emits the full gallery to confirm.
-    setGalleryPhotos((list) => list.filter((p) => p.id !== id))
-    setGalleryStorage((s) => ({ ...s, current: Math.max(0, s.current - 1) }))
-  }, [])
+  // A reply that never comes (the bridge scene reloaded mid-request) resolves null after
+  // `timeoutMs`, so a page never waits for good.
+  const bridgeCall = useCallback(
+    <K extends BridgeReply['kind']>(
+      kind: K,
+      build: (requestId: number) => PageToScene,
+      timeoutMs = BRIDGE_CALL_TIMEOUT_MS
+    ): Promise<Extract<BridgeReply, { kind: K }> | null> => {
+      const driver = driverRef.current
+      if (driver == null) return Promise.resolve(null)
+      const requestId = ++bridgeRequestRef.current
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }, timeoutMs)
+        bridgePendingRef.current.set(requestId, (msg) => {
+          clearTimeout(timer)
+          resolve(msg.kind === kind ? (msg as Extract<BridgeReply, { kind: K }>) : null)
+        })
+        try {
+          driver.send(build(requestId))
+        } catch (e) {
+          console.error(`[bridge] ${kind} request could not be sent`, e)
+          clearTimeout(timer)
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }
+      })
+    },
+    []
+  )
+  const fetchGalleryPage = useCallback(
+    async (offset: number, limit: number): Promise<ReelPage> => {
+      const msg = await bridgeCall('gallery', (requestId) => ({ kind: 'getGallery', requestId, offset, limit }))
+      return msg == null
+        ? { ok: false, photos: [], total: 0, max: 0 }
+        : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max, received: msg.received }
+    },
+    [bridgeCall]
+  )
+  const openExternalUrl = useCallback(
+    async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const setGalleryPhotoPublic = useCallback(
+    async (id: string, isPublic: boolean): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
+    [bridgeCall]
+  )
+  const removeGalleryPhoto = useCallback(
+    async (id: string): Promise<ReelWrite> =>
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
+    [bridgeCall]
+  )
   const teleport = useCallback((x: number, y: number) => {
     setLobbyOpen(false)
     driverRef.current?.send({ kind: 'teleport', x, y })
@@ -3691,6 +3853,36 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setInvitable(null)
     driverRef.current?.send({ kind: 'getInvitableCommunities', address })
   }, [])
+  const loadCommunityPosts = useCallback((id: string) => {
+    communityPostsPage.current = 0
+    updateCommunityPosts(() => ({ id, posts: [], total: 0, loading: true, loadingMore: false, posting: false, posted: 0, liking: [], deleting: [] }))
+    driverRef.current?.send({ kind: 'getCommunityPosts', id, page: 1 })
+  }, [updateCommunityPosts])
+  const loadMoreCommunityPosts = useCallback(() => {
+    const current = communityPostsRef.current
+    if (current == null || current.loading || current.loadingMore) return
+    if (communityPostsPage.current === 0 || current.posts.length >= current.total) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, loadingMore: true }))
+    driverRef.current?.send({ kind: 'getCommunityPosts', id: current.id, page: communityPostsPage.current + 1 })
+  }, [updateCommunityPosts])
+  const createCommunityPost = useCallback((id: string, content: string) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.posting) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, posting: true }))
+    driverRef.current?.send({ kind: 'createCommunityPost', id, content })
+  }, [updateCommunityPosts])
+  const deleteCommunityPost = useCallback((id: string, postId: string) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.deleting.includes(postId)) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, deleting: [...prev.deleting, postId] }))
+    driverRef.current?.send({ kind: 'deleteCommunityPost', id, postId })
+  }, [updateCommunityPosts])
+  const likeCommunityPost = useCallback((id: string, postId: string, like: boolean) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.liking.includes(postId)) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, liking: [...prev.liking, postId] }))
+    driverRef.current?.send({ kind: 'likeCommunityPost', id, postId, like })
+  }, [updateCommunityPosts])
   const unbanCommunityMember = useCallback((id: string, address: string) => {
     driverRef.current?.send({ kind: 'unbanCommunityMember', id, address })
   }, [])
@@ -3977,8 +4169,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setSubmitted(true)
       // at once, not on the next render: a /hud_login in the same task is refused as signed in
       submittedRef.current = true
-      // A ?position/?realm link launches straight there (pickDestination, from the url effect).
-      if (urlDestination.current != null) return true
+      // A ?position/?realm link launches straight there (pickDestination, from the url effect); the
+      // sign-in still shows Verifying, and a new account its look and name, before the world. On
+      // desktop that is every sign-in: the engine puts its own realm in the address.
+      if (urlDestination.current != null) {
+        setWelcomePending(welcomeShown())
+        return true
+      }
       // Otherwise the lobby: launch now holding the world back, so signing in, the avatar and
       // friends work but no scene loads until a destination is picked (which releases it).
       setLobby(true)
@@ -4313,7 +4510,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   const phase: SessionPhase = !submitted
     ? 'login'
-    : welcome != null || (welcomePending && lobby)
+    : welcome != null || welcomePending
       ? 'welcome'
       : !destinationPicked
       ? urlDestination.current != null
@@ -4584,6 +4781,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (hasOpenPopup()) closeTopPopup()
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
+      // the debug panel closes after every popup, leaf layer, panel and the lobby
+      else if (isDebugPanelOpen() && !lobbyOpen) closeDebugPanel()
       else setLobbyOpen(false)
       return
     }
@@ -4651,8 +4850,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null, linkRealm, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, donatePlaceKey, linkRealm, setMinimapConfig]
+    () => ({
+      pose: poseRef,
+      satelliteView,
+      sceneTitle,
+      restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
+      donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
+      linkRealm,
+      setConfig: setMinimapConfig
+    }),
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig]
   )
 
   return {
@@ -4776,7 +4983,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
@@ -4791,14 +4998,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       take: takePhoto
     },
     gallery: {
-      list: galleryPhotos,
-      current: galleryStorage.current,
-      max: galleryStorage.max,
-      loaded: galleryLoaded,
       open: galleryOpen,
       toggle: toggleGallery,
+      fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },
     permissions: {
@@ -4817,10 +5022,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
-    mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, refusals: mic.refusals, toggle: toggleMic },
     nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
+    openExternalUrl,
     setEngineViewport,
     setInteractableArea,
     logout,

@@ -49,8 +49,8 @@ pub mod notifications;
 pub mod profile_images;
 pub mod rpc;
 pub mod segment_webhooks;
-#[cfg(test)]
-mod test_fixtures;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_fixtures;
 pub mod writes;
 
 pub use crate::shared::identity::{

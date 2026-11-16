@@ -69,7 +69,7 @@ impl Plugin for LivekitPlugin {
         }
         app.add_plugins(LivekitRuntimePlugin);
         app.add_plugins(LivekitRoomPlugin);
-        super::room::diagnostics::register(app);
+        app.add_plugins(super::room::diagnostics::RoomDiagnosticsPlugin);
         app.add_plugins(LivekitParticipantPlugin);
         app.add_plugins(LivekitTrackPlugin);
 
@@ -312,6 +312,12 @@ fn handle_input(
                 .0
                 .push_back(VoiceInput::SetMic(!call_mic.enabled));
         }
+        // the push-to-talk release toggles too; count the press only
+        _ if mic_state.scene_blocked => {
+            if *pressed {
+                mic_state.refuse();
+            }
+        }
         _ => mic_state.enabled = !mic_state.enabled,
     }
 }
@@ -323,7 +329,7 @@ fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<Mic
                 rpc_result_sender.send(mic.clone());
             }
             SystemApi::SetMicEnabled(enabled) => {
-                mic.enabled = mic.available && *enabled;
+                mic.request_enabled(*enabled);
             }
             _ => (),
         }

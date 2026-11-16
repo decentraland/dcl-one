@@ -10,6 +10,7 @@ import speakerIcon from '../../assets/voice/speaker.webp'
 import speakIcon from '../../assets/voice/speak.webp'
 import speakingIcon from '../../assets/voice/speaking.webp'
 import styles from './NearbyVoiceWidget.module.css'
+import { NEARBY_VOICE_BLOCKED } from './NearbyVoiceRefusals'
 
 export function NearbyVoiceWidget({
   anchor,
@@ -20,6 +21,7 @@ export function NearbyVoiceWidget({
   speaking,
   talking,
   micAvailable,
+  blocked,
   onSpeakToggle,
   talkKey,
   onClose
@@ -36,6 +38,8 @@ export function NearbyVoiceWidget({
   /** Voice is being picked up right now. */
   talking: boolean
   micAvailable: boolean
+  /** The scene the player stands in turns nearby voice off. */
+  blocked: boolean
   onSpeakToggle: () => void
   /** The push-to-talk key's label, when it has one. */
   talkKey?: string
@@ -92,7 +96,7 @@ export function NearbyVoiceWidget({
             type="button"
             className={`${styles.speak} ${speaking ? styles.speakOn : ''} ${speaking && talking ? styles.speakLive : ''}`.trim()}
             aria-pressed={speaking}
-            disabled={!micAvailable}
+            disabled={!micAvailable || blocked}
             onClick={onSpeakToggle}
           >
             {speaking ? (
@@ -108,7 +112,9 @@ export function NearbyVoiceWidget({
             )}
           </button>
           <div className={styles.hint}>
-            {!micAvailable ? (
+            {blocked ? (
+              NEARBY_VOICE_BLOCKED
+            ) : !micAvailable ? (
               'No microphone available'
             ) : talkKey == null ? null : speaking ? (
               <>

@@ -20,6 +20,7 @@ export type ContextMenuItem =
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
+  'aria-label'?: string
   /** Scroll past a long list's maximum height (a submenu's list of names). */
   scroll?: boolean
   /** sheet: a flat sheet with taller rows (the chat's conversation menu). */
@@ -31,11 +32,11 @@ function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
 
-export function ContextMenu({ items, scroll = false, variant = 'default' }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({ items, scroll = false, variant = 'default', 'aria-label': ariaLabel }: ContextMenuProps): React.JSX.Element {
   return (
-    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''} ${variant === 'sheet' ? styles.sheet : ''}`.trim()} role="menu">
+    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''} ${variant === 'sheet' ? styles.sheet : ''}`.trim()} role="menu" aria-label={ariaLabel}>
       {items.map((it, i) => {
-        if (it.kind === 'separator') return <div className={styles.sep} key={i} />
+        if (it.kind === 'separator') return <div className={styles.sep} role="separator" key={i} />
 
         if (it.kind === 'title') {
           return (
@@ -116,15 +117,22 @@ export function ContextMenu({ items, scroll = false, variant = 'default' }: Cont
 
 function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' }> }): React.JSX.Element {
   const [on, setOn] = useState(!!item.checked)
+  // A new `checked` from the owner wins (a write that failed flips the switch back).
+  const [given, setGiven] = useState(item.checked)
+  if (item.checked !== given) {
+    setGiven(item.checked)
+    setOn(!!item.checked)
+  }
   const change = (next: boolean): void => {
     setOn(next)
     item.onChange?.(next)
   }
+  const name = typeof item.label === 'string' ? item.label : undefined
   return (
-    <label className={`${styles.item} ${styles.itemToggle}`} role="menuitemcheckbox" aria-checked={on}>
+    <label className={`${styles.item} ${styles.itemToggle}`} role="menuitemcheckbox" aria-checked={on} aria-label={name}>
       {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
       <span className={styles.label}>{item.label}</span>
-      <Toggle checked={on} onChange={change} />
+      <Toggle checked={on} onChange={change} aria-label={name} />
     </label>
   )
 }

@@ -18,6 +18,7 @@ import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-cor
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
+import { PassportPhotos, type PassportPhotoActions } from '../gallery/PassportPhotos'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
@@ -349,6 +350,7 @@ export function ProfilePassport({
   inviteItems = [],
   onClose,
   onDirtyChange,
+  photoActions,
   initialTab = 'overview'
 }: {
   profile: Profile
@@ -377,6 +379,8 @@ export function ProfilePassport({
   onClose: () => void
   /** Announce unsaved edits, so the popup layer can refuse to close on a stray backdrop click. */
   onDirtyChange?: (dirty: boolean) => void
+  /** The Photos tab's writes and viewer (signed through the session); without them it only lists. */
+  photoActions?: PassportPhotoActions
   /** The tab the passport opens on. */
   initialTab?: PassportTab
 }): React.JSX.Element {
@@ -738,25 +742,7 @@ export function ProfilePassport({
               </section>
             )}
 
-            {tab === 'photos' && (
-              <section className={`${styles.card} ${(profile.photos?.length ?? 0) > 0 ? '' : styles.cardFill}`}>
-                {profile.photos && profile.photos.length > 0 ? (
-                  <div className={styles.photoGrid}>
-                    {profile.photos.map((src, i) => (
-                      <a key={i} href={src} target="_blank" rel="noreferrer"><img src={src} alt="" /></a>
-                    ))}
-                  </div>
-                ) : (
-                  <div className={styles.emptyState}>
-                    <span className={styles.emptyIcon}>
-                      <Icon name="gallery" size={34} />
-                    </span>
-                    <p className={styles.emptyTitle}>No photos here yet!</p>
-                    {isSelf && <p className={styles.emptySub}>✨ Set your photos as public to make them visible in your Profile &amp; Communities ✨</p>}
-                  </div>
-                )}
-              </section>
-            )}
+            {tab === 'photos' && <PassportPhotos key={profile.address.toLowerCase()} address={profile.address} isSelf={isSelf} actions={photoActions} />}
 
             {/* Keyed on the lowercased address: the passport opens with the address it was given, then
                 switches to the stored profile's lowercase one, which is the same creator. */}

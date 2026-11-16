@@ -1203,6 +1203,16 @@
               }
             }
           },
+          "429": {
+            "description": "The signer uploaded too many posters this hour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "503": {
             "description": "",
             "content": {
@@ -1281,6 +1291,16 @@
           },
           "413": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The signer uploaded too many posters this hour",
             "content": {
               "application/json": {
                 "schema": {

@@ -39,7 +39,7 @@ defaults:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     permissions:
       contents: read
     outputs:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Bump release version
         id: semantic-version
-        uses: paulhatch/semantic-version@502226b17e3e242e4befd0a45690fcbb27dd1373 # v6.0.3
+        uses: paulhatch/semantic-version@5ae1354e589c5a67345fb2c6e65b025ff676d7c7 # v6.0.7
         with:
           tag_prefix: "@dcl/inspector@"
           version_format: ${major}.${minor}.${patch}
@@ -134,7 +134,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-inspector
+        run: make install-inspector
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -149,10 +149,11 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.asset_packs_changed }} == "false" ]]; then
             echo "Installing latest asset-packs version: ${{ inputs.asset_packs_version }}"
-            # The asset-packs job published this version seconds ago and npm serves a CDN-cached
-            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            # The asset-packs job published this version seconds ago and the registry serves a
+            # CDN-cached packument for 300s, so resolution retries for longer than that.
             for ((i = 1; i <= 10; i++)); do
-              npm install --prefer-online "@dcl/asset-packs@${{ inputs.asset_packs_version }}" && exit 0
+              # The caret range goes in the published manifest and in the lockfile alike, so the build's dependency check passes.
+              pnpm add "@dcl/asset-packs@^${{ inputs.asset_packs_version }}" && exit 0
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
@@ -160,11 +161,11 @@ jobs:
             exit 1
           elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
             echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
-            npm install "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
+            pnpm add "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
           else
             # No S3 package (fork or Dependabot PR): build against the last published asset-packs.
             echo "::warning::No asset-packs package for this PR; building against @dcl/asset-packs@latest"
-            npm install @dcl/asset-packs@latest
+            pnpm add @dcl/asset-packs@latest
           fi
 
       - name: protoc
@@ -217,7 +218,7 @@ jobs:
       # Bevy engine/agent bundles stay out: the preview doesn't load them.
       - name: AWS role for the SDK bucket
         if: env.CAN_UPLOAD == 'true'
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
           aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
@@ -251,30 +252,26 @@ jobs:
     if: ${{ github.event.pull_request.number && needs.version.outputs.changed == 'true' && needs.publish.outputs.s3_bucket_key != '' }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: write
     steps:
-      - name: find Comment
-        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
-        id: fc
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
-          body-includes: Test @dcl/inspector package
-
-      - name: create or update comment
-        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/creator-hub-test-builds
+            .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Write the inspector section of the test builds comment
+        uses: ./.github/actions/creator-hub-test-builds
         with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body: |
-            # Test @dcl/inspector package
-
-            - Preview: [link](${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.preview_path }})
-            - Install via NPM:
-              ```bash
-              npm install "${{ secrets.SDK_TEAM_S3_BASE_URL }}/${{ needs.publish.outputs.s3_bucket_key }}"
-              ```
-          edit-mode: replace
+          pr-number: ${{ github.event.pull_request.number }}
+          section: inspector
+          github-token: ${{ github.token }}
+          base-url: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+          package-key: ${{ needs.publish.outputs.s3_bucket_key }}
+          version: ${{ needs.version.outputs.version }}
+          preview-path: ${{ needs.publish.outputs.preview_path }}
 
   release:
     needs: [version, publish]

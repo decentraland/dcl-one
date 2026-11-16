@@ -39,8 +39,8 @@ understand the change in one sitting.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
   first; the [scheduling guide](scheduling.md) explains the current setup.
 - If something works better with a change in a dependency, change the dependency. Upstream it
-  where possible; where it is bespoke to us, we maintain our forks for exactly that. Bevy itself
-  is vendored here: see [the bevy fork](bevy-fork.md).
+  where possible; where it is bespoke to us, it is a patch in this repository: see
+  [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Tests
 
@@ -126,6 +126,8 @@ this engine's design using its requirements and tests.
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
+- `python3 ../../../tooling/patched-sources.py materialise` after the merge and before the cargo
+  commands: Cargo reads the [rebuilt trees](bevy-fork.md#changing-bevy).
 - `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
@@ -149,11 +151,8 @@ this engine's design using its requirements and tests.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
-- Changes to bevy go in the vendored tree, `rendering/bevy-explorer/bevy`: see
-  [the bevy fork](bevy-fork.md).
-- `rendering/bevy-explorer/forks.toml` and `cargo-patches.toml` are generated from the lock.
-  After changing a git dependency's revision, run `python3 tooling/upstream-forks.py` from the
-  dcl-one root so they match; a daily workflow otherwise opens an `upstream/forks` PR.
+- A change to bevy or to a forked crate is one more patch file under
+  `rendering/bevy-explorer/patches/<name>/series`: see [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Review
 
@@ -180,6 +179,10 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | Keys are published while a slot is in use, since its release can choose between newcomers | `keys_are_read_while_a_slot_is_in_use` |
 | A departed hash ranks last while any request of it is alive, including a retry after its queue drained | `a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained` |
 | The gate keeps granting after a poisoned lock, and a release skips a queue entry without its ticket instead of panicking in a destructor | `a_poisoned_gate_keeps_granting_and_releasing`, `a_queue_entry_without_its_ticket_is_skipped_inside_a_release` |
+| A content hash's definitive client error is answered from memory for the session; other failures, url-keyed reads and loopback keep the retry window; preview asks again | `a_content_hash_that_answers_a_client_error_is_remembered_for_the_session`, `transient_and_url_keyed_failures_keep_the_retry_window`, `a_loopback_404_is_answered_from_memory_only_within_the_retry_window`, `a_session_failure_is_answered_by_read_without_a_request`, `a_preview_client_ignores_a_session_failure`, `a_preview_client_does_not_keep_a_content_failure_for_the_session`, `a_preview_client_asks_again_for_a_missing_file_at_once` |
+| The failure memory keeps answering after a poisoned lock | `a_poisoned_failure_memory_keeps_answering` |
+| Content reads are keyed by hash and url reads by url, so only content can be remembered for the session | `content_reads_are_keyed_by_hash_and_url_reads_by_url` |
+| A session failure answers only content reads; any other read of the url keeps the retry window, and a success clears the entry | `a_session_failure_answers_only_content_reads`, `a_successful_download_clears_a_failure_of_its_url` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
@@ -190,6 +193,6 @@ on unrelated callers. Give changes with independent consumers or failure modes t
 PR and test evidence.
 
 For browser forwarding changes, run
-`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
 `rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
 referrer policy and disposal of unread response bodies.

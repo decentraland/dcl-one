@@ -39,6 +39,7 @@ import {
   saveZoom
 } from '@explorer-core/features/minimap/minimapPrefs'
 import { MinimapSettings } from './MinimapSettings'
+import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
@@ -280,6 +281,7 @@ export const Minimap = memo(function Minimap({
             (bevy-ui-scene's widget said "empty scene" for the same case). */}
         <span className={styles.title}>{sceneTitle || 'Empty parcel'}</span>
         <div className={styles.actions}>
+          {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
           {donate.visible && (
             <button
               type="button"

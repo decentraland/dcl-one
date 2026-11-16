@@ -796,6 +796,10 @@
           "kind": "regular"
         },
         {
+          "name": "link.helpers.ts",
+          "kind": "regular"
+        },
+        {
           "name": "package.json",
           "kind": "regular"
         },
@@ -818,6 +822,10 @@
         {
           "name": "test",
           "kind": "directory"
+        },
+        {
+          "name": "text-styles.ts",
+          "kind": "regular"
         },
         {
           "name": "tsconfig.json",
@@ -895,11 +903,19 @@
           "kind": "directory"
         },
         {
+          "name": "camera-reel",
+          "kind": "directory"
+        },
+        {
           "name": "category-icons",
           "kind": "directory"
         },
         {
           "name": "chat",
+          "kind": "directory"
+        },
+        {
+          "name": "communities",
           "kind": "directory"
         },
         {
@@ -1182,6 +1198,31 @@
       ]
     },
     {
+      "path": "library/ui/apps/hud/assets/camera-reel",
+      "entries": [
+        {
+          "name": "copy-link.png",
+          "kind": "regular"
+        },
+        {
+          "name": "delete.png",
+          "kind": "regular"
+        },
+        {
+          "name": "download.png",
+          "kind": "regular"
+        },
+        {
+          "name": "menu-vertical.png",
+          "kind": "regular"
+        },
+        {
+          "name": "share-x.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/apps/hud/assets/category-icons",
       "entries": [
         {
@@ -1340,6 +1381,19 @@
         },
         {
           "name": "symbols.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities",
+      "entries": [
+        {
+          "name": "favourite-outline.png",
+          "kind": "regular"
+        },
+        {
+          "name": "favourite-solid.png",
           "kind": "regular"
         }
       ]
@@ -2277,6 +2331,14 @@
       "path": "library/ui/apps/hud/design",
       "entries": [
         {
+          "name": "AnchoredMenu.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "AnchoredMenu.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "Avatar.module.css",
           "kind": "regular"
         },
@@ -2896,11 +2958,27 @@
           "kind": "regular"
         },
         {
+          "name": "EmojiButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiButton.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "EmojiPicker.module.css",
           "kind": "regular"
         },
         {
           "name": "EmojiPicker.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiSuggestList.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "EmojiSuggestList.tsx",
           "kind": "regular"
         },
         {
@@ -2949,6 +3027,14 @@
       "path": "library/ui/apps/hud/features/communities",
       "entries": [
         {
+          "name": "Announcements.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Announcements.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "CommunitiesPage.module.css",
           "kind": "regular"
         },
@@ -2974,6 +3060,14 @@
         },
         {
           "name": "InviteToCommunity.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "LoadMore.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "LoadMore.tsx",
           "kind": "regular"
         },
         {
@@ -3258,6 +3352,14 @@
       "path": "library/ui/apps/hud/features/gallery",
       "entries": [
         {
+          "name": "DownloadedToast.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DownloadedToast.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "GalleryPage.module.css",
           "kind": "regular"
         },
@@ -3266,7 +3368,39 @@
           "kind": "regular"
         },
         {
+          "name": "PassportPhotos.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PassportPhotos.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "PhotoDetail.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ReelGrid.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ReelGrid.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "publicReels.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "reelActions.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useOwnReelActions.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useReelList.ts",
           "kind": "regular"
         }
       ]
@@ -3441,6 +3575,14 @@
         },
         {
           "name": "MinimapTiles.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "SceneRestrictions.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "SceneRestrictions.tsx",
           "kind": "regular"
         },
         {
@@ -3905,6 +4047,10 @@
       "path": "library/ui/apps/hud/features/voice",
       "entries": [
         {
+          "name": "NearbyVoiceRefusals.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "NearbyVoiceWidget.module.css",
           "kind": "regular"
         },
@@ -4118,6 +4264,14 @@
           "kind": "regular"
         },
         {
+          "name": "reelActions.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "reelGrid.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "scrollThumb.test.tsx",
           "kind": "regular"
         },
@@ -4232,6 +4386,10 @@
         },
         {
           "name": "clicks.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "communities.announcements.test.tsx",
           "kind": "regular"
         },
         {
@@ -4388,6 +4546,10 @@
         },
         {
           "name": "nearbyVoice.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "nearbyVoiceRefusals.test.tsx",
           "kind": "regular"
         },
         {
@@ -4717,8 +4879,12 @@
       "sha256": "b014219d7251931e4a6659010ef816f433c63f88b7af990d8d69d54e01a884d7"
     },
     {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
+      "sha256": "ef0b7bb27c67a68ecbab80763a4992f90b8e1bb6ef1a642efaadc577f344016a"
+    },
+    {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "0086f2a09c38a4c5f66bd0e9e719cec6d3227d8ae909a48e0310c6e4108c9c24"
+      "sha256": "25d9ae1992bcaa15d3a01ca12b77731cf5553b54422c9e3d272051604e0b7578"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -4726,7 +4892,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/sandbox_host.js",
-      "sha256": "c3dde5bf9d513b85bc441a731faf69ccbe032666950d64203689f98b6c3b2434"
+      "sha256": "4754c708f977eb0060092883485861864f850435c087c02ecc703d724583ac25"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/scene_fetch.js",
+      "sha256": "a3fd68c0d07343b2c17a9e0606c80e6efea13e6b90f10ef54a1809a0e09c65bb"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/package.json",
@@ -4742,11 +4912,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "0c35145bee22ecc4795a1027b8e2a030cf54bfa10eb1666bed6416f9c6611357"
+      "sha256": "325946e1110b2758f2d172f0c6676117458b965f9f22ce09907d9f50e8d27ef8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "4725764b6afa53a81c6f5f9161a0cb5a5f3f5f0cc6a0be68bbcf46fc3ae39805"
+      "sha256": "7a59e6d5999356f477003509a4fd027fb9fa87f519b1f152d818cb5831b5db8e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -4762,7 +4932,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "11803c812477585a9cffeffe25beb22e7afdb5ce43281bea547cc71737bb1ca5"
+      "sha256": "da029814a9fca28f4b41cbf34a46ba3eb91dcafef06b3357d6a67a5ba1c192b1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -4785,6 +4955,10 @@
       "sha256": "885fe34ed0dbd00cbafcb70cd483192ea078a6bdf9ae777c38a9a3cf1c0c93e7"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gallery.ts",
+      "sha256": "5003b68f51d959b4173131e6565ee73843493079367998bea4a76a4fa3871d5a"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
       "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
     },
@@ -4798,7 +4972,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "b8a2480165231a291b6ac40ab7579dc1c989afb9c71e0424a2f803936ad26a21"
+      "sha256": "1a39a6753fd4543c8096adefb541ec3d35e4e99aee95372666d1f9a8765594d7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -4806,7 +4980,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "874cc626923f9c934979409812eff2c7b25b877bf10f54583467f38812dd7aac"
+      "sha256": "9457dd6a36f7c997393276bbc96936a541a67675d5d2b465dc1bbf2ddf078c40"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
@@ -4814,7 +4988,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voice.ts",
-      "sha256": "6ac7807327fbe67537994ae9ef7dde647c4118c3e54e9eaf756d980533f45dee"
+      "sha256": "a75ee931882da6f8d025d10c3f526bf8baa830a7a9288e451333e55e6ecc3b64"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
@@ -4853,12 +5027,12 @@
       "sha256": "166bbb9cb41c0b98dbbc970791ff2227f673814773947adab66ea3f22c887076"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package-lock.json",
-      "sha256": "fdc8e5c2c85df27b95e2dbdea7d531aef8b8edb11a553c0873772ca70270dac6"
+      "path": "rendering/bevy-explorer/source/react-web/package.json",
+      "sha256": "915298c4c41811c8c6d029cd6a40b01861506a22ece4cbf9ce9bd5b42075d0e5"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/package.json",
-      "sha256": "7489c23e7dc87c0b3967864e56c1c13970e97fac518e9e4b6500847106960540"
+      "path": "rendering/bevy-explorer/source/react-web/pnpm-lock.yaml",
+      "sha256": "d9455d0665084e10809a0975c53a9eeb6932bf17979f7ca8457cca85331c0103"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.d.mts",
@@ -4866,7 +5040,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "e4d4b363c729f018930449d614493675bdf77d7abb7fb7f8a2d81f664f1863dc"
+      "sha256": "391cdf1699d614589ff6c97a5fe696aecf01256d907ad442d03c9ef043c423aa"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
@@ -4930,7 +5104,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
-      "sha256": "73b1f2854e4eb9972a5c9911f909044159a52809b5192f8f969e35a5b863ee92"
+      "sha256": "28e4c21223c4d1ad61a7a0174f82c331c8f19f79531bd780ad74408fdd32ddb0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
@@ -4958,7 +5132,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "29db5e29cf57111a645a1f417b305887d764942f15092200beee74a760df6f38"
+      "sha256": "73a13e5fb2c48bf8c062b946b4f0dc3951a5808f3a1865c21b240f8748f0dfce"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -4975,6 +5149,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
       "sha256": "ce4fa4466eab3bcd939a2a6080c1dc2d005422c4d65f3828019eef41b2c54576"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
+      "sha256": "e537bdf69eae99b6293066842b9efbfa57a7b66e8c560886110555ff0f2447fc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
@@ -5010,11 +5188,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "4b376514a743d34c422d953ccd5bf44d0da275d754640c3df2544d920a2ac358"
+      "sha256": "809082502001ff082e036dea2e02552fceaff138811d99ac8c93ec56f8a0e92e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
-      "sha256": "3d2bde9a27de63fb7775fda5b6026a72d2096371ae0fc07dbd03cb428dd725c1"
+      "sha256": "0b6c48ce718ce73b3a9da5eaf0a8af02553ac95509c81c1db8169dc02304fff3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
@@ -5023,6 +5201,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
       "sha256": "e6072c8cb90b4e661c6a4c8aa6f64d3a70284b5db99b7451fff5a9a7f10543ab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
+      "sha256": "4b98ba64109ff816c1cfd60ba93427a2616c86cda821123bbfbc7496f6eda317"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -5078,7 +5260,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
-      "sha256": "8ff57c92f31bcda6cd80c01e9dc849b0f0d2e0fa447c7bc709acd23bdface10c"
+      "sha256": "9575d03e55719e2df50b0cd125ded6ed26a5b16b71be7fdbb748169132d69403"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
+      "sha256": "3b8805c5f697e3e40564fb4f0febc4ee9b2c4f46c807e3bf365d2a6bc886cc6e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
@@ -5102,7 +5288,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
-      "sha256": "6c19dee9dc87462f7243bda332a4e2b9d7b8daefdd1ccb78d4448af72664f3d2"
+      "sha256": "3dbe90a2a7601e93446485518e5723cc6e6b50dd04ae9ee3603a6a6b689c26ac"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
@@ -5126,11 +5312,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "111bcbb47e47fc9f057aa50c0f7bb99203bdde4b6683126a6c61fbc3c61ab2d3"
+      "sha256": "a97d721518d36062196605d27a3d0311044dcce3328fbdd7061a1908c89579b6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "dc8fc99290320524e139415c805a5d33aef163cc0f6aaac740300de1712d30b6"
+      "sha256": "8c478f0e644f6b2ea7c07125464d0f1c8f029ae9f1b90c53b891979f38af58e4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -5171,6 +5357,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
@@ -5183,6 +5370,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -5197,6 +5385,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/realmTravel.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/recoverSigner.ts",
     "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
@@ -5260,7 +5449,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "41715d1f48f1ac62ab266d19c9d941910b2f5d0242ce8f27d794b3bd64076711"
+      "sha256": "4b3c29075765f99a3dc519c15eac7a18e8a94678f7b7ec06bfc5b1b6350c2fe7"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -5292,7 +5481,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "951922206bdddcc1b2df5d6b9b968841de8439a7077b45ac88f5e7b5e305157f"
+      "sha256": "f040a63c43bd705e90c7355b3b8eab351cb9ccdcabd575166bca8b91be57570d"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5496,11 +5685,11 @@
     },
     {
       "path": "library/explorer-core/lib/cefNativeBridge.ts",
-      "sha256": "7d433a71802ec9bf8fab7cc3b3810b4cca53ce673c59c2758c0875298fd8af19"
+      "sha256": "e70b6a5c87803a9c91c027f7a67a45d8abc0fe62e41e50bdb193f17ece39b7a0"
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
-      "sha256": "c6eaf4d73e1225f72b9f34510a1f5a5370488f0c0a24f32a8b84059d681876aa"
+      "sha256": "41cdd406b7f2075f5583a18ee191abf11e3e026cd11862fcbe0a4082a34db378"
     },
     {
       "path": "library/explorer-core/lib/color.ts",
@@ -5712,7 +5901,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "d77dbae6864fee852b458df36adfd1536c92a68c6f5ff58294714eca56b95f58"
+      "sha256": "7674c234ea36909311d52cd8ad064b4ada2ff511322027764b34cdc71e000b90"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -5927,6 +6116,26 @@
       "sha256": "8691b8422043366ff40df87525f7f60faa4fa750f8d871760920f402417e87fc"
     },
     {
+      "path": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "sha256": "1c27dfbdabbd6bb191aeaceb38b2553dcbe083353091e6b5cb4eac045181f4b3"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "sha256": "bf04d8879000a8ae1b6ab5253783afdb4185360e285f2f729a58d34baba2e1c1"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "sha256": "473c78dd4e392b061c4c0996d9f3ad2b6f05bf3c954ebf024aa5df7b65ce44c8"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "sha256": "a9c1cf73501519956dfc639131d5014ab4335f7563194c29a1b46c07a6ffcbf3"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "sha256": "3f9d844bf0e67644aec5aa9a5110f768a139e56fa53504ec693503650a095ea6"
+    },
+    {
       "path": "library/ui/apps/hud/assets/category-icons/all.png",
       "sha256": "acaad7bb1194099053d970aedc497814998b7e36e16a183174f9dd18f5435688"
     },
@@ -6069,6 +6278,14 @@
     {
       "path": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
       "sha256": "6c1d7ae4d8fdf33951ffe4cae923f029863c7f70095995e1aa51658dfaed4241"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "sha256": "d0c7df4d6b178d19076e1741164ede12f61e8399c2a111891ba94a13a95cc2d9"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "sha256": "75eed1719d84c13204a9adf1d1555401427fdf7b1fa7c9274565fae4b7261ff2"
     },
     {
       "path": "library/ui/apps/hud/assets/donate/tip.png",
@@ -6895,6 +7112,14 @@
       "sha256": "3ca6133265b6c75afbf14881ddeedff2ba6e044fbd13645e79f95f86483e9188"
     },
     {
+      "path": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "sha256": "1cb3ebf7ca377957db1748053850428c941f05bdb114c8251d380e5b583854fd"
+    },
+    {
+      "path": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "sha256": "da01319614a9284cb5abb9a8e7e75074379e46ef3bb1a4cc68eb72971277fb66"
+    },
+    {
       "path": "library/ui/apps/hud/design/Avatar.module.css",
       "sha256": "3087982b5d172f10fc366f47336964de0e07b6617130abe17281d81cf5426920"
     },
@@ -6964,7 +7189,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "sha256": "0abad2c7e9c4cb1ec973aa6cc2893ac8a19429c422940d108193565066fe32ee"
+      "sha256": "36287a915311f2302658b7a7222d392f5b728c0d464f78ab048b839cc973251a"
     },
     {
       "path": "library/ui/apps/hud/design/ControlButton.module.css",
@@ -7104,7 +7329,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Modal.tsx",
-      "sha256": "98a405a4c402d7855eb0972237510e02aedc5e8e04a1bc326a11a6f54f2e879a"
+      "sha256": "21900a6889385e0530b8190dbf032ebd242bd5b0783965bc6d1a439bb423b0c2"
     },
     {
       "path": "library/ui/apps/hud/design/OptionMenu.module.css",
@@ -7172,7 +7397,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "a8ee4b6f036f2a5c71a4091eadf0770954a532ff0307044868312091b7362ad5"
+      "sha256": "dbe37eb325cad6b29429a400943ea02bf89c0cc93b623dad4a7ff6342a932d7d"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -7252,7 +7477,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Toast.tsx",
-      "sha256": "0b4e7ab5ca591c7ba6ca1675df26d9e869b4b3e66822e8d056adfc12097a2896"
+      "sha256": "1960d5987d0d99bc075d1f3753db0f494b092605f68e9e8476882be2dd2a8467"
     },
     {
       "path": "library/ui/apps/hud/design/Toggle.module.css",
@@ -7292,7 +7517,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "97c29ea6b4742311189c103190b67466f32ce4a510b0134905f016d0a23cc5bc"
+      "sha256": "3c8cb0f3d2e3fef26b478f6c53e5f70b3cacd4f3d462b50858c45fce1c3832b8"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -7328,11 +7553,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "daeaaddbbce6a56b2b7b7ed63f9579b7e8fad11557d0e1134b8fa219d84ec9f6"
+      "sha256": "228d230d44a31f95e3478456084395be2291c7168b79fd1fef8dabda32bf4664"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "223dbd5536e9b4368583676dbb005f715b560a27f2e60728358eb4f6150dfddb"
+      "sha256": "0251bb18b38712d441168b0b3cccebcd981780050f4d5087d2711feeb0eca41f"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -7355,12 +7580,28 @@
       "sha256": "d07210840e88aeb79750cc666679ac55be41328b789f5f2385c37d8986de4114"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "sha256": "a3b096510b8830f8f7c891877fbca584831ccfe6cb5d9a7ddb3fc39f03df7164"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "sha256": "0e69ffa64e5c33445ca8d6221c09a76fa3573d47fc51ecb9c33c20e2fb3275ed"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
       "sha256": "7ad5f06733930f3e52ee7e632b7e26d9eda96aa104616faf4d49b0dec3e6e657"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "sha256": "12014be22fa589d360b338545f939257a7b0726f76328b944c64cc11e168f137"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "sha256": "bf649a0be587aebecd6c6eea59113dc47e80a52e79ed14560a40984ef9297f37"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "sha256": "2a1c4b0b4b25cfd24da367b65152dd6b2986cb023bfa8f9793145d2a73f980eb"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCard.module.css",
@@ -7403,12 +7644,20 @@
       "sha256": "44cfe567f172cb23867002aa774e10ae9a73ad4208d198ea19cd5939091861f9"
     },
     {
+      "path": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "sha256": "5acf689568ab06d6337e0ace6d249aada1f6c680fa226f6321686a20ec97a993"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "sha256": "8c5c56628ede1c581c94d6137b2986fac4d2fe3352ee88d2313f4115d14d6dd4"
+    },
+    {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "f517d31209f8355f8cbab10647ccaf7cac195870f1cc03db5dd403e8253fc311"
+      "sha256": "259944d7ba80c73d46f034d7853e7bdac9b65f52fd0f59fb2cc98b1bdadb4599"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "f9c95e5e5dceda265d945ee0519db9f795ba2f4a54a432a35f7e95ad2243d02e"
+      "sha256": "9149a8b8984eb52e3df42817a088c0edc772a15d24bdd08ebdbfa848f94849fb"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -7420,15 +7669,23 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "0712fc26d02ab8cda0eb7768db12818e48d3d82e94778ea3e22ca036d1e3e220"
+      "sha256": "8d6ab062285496a52d1f902464253a96b165921b781d12b00d8daf1a15f6f008"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "150f9e20302ca4b5df24a74e321bcfa550c228d77bd0be741913bc3940a7210f"
+      "sha256": "ec124ae1249b70c5ffda789a3cbe8411c04a5b5db91824295096b8431bcb98cd"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
       "sha256": "79083e76ee35010981688e3ce6597fc7df7a3113cccfb4137ed7655955542431"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "sha256": "fb7109279f10465be35393269f9b8040edbfc7d6e941c0bdbdae4e36100f940f"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "sha256": "ad9e64e470c019288ba1aeb4c7d72ea7b713bbfe1440c2c327ba8ecff2f268a4"
     },
     {
       "path": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
@@ -7436,11 +7693,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
-      "sha256": "d73c341ca6af8815bbae87a2b6d953fcfa986f1cb20a506a375f1b77583c5184"
+      "sha256": "2867570f1facce523e0fa574b6523dec95a2d5f0ef60adb5a4cce0c84ad9540c"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "c57ca4a2cca7afb9ae948bd52ad7106b5e0562eeaaadfba29286e9b0f6a63879"
+      "sha256": "4ac364bd077a995c4d24b89411f8d61396690a48f7a5f3d1c0e69f326bb20de4"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
@@ -7452,7 +7709,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "94859614803b162d43e0957b63f143819b31653af59281dd90e2f5b5f564eca2"
+      "sha256": "954c7a9c4795903a16a547a678598d25e2dcc0395cec3f69c029589839039c0d"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -7667,16 +7924,56 @@
       "sha256": "c07b73ba4ff6afa4c2c066813d9eeb533d7f29e089ffc4a6a62a6760c7363ef3"
     },
     {
+      "path": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "sha256": "19e79b9238b2c6fec6c74c34485fc9bcbb8c45a3425c8073b9ef2af2073eb8b3"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "sha256": "5993439fe320f0a6788ca370d66d710cdab76c3e27614e0663901795ce69cddd"
+    },
+    {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.module.css",
-      "sha256": "675741c1cfab9d81a5735730aa874dd5bfa2bff385ad1910187cbb66cd126f1e"
+      "sha256": "fda6fbc71ec01925dd4bbedd9e27db1d8f23397978dc024f7b66a0a5a3e0b9b9"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "sha256": "d6aca94d28655ebc3347621d30ada1d7a1e0be7d43c05af9cb9df181dd38090e"
+      "sha256": "36ac80315e6f8d06be940c57ff76c3d018c3c7b871af5bd7ec0f6dbeecc7d6f6"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
+      "sha256": "0049d3f74fb4c0d216d9d0047bb5da0e53abc8bb11046db27448d1975d95ef80"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "sha256": "126a58c49b63ce1f86dffa4b043fc829b1f1156625608334fa99b0833d20a4d4"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "9b9656d65d70283c9696723a95d9a28770e53923aec49fee7ce905d2790f9851"
+      "sha256": "b50127e5098179c882ad32a86ccb17b6f18865156803a78449053548c7a322b7"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
+      "sha256": "b2e22960bc5b8a2ddd4164500116762f4d927cf747da97e366d52dfbb55aa546"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "sha256": "03952873ede9ec0dbf4f76d806653cf549e60418ae9a295ad0ec1e4d377bd024"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "sha256": "d3b3b6f8c38728f342fe8cf8f0962e3d030b9ed131bca9cf5d036c16b2e8b466"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "sha256": "bcf50ee56954cef67a32dc4fdfdd9c90fcf129f040d6b82a3de2ff9ab3059aa6"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "sha256": "257f38df47dc370db4cc45f0f83ff9ff79011ef9fea73b541c7c96f947f0a4ff"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "sha256": "2f01d899192b07baead1fed6379251d653ac6490f319a7c8ad79b19aee686e55"
     },
     {
       "path": "library/ui/apps/hud/features/gate/EntryParamsDialog.module.css",
@@ -7808,7 +8105,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "0f2f2bd89c7c9e2f308b95c5fc6ddda20f0b35083fb45ecb14157b46ec212bcc"
+      "sha256": "fa13f06aced6f3f0c5df2e6468839f29fbcb23b4879c4f01f77591026f103aef"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -7821,6 +8118,14 @@
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
       "sha256": "6c47e3396ecb32796a4fb8c2d09170e5bad82a8f9670d52af3eed69d44a3dd65"
+    },
+    {
+      "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
+      "sha256": "7db8b252b71265bcaeb99c039c2c75a4c9d1f872f9a00ccf619a186910d9ce11"
+    },
+    {
+      "path": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "sha256": "20b10c2a7d2df7a2a082e58b7c5c009bbb35a728705765b4c36c21889393cbff"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/icons.tsx",
@@ -7944,7 +8249,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "c2248d762e45058cd1666cef47aabfc42a00d393524f3527ebc9177ddefda1a3"
+      "sha256": "ea467a93015874ffbcb9eebbd37bafc6e1a50ae52f8395e665cd08f53290d13f"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -7964,11 +8269,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "5abafe6c62d152abc009a4bc684f8b600e2108291d66c3c05d031d48329de2ff"
+      "sha256": "5289bc1c3446bc98784a35959fd48993d1dba08bcd4e0218b25723e00192902c"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "0817d5fcbb9c2fe80ec7dd27711665dd0477a20f73dd5af6758ff7e75aee231a"
+      "sha256": "d76603d75a919857b393dd94544382b0f85cc94fd5f30736e4bd7514dbc5841d"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -8004,7 +8309,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/profileStore.ts",
-      "sha256": "2e46aad2236705a915aa360acebf92682a1ea296c8f6a402e390cceace64889f"
+      "sha256": "7d323fa38448852b90426840e8afe0e9c7fa89d5cdbc198272ee7ca1dd46680c"
     },
     {
       "path": "library/ui/apps/hud/features/session/useConnectivity.ts",
@@ -8012,7 +8317,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "c268ecead17f007d8d96e8ba5d9ca72ef095dd8503ec2d8e5c311d47b73eb7cb"
+      "sha256": "fb10cd878786ef4100ffa1911553f517e614df7c5dfbbd711fca4773029d9695"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8044,7 +8349,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "74ca85c9ced511fcc897a62d98d628aee767271da78754697bdffd575df03ab3"
+      "sha256": "d383cefceabfba1491407ca83380c0e9f607163e8d281de0b47add3bd6c5f9bc"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -8116,7 +8421,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.module.css",
-      "sha256": "4317bde0cbfa5bf61556a2f7299cea7ae43a851b99cd3d431abcb7e3e3872746"
+      "sha256": "bd27b31bc9e919d3f9ef4833d3a01c3c33d00aea7aafe255d70daa63118b620c"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountLook.tsx",
@@ -8195,16 +8500,20 @@
       "sha256": "b60015d390add47a2add9e6a77f64e8be86a4fd7267e5f3362f697fd0d981b37"
     },
     {
+      "path": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "sha256": "3642b07edfbef70adcc93878af592bc1553b5d5f159e0c6ef47332da526e8e10"
+    },
+    {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.module.css",
       "sha256": "57631cd72ec8f6aa13f91cc8b1cfada5a14c297f40e166fe555b82e24c4448a1"
     },
     {
       "path": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
-      "sha256": "beab5d202eb49ae880cbe269edd065b00b769c8b7880b7e48e236e9ee7d6af88"
+      "sha256": "077cf972effdc7a81a6fc1cf94a97f7c8f78521764e69da52f1aad9f9a29a5a7"
     },
     {
       "path": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
-      "sha256": "1c1234a700a5061319808c0c05ec94094168e88908e13abd5a7c6f44b7cdc657"
+      "sha256": "44f952704931c26fcdad78e54d2906bbf54d07d3b477159a6108c0ca4987ddf5"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
@@ -8260,7 +8569,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "bbf57fef26f9f066a7e5a844f500d3a467f5de96e4c5ce5db172396c0848cbdd"
+      "sha256": "5c03503d083c7c72b6d541f97fa131524a473e3ccebc4be1d2e072cf63cbe708"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -8312,7 +8621,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "cb529ccfffd9be054d89e49357c6b68e425a37c6e98bb842ada66572a1ea035b"
+      "sha256": "b8e8d6de39dcaa0cc24e239df6625f73f12bdd4b9f85e367b75b533354fba87c"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -8399,12 +8708,16 @@
       "sha256": "205d1ed4a727fcc167ab1cbd9f60eae0b406e54cac578f50638685d473edcbaa"
     },
     {
+      "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "sha256": "edd8566f3455f44928b96ebdb7749488eda3566b9fa6657115fee04de403e003"
+    },
+    {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "c66a35906ff03d458d15712e4a04690996f1b46a061507def51964181c5c3f10"
+      "sha256": "4e435d3b33fbe479ae7b1efe90bafc64aefa9a8cde4399221faec1646a994ad6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
-      "sha256": "f9d7611954ef81e75973c82b28ca088c66bc8a6227ac8aa0bff8b46699891a64"
+      "sha256": "e688d2fd84b37ee0a79475db16bef1caf9e9d162e537e5d6eba0add79a9f52be"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.join.test.tsx",
@@ -8412,7 +8725,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.test.tsx",
-      "sha256": "672d1926dbb83423e53ff61aea41d54f735f9c2c95fd6c215625b49b2bf22a1e"
+      "sha256": "bbf9303627796e2e91a80b9bd72af4164bb4d9e610d6d33c12e2396865384816"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
@@ -8428,7 +8741,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "171c148b77dd75fc4fe87857fc4f054ff46bcbba8672c636658633d640f1c65e"
+      "sha256": "083aac570174c4f37facebad291a038fe729a1a824aa5e572c0b93100332c753"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/discoverPanel.test.tsx",
@@ -8484,11 +8797,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
-      "sha256": "8a812e585096b192a4379906040909e733be4bf862d1a77386b47ca4f4b2c95d"
+      "sha256": "d2aec385234127d841196513ed2accbbce48c277c14d1fb409084f94e007173b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
-      "sha256": "8b7de30ed4da7edda36b76f337056b74c8e6c708901b00d1f2e1f9b820b15485"
+      "sha256": "8c2d3e3b4dbb184947b0c9e6d28ec598452679126235c9d817e0861ce3e5850c"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
@@ -8536,7 +8849,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "75120da841984833c2d8c24814f6806350a021cffcc1a410c6431bfed02787f1"
+      "sha256": "0cb19bf8b05467d508a5810c75739057a4d754409142e145e85702cdaa4a569b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -8552,7 +8865,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "d32b435d34016aa6b6d08513fe7244b10c7023264a7674e537d400450dc7f73c"
+      "sha256": "b3d6cb97ac3bb1abe747ecb1ba2bb01b12afe367e7508bd3f755b9ace0549b64"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "sha256": "fffb5c0098cfcb890a425730531f1247f37088aa452ce5eaaf0e4b6046d7d974"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
@@ -8652,7 +8969,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "147544d9988c8b869070d790c4688a869ce2a94233eb31835d399a9843ee49be"
+      "sha256": "09221144b3c705b1117c1f7291fceede1dc7ba991633fc77a1d6f218cccabfec"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemPanel.test.tsx",
@@ -8676,7 +8993,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/welcome.test.tsx",
-      "sha256": "8f229ff69b3f39a21afc4074020c3e20c2399d5d2dcdf91749cfd4fe25d42fc3"
+      "sha256": "f1080e3c45e649059ac014ce752fa1163fdc614250ecc48a083f4d63b44424de"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/worldAccess.test.tsx",
@@ -8724,7 +9041,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "662b4c518d785e17f2d38b72a17ca9a27a58faab2af6133c035424fa9696eea3"
+      "sha256": "c34eab3ed1376d176f4e319aabf82560e0244dff3ed7ca280059ef23213169ac"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -8741,6 +9058,14 @@
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
       "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/reelActions.test.ts",
+      "sha256": "d9e21751a0f85eb6742e4dd18e2793379844217e3f2ad7a3295c2affad4cb2a0"
+    },
+    {
+      "path": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "sha256": "9dddc507f001ea71379ada1a403a6daaee9c485122211dea6ccbab9eb8afdec6"
     },
     {
       "path": "library/ui/apps/hud/test/scrollThumb.test.tsx",
@@ -10746,6 +11071,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "kind": "native:runtime"
     },
@@ -10971,6 +11311,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/gate/EntryParamsDialog.tsx",
       "kind": "native:runtime"
     },
@@ -11346,6 +11701,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
       "kind": "native:runtime"
     },
@@ -11492,6 +11862,66 @@
     {
       "from": "library/ui/apps/hud/components/WorldVisitModal.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -12501,6 +12931,66 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
       "kind": "native:runtime"
     },
@@ -12512,6 +13002,21 @@
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -12782,6 +13287,21 @@
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/LogoPattern.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "test:runtime"
     },
     {
@@ -13772,6 +14292,21 @@
     {
       "from": "library/ui/apps/hud/design/icons.tsx",
       "to": "library/ui/apps/hud/assets/sidebar-icons/voice-speaking.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -16191,6 +16726,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "kind": "native:runtime"
     },
@@ -16202,6 +16752,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
       "kind": "test:runtime"
     },
     {
@@ -16805,6 +17370,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "to": "library/ui/apps/hud/assets/chat/emoji-categories/activities.png",
       "kind": "native:runtime"
@@ -16982,6 +17562,36 @@
     {
       "from": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
       "kind": "test:runtime"
     },
     {
@@ -17255,6 +17865,171 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "native:runtime"
@@ -17357,6 +18132,21 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
       "kind": "test:runtime"
     },
     {
@@ -17646,6 +18436,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunityCreateModal.tsx",
       "kind": "native:runtime"
     },
@@ -17810,6 +18615,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -17870,6 +18690,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
       "kind": "native:runtime"
@@ -17912,21 +18762,6 @@
     {
       "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "to": "library/explorer-core/lib/bugReport.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -19955,6 +20790,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -20001,6 +20866,51 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
     },
@@ -20030,18 +20940,108 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
-      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
       "kind": "test:runtime"
     },
     {
@@ -20091,6 +21091,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "native:runtime"
     },
@@ -20117,6 +21147,216 @@
     {
       "from": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
       "to": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "test:runtime"
     },
     {
@@ -22191,6 +23431,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/features/minimap/icons.tsx",
       "kind": "native:runtime"
     },
@@ -22307,6 +23562,36 @@
     {
       "from": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
       "to": "library/ui/apps/hud/features/minimap/Minimap.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.module.css",
       "kind": "test:runtime"
     },
     {
@@ -23852,6 +25137,21 @@
     {
       "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "to": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
       "kind": "test:runtime"
     },
     {
@@ -27980,6 +29280,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -28067,6 +29397,21 @@
     {
       "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
       "kind": "test:runtime"
     },
     {
@@ -29915,6 +31260,81 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -30422,6 +31842,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
       "to": "library/ui/apps/hud/design/popups.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -30966,6 +32401,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
       "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "kind": "native:runtime"
     },
@@ -30992,6 +32442,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/gallery.page.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
@@ -31866,6 +33331,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "kind": "native:runtime"
     },
@@ -31877,6 +33357,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
       "kind": "test:runtime"
     },
     {
@@ -31893,6 +33388,21 @@
       "from": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
@@ -33077,6 +34587,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "kind": "test:runtime"
     },
     {
@@ -33771,6 +35296,36 @@
     },
     {
       "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/profile.passport.test.tsx",
       "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "kind": "native:runtime"
     },
@@ -33872,6 +35427,81 @@
     {
       "from": "library/ui/apps/hud/test/rail.test.tsx",
       "to": "library/ui/apps/hud/design/Rail.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/explorer-core/test/console.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelActions.test.ts",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/reelGrid.test.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
       "kind": "test:runtime"
     },
     {
@@ -35026,7 +36656,7 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -35706,6 +37336,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Avatar.tsx",
       "kind": "type"
     },
@@ -36021,7 +37656,17 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/EmojiSuggestList.tsx",
       "kind": "type"
     },
     {
@@ -36071,6 +37716,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "kind": "type"
     },
@@ -36087,6 +37737,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
       "kind": "type"
     },
     {
@@ -36276,12 +37931,47 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/DownloadedToast.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gallery/GalleryPage.tsx",
       "kind": "type"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/PassportPhotos.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/ReelGrid.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/publicReels.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/useOwnReelActions.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gallery/useReelList.ts",
       "kind": "type"
     },
     {
@@ -36392,6 +38082,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/minimap/SceneRestrictions.tsx",
       "kind": "type"
     },
     {
@@ -36686,6 +38381,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voice/NearbyVoiceRefusals.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
       "kind": "type"
     },
@@ -36921,6 +38621,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
       "kind": "type"
     },
@@ -37112,6 +38817,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/nearbyVoiceRefusals.test.tsx",
       "kind": "type"
     },
     {
@@ -37347,6 +39057,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/rail.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/reelActions.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/reelGrid.test.tsx",
       "kind": "type"
     },
     {
@@ -38296,6 +40016,81 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/copy-link.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/delete.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/download.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/menu-vertical.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/camera-reel/share-x.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/category-icons/all.png",
       "kind": "native:asset"
     },
@@ -38832,6 +40627,36 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-outline.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/communities/favourite-solid.png",
       "kind": "test:asset"
     },
     {
