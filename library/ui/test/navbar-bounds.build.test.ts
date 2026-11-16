@@ -152,19 +152,27 @@ describe('native public NavBar bounds, independently of captured Review selectio
         await openCase('in-composition', width)
         await click('button[aria-label="Open menu"]')
         expect(await evaluate('!!document.activeElement?.closest(\'[role="dialog"]\')')).toBe(true)
-        const result = await bounds('[role="dialog"]', false)
+        const result = await bounds('[role="dialog"] [data-testid="navbar-panel"]', false)
         expect(result.overflow).toEqual([])
         expect(
           await evaluate(
-            `(()=>{const b=document.querySelector('[role="dialog"]').getBoundingClientRect();return b.left>=-1&&b.top>=-1&&b.right<=innerWidth+1&&b.bottom<=innerHeight+1})()`
+            `(()=>{const b=document.querySelector('[role="dialog"] [data-testid="navbar-panel"]').getBoundingClientRect();return b.left>=-1&&b.top>=-1&&b.right<=innerWidth+1&&b.bottom<=innerHeight+1})()`
           )
         ).toBe(true)
+        let panelStops = 0
         for (let i = 0; i < 12; i++) {
           await key('Tab', 9)
           expect(await evaluate('!!document.activeElement?.closest(\'[role="dialog"]\')')).toBe(
             true
           )
+          if (
+            await evaluate<boolean>(
+              '!!document.activeElement?.closest(\'[data-testid="navbar-panel"]\')'
+            )
+          )
+            panelStops++
         }
+        expect(panelStops).toBeGreaterThan(0)
         await key('Escape', 27)
         expect(await evaluate('document.querySelector(\'[role="dialog"]\')===null')).toBe(true)
         expect(await evaluate('document.activeElement?.getAttribute("aria-label")')).toBe(
