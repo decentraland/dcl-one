@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Button } from "@dcl/one-ui";
+import { Button, ShopCard, ShopCardPrice, type ShopCardCreator } from "@dcl/one-ui";
 import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
 
 import { assetPage } from "@/core/lib/shop/redirects";
@@ -11,8 +11,8 @@ import { DEFAULT_CREATIONS_CATEGORY } from "@/data/lib/profile/queries";
 
 import {
   catalogueTotal,
-  CollectibleBadges,
-  CollectibleCard,
+  categoryGlyph,
+  collectibleBadges,
   CollectiblesItem,
   CollectiblesPanel,
   loadedRows,
@@ -21,9 +21,9 @@ import {
   unreadyState,
   useFocusNewRows,
   useRouterClick,
+  ShopCardRouterLink,
   ViewAllLink,
   type CategoryOption,
-  type CollectibleCardProps,
   type CollectiblesState,
 } from "./collectibles";
 import { useProfileCreations } from "./hooks";
@@ -64,30 +64,37 @@ function countLabel(shown: number, total: number): string {
   return total > shown ? `Showing ${shown} of ${noun(total)}` : noun(shown);
 }
 
-function CreationCard({ item, creator }: { item: ProfileCreation; creator: string }) {
+/** The price as the Shop's card rule decided it: credits, MANA on its network, or why there is none. */
+function creationPrice(item: ProfileCreation) {
+  const payment = item.payment;
+  if (payment.kind === "credits") return <ShopCardPrice kind="credits" amount={payment.credits} />;
+  if (payment.kind === "mana") return <ShopCardPrice kind="mana" amount={payment.mana} network={item.network} />;
+  // A credit-eligible sale whose quote failed says so; anything else unpriced is not for sale.
+  return (
+    <ShopCardPrice
+      kind="none"
+      label={payment.kind === "creditsUnavailable" ? "Credits price unavailable" : "Not for sale"}
+    />
+  );
+}
+
+function CreationCard({ item, creator }: { item: ProfileCreation; creator: ShopCardCreator }) {
   const routerClick = useRouterClick();
   const href = assetPage(item.contractAddress, item.itemId, "item");
-  const payment = item.payment;
-  const price: CollectibleCardProps["price"] =
-    payment.kind === "credits"
-      ? { currency: "credits", amount: payment.credits }
-      : payment.kind === "mana"
-        ? { currency: "mana", amount: payment.mana, network: item.network }
-        : undefined;
   return (
-    <CollectibleCard
-      title={item.name}
-      imageUrl={item.thumbnail}
-      href={href}
+    <ShopCard
+      name={item.name}
+      image={item.thumbnail}
       rarity={item.rarity}
-      byline={`By ${creator}`}
-      price={price}
-      // A credit-eligible sale whose quote failed says so; anything else unpriced is not for sale.
-      priceFallback={payment.kind === "creditsUnavailable" ? "Credits price unavailable" : "Not for sale"}
-      badges={<CollectibleBadges {...item.traits} />}
-      action={
-        payment.kind !== "none" ? (
-          <Button href={href} onClick={routerClick(href)} size="sm" aria-label={`Buy ${item.name}`}>
+      creator={creator}
+      price={creationPrice(item)}
+      categoryIcon={categoryGlyph(item.traits.category)}
+      badges={collectibleBadges(item.traits)}
+      href={href}
+      linkComponent={ShopCardRouterLink}
+      actions={
+        item.payment.kind !== "none" ? (
+          <Button href={href} onClick={routerClick(href)} size="md" aria-label={`Buy ${item.name}`}>
             Buy
           </Button>
         ) : (
@@ -95,7 +102,7 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: strin
             href={href}
             onClick={routerClick(href)}
             variant="secondary"
-            size="sm"
+            size="md"
             aria-label={`View in Shop: ${item.name}`}
           >
             View in Shop
@@ -112,7 +119,11 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
   const query = useProfileCreations(profile.address, category);
   const rows = query.data ? loadedRows(query.data) : [];
   const focus = useFocusNewRows(rows.length, query.dataUpdatedAt + query.errorUpdatedAt);
-  const creator = displayName(profile);
+  const creator: ShopCardCreator = {
+    name: displayName(profile),
+    picture: profile.avatarUrl || undefined,
+    color: profile.nameColor,
+  };
 
   const { filters, panel } = useCategoryTabs("Creations shown", CATEGORY_TABS, category, setCategory);
 

@@ -2,8 +2,7 @@ import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query
 import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type Ref } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { Button, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
-import { useBrokenImage } from "@dcl/one-ui/apps/sites/provisional/useBrokenImage";
+import { Button, Spinner, Tabs, TabsBar, type ShopCardLinkProps } from "@dcl/one-ui";
 import {
   BackpackBody,
   BackpackEarrings,
@@ -26,12 +25,9 @@ import {
   BackpackSkins,
   BackpackTiara,
   BackpackUpperBody,
-  GeneralMana,
   GeneralName,
-  GeneralPolygonMana,
   GeneralRightArrow,
   GeneralSmartItem,
-  ShopCredits,
 } from "@dcl/one-ui/foundations/icons";
 
 import type { CollectiblePage } from "@/data/lib/catalyst/marketplace/profile-collectibles";
@@ -360,7 +356,7 @@ export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: Co
   );
 }
 
-/** One cell of the list; wraps a CollectibleCard or a NameRow. */
+/** One cell of the list; wraps a ShopCard or a NameRow. */
 export function CollectiblesItem({ children }: { children: ReactNode }) {
   return <li className={styles.item}>{children}</li>;
 }
@@ -391,102 +387,9 @@ export function NameRow({ name, actions }: { name: string; actions?: ReactNode }
   );
 }
 
-export type CollectibleRarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
-
-export type CollectibleCardProps = {
-  title: string;
-  imageUrl?: string;
-  /** A decorative glyph shown instead of an image that is missing or fails, e.g. a NAME's. */
-  placeholder?: ReactNode;
-  /** The item's or token's own page; the whole card opens it. */
-  href: string;
-  /** Paints the image surface and the rarity tag. Without it the card has neither. */
-  rarity?: CollectibleRarity;
-  /** The line under the title, e.g. "By Alice". */
-  byline?: ReactNode;
-  /** In MANA on its network, or in credits. */
-  price?:
-    { currency: "mana"; amount: string; network: "ethereum" | "polygon" } | { currency: "credits"; amount: string };
-  /** Shown where the price goes when there is none, e.g. "Not for sale". */
-  priceFallback?: string;
-  /** Glyphs next to the rarity tag; see `CollectibleBadges`. */
-  badges?: ReactNode;
-  /** Revealed over the badge row on hover or keyboard focus, e.g. Buy. */
-  action?: ReactNode;
-};
-
-const RARITY_LABEL: Record<CollectibleRarity, string> = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  epic: "Epic",
-  legendary: "Legendary",
-  exotic: "Exotic",
-  mythic: "Mythic",
-  unique: "Unique",
-};
-
-/**
- * A wearable, emote, NAME or LAND as the catalogue lists it: its image on the rarity's colour,
- * title, byline, price and badges. On hover or focus it lifts and slides its action in over the
- * badges, as the source does. The design system has no catalogue card yet, so it is drawn here.
- */
-export function CollectibleCard({
-  title,
-  imageUrl,
-  placeholder,
-  href,
-  rarity,
-  byline,
-  price,
-  priceFallback,
-  badges,
-  action,
-}: CollectibleCardProps) {
-  const { broken, ref, onError } = useBrokenImage(imageUrl);
-  const PriceMark =
-    price?.currency === "credits" ? ShopCredits : price?.network === "ethereum" ? GeneralMana : GeneralPolygonMana;
-  const rootClass = [styles.card, rarity && styles[rarity], action && styles.withAction].filter(Boolean).join(" ");
-
-  return (
-    <article className={rootClass}>
-      <div className={styles.media}>
-        {imageUrl && !broken ? (
-          <img ref={ref} className={styles.image} src={imageUrl} alt="" loading="lazy" onError={onError} />
-        ) : placeholder ? (
-          <span className={styles.placeholder} aria-hidden="true">
-            {placeholder}
-          </span>
-        ) : null}
-      </div>
-      <div className={styles.content}>
-        <h3 className={styles.title}>
-          {/* The title's link covers the card, so the whole card opens the item. */}
-          <CollectibleLink to={href} className={styles.cardLink}>
-            {title}
-          </CollectibleLink>
-        </h3>
-        {byline ? <div className={styles.byline}>{byline}</div> : null}
-        {price ? (
-          <p className={styles.price}>
-            <PriceMark size={32} aria-hidden="true" />
-            <span>
-              <span className={styles.visuallyHidden}>Price: </span>
-              {price.amount}
-              <span className={styles.visuallyHidden}>{price.currency === "credits" ? " credits" : " MANA"}</span>
-            </span>
-          </p>
-        ) : priceFallback ? (
-          <p className={styles.fallback}>{priceFallback}</p>
-        ) : null}
-        <div className={styles.badges}>
-          {rarity ? <span className={styles.rarity}>{RARITY_LABEL[rarity]}</span> : null}
-          {badges ? <span className={styles.info}>{badges}</span> : null}
-        </div>
-        {action ? <div className={styles.action}>{action}</div> : null}
-      </div>
-    </article>
-  );
+/** The public ShopCard's link: this router's, loaded on hover or focus. */
+export function ShopCardRouterLink({ href, ...props }: ShopCardLinkProps) {
+  return <Link to={href} prefetch="intent" {...props} />;
 }
 
 type IconComponent = typeof BackpackHat;
@@ -523,22 +426,28 @@ function categoryLabel(category: string): string {
 function Badge({ icon: Icon, label }: { icon: IconComponent; label: string }) {
   return (
     <span className={styles.badge} role="img" aria-label={label} title={label}>
-      <Icon size={20} aria-hidden="true" />
+      <Icon size={16} aria-hidden="true" />
     </span>
   );
 }
 
-export type CollectibleBadgesProps = {
-  /** The wearable slot; a slot without a glyph (an emote's kind) shows none. */
-  category?: string;
-  /** `BaseMale` and `BaseFemale` together are unisex. */
-  bodyShapes?: readonly string[];
-  isSmart?: boolean;
-};
-
-/** A wearable's slot, body shape and smart badges, each named for assistive technology. */
-export function CollectibleBadges({ category, bodyShapes = [], isSmart = false }: CollectibleBadgesProps) {
+/** A wearable's slot glyph for the card's corner, named for assistive technology; none for a slot without one. */
+export function categoryGlyph(category: string | undefined): ReactNode | undefined {
   const slot = category ? CATEGORY_ICON[category] : undefined;
+  return slot && category ? <Badge icon={slot} label={categoryLabel(category)} /> : undefined;
+}
+
+/**
+ * A wearable's body shape and smart badges, each named for assistive technology (`BaseMale` and
+ * `BaseFemale` together are unisex); none without either.
+ */
+export function collectibleBadges({
+  bodyShapes,
+  isSmart,
+}: {
+  bodyShapes: readonly string[];
+  isSmart: boolean;
+}): ReactNode | undefined {
   const male = bodyShapes.some((shape) => shape.toLowerCase().includes("basemale"));
   const female = bodyShapes.some((shape) => shape.toLowerCase().includes("basefemale"));
   const body =
@@ -549,10 +458,9 @@ export function CollectibleBadges({ category, bodyShapes = [], isSmart = false }
         : female
           ? { icon: BackpackGenderFemale, label: "For female" }
           : null;
-
+  if (!body && !isSmart) return undefined;
   return (
     <>
-      {slot && category ? <Badge icon={slot} label={categoryLabel(category)} /> : null}
       {body ? <Badge icon={body.icon} label={body.label} /> : null}
       {isSmart ? <Badge icon={GeneralSmartItem} label="Smart wearable" /> : null}
     </>

@@ -4,7 +4,7 @@
 
 import { Button, ChevronRight, EmptyState, Rail } from '@hud/design'
 import { pressedWith, type PressedWith } from './pressedWith'
-import { ShopItemSkeleton } from './ShopItemCard'
+import { ShopCardSkeleton } from '@dcl/one-ui'
 import styles from './ShopHome.module.css'
 
 /** A row shows five whole cards and the sixth's edge, so it pages five at a time. */
@@ -153,7 +153,7 @@ function HomeRow<T extends { id: string }>({
       {row.pending ? (
         <div className={styles.skeletons} aria-busy="true">
           {Array.from({ length: ROW_PAGE + 1 }, (_, i) => (
-            <ShopItemSkeleton key={i} />
+            <ShopCardSkeleton key={i} />
           ))}
         </div>
       ) : (

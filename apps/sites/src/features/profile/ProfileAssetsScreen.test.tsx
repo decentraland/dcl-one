@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -19,11 +19,12 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
 }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
 
+import { ShopCard } from "@dcl/one-ui";
+
 import type { ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { PROFILE_COLLECTIBLES_PAGE, profileKeys } from "@/data/lib/profile/queries";
 
-import { CollectibleCard } from "./collectibles";
 import { ProfileAssetsScreen } from "./ProfileAssetsScreen";
 
 const A = "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b";
@@ -89,7 +90,7 @@ describe("profile assets", () => {
     expect(screen.getByText("3431 assets")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
     const token = card("Power Up 1");
-    expect(within(token).getByText("Epic")).toBeTruthy();
+    expect(within(token).getByText("epic")).toBeTruthy();
     expect(within(token).getByRole("img", { name: "Top Head" })).toBeTruthy();
     expect(within(token).getByRole("img", { name: "For female" })).toBeTruthy();
     expect(within(token).getByRole("link", { name: "View Power Up 1" }).getAttribute("href")).toBe("/shop/token/0xabc/1");
@@ -101,7 +102,7 @@ describe("profile assets", () => {
     show();
 
     const ens = await screen.findByRole("link", { name: "brai" }).then(() => card("brai"));
-    expect(within(ens).queryByText("Common")).toBeNull();
+    expect(within(ens).queryByText("common")).toBeNull();
     expect(within(ens).getByRole("link", { name: "Edit brai" }).getAttribute("href")).toBe("/create/names");
     expect(within(ens).getByRole("link", { name: "Transfer brai" }).getAttribute("href")).toBe("/shop/token/0xens/5/transfer");
     expect(within(ens).queryByRole("link", { name: /^View/ })).toBeNull();
@@ -120,9 +121,7 @@ describe("profile assets", () => {
 
   it("drops a card image that fails to load, showing its glyph instead", () => {
     const { container } = render(
-      <MemoryRouter>
-        <CollectibleCard title="Broken" href="/shop/token/0xabc/1" imageUrl="https://example.com/missing.png" placeholder={<svg data-glyph="" />} />
-      </MemoryRouter>,
+      <ShopCard name="Broken" href="/shop/token/0xabc/1" image="https://example.com/missing.png" placeholder={<svg data-glyph="" />} />,
     );
 
     fireEvent.error(container.querySelector("img") as HTMLImageElement);
@@ -144,7 +143,7 @@ describe("profile assets", () => {
     await user.click(screen.getByRole("tab", { name: "Lands" }));
     const parcel = await screen.findByRole("link", { name: "Parcel 162,-133" }).then(() => card("Parcel 162,-133"));
     expect(within(parcel).getByRole("link", { name: "View Parcel 162,-133" }).getAttribute("href")).toBe("/shop/token/0xabc/3");
-    expect(within(parcel).queryByText("Common")).toBeNull();
+    expect(within(parcel).queryByText("common")).toBeNull();
 
     await user.click(screen.getByRole("tab", { name: "Estates" }));
     const plot = await screen.findByRole("link", { name: "Estate" }).then(() => card("Estate"));

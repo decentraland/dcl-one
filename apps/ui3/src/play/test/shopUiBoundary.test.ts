@@ -1,6 +1,6 @@
 // The in-world Shop's UI (features/shop/ui) moves to library/ui/apps/shop/ once that exists
 // (docs/ui-standards.md, App-specific UI): it may import React, the HUD's design primitives and assets,
-// its own files, the Shop's pure model and formatting (library/shop) and the web Shop's credits mark —
+// its own files, the public @dcl/one-ui components, the Shop's pure model and formatting (library/shop) and the web Shop's credits mark —
 // never data (queries, fetchers, TanStack) nor the HUD's runtime (session, engine, menu, its libs).
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest'
 const UI = join(__dirname, '../features/shop/ui')
 const ALLOWED = [
   /^react$/,
+  // The public components (the item card and its skeleton are the design system's ShopCard).
+  /^@dcl\/one-ui$/,
   /^\.\/[A-Za-z]+(\.module\.css)?$/,
   /^@hud\/design$/,
   /^@hud\/assets\//,
@@ -27,7 +29,7 @@ describe('the in-world Shop UI', () => {
   const files = readdirSync(UI).filter((f) => /\.tsx?$/.test(f))
 
   it('has its components', () => {
-    expect(files).toEqual(expect.arrayContaining(['index.ts', 'ShopItemCard.tsx', 'ShopItemPanel.tsx', 'ShopFilters.tsx', 'ShopHome.tsx']))
+    expect(files).toEqual(expect.arrayContaining(['index.ts', 'ShopItemPanel.tsx', 'ShopFilters.tsx', 'ShopHome.tsx']))
   })
 
   it.each(files)('%s imports no data and nothing of the HUD runtime', (file) => {
