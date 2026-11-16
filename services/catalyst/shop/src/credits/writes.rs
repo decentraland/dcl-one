@@ -18,7 +18,7 @@ use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 
-use crate::shared::writes::{OPS_WRITES_ENABLED, Refusal, WRITES_DISABLED_MESSAGE, ops_refusal};
+use crate::shared::writes::{OPS_WRITES_ENABLED, WRITES_DISABLED_MESSAGE};
 
 /// The route-local paths whose non-GET methods stay open while writes are
 /// disabled: the price read, at its legacy and its canonical path.
@@ -33,15 +33,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
 }
 
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("operator-plane", WRITES_DISABLED_MESSAGE);
-    let body =
-        serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": message });
+    let body = serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": WRITES_DISABLED_MESSAGE });
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -54,10 +46,8 @@ pub fn refused_response(refusal: &Refusal) -> Response {
 }
 
 async fn gate(State(enabled): State<bool>, req: Request, next: Next) -> Response {
-    if is_gated(req.method(), req.uri().path())
-        && let Some(refusal) = ops_refusal(enabled)
-    {
-        return refused_response(&refusal);
+    if !enabled && is_gated(req.method(), req.uri().path()) {
+        return disabled_response();
     }
     next.run(req).await
 }
@@ -162,33 +152,5 @@ mod tests {
             call(&app, "POST", "/credits/stripe/webhook").await,
             (StatusCode::OK, "granted".to_string())
         );
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/credits/cart/items").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.advance(26 * HOUR);
-            let (status, body) = call(&app, "POST", "/credits/cart/items").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["error"], "Service Unavailable");
-            assert_eq!(
-                v["message"],
-                "operator-plane writes are held on this node: the last complete backup (backup.json) is 27 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            let (status, _) = call(&app, "GET", "/credits/packs").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

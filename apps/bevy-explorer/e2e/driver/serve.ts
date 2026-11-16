@@ -172,7 +172,7 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
   pipeline(createReadStream(file), response, () => {})
 }
 
-/** Serve `root` at `http://localhost:<port>/`, bound to IPv4 loopback (port 0 picks a free one). */
+/** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
 export async function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
   // the origin the realm document names: known once the server listens, before any request comes
@@ -184,12 +184,8 @@ export async function serveWebApp(root: string, port: number): Promise<StaticSer
     })
   })
   const listening = await listen(server, port)
-  // Signed service requests preflight from the page's origin. The services allow the
-  // development host `localhost`; its numeric loopback spelling is a different origin.
-  // Keep the socket bound to IPv4 loopback while using that host for the app and bridge.
-  const url = `http://localhost:${listening.port}/`
-  origin = url.replace(/\/$/, '')
-  return { ...listening, url }
+  origin = listening.url.replace(/\/$/, '')
+  return listening
 }
 
 export function listen(server: Server, port: number): Promise<StaticServer> {

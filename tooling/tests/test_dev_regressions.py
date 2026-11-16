@@ -1,5 +1,7 @@
 """CI inventory fixtures and a dependency-free Cargo build-context regression."""
 import importlib.util
+import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -79,6 +81,69 @@ class AuthStressTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_maintenance_review_regressions_resolve_exact_source_and_inventory(self):
+        cases = {
+            "comms/src/gatekeeper/admission/cluster/fence.rs": ("gatekeeper::admission::cluster::fence::tests::", [
+                "selected_replay_rotates_beyond_queue_capacity_without_a_global_tick_and_retains_old_sources",
+                "healthy_owned_replay_waits_for_renewal_but_a_new_desire_is_due_immediately",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/tests.rs": ("gatekeeper::admission::cluster::subscriber::tests::", [
+                "shutdown_settles_all_selected_targets_independently_of_due_maintenance_filter",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/wallet_queue/tests.rs": ("gatekeeper::admission::cluster::subscriber::wallet_queue::tests::", [
+                "maintenance_has_lifetime_credit_item_and_running_bounds_with_event_headroom",
+                "maintenance_credit_remains_charged_until_uncertain_mutation_settles",
+                "maintenance_capacity_notifications_refill_more_than_the_global_queue_without_a_timer",
+                "an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_wallet_work",
+            ]),
+        }
+        required = guard.MANDATORY_ARCHIPELAGO[("catalyst_comms", "lib")]
+        for path, (prefix, names) in cases.items():
+            source = (ROOT / "services/catalyst" / path).read_text()
+            for name in names:
+                self.assertEqual(len(re.findall(r"\bfn\s+" + name + r"\s*\(", source)), 1)
+                self.assertEqual(required.count(prefix + name), 1)
+
+    def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
+        cases = [
+            ("tests/pulse_cluster_lookup.rs", "", [
+                "real_selection_retirement_exchange_requires_complete_absence_and_exact_source",
+            ]),
+            ("comms/src/protocol/bus/cluster.rs", "protocol::bus::cluster::tests::", [
+                "selection_retirement_codec_is_exact_bounded_and_negative_only",
+            ]),
+            ("comms/src/pulse/cluster/assignments.rs", "pulse::cluster::assignments::current_tests::", [
+                "retirement_requires_complete_absence_and_survives_record_and_control_gc",
+                "retirement_withholds_blocked_pending_and_successor_current_evidence",
+            ]),
+            ("tests/comms_v4_assignment_fence/recovery.rs", "recovery::", [
+                "started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
+                "started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
+                "started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement",
+                "started_selected_retirement_waits_for_a_lease_and_preserves_a_real_foreign_successor",
+            ]),
+        ]
+        for path, prefix, names in cases:
+            target = ("pulse_cluster_lookup", "test") if path == "tests/pulse_cluster_lookup.rs" else (("comms_v4_assignment_fence", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            source = (ROOT / "services/catalyst" / path).read_text(encoding="utf-8")
+            bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+            for name in names:
+                with self.subTest(target=target, name=name):
+                    self.assertIn(prefix + name, required)
+                    self.assertEqual(bodies.count(name), 1)
+
+    def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
+        target = "archipelago_control_extensions_websocket"
+        catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))
+        required = set(catalog["catalyst"][target]) | set(guard.MANDATORY_ARCHIPELAGO[(target, "test")])
+        source = (ROOT / "services/catalyst/tests" / (target + ".rs")).read_text(encoding="utf-8")
+        bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+        for name in sorted(required):
+            with self.subTest(name=name):
+                self.assertEqual(bodies.count(name), 1, "mandatory selectors must track the actual current socket test body")
+        self.assertIn("configured_replica_signaling_cannot_steal_a_fresh_foreign_room", required)
+
     def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
         bodies = {
             ("catalyst_comms", "lib"): [

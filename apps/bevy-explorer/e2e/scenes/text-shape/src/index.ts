@@ -26,7 +26,7 @@ import { setupVisualTest } from './visual-test-setup'
  * depth occlusion shows up as drift in the corresponding row.
  *
  * Layout is a single 0,0 parcel with subjects stacked in Y, all packed inside
- * the camera FOV (camera at (8, 6, -7) looking at (8, 6, 8)). z is held at 8
+ * the camera FOV (camera at (8, 7, -2) looking at (8, 3, 8)). z is held at 8
  * for nearly every entity so X/Y screen position maps cleanly back to row/col.
  *
  * Y stack (bottom → top), labels are the axis under test:
@@ -38,12 +38,11 @@ import { setupVisualTest } from './visual-test-setup'
  *   y≈5.8  shadow           · shadowBlur × shadowOffset × shadowColor
  *   y≈6.5  outline          · outlineWidth × outlineColor
  *   y≈7.2  padding & line   · paddingLeft/Right vs lineSpacing on multi-line
- *   y≈7.9  wrapping        · textWrapping + lineCount
- *   y≈9.5  auto-size       · fontAutoSize fit vs fixed fontSize
- *   y≈12   billboard / occlusion · BM_ALL must face camera; plane must occlude
+ *   y≈7.9  wrapping & auto  · textWrapping + lineCount + fontAutoSize
+ *   y≈8.6  billboard / occlusion · BM_ALL must face camera; plane must occlude
  *
  * Every entity has a hover hint describing the case it covers; max distance is
- * bumped well past the SDK default so the locked virtual camera at z=−7 still
+ * bumped well past the SDK default so the locked virtual camera at z=−2 still
  * resolves hovers on every text entity.
  *
  * Default text orientation in DCL faces the −Z viewer direction, so most
@@ -65,7 +64,6 @@ export function main() {
   })
 
   const zRow = 8
-  const cameraPosition = Vector3.create(8, 6, -7)
 
   // Default textColor for cells that are NOT testing color or border. White
   // is the SDK default, but white text washes out against both the bright
@@ -327,7 +325,7 @@ export function main() {
     hint: 'lineSpacing=30 · 3 lines pulled apart',
   })
 
-  // ── wrapping + lineCount row (y=7.9) ──────────────────────────
+  // ── wrapping + lineCount + autosize row (y=7.9) ──────────────────────────
   const wrapRow = 7.9
 
   // Long sentence, narrow width, wrapping ON → multi-line layout.
@@ -360,43 +358,43 @@ export function main() {
     hint: 'lineCount=2 · only first two of four explicit lines render',
   })
 
-  // Auto-size uses the box only when wrapping is enabled, ignores fontSize,
-  // and has an 18 pt minimum. Give the pair its own row with boxes larger
-  // than that minimum so fitting, rather than overflow at the floor, is visible.
-  const autoRow = 9.5
+  // fontAutoSize comparison: same text/cell, autoSize ON vs OFF. The DCL
+  // implementation does NOT clamp glyph height to the box — instead it
+  // scales relative to fontSize as an upper bound, so we use a small
+  // fontSize=1 baseline and a short label to keep the auto-sized text from
+  // bleeding into the rows above. If autoSize regresses, the two cells
+  // become indistinguishable.
   makePaddedCell({
-    centerX: 4.5,
-    centerY: autoRow,
+    centerX: 9.5,
+    centerY: wrapRow,
     z: zRow,
-    width: 6,
-    height: 2.2,
+    width: 1.6,
+    height: 0.5,
     text: 'AUTO',
     fontSize: 1,
-    textWrapping: true,
     fontAutoSize: true,
     align: TextAlignMode.TAM_MIDDLE_CENTER,
-    hint: 'fontAutoSize=true · wrapping enabled · 6×2.2 cell · text scales to fit',
+    hint: 'fontAutoSize=true · 1.6×0.5 cell · text scales to fit',
   })
   makePaddedCell({
-    centerX: 11.5,
-    centerY: autoRow,
+    centerX: 12.5,
+    centerY: wrapRow,
     z: zRow,
-    width: 6,
-    height: 2.2,
+    width: 1.6,
+    height: 0.5,
     text: 'AUTO',
     fontSize: 1,
-    textWrapping: true,
     fontAutoSize: false,
     align: TextAlignMode.TAM_MIDDLE_CENTER,
     hint: 'fontAutoSize=false reference · same cell, fontSize honoured',
   })
 
-  // ── billboard + occlusion row (y=12) ────────────────────────────────────
+  // ── billboard + occlusion row (y=8.6) ────────────────────────────────────
   // Billboard text: created at 180°Y so its natural facing is AWAY from the
   // camera. BM_ALL must override that rotation every frame. A regression
   // where the billboard system stops applying leaves the text mirrored or
   // edge-on.
-  const topRow = 12
+  const topRow = 8.6
   const billboardText = engine.addEntity()
   Transform.create(billboardText, {
     position: Vector3.create(5, topRow, zRow),
@@ -421,25 +419,23 @@ export function main() {
   // the camera at smaller z). The plane MUST occlude the text. If depth-test
   // regresses for text rendering, the text bleeds through the plane.
   const occludedText = engine.addEntity()
-  const occludedPosition = Vector3.create(11, topRow, zRow)
-  Transform.create(occludedText, { position: occludedPosition })
+  Transform.create(occludedText, { position: Vector3.create(11, topRow, zRow) })
   TextShape.create(occludedText, {
     text: 'OCCLUDED',
-    fontSize: 2,
+    fontSize: 6,
     textColor: Color4.create(1, 0.3, 0.3, 1),
   })
   MeshCollider.setPlane(occludedText)
   attachHint(occludedText, 'Occlusion subject · sits behind the gray plane')
 
-  // Place the plane on the camera-to-text line. Keeping the same X/Y at a
-  // nearer Z would shift its projection and leave text visible below it.
+  // The occluding plane: same X/Y as the text but closer to the camera.
   // Sized generously larger than the OCCLUDED text footprint (≈1.6×0.4 at
   // fontSize=2) so the glyphs are fully covered with margin to spare — a
   // partially-occluding plane would let edges peek through and read as
   // "depth test broken" in the diff regardless of actual behavior.
   const occluder = engine.addEntity()
   Transform.create(occluder, {
-    position: Vector3.lerp(cameraPosition, occludedPosition, 0.9),
+    position: Vector3.create(11, topRow, zRow - 1.5),
     scale: Vector3.create(3.5, 1.2, 1),
   })
   MeshRenderer.setPlane(occluder)
@@ -452,16 +448,16 @@ export function main() {
   attachHint(occluder, 'Occluder plane · must hide the OCCLUDED text behind it')
 
   // ── camera ───────────────────────────────────────────────────────────────
-  // Keep the complete y=0.6..12 stack and the nearer occluder inside the frame.
+  // Pulled back to z=−2 and up to y=4.5 so the y=0.6..8.6 stack frames cleanly.
   setupVisualTest({
-    lookAtPos: Vector3.create(8, 6, 8),
-    cameraPos: cameraPosition,
+    lookAtPos: Vector3.create(8, 5, 8),
+    cameraPos: Vector3.create(8, 5, 0),
   })
 }
 
 // Hover hint: show `text` while the cursor is over the entity. Empty click
 // handler — only the hover tooltip matters here. maxDistance bumped past the
-// SDK default so the locked virtual camera at z=−7 still resolves hovers on
+// SDK default so the locked virtual camera at z=−2 still resolves hovers on
 // every text entity in the back of the parcel.
 const HINT_MAX_DISTANCE = 100
 
