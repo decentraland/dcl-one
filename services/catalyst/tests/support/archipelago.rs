@@ -48,7 +48,7 @@ pub fn gatekeeper_with_livekit(bus: Option<Arc<dyn NatsBus>>, livekit: LiveKit) 
     let state = comms_state(livekit);
     Arc::new(match bus {
         Some(bus) => state.with_bus(bus),
-        None => state,
+        None => state.with_bus(statistics_bus()),
     })
 }
 
@@ -135,9 +135,155 @@ pub async fn serve(state: AppState) -> u16 {
         .await
         .expect("bind");
     let port = listener.local_addr().unwrap().port();
-    let app = archipelago::mounts(state, true).stats;
+    state
+        .started
+        .store(true, std::sync::atomic::Ordering::Release);
+    let mounts = archipelago::mounts(
+        state,
+        true,
+        Default::default(),
+        catalyst::comms::stats::http::test_support::matcher(),
+        std::sync::Arc::new(catalyst::content::Denylist::default()),
+    );
+    let app = catalyst::comms::stats::http::merge_root(mounts.stats, mounts.statistics);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
     port
+}
+
+/// In-process broker fixture running the actual Pulse statistics store on observations.
+#[derive(Default)]
+struct StatisticsBus {
+    bus: catalyst::comms::gatekeeper::bus::InProcessBus,
+    statistics: std::sync::Mutex<catalyst::comms::pulse::statistics::Statistics>,
+}
+fn statistics_sequence() -> u64 {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+#[async_trait::async_trait]
+impl NatsBus for StatisticsBus {
+    async fn statistics_control(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, catalyst::comms::gatekeeper::bus::RequestError> {
+        use catalyst::comms::protocol::bus::statistics::ProducerRequest;
+        let request = ProducerRequest::decode(&payload)
+            .ok_or(catalyst::comms::gatekeeper::bus::RequestError::Invalid)?;
+        self.statistics
+            .lock()
+            .unwrap()
+            .control(request)
+            .encode()
+            .ok_or(catalyst::comms::gatekeeper::bus::RequestError::Invalid)
+    }
+    fn is_enabled(&self) -> bool {
+        true
+    }
+    fn is_connected(&self) -> bool {
+        true
+    }
+    fn is_ready(&self) -> bool {
+        true
+    }
+    fn connect(&self) {}
+    fn subscribe(
+        &self,
+        subject: &str,
+        queue: Option<&str>,
+        handler: catalyst::comms::gatekeeper::bus::NatsHandler,
+    ) -> catalyst::comms::gatekeeper::bus::NatsSubscription {
+        self.bus.subscribe(subject, queue, handler)
+    }
+    async fn publish(
+        &self,
+        subject: &str,
+        payload: Vec<u8>,
+    ) -> catalyst::comms::gatekeeper::bus::PublishOutcome {
+        use catalyst::comms::protocol::bus::statistics::*;
+        if subject == OBSERVATIONS_SUBJECT {
+            let mut store = self.statistics.lock().unwrap();
+            if let Some(event) = Observation::decode(&payload) {
+                store.observe(event, chrono::Utc::now().timestamp_millis());
+                let sequence = statistics_sequence();
+                for frame in frames(&store.snapshot(), uuid::Uuid::nil(), sequence, 65536).unwrap()
+                {
+                    self.bus.inject(SNAPSHOTS_SUBJECT, &frame);
+                }
+            }
+        }
+        self.bus.publish(subject, payload).await
+    }
+    async fn request(
+        &self,
+        subject: &str,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, catalyst::comms::gatekeeper::bus::RequestError> {
+        self.bus.request(subject, payload).await
+    }
+}
+/// Fixture writes still cross the typed complete-snapshot transport, never the reader's state.
+pub async fn snapshot(
+    state: &AppState,
+    change: impl FnOnce(&mut catalyst::comms::protocol::bus::statistics::Snapshot),
+) {
+    use catalyst::comms::protocol::bus::statistics::*;
+    let mut snapshot = (*state.statistics.snapshot()).clone();
+    change(&mut snapshot);
+    for frame in frames(&snapshot, uuid::Uuid::nil(), statistics_sequence(), 65536).unwrap() {
+        assert_eq!(
+            state.gatekeeper.bus.publish(SNAPSHOTS_SUBJECT, frame).await,
+            catalyst::comms::gatekeeper::bus::PublishOutcome::Submitted
+        );
+    }
+}
+pub async fn heartbeat(
+    state: &AppState,
+    address: String,
+    position: [f32; 3],
+    _parcel: [i32; 2],
+    _realm: String,
+) {
+    snapshot(state, |snapshot| {
+        let peer = catalyst::comms::protocol::bus::statistics::Peer {
+            address: address.clone(),
+            position: position.map(f64::from),
+            time: chrono::Utc::now().timestamp_millis(),
+        };
+        if let Some(held) = snapshot.peers.iter_mut().find(|p| p.address == address) {
+            *held = peer;
+        } else {
+            snapshot.peers.push(peer);
+        }
+    })
+    .await;
+}
+pub fn peer(
+    state: &AppState,
+    address: &str,
+) -> Option<catalyst::comms::protocol::bus::statistics::Peer> {
+    state
+        .statistics
+        .snapshot()
+        .peers
+        .iter()
+        .find(|peer| peer.address == address)
+        .cloned()
+}
+pub async fn disconnect(state: &AppState, address: &str) {
+    snapshot(state, |snapshot| {
+        snapshot.peers.retain(|peer| peer.address != address)
+    })
+    .await;
+}
+pub async fn topology(state: &AppState, bytes: Vec<u8>) {
+    snapshot(state, |snapshot| snapshot.islands = bytes).await;
+}
+pub async fn discovery(state: &AppState, bytes: Vec<u8>) {
+    snapshot(state, |snapshot| snapshot.discovery = bytes).await;
+}
+
+pub fn statistics_bus() -> Arc<dyn NatsBus> {
+    Arc::new(StatisticsBus::default())
 }

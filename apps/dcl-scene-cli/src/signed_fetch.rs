@@ -12,7 +12,7 @@ use dcl_auth::eip1654::Eip1654Validator;
 use dcl_auth::rpc_validator::RpcEip1654Validator;
 use dcl_auth::signed_fetch::{
     ChainShapeError, LegacyPayload, SignatureRefusal, SignedPath, SignedRequest, SkewError,
-    UnsignedLinks, candidate_paths, check_symmetric_skew, extract_auth_chain, header_str,
+    UnsignedLinks, candidate_paths, check_timestamp_window, extract_auth_chain, header_str,
     parse_metadata, timestamp_or_zero, verify_signature,
 };
 use dcl_auth::{AuthError, MAX_AUTH_CHAIN_LINKS};
@@ -150,7 +150,7 @@ pub async fn verify_signed_fetch_meta_with(
     let chain = extract_auth_chain(headers, UnsignedLinks::LeftToVerify).map_err(shape_error)?;
     let ts = timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
     let now = chrono::Utc::now().timestamp();
-    check_symmetric_skew(ts, now, tolerance_secs).map_err(|e| match e {
+    check_timestamp_window(ts, now, tolerance_secs).map_err(|e| match e {
         SkewError::InvalidTimestamp(ts) => SignedFetchError::InvalidTimestamp(ts),
         SkewError::Expired { .. } => SignedFetchError::Expired,
     })?;

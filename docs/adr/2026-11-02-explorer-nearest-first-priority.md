@@ -37,7 +37,12 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   the camera or not). The avatar crate (`update_render_avatar`) puts the entity hashes of the
   body, the wearables and the default wearables there as their pointers resolve, and only when
   the list changes, so a wearable's definition, model and textures queue in the avatar tier at
-  the avatar's partition, and a wearable several avatars share at the best of theirs. Every
+  the avatar's partition, and a wearable several avatars share at the best of theirs. The
+  emotes an avatar plays are filed the same way, in `PartitionedEmoteDownloads`
+  (`file_emote_downloads`, between choosing the frame's emotes and starting their loads): the
+  full-body emote and the upper-body request, while they play, so an emote's definition, model
+  and sounds do not wait behind every scene in range. A scene emote downloads under its scene's
+  hash and a built-in one does not download, so neither is listed. Every
   avatar comes after the player's scenes and before any other scene; among avatars the key
   decides, nearer ring first, in front before behind within a ring, then distance. Scene content
   stays per scene (the download-slot entry below); avatar downloads are partitioned per entity.

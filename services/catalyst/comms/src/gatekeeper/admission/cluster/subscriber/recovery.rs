@@ -321,6 +321,9 @@ mod tests {
         assert!(!fresh);
         assert_eq!(first.cutoff, retry.cutoff);
         let mut snapshot = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: "wallet".into(),
             source_incarnation: "source".into(),
             pending_takeovers: vec![op],

@@ -1,13 +1,10 @@
-use crate::archipelago::feed::FeedCache;
-use crate::archipelago::registry::{
-    AdmissionTicket, MAX_ASSIGNMENT_BYTES, PeerLink, SocketEvent, SocketEvents,
-};
+use crate::archipelago::registry::{MAX_ASSIGNMENT_BYTES, PeerLink, SocketEvent, SocketEvents};
 use crate::archipelago::session::{is_address, is_session_key, session_key_of};
 use crate::archipelago::state::AppState;
 use crate::auth::AuthChain;
 use crate::protocol::archipelago::archipelago::{
-    ChallengeResponseMessage, ClientPacket, IslandChangedMessage, KickedMessage, KickedReason,
-    ServerPacket, WelcomeMessage, client_packet, server_packet,
+    ChallengeResponseMessage, IslandChangedMessage, KickedMessage, KickedReason, ServerPacket,
+    WelcomeMessage, client_packet, server_packet,
 };
 use axum::Router;
 use axum::extract::State;
@@ -18,26 +15,113 @@ use io::WebSocket;
 use prost::Message as _;
 use rand::RngExt;
 use std::time::Duration;
-use tokio::time::Instant;
 
 mod control_position;
 mod io;
+mod legacy_decode;
 mod legacy_fence;
 
-const LEGACY_SUBPROTOCOL: &str = "archipelago";
+const MAX_CLIENT_MESSAGE_BYTES: usize = 16 * 1024;
 const AUTHORITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/ws", get(ws_upgrade))
 }
 
-async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    upgrade(ws, state)
+type Peer = Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>;
+
+pub(super) fn connector_routes(
+    http: std::sync::Arc<super::handlers::ConnectorHttp>,
+) -> Router<AppState> {
+    Router::new().route(
+        "/ws",
+        axum::routing::any(move |method, uri, headers, peer, ws, state| {
+            connector_upgrade(method, uri, headers, peer, ws, state, http.clone())
+        }),
+    )
 }
 
-fn upgrade(ws: WebSocketUpgrade, state: AppState) -> axum::response::Response {
+async fn connector_upgrade(
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+    peer: Peer,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+    State(state): State<AppState>,
+    http: std::sync::Arc<super::handlers::ConnectorHttp>,
+) -> axum::response::Response {
+    if method != axum::http::Method::GET
+        || !headers
+            .get("sec-websocket-key")
+            .is_some_and(|key| key.as_bytes().len() == 24)
+    {
+        return http.respond(method, uri, headers).await;
+    }
+    match ws {
+        Ok(ws) => ws_upgrade(ws, State(state), headers, peer)
+            .await
+            .into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    peer: Peer,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let client = crate::shared::client_ip::distinct_client_ip(
+        &headers,
+        peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
+        &state.settings.server.trusted_proxy_cidrs,
+    );
+    if client.is_none() && state.sockets_per_ip.enabled() {
+        crate::gatekeeper::admission::cluster::metrics::ws_unattributed_upgrade();
+    }
+    // Optional protocol names never select the authentication or packet decoder.
+    let protocols = headers
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let response = upgrade(ws, state.clone(), protocols, client.as_deref());
+    state
+        .connector_metrics
+        .observe_connector(crate::stats::http::Observation {
+            method: "GET".into(),
+            handler: "/ws".into(),
+            code: response.status().as_u16(),
+            request_size: 0.,
+            duration: start.elapsed(),
+        });
+    response
+}
+
+fn upgrade(
+    ws: WebSocketUpgrade,
+    state: AppState,
+    protocols: Vec<String>,
+    client: Option<&str>,
+) -> axum::response::Response {
+    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            [(axum::http::header::RETRY_AFTER, "5")],
+        )
+            .into_response();
+    };
+    let handler = state.handlers.clone().try_acquire_owned();
     let permit = match state.sockets.clone().try_acquire_owned() {
-        Ok(permit) if !state.restart.is_cancelled() => permit,
+        Ok(permit) if handler.is_ok() && !state.restart.is_cancelled() => permit,
         _ => {
             return (
                 axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -46,15 +130,17 @@ fn upgrade(ws: WebSocketUpgrade, state: AppState) -> axum::response::Response {
                 .into_response();
         }
     };
-    let ws = ws.protocols([LEGACY_SUBPROTOCOL]);
+    let ws = ws.protocols(protocols);
     ws.read_buffer_size(16 * 1024)
         .write_buffer_size(0)
         .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
-        .max_message_size(MAX_ASSIGNMENT_BYTES)
-        .max_frame_size(MAX_ASSIGNMENT_BYTES)
+        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
+            let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit);
             handle_socket(socket, state).await;
+            drop(handler);
         })
         .into_response()
 }
@@ -80,15 +166,20 @@ async fn send_packet(
     socket: &mut WebSocket,
     message: server_packet::Message,
     owner: Option<&PeerLink>,
-    feed: &FeedCache,
 ) -> bool {
-    if matches!(message, server_packet::Message::IslandChanged(_)) {
-        socket.delivery(Some(true), true, true);
-    }
-    if matches!(message, server_packet::Message::Kicked(_)) {
-        socket.kick();
-    }
-    io::send(socket, Message::Binary(craft(message).into()), owner, feed).await
+    let outgoing = match message {
+        server_packet::Message::IslandChanged(assignment) => io::Outgoing::Assignment {
+            message: Message::Binary(
+                craft(server_packet::Message::IslandChanged(assignment)).into(),
+            ),
+            stamp: None,
+        },
+        server_packet::Message::Kicked(kick) => io::Outgoing::Kick(Message::Binary(
+            craft(server_packet::Message::Kicked(kick)).into(),
+        )),
+        other => io::Outgoing::Packet(Message::Binary(craft(other).into())),
+    };
+    io::send_outgoing(socket, outgoing, owner).await
 }
 
 fn kicked_packet() -> server_packet::Message {
@@ -101,12 +192,11 @@ async fn handle_renewal_result(
     socket: &mut WebSocket,
     result: Result<(), crate::archipelago::control_v4::V4Error>,
     link: &PeerLink,
-    feed: &FeedCache,
 ) -> bool {
     match result {
         Ok(()) => true,
         Err(crate::archipelago::control_v4::V4Error::AuthorityConflict) => {
-            let _ = send_packet(socket, kicked_packet(), Some(link), feed).await;
+            let _ = send_packet(socket, kicked_packet(), Some(link)).await;
             false
         }
         Err(_) => false,
@@ -122,52 +212,13 @@ fn heartbeat_position(
         .filter(|position| position.iter().all(|value| value.is_finite()))
 }
 
-/// Reject reserved offer and typed-auth fields even when mixed with legacy fields.
-/// Malformed packets remain the ordinary decoder's responsibility.
-fn has_extended_auth(mut bytes: &[u8]) -> bool {
-    use prost::encoding::{DecodeContext, WireType, decode_key, skip_field};
-    while !bytes.is_empty() {
-        let Ok((tag, wire)) = decode_key(&mut bytes) else {
-            return false;
-        };
-        if matches!(tag, 1 | 2) && wire == WireType::LengthDelimited {
-            let Ok(len) = prost::decode_length_delimiter(&mut bytes) else {
-                return false;
-            };
-            let Some(mut auth) = bytes.get(..len) else {
-                return false;
-            };
-            bytes = &bytes[len..];
-            while !auth.is_empty() {
-                let Ok((field, kind)) = decode_key(&mut auth) else {
-                    return false;
-                };
-                if field == 2 {
-                    return true;
-                }
-                if skip_field(kind, field, &mut auth, DecodeContext::default()).is_err() {
-                    return false;
-                }
-            }
-        } else if skip_field(wire, tag, &mut bytes, DecodeContext::default()).is_err() {
-            return false;
-        }
-    }
-    false
-}
-
 /// Suppress only a complete assignment already accepted by this socket's bounded writer queue.
-fn is_repeat(
-    last: Option<&(IslandChangedMessage, Instant)>,
-    assignment: &IslandChangedMessage,
-    now: Instant,
-    dedup_ms: u64,
-) -> bool {
+fn is_repeat(last: Option<&(Vec<u8>, i64)>, assignment: &[u8], now: i64, dedup_ms: f64) -> bool {
     match last {
         Some((seen, at)) => {
-            dedup_ms > 0
-                && seen == assignment
-                && now.duration_since(*at).as_millis() < dedup_ms as u128
+            dedup_ms > 0.0
+                && seen.as_slice() == assignment
+                && (now as f64) - (*at as f64) < dedup_ms
         }
         None => false,
     }
@@ -189,15 +240,50 @@ struct Registration {
     fence: Option<legacy_fence::LegacyFence>,
 }
 
+/// Keep receiving while authentication/policy is pending so Close reaches the transport coordinator.
+async fn handshake_operation<F: std::future::Future>(
+    socket: &mut WebSocket,
+    state: &AppState,
+    deadline: tokio::time::Instant,
+    signed_pending: bool,
+    operation: F,
+) -> Option<F::Output> {
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            biased;
+            _ = state.restart.cancelled() => return None,
+            _ = tokio::time::sleep_until(deadline) => return None,
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(payload))) => {
+                    if !io::send(socket, Message::Pong(payload), None).await { return None; }
+                }
+                Some(Ok(Message::Pong(_))) => {}
+                Some(Ok(Message::Binary(bytes))) => match legacy_decode::decode(bytes.as_ref()) {
+                    Ok(packet) if signed_pending && matches!(packet.message, Some(client_packet::Message::SignedChallenge(_))) => {}
+                    Err(_) => {
+                        let _ = io::send(socket, Message::Close(Some(axum::extract::ws::CloseFrame {
+                            code: 1007, reason: "Cannot decode ClientPacket".into(),
+                        })), None).await;
+                        return None;
+                    }
+                    _ => return None,
+                }
+                _ => return None,
+            },
+            result = &mut operation => return Some(result),
+        }
+    }
+}
+
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut stage = Stage::HandshakeStart;
     let mut challenge_to_sign = String::new();
-    let mut claimed: Option<String> = None;
-    let mut admission: Option<AdmissionTicket> = None;
+    let mut issuance = None;
     let mut authority_epoch = None;
     let mut registration: Option<Registration> = None;
     let mut events: Option<SocketEvents> = None;
-    let mut last_island: Option<(IslandChangedMessage, Instant)> = None;
+    let mut last_island: Option<(Vec<u8>, i64)> = None;
     let mut last_stamp = None;
     let dedup_ms = state.settings.server.island_changed_dedup_ms;
     let handshake_timeout = Duration::from_millis(state.settings.auth.handshake_timeout_ms);
@@ -210,7 +296,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     loop {
         if let Some(current) = &registration {
             socket.bind_owner(&current.link);
-            socket.bind_fence(current.fence.as_ref().map(|fence| &fence.owner));
         }
         if registration
             .as_ref()
@@ -220,7 +305,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 events.as_mut().and_then(|rx| rx.try_recv().ok()),
                 Some(SocketEvent::Kicked)
             ) {
-                let _ = send_packet(&mut socket, kicked_packet(), None, &state.feed).await;
+                let _ = send_packet(&mut socket, kicked_packet(), None).await;
             }
             break;
         }
@@ -234,17 +319,14 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 let msg = match msg { Ok(m) => m, Err(_) => break };
                 match msg {
                     Message::Binary(bytes) => {
-                        if stage != Stage::Completed && has_extended_auth(&bytes) {
-                            break;
-                        }
-                        let packet = match ClientPacket::decode(bytes.as_ref()) {
+                        let packet = match legacy_decode::decode(bytes.as_ref()) {
                             Ok(p) => p,
                             Err(_) => {
                                 let _ = io::send(&mut socket,
                                     Message::Close(Some(axum::extract::ws::CloseFrame {
                                         code: 1007,
                                         reason: "Cannot decode ClientPacket".into(),
-                                    })), registration.as_ref().map(|current| &current.link), &state.feed)
+                                    })), registration.as_ref().map(|current| &current.link))
                                     .await;
                                 break;
                             }
@@ -255,11 +337,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     break;
                                 };
                                 let addr = req.address.to_ascii_lowercase();
-                                if !is_address(&addr) {
+                                if !req.address.starts_with("0x") || !is_address(&addr) {
                                     tracing::debug!("rejecting: challengeRequest carries no valid address");
                                     break;
                                 }
-                                if state.deny_list.is_denied(&addr).await {
+                                let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, false, state.deny_list.is_denied(&addr)).await else { break };
+                                if denied {
                                     tracing::warn!(addr = %addr, "archipelago ws rejected: deny-listed wallet");
                                     break;
                                 }
@@ -269,19 +352,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     Ok(Ok(epoch)) => epoch,
                                     _ => break,
                                 };
-                                let nonce: [u8; 24] = rand::rng().random();
+                                let nonce: [u8; 32] = rand::rng().random();
                                 challenge_to_sign = format!("dcl-{}", nonce.iter().map(|b| format!("{b:02x}")).collect::<String>());
 
-                                let Some(ticket) = state.registry.begin_admission(&addr) else {
-                                    tracing::error!(addr = %addr, "archipelago admission sequence exhausted");
-                                    break;
-                                };
-                                state
-                                    .challenges
-                                    .put_for_key(&addr, &challenge_to_sign);
+                                issuance = Some(state.challenges.issue(&challenge_to_sign));
                                 let already_connected = state.registry.has_any_peer(&addr);
-                                admission = Some(ticket);
-                                claimed = Some(addr);
                                 if !send_packet(
                                     &mut socket,
                                     server_packet::Message::ChallengeResponse(ChallengeResponseMessage {
@@ -289,7 +364,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         already_connected,
                                     }),
                                     None,
-                                    &state.feed,
                                 )
                                 .await
                                 {
@@ -306,35 +380,35 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     Ok(c) => c,
                                     Err(_) => break,
                                 };
-                                let addr = claimed.clone().unwrap_or_default();
-                                match state.challenges.redeem_and_verify_payload(
-                                    &addr,
-                                    &addr,
-                                    &challenge_to_sign,
-                                    &challenge_to_sign,
-                                    &chain,
-                                ) {
-                                    Ok(()) => {
-                                        let signer = chain
-                                            .first()
-                                            .map(|l| l.payload.to_ascii_lowercase())
-                                            .unwrap_or(addr);
-                                        if state.deny_list.is_denied(&signer).await {
-                                            tracing::warn!(addr = %signer, "archipelago ws rejected: deny-listed wallet (post-auth)");
-                                            break;
-                                        }
-                                        if state.ban_checker.is_banned(&signer).await {
-                                            tracing::warn!(addr = %signer, "archipelago ws rejected: platform-banned wallet");
-                                            let _ = send_packet(&mut socket, kicked_packet(), None, &state.feed).await;
-                                            break;
-                                        }
+                                let Some(issued) = issuance.as_ref() else { break };
+                                let Some(verified) = handshake_operation(
+                                    &mut socket, &state, handshake_deadline, true,
+                                    state.challenges.redeem_and_verify_payload(
+                                        issued, &challenge_to_sign, &chain, state.gatekeeper.eip1654(),
+                                    ),
+                                ).await else { break };
+                                match verified {
+                                    Ok(signer) => {
                                         let session = session_key_of(&chain, &signer);
                                         if !is_session_key(&session) {
                                             tracing::warn!(addr = %signer, "rejecting: auth chain yields no usable session key");
                                             break;
                                         }
+                                        let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.deny_list.is_denied(&signer)).await else { break };
+                                        if denied {
+                                            tracing::warn!(addr = %signer, "archipelago ws rejected: deny-listed wallet (post-auth)");
+                                            break;
+                                        }
+                                        let Some(banned) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.ban_checker.is_banned(&signer)).await else { break };
+                                        if banned {
+                                            tracing::warn!(addr = %signer, "archipelago ws rejected: platform-banned wallet");
+                                            let _ = send_packet(&mut socket, kicked_packet(), None).await;
+                                            break;
+                                        }
+                                        if state.restart.is_cancelled() || tokio::time::Instant::now() >= handshake_deadline {
+                                            break;
+                                        }
                                         let admitted = if let Some(epoch) = authority_epoch {
-                                            admission.take();
                                             match tokio::time::timeout_at(
                                                 handshake_deadline,
                                                 legacy_fence::LegacyFence::claim(&state, &signer, &session, epoch),
@@ -347,12 +421,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                                 }
                                             }
                                         } else {
-                                            admission.take().and_then(|ticket| ticket.commit(&session))
+                                            // No await between final policy completion and local registration.
+                                            state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit(&session))
                                                 .map(|(link, rx, previous)| (link, rx, previous, None))
                                         };
                                         let Some((link, rx, previous, fence)) = admitted else {
                                             tracing::info!(addr = %signer, session = %session, "rejecting superseded handshake admission");
-                                            let _ = send_packet(&mut socket, kicked_packet(), None, &state.feed).await;
+                                            let _ = send_packet(&mut socket, kicked_packet(), None).await;
                                             break;
                                         };
                                         if let Some(previous) = previous {
@@ -369,6 +444,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                             link,
                                             fence,
                                         });
+                                        if state.restart.is_cancelled() || tokio::time::Instant::now() >= handshake_deadline { break; }
                                         tracing::info!(addr = %signer, session = %session, "archipelago ws handshake complete (welcome)");
                                         if !send_packet(
                                             &mut socket,
@@ -376,7 +452,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                                 peer_id: signer.clone(),
                                             }),
                                             registration.as_ref().map(|current| &current.link),
-                                            &state.feed,
                                         )
                                         .await
                                         {
@@ -390,7 +465,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         handshake_deadline = tokio::time::Instant::now() + handshake_timeout;
                                     }
                                     Err(e) => {
-                                        tracing::warn!(addr = %claimed.clone().unwrap_or_default(), reason = e.class(), "archipelago signed-challenge rejected");
+                                        tracing::warn!(reason = e.class(), "archipelago signed-challenge rejected");
                                         break;
                                     }
                                 }
@@ -400,6 +475,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     continue;
                                 };
                                 let Some(current) = registration.as_ref() else { continue };
+                                if let Some(position) = hb.position.as_ref() {
+                                    state.observations.publish(crate::protocol::bus::statistics::Event::Heartbeat {
+                                        address: current.address.clone(),
+                                        position: [position.x as f64, position.y as f64, position.z as f64],
+                                    });
+                                }
                                 let Some(position) = heartbeat_position(&hb) else { continue };
                                 let realm = hb.desired_room.unwrap_or_else(|| "catalyrst".into());
                                 if !crate::protocol::bus::control_position::valid_realm(&realm) { continue; }
@@ -412,18 +493,18 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                             // Deferred positions recheck this exact owner before application.
                                         }
                                         Ok(Ok(false)) => {
-                                            let _ = send_packet(&mut socket, kicked_packet(), None, &state.feed).await;
+                                            let _ = send_packet(&mut socket, kicked_packet(), None).await;
                                             break;
                                         }
                                         _ => break,
                                     }
                                 }
-                                socket.position(current.fence.as_ref().map(|f| f.owner.clone()), current.link.clone(), current.address.clone(), realm, position).await;
+                                socket.position(current.fence.as_ref().map(|f| f.owner.clone()), current.link.clone(), realm, position).await;
                             }
                         }
                     }
                     Message::Ping(p) => {
-                        if !io::send(&mut socket, Message::Pong(p), registration.as_ref().map(|current| &current.link), &state.feed).await {
+                        if !io::send(&mut socket, Message::Pong(p), registration.as_ref().map(|current| &current.link)).await {
                             break;
                         }
                     }
@@ -446,30 +527,31 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                         let Ok(assignment) = IslandChangedMessage::decode(payload.as_slice()) else {
                             continue;
                         };
-                        let now = Instant::now();
-                        if last_stamp == stamp && is_repeat(last_island.as_ref(), &assignment, now, dedup_ms) {
+                        let now = chrono::Utc::now().timestamp_millis();
+                        if last_stamp == stamp && is_repeat(last_island.as_ref(), &payload, now, dedup_ms) {
                             state.feed.on_deduplicated();
                             continue;
                         }
-                        socket.bind_pulse(stamp.clone());
-                        if !send_packet(
+                        if !io::send_outgoing(
                             &mut socket,
-                            server_packet::Message::IslandChanged(assignment.clone()),
+                            io::Outgoing::Assignment {
+                                message: Message::Binary(craft(server_packet::Message::IslandChanged(assignment.clone())).into()),
+                                stamp: stamp.clone(),
+                            },
                             registration.as_ref().map(|current| &current.link),
-                            &state.feed,
                         )
                         .await
                         {
                             break;
                         }
                         // Local queue acceptance is not proof of remote consumption.
-                        last_island = Some((assignment, Instant::now()));
+                        last_island = Some((payload, now));
                         last_stamp = stamp;
                     }
                     SocketEvent::Kicked => {
                         let addr = registration.as_ref().map(|r| r.address.clone()).unwrap_or_default();
                         tracing::info!(addr = %addr, "session superseded or kicked; closing socket");
-                        let _ = send_packet(&mut socket, kicked_packet(), None, &state.feed).await;
+                        let _ = send_packet(&mut socket, kicked_packet(), None).await;
                         break;
                     }
                 }
@@ -489,7 +571,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 let result = tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT, state.control_v4.renew(owner),
                 ).await.unwrap_or(Err(crate::archipelago::control_v4::V4Error::AuthorityUnavailable));
-                if !handle_renewal_result(&mut socket, result, &current.link, &state.feed).await {
+                if !handle_renewal_result(&mut socket, result, &current.link).await {
                     break;
                 }
             }
@@ -497,23 +579,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 
     drop(socket);
-    if let Some(address) = claimed.as_ref() {
-        state
-            .challenges
-            .discard_for_key(address, &challenge_to_sign);
+    if let Some(issued) = issuance.as_ref() {
+        state.challenges.discard(issued);
     }
     if let Some(current) = registration {
         current.link.close();
-        if let Some(fence) = current.fence {
+        if let Some(fence) = current.fence.as_ref() {
             control_position::publish(&state, &fence.owner, "", None);
             state
                 .registry
                 .on_v4_peer_disconnected(&current.address, current.link.id);
-            let _ = tokio::time::timeout(
-                AUTHORITY_OPERATION_TIMEOUT,
-                state.control_v4.release(&fence.owner),
-            )
-            .await;
         } else {
             state.registry.on_peer_disconnected(
                 &current.address,
@@ -521,9 +596,23 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 current.link.id,
             );
         }
-        if !state.registry.has_any_peer(&current.address) {
-            state.peers.remove_peer(&current.address);
-        }
+        state.registry.while_wallet_absent(&current.address, || {
+            state.enforcement.remove_peer(&current.address)
+        });
+        // Statistics backpressure retains handler admission credit without
+        // delaying signaling revocation, registry cleanup or durable release.
+        tokio::join!(
+            state.observations.disconnect(current.address.clone()),
+            async {
+                if let Some(fence) = current.fence.as_ref() {
+                    let _ = tokio::time::timeout(
+                        AUTHORITY_OPERATION_TIMEOUT,
+                        state.control_v4.release(&fence.owner),
+                    )
+                    .await;
+                }
+            }
+        );
         tracing::info!(addr = %current.address, session = %current.session, "archipelago ws closed");
     }
 }
@@ -564,10 +653,7 @@ mod tests {
                             } else {
                                 V4Error::AuthorityUnavailable
                             });
-                            assert!(
-                                !handle_renewal_result(&mut socket, result, &link, &state.feed)
-                                    .await
-                            );
+                            assert!(!handle_renewal_result(&mut socket, result, &link).await);
                             drop(socket);
                             link.close();
                         })
@@ -603,26 +689,6 @@ mod tests {
     }
 
     #[test]
-    fn reserved_auth_fields_are_rejected_without_rejecting_legacy_fields() {
-        for outer in [0x0a_u8, 0x12] {
-            let legacy = [outer, 3, 0x0a, 1, b'x'];
-            assert!(!has_extended_auth(&legacy));
-            // A valid legacy string plus an empty offer/typed chain still rejects.
-            assert!(has_extended_auth(&[outer, 5, 0x0a, 1, b'x', 0x12, 0]));
-            // The reserved field rejects for every wire kind, not just known messages.
-            assert!(has_extended_auth(&[outer, 2, 0x10, 0]));
-            assert!(has_extended_auth(&[outer, 2, 0x12, 0]));
-            // A duplicate top-level auth arm cannot hide a reserved nested field.
-            let mut mixed = legacy.to_vec();
-            mixed.extend_from_slice(&[outer, 2, 0x12, 0]);
-            assert!(has_extended_auth(&mixed));
-        }
-        assert!(!has_extended_auth(&[0x0a, 9, 0x0a]));
-        assert!(!has_extended_auth(&[0x0a, 1, 0xff]));
-        assert!(!has_extended_auth(&[0x1a, 0]));
-    }
-
-    #[test]
     fn positionless_heartbeat_is_ignored() {
         let hb = Heartbeat {
             position: None,
@@ -647,42 +713,87 @@ mod tests {
     }
 
     #[test]
+    fn dedup_preserves_fractional_infinite_and_number_subtraction_boundaries() {
+        let last = (vec![1], 1_000);
+        for (threshold, now, expected) in [
+            (0.5, 1_000, true),
+            (0.5, 1_001, false),
+            (10.0, 1_010, false),
+            (10.0, 1_011, false),
+            (10.0, 999, true),
+            (f64::INFINITY, i64::MAX, true),
+            (-1.0, 999, false),
+            (-0.0, 999, false),
+            (f64::NEG_INFINITY, 999, false),
+        ] {
+            assert_eq!(is_repeat(Some(&last), &[1], now, threshold), expected);
+            assert!(!is_repeat(Some(&last), &[2], now, threshold));
+        }
+        // The operands round separately before subtraction, as Number timestamps do.
+        let last = (vec![1], 9_007_199_254_740_992);
+        assert!(is_repeat(Some(&last), &[1], 9_007_199_254_740_993, 0.5));
+    }
+
+    #[test]
     fn the_same_room_inside_the_window_is_a_repeat_and_a_different_one_is_not() {
-        let now = Instant::now();
+        let now = 1000;
         let assignment = IslandChangedMessage {
             island_id: "island-C1".into(),
             conn_str: "livekit:wss://example.invalid?access_token=first".into(),
             ..Default::default()
         };
-        let last = (assignment.clone(), now);
-        assert!(is_repeat(Some(&last), &assignment, now, 10_000));
+        let last = (assignment.encode_to_vec(), now);
+        assert!(is_repeat(
+            Some(&last),
+            &assignment.encode_to_vec(),
+            now,
+            10_000.0
+        ));
         assert!(!is_repeat(
             Some(&last),
             &IslandChangedMessage {
                 island_id: "island-C2".into(),
                 ..assignment.clone()
-            },
+            }
+            .encode_to_vec(),
             now,
-            10_000
+            10_000.0
         ));
-        assert!(!is_repeat(None, &assignment, now, 10_000));
+        assert!(!is_repeat(None, &assignment.encode_to_vec(), now, 10_000.0));
     }
 
     #[test]
     fn a_zero_window_repeats_nothing_and_an_elapsed_one_lets_the_room_through() {
-        let now = Instant::now();
+        let now = 1000;
         let assignment = IslandChangedMessage {
             island_id: "island-C1".into(),
             conn_str: "livekit:wss://example.invalid?access_token=first".into(),
             ..Default::default()
         };
-        let last = (assignment.clone(), now);
-        assert!(!is_repeat(Some(&last), &assignment, now, 0));
+        let last = (assignment.encode_to_vec(), now);
         assert!(!is_repeat(
             Some(&last),
-            &assignment,
-            now + Duration::from_millis(10),
-            10
+            &assignment.encode_to_vec(),
+            now,
+            0.0
+        ));
+        assert!(!is_repeat(
+            Some(&last),
+            &assignment.encode_to_vec(),
+            now + 10,
+            10.0
+        ));
+        assert!(is_repeat(
+            Some(&last),
+            &assignment.encode_to_vec(),
+            now - 100_000,
+            10.0
+        ));
+        assert!(!is_repeat(
+            Some(&last),
+            &assignment.encode_to_vec(),
+            now + 100_000,
+            10.0
         ));
     }
 }
