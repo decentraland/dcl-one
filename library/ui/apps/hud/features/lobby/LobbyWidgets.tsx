@@ -51,7 +51,7 @@ export interface LobbyWidgetContext {
   openPlace: (p: LobbyPlace, origin: CardOrigin) => void
   jumpPlace: (p: LobbyPlace, origin: CardOrigin) => void
   openEvent: (e: EventData, origin: CardOrigin) => void
-  jumpEvent: (e: EventData, origin: CardOrigin) => (() => void) | null
+  jumpEvent: (e: EventData, origin: CardOrigin) => (() => boolean) | null
   toggleInterest: (e: EventData) => void
   addToCalendar: (e: EventData) => void
   shareEvent: (e: EventData, anchor: HTMLElement) => void
@@ -59,7 +59,8 @@ export interface LobbyWidgetContext {
   joinFriend: (f: Friend) => void
   viewCommunity: (c: Community) => void
   openPhoto: (index: number) => void
-  goTo: (text: string) => Promise<boolean>
+  /** True once travel started, false for nowhere to go, null to keep the text as it is. */
+  goTo: (text: string) => Promise<boolean | null>
   viewAll: (target: 'recent' | 'recommended' | 'live' | 'upcoming' | 'communities' | 'gallery') => void
 }
 
@@ -339,8 +340,8 @@ function GoTo({ ctx }: { ctx: LobbyWidgetContext }): React.JSX.Element {
     setChecking(true)
     const ok = await ctx.goTo(destination).catch(() => false)
     setChecking(false)
-    if (ok) setText('')
-    else setInvalid(true)
+    if (ok === true) setText('')
+    else if (ok === false) setInvalid(true)
   }
   return (
     <>

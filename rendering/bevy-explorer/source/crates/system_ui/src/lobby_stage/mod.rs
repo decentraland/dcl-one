@@ -29,11 +29,10 @@ use system_bridge::{LobbyStage, SystemApi};
 use texture_camera::TextureLayersCache;
 
 use self::{
-    dust::Dust,
     materials::{
-        order, BlobMaterial, DustMaterial, DustUniform, FloorExtension, FloorMaterial,
-        FloorUniform, MistMaterial, MistUniform, RockExtension, RockMaterial, RockUniform,
-        VignetteMaterial, VignetteUniform,
+        order, BlobMaterial, DustMaterial, FloorExtension, FloorMaterial, FloorUniform,
+        MistMaterial, MistUniform, RockExtension, RockMaterial, RockUniform, VignetteMaterial,
+        VignetteUniform,
     },
     presets::{mirrored_rotation, StagePreset},
 };
@@ -87,7 +86,7 @@ impl Plugin for LobbyStagePlugin {
         app.init_resource::<StageRequest>()
             .add_systems(
                 Update,
-                (take_requests, sync_stage, animate_dust)
+                (take_requests, sync_stage)
                     .chain()
                     .in_set(SceneSets::RestrictedActions),
             )
@@ -95,7 +94,8 @@ impl Plugin for LobbyStagePlugin {
                 PostUpdate,
                 fit_stage.after(TransformSystem::TransformPropagate),
             )
-            .add_observer(moss_rocks);
+            .add_observer(moss_rocks)
+            .add_observer(layer_scene);
         diagnostics::register(app);
     }
 }
@@ -147,6 +147,13 @@ struct Mossy {
 fn take_requests(mut events: EventReader<SystemApi>, mut request: ResMut<StageRequest>) {
     for event in events.read() {
         if let SystemApi::SetLobbyStage(stage) = event {
+            if stage
+                .as_ref()
+                .is_some_and(|s| !s.feet.world_vec_to_vec3().is_finite())
+            {
+                warn!("setLobbyStage: ignoring non-finite feet");
+                continue;
+            }
             request.0 = stage.clone();
         }
     }
@@ -167,7 +174,7 @@ fn render_layer(
 
 type StageCamera = (
     Entity,
-    &'static GlobalTransform,
+    Ref<'static, GlobalTransform>,
     &'static RenderLayers,
     &'static Projection,
     Option<&'static Exposure>,
@@ -237,6 +244,10 @@ fn sync_stage(
     let Some((camera, camera_transform, _, _, exposure)) = camera_for(render_layer) else {
         return;
     };
+    // a camera spawned this frame is not placed until PostUpdate: build next frame
+    if camera_transform.is_added() {
+        return;
+    }
     let Some((scene_root, root_transform)) = roots
         .iter()
         .next()
@@ -280,6 +291,7 @@ fn sync_stage(
     builder.build(
         &mut commands,
         root,
+        &layers,
         preset,
         exposure,
         &asset_server,
@@ -314,10 +326,13 @@ pub fn key_light_illuminance(intensity: f32, exposure: f32) -> f32 {
 }
 
 impl StageAssets<'_> {
+    #[allow(clippy::too_many_arguments)]
     fn build(
         &mut self,
         commands: &mut Commands,
         root: Entity,
+        // set as each part spawns: propagation lands a frame later, on the default layer meanwhile
+        layers: &RenderLayers,
         preset: &'static StagePreset,
         exposure: f32,
         asset_server: &AssetServer,
@@ -338,6 +353,7 @@ impl StageAssets<'_> {
             Transform::from_translation(BACKDROP_POSITION),
             NotShadowCaster,
             NotShadowReceiver,
+            layers.clone(),
             ChildOf(root),
         ));
 
@@ -380,12 +396,14 @@ impl StageAssets<'_> {
             })),
             Transform::from_xyz(0.0, FLOOR_Y, 0.0),
             NotShadowCaster,
+            layers.clone(),
             ChildOf(root),
         ));
 
         commands.spawn((
             SceneRoot(asset_server.load("embedded://lobby_stage/podium.glb#Scene0")),
             Transform::from_xyz(0.0, PODIUM_Y, 0.0),
+            layers.clone(),
             ChildOf(root),
         ));
 
@@ -404,6 +422,7 @@ impl StageAssets<'_> {
                 .with_scale(Vec3::new(BLOB_SIZE, BLOB_SIZE, 1.0)),
             NotShadowCaster,
             NotShadowReceiver,
+            layers.clone(),
             ChildOf(root),
         ));
 
@@ -427,24 +446,22 @@ impl StageAssets<'_> {
                 )),
                 NotShadowCaster,
                 NotShadowReceiver,
+                layers.clone(),
                 ChildOf(root),
             ));
         }
 
         if let Some(color) = preset.dust {
             commands.spawn((
-                Dust::new(color.to_linear()),
-                Mesh3d(meshes.add(dust::empty_mesh())),
+                Mesh3d(meshes.add(dust::mesh())),
                 MeshMaterial3d(self.dust.add(DustMaterial {
-                    dust: DustUniform {
-                        color: DUST_TINT.to_linear().to_vec4(),
-                        softness: DUST_SOFTNESS,
-                    },
+                    dust: dust::uniform(DUST_TINT.to_linear(), color.to_linear(), DUST_SOFTNESS),
                 })),
                 Transform::default(),
                 NoFrustumCulling,
                 NotShadowCaster,
                 NotShadowReceiver,
+                layers.clone(),
                 ChildOf(root),
             ));
         }
@@ -457,6 +474,7 @@ impl StageAssets<'_> {
                 Transform::from_translation(prop.position + Vec3::Y * FLOOR_Y)
                     .with_rotation(mirrored_rotation(prop.rotation))
                     .with_scale(Vec3::splat(prop.scale)),
+                layers.clone(),
                 ChildOf(root),
             ));
             if let Some((_, moss, mask)) =
@@ -480,6 +498,7 @@ impl StageAssets<'_> {
             Transform::from_rotation(
                 mirrored_rotation(preset.light_rotation) * Quat::from_rotation_y(PI),
             ),
+            layers.clone(),
             ChildOf(root),
         ));
 
@@ -502,9 +521,30 @@ impl StageAssets<'_> {
                 NoFrustumCulling,
                 NotShadowCaster,
                 NotShadowReceiver,
+                layers.clone(),
                 ChildOf(root),
             ));
         }
+    }
+}
+
+/// A model's meshes spawn after the stage, so they take its layer here.
+fn layer_scene(
+    trigger: Trigger<SceneInstanceReady>,
+    parents: Query<&ChildOf>,
+    stages: Query<&Stage>,
+    children: Query<&Children>,
+    mut commands: Commands,
+) {
+    let Ok(stage) = parents
+        .get(trigger.target())
+        .and_then(|parent| stages.get(parent.parent()))
+    else {
+        return;
+    };
+    let layers = RenderLayers::layer(stage.render_layer);
+    for entity in children.iter_descendants(trigger.target()) {
+        commands.entity(entity).try_insert(layers.clone());
     }
 }
 
@@ -540,34 +580,6 @@ fn moss_rocks(
             .entity(entity)
             .remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(rock));
-    }
-}
-
-fn animate_dust(
-    time: Res<Time>,
-    mut dust: Query<(&mut Dust, &Mesh3d, &ChildOf)>,
-    stages: Query<(&Stage, &GlobalTransform)>,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    for (mut motes, mesh, parent) in &mut dust {
-        motes.tick(time.delta_secs());
-        let Ok((stage, stage_transform)) = stages.get(parent.parent()) else {
-            continue;
-        };
-        let Some(camera) = stage.camera.and_then(|c| cameras.get(c).ok()) else {
-            continue;
-        };
-        let to_stage = stage_transform.affine().inverse();
-        let right = to_stage
-            .transform_vector3(camera.right().into())
-            .normalize_or_zero();
-        let up = to_stage
-            .transform_vector3(camera.up().into())
-            .normalize_or_zero();
-        if let Some(mesh) = meshes.get_mut(&mesh.0) {
-            motes.build_mesh(mesh, right, up);
-        }
     }
 }
 
@@ -865,11 +877,7 @@ mod tests {
                 .with_generated_tangents()
                 .unwrap(),
         );
-        let dust = meshes.add({
-            let mut mesh = dust::empty_mesh();
-            Dust::new(LinearRgba::WHITE).build_mesh(&mut mesh, Vec3::X, Vec3::Y);
-            mesh
-        });
+        let dust = meshes.add(dust::mesh());
         let blob_shape = world.resource_mut::<Assets<Image>>().add(Image::default());
 
         let floor = world
@@ -898,7 +906,7 @@ mod tests {
         let dust_material = world
             .resource_mut::<Assets<DustMaterial>>()
             .add(DustMaterial {
-                dust: DustUniform::default(),
+                dust: dust::uniform(LinearRgba::WHITE, LinearRgba::WHITE, 1.0),
             });
         world.spawn((
             Mesh3d(dust),

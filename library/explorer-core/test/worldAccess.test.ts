@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { judgeWorldAccess } from '../features/places/worldAccess'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fetchWorldAccess, judgeWorldAccess } from '../features/places/worldAccess'
 
 const OWNER = '0xOwner00000000000000000000000000000000001'
 const ME = '0xMe0000000000000000000000000000000000002'
@@ -34,5 +34,35 @@ describe('world access', () => {
 
   it('cannot tell for an access type it does not know', () => {
     expect(judgeWorldAccess({ owner: OWNER, permissions: { access: { type: 'nft-gated' } } }, ME, [])).toBe('failed')
+  })
+
+  describe('the check', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
+    })
+    const hanging = (): void => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((_url: string, init?: RequestInit) => new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))))
+      )
+    }
+
+    it('cannot tell once the worlds server takes too long', async () => {
+      const timeout = new AbortController()
+      vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+      hanging()
+      const check = fetchWorldAccess('party.dcl.eth', ME, [], new AbortController().signal)
+      timeout.abort(new DOMException('timed out', 'TimeoutError'))
+      await expect(check).resolves.toBe('failed')
+    })
+
+    it("still rejects when the caller's own signal aborts", async () => {
+      hanging()
+      const caller = new AbortController()
+      const check = fetchWorldAccess('party.dcl.eth', ME, [], caller.signal)
+      caller.abort()
+      await expect(check).rejects.toBeDefined()
+    })
   })
 })

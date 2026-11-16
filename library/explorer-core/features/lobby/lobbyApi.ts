@@ -7,6 +7,8 @@ import { getPref, PREF, setPref } from '../../lib/prefs'
 const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
 const CACHE_TTL = 60_000
+const WHERE_LOOKUPS = 4
+const WHERE_TIMEOUT_MS = 5_000
 
 export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -102,35 +104,46 @@ export type FriendWhere = { kind: 'genesis'; parcel: { x: number; y: number } } 
 
 type Peer = { id?: string; address?: string; parcel?: [number, number] }
 
+/** None when comms cannot answer, so the worlds are still asked. */
+async function fetchPeers(wallets: string[]): Promise<Peer[]> {
+  const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`, { signal: AbortSignal.timeout(WHERE_TIMEOUT_MS) }).catch(() => null)
+  if (res == null) return []
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    return []
+  }
+  const body = (await res.json().catch(() => null)) as { peers?: Peer[] } | null
+  return body?.peers ?? []
+}
+
+async function fetchConnectedWorld(wallet: string): Promise<string | null> {
+  const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(wallet)}/connected-world`, { signal: AbortSignal.timeout(WHERE_TIMEOUT_MS) }).catch(() => null)
+  if (r == null) return null
+  if (!r.ok) {
+    await r.body?.cancel().catch(() => undefined)
+    return null
+  }
+  const data = (await r.json().catch(() => null)) as { world?: string } | null
+  return data?.world || null
+}
+
 /** Comms peers first; each wallet still missing is asked for the world it is in. */
 export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, FriendWhere>> {
   const found = new Map<string, FriendWhere>()
   if (wallets.length === 0) return found
-  const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`)
-  if (!res.ok) {
-    await res.body?.cancel().catch(() => undefined)
-    throw new Error(`peers: ${res.status}`)
-  }
-  const body = (await res.json()) as { peers?: Peer[] }
-  for (const peer of body.peers ?? []) {
+  for (const peer of await fetchPeers(wallets)) {
     const id = (peer.id ?? peer.address ?? '').toLowerCase()
     if (id && Array.isArray(peer.parcel)) found.set(id, { kind: 'genesis', parcel: { x: peer.parcel[0], y: peer.parcel[1] } })
   }
-  await Promise.all(
-    wallets
-      .filter((w) => !found.has(w.toLowerCase()))
-      .map(async (w) => {
-        const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(w)}/connected-world`).catch(() => null)
-        if (r == null) return
-        if (!r.ok) {
-          await r.body?.cancel().catch(() => undefined)
-          return
-        }
-        const data = (await r.json().catch(() => null)) as { world?: string } | null
-        if (data?.world) found.set(w.toLowerCase(), { kind: 'world', world: data.world, parcel: null })
-      })
-  )
+  const queue = wallets.filter((w) => !found.has(w.toLowerCase()))
+  const lookup = async (): Promise<void> => {
+    for (let w = queue.shift(); w != null; w = queue.shift()) {
+      const world = await fetchConnectedWorld(w)
+      if (world != null) found.set(w.toLowerCase(), { kind: 'world', world, parcel: null })
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(WHERE_LOOKUPS, queue.length) }, lookup))
   for (const w of wallets) if (!found.has(w.toLowerCase())) found.set(w.toLowerCase(), { kind: 'unknown' })
   return found
 }
@@ -142,7 +155,7 @@ export async function whereTitle(where: FriendWhere): Promise<string> {
 }
 
 export async function fetchCrowd(): Promise<{ x: number; y: number }> {
-  const res = await fetch(`${serviceUrl('realmProvider')}/hot-scenes`)
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/hot-scenes`)
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined)
     throw new Error(`hot-scenes: ${res.status}`)

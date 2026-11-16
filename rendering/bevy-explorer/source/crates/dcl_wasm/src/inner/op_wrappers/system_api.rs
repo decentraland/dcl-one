@@ -197,9 +197,12 @@ pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, Was
 }
 
 #[wasm_bindgen]
-pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) {
-    serde_parse!(stage);
+pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: a malformed stage throws in JS, as on Deno.
+    let stage = serde_wasm_bindgen::from_value(stage)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setLobbyStage: {e}")))?;
     dcl_js::system_api::op_set_lobby_stage(state.rc(), stage);
+    Ok(())
 }
 
 #[wasm_bindgen]

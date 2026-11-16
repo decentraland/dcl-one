@@ -94,6 +94,10 @@ pub struct DustMaterial {
 }
 
 impl Material for DustMaterial {
+    fn vertex_shader() -> ShaderRef {
+        shader(&embedded_path!("lobby_dust.wgsl"))
+    }
+
     fn fragment_shader() -> ShaderRef {
         shader(&embedded_path!("lobby_dust.wgsl"))
     }
@@ -109,9 +113,12 @@ impl Material for DustMaterial {
     fn specialize(
         _: &MaterialPipeline<Self>,
         descriptor: &mut RenderPipelineDescriptor,
-        _: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         _: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.vertex.buffers = vec![layout
+            .0
+            .get_layout(&[Mesh::ATTRIBUTE_POSITION.at_shader_location(0)])?];
         descriptor.primitive.cull_mode = None;
         Ok(())
     }
@@ -236,8 +243,16 @@ mod uniforms {
 
     #[derive(Clone, Copy, Default, Debug, ShaderType)]
     pub struct DustUniform {
-        /// linear rgba, multiplied by each mote's colour
+        /// linear rgba
         pub color: Vec4,
+        /// in the stage's frame
+        pub emitter_centre: Vec4,
+        pub emitter_size: Vec4,
+        /// a life in seconds (min, max), then the speed in metres per second (min, max)
+        pub lifetime_speed: Vec4,
+        /// metres across (min, max), then the drift's strength and cells per metre
+        pub size_noise: Vec4,
+        pub noise_scroll: f32,
         /// share of the disc's radius its edge takes to fade
         pub softness: f32,
     }

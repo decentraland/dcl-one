@@ -9,7 +9,7 @@ import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
 import { eventAt } from './eventFixtures'
-import { fetchLandingPlace, fetchRecents, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, fetchLandingPlace, fetchRecents, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import * as analytics from '@explorer-core/lib/analytics'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
@@ -242,6 +242,32 @@ describe('lobby widgets', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it("keeps an event's detail open and reports no jump when the pick is refused", () => {
+    const track = vi.spyOn(analytics, 'track')
+    const session = fakeSession()
+    vi.mocked(session.pickDestination).mockReturnValue(false)
+    lobbyRead(session, [eventAt('l', new Date(), { name: 'Live Party', x: 1, y: 2, live: true })])
+    render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Live Party' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Live Party' })).getByRole('button', { name: /^Jump in to/ }))
+    expect(session.pickDestination).toHaveBeenCalledOnce()
+    expect(track).not.toHaveBeenCalledWith('event_jumped_in', expect.anything())
+    expect(screen.getByRole('dialog', { name: 'Live Party' })).toBeInTheDocument()
+  })
+
+  it("closes an event's share menu on Cancel and leaves the lobby up", () => {
+    const session = fakeSession()
+    lobbyRead(session, [eventAt('u', new Date(Date.now() + 3_600_000), { name: 'Tower Smash', x: 3, y: 4 })])
+    render(lobby(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    expect(screen.getByRole('menuitem', { name: 'Copy link' })).toBeInTheDocument()
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
+    expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull()
+    expect(dispatchCancelLayer()).toBe(false)
+  })
+
   it("keeps an upcoming event's detail open when its world cannot be reached", () => {
     const session = fakeSession()
     lobbyRead(session, [eventAt('u', new Date(Date.now() + 3_600_000), { name: 'Bad Fest', world: true, server: 'https://realm.example/about' })])
@@ -331,6 +357,31 @@ describe('lobby go to', () => {
     goTo('ghost')
     expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
+
+  it('keeps the text, unflagged, when the pick is refused', async () => {
+    const session = withGoTo()
+    vi.mocked(session.pickDestination).mockReturnValue(false)
+    render(lobby(session))
+    goTo('3,-5')
+    await waitFor(() => expect(session.pickDestination).toHaveBeenCalledOnce())
+    expect(screen.getByRole('textbox', { name: 'Go to a coordinate or a World' })).toHaveValue('3,-5')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('does not travel when the crowd answers after another pick', async () => {
+    setPref(PREF.lobbyLayout, '{"Version":1,"Entries":[{"Corner":"TopLeft","Widget":"GoTo4By1","X":0,"Y":0},{"Corner":"TopRight","Widget":"LiveEvents3By3","X":0,"Y":0}]}')
+    const session = fakeSession()
+    lobbyRead(session, [eventAt('l', new Date(), { name: 'Live Party', x: 1, y: 2, live: true })])
+    let answer: (p: { x: number; y: number }) => void = () => undefined
+    vi.mocked(fetchCrowd).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    render(lobby(session))
+    goTo('crowd')
+    await waitFor(() => expect(fetchCrowd).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'Jump in to Live Party' }))
+    await act(async () => answer({ x: 9, y: 9 }))
+    expect(session.pickDestination).toHaveBeenCalledOnce()
+    expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 1, y: 2 })
+  })
 })
 
 describe('lobby layout editor', () => {
@@ -354,6 +405,22 @@ describe('lobby layout editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'SAVE' }))
     expect(screen.queryByRole('heading', { name: /welcome/i })).not.toBeInTheDocument()
     expect(getPref(PREF.lobbyLayout)).not.toContain('Landing4By3')
+  })
+
+  it('lets a page opened over the editor close first on Cancel and keeps the draft', () => {
+    const session = fakeSession()
+    const { rerender } = render(lobby(session))
+    fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Jump In Home' }))
+    rerender(lobby({ ...session, lobbyData: { ...session.lobbyData, covered: true } }))
+    expect(dispatchCancelLayer()).toBe(false)
+    rerender(lobby(session))
+    const modal = screen.getByRole('dialog', { name: 'Customize Lobby' })
+    expect(within(modal).getByRole('button', { name: 'SAVE' })).toBeEnabled()
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Customize Lobby' })).not.toBeInTheDocument()
   })
 
   it("fills a friend's picture with their profile colour, framed a fifth of the way to white", async () => {

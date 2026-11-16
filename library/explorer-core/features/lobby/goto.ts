@@ -46,15 +46,18 @@ export function parseGotoTarget(text: string): GotoTarget {
 }
 
 export const WORLD_SUFFIX = '.dcl.eth'
-const WORLD = /^[A-Za-z0-9]+\.dcl\.eth$/
+// name.dcl.eth or name.eth, the names worldName keeps
+const WORLD = /^[A-Za-z0-9]+(\.dcl)?\.eth$/
 const WORLD_SHORT_NAME = /^[A-Za-z0-9]+$/
 
-/** Genesis City's parcels: the square city and its two extensions, each one parcel wider on every side. */
+/** Genesis City's parcels: the square city and its two extensions, as `[minX, minY, maxX, maxY)`. */
 const GENESIS_BOUNDS: ReadonlyArray<readonly [number, number, number, number]> = [
-  [-151, -151, 151, 151],
-  [61, 150, 163, 159],
-  [150, 58, 164, 151]
+  [-150, -150, 151, 151],
+  [62, 151, 163, 159],
+  [151, 59, 164, 151]
 ]
+/** The worlds server's bound on a deployment's parcels. */
+const WORLD_PARCEL_LIMIT = 150
 
 export function isGenesisParcel(x: number, y: number): boolean {
   return GENESIS_BOUNDS.some(([minX, minY, maxX, maxY]) => x >= minX && x < maxX && y >= minY && y < maxY)
@@ -65,7 +68,11 @@ export function isDestination(text: string): boolean {
   if (t.random || t.crowd) return true
   if (t.spawnPoint != null) return false
   if (t.world != null && !WORLD.test(t.world) && !WORLD_SHORT_NAME.test(t.world)) return false
-  if (t.parcel != null && !isGenesisParcel(t.parcel.x, t.parcel.y)) return false
+  if (t.parcel != null) {
+    const { x, y } = t.parcel
+    const inside = t.world != null ? Math.abs(x) <= WORLD_PARCEL_LIMIT && Math.abs(y) <= WORLD_PARCEL_LIMIT : isGenesisParcel(x, y)
+    if (!inside) return false
+  }
   return t.world != null || t.parcel != null
 }
 

@@ -24,9 +24,13 @@ export function judgeWorldAccess(body: PermissionsBody, wallet: string | null, c
   return listed.some((id) => communities?.includes(id) === true) ? 'invited' : 'denied'
 }
 
+/** A slower check is `failed`: Jump in shows and the world decides on arrival. */
+export const WORLD_ACCESS_TIMEOUT_MS = 8_000
+
 export async function fetchWorldAccess(world: string, wallet: string | null, communities: readonly string[] | null, signal?: AbortSignal): Promise<WorldAccess> {
+  const timeout = AbortSignal.timeout(WORLD_ACCESS_TIMEOUT_MS)
   try {
-    const res = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/permissions`, { signal })
+    const res = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/permissions`, { signal: signal != null ? AbortSignal.any([signal, timeout]) : timeout })
     if (!res.ok) {
       await res.body?.cancel().catch(() => undefined)
       return 'failed'

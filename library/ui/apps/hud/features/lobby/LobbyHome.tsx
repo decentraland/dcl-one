@@ -43,7 +43,7 @@ import { useStoredProfile } from '../login/useStoredProfile'
 import { openPlaceDetail } from '../places/PlaceDetail'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
-import type { Destination } from '../session/useEngineSession'
+import { SIGNING_IN_PICK, type Destination } from '../session/useEngineSession'
 import { profilePictureStyle, type ConnectedFriend } from './LobbyCards'
 import { CustomizeModal, DropMarker, EditorGrids, WidgetHandle, WidgetPreview, useLayoutEditor } from './LobbyEditor'
 import { openExploreSection, type ExploreSection } from './ExploreSectionModal'
@@ -61,6 +61,7 @@ const DRAG_THRESHOLD = 8
 /** Pixels from the pointer. */
 const AVATAR_TOOLTIP_OFFSET = 100
 const FRIEND_TOOLTIP_OFFSET = 16
+const STALE = Symbol('stale')
 const CROWD_ERROR = 'The most crowded place could not be found. Please try again.'
 
 // The Backpack's preview runs past its modal's edge; only the part inside the modal is a hole.
@@ -134,6 +135,7 @@ function EditSession({
   canvas,
   toCanvas,
   welcome,
+  covered,
   onDone
 }: {
   saved: LobbyLayout
@@ -141,13 +143,15 @@ function EditSession({
   canvas: { width: number; height: number }
   toCanvas: (x: number, y: number) => { x: number; y: number }
   welcome: string
+  covered: boolean
   onDone: (layout: LobbyLayout | null) => void
 }): React.JSX.Element {
   const e = useLayoutEditor(saved, canvas, toCanvas)
   const { display, lifted, changed, draft } = e.editor
   const cancel = useRef(() => onDone(null))
   cancel.current = () => onDone(null)
-  useEffect(() => registerCancelLayer(() => cancel.current()), [])
+  // a page over the editor takes Cancel first, so the draft stays
+  useEffect(() => (covered ? undefined : registerCancelLayer(() => cancel.current())), [covered])
   return (
     <>
       <EditorGrids canvas={canvas} target={e.target} size={e.drag?.widget ?? null} />
@@ -204,6 +208,8 @@ export function LobbyHome({
   const reel = useReelList('lobby', session.gallery.fetchPage)
   const reelActions = useOwnReelActions(session.gallery, reel)
   const [share, setShare] = useState<{ event: EventData; x: number; y: number } | null>(null)
+  const sharing = share != null
+  useEffect(() => (sharing ? registerCancelLayer(() => setShare(null)) : undefined), [sharing])
   const [avatarTip, setAvatarTip] = useState<{ x: number; y: number } | null>(null)
   const [friendTip, setFriendTip] = useState<{ name: string; x: number; y: number } | null>(null)
   const [rotating, setRotating] = useState<{ x: number; y: number } | null>(null)
@@ -236,7 +242,23 @@ export function LobbyHome({
   const onlineByAddress = useMemo(() => new Map(online.map((f) => [f.address.toLowerCase(), f])), [online])
 
   const busy = session.login.busy
-  const pick = useCallback((dest: Destination) => onPick(dest), [onPick])
+  // moves on with every pick and on unmount: a lookup answering later does not travel
+  const travels = useRef(0)
+  useEffect(() => () => void travels.current++, [])
+  /** False when the pick was refused (sign-in still finishing, or nowhere to go). */
+  const pick = useCallback(
+    (dest: Destination): boolean => {
+      travels.current++
+      const ok = onPick(dest)
+      if (!ok && busy) showToast(SIGNING_IN_PICK)
+      return ok
+    },
+    [onPick, busy]
+  )
+  const afterLookup = <T,>(lookup: Promise<T>): Promise<T | typeof STALE> => {
+    const seq = travels.current
+    return lookup.then((value) => (seq === travels.current ? value : STALE))
+  }
 
   const friendsAt = useCallback(
     (addresses: string[] | null | undefined): ConnectedFriend[] =>
@@ -265,13 +287,14 @@ export function LobbyHome({
     openPlaceDetail({ place: p, onJumpIn: (place) => jumpPlace(place, origin) })
   }
 
-  const jumpEvent = (e: EventData, origin: lobbyAnalytics.CardOrigin): (() => void) | null => {
+  const jumpEvent = (e: EventData, origin: lobbyAnalytics.CardOrigin): (() => boolean) | null => {
     const dest = eventDestination(e)
     if (dest == null) return null
     return () => {
+      if (!pick(dest.kind === 'world' ? { kind: 'world', realm: dest.realm } : { kind: 'parcel', x: dest.x, y: dest.y })) return false
       lobbyAnalytics.eventJumpedIn(e, origin)
       clickButton('JUMP_IN', 'LOBBY', { kind: 'event', event_id: e.id })
-      pick(dest.kind === 'world' ? { kind: 'world', realm: dest.realm } : { kind: 'parcel', x: dest.x, y: dest.y })
+      return true
     }
   }
 
@@ -316,8 +339,7 @@ export function LobbyHome({
           showToast('This event’s world cannot be reached.', { tone: 'error' })
           return false
         }
-        jump()
-        return true
+        return jump()
       })
     },
     jumpEvent,
@@ -333,8 +355,9 @@ export function LobbyHome({
     },
     openFriend: (f: Friend) => openPassport(f.address),
     joinFriend: (f: Friend) => {
-      refreshWhere(f.address)
+      afterLookup(refreshWhere(f.address))
         .then((where) => {
+          if (where === STALE) return
           if (where.kind === 'genesis') {
             lobbyAnalytics.friendJoined(f.address, where.parcel)
             pick({ kind: 'parcel', x: where.parcel.x, y: where.parcel.y })
@@ -353,27 +376,27 @@ export function LobbyHome({
       const target = parseGotoTarget(text)
       if (target.world != null) {
         const world = worldName(target.world)
-        if (!(await worldReachable(world))) return false
-        pick({ kind: 'world', realm: world, position: target.parcel ? `${target.parcel.x},${target.parcel.y}` : undefined })
-        return true
+        const reachable = await afterLookup(worldReachable(world))
+        if (reachable === STALE) return null
+        if (!reachable) return false
+        return pick({ kind: 'world', realm: world, position: target.parcel ? `${target.parcel.x},${target.parcel.y}` : undefined }) || null
       }
       if (target.random) {
         const p = randomParcel()
-        pick({ kind: 'parcel', x: p.x, y: p.y })
-        return true
+        return pick({ kind: 'parcel', x: p.x, y: p.y }) || null
       }
       if (target.crowd) {
         try {
-          const p = await fetchCrowd()
-          pick({ kind: 'parcel', x: p.x, y: p.y })
+          const p = await afterLookup(fetchCrowd())
+          if (p === STALE) return null
+          return pick({ kind: 'parcel', x: p.x, y: p.y }) || null
         } catch {
           showToast(CROWD_ERROR)
+          return null
         }
-        return true
       }
       if (target.parcel != null) {
-        pick({ kind: 'parcel', x: target.parcel.x, y: target.parcel.y })
-        return true
+        return pick({ kind: 'parcel', x: target.parcel.x, y: target.parcel.y }) || null
       }
       return false
     },
@@ -547,6 +570,7 @@ export function LobbyHome({
           canvas={canvas}
           toCanvas={toCanvas}
           welcome={profile?.name ? `Welcome ${profile.name}!` : 'Welcome!'}
+          covered={session.lobbyData.covered}
           onDone={(layout) => {
             if (layout != null) {
               saveLayout(layout)
@@ -616,8 +640,7 @@ export function LobbyHome({
             onLoadMeta={session.gallery.loadPhoto}
             onClose={() => setPhotoIndex(null)}
             onTeleport={(x, y) => {
-              setPhotoIndex(null)
-              pick({ kind: 'parcel', x, y })
+              if (pick({ kind: 'parcel', x, y })) setPhotoIndex(null)
             }}
             onDelete={(photo) =>
               void reelActions.remove(photo).then((removed) => {

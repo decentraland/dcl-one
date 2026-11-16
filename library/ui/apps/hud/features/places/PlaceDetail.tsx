@@ -22,7 +22,7 @@ import likeRateIcon from '../../assets/places/like-rate.png'
 import locationIcon from '../../assets/places/location.png'
 import visitsIcon from '../../assets/places/visits.png'
 import type { SignedPlace } from '@explorer-core/engine/protocol'
-import { setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
+import { likeRateOf, setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { fetchWorldAccess, type WorldAccess } from '@explorer-core/features/places/worldAccess'
 import { placeOnline } from '@explorer-core/features/lobby/lobbyApi'
@@ -67,6 +67,7 @@ interface Votes {
   favorite: boolean
 }
 
+type Field = 'vote' | 'favorite'
 const votesOf = (p: Partial<SignedPlace>): Votes => ({ like: p.user_like === true, dislike: p.user_dislike === true, favorite: p.user_favorite === true })
 
 function Creator({ place, signed }: { place: DetailPlace; signed: SignedPlace | null }): React.JSX.Element {
@@ -143,8 +144,10 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   const [votes, setVotes] = useState<Votes>(() => votesOf(place as Partial<SignedPlace>))
   // the last votes the service confirmed, which a refused change goes back to
   const confirmed = useRef(votes)
-  // the signed read can predate a vote or favourite: once one is sent, the read no longer sets them
-  const wrote = useRef(false)
+  // The signed read can predate a vote or favourite. Per field: before a write it sets the field;
+  // while one is in flight it only sets what a refusal goes back to; after one answered it is stale.
+  const writes = useRef<Record<Field, 'none' | 'sent' | 'answered'>>({ vote: 'none', favorite: 'none' })
+  const [counts, setCounts] = useState<{ likeRate?: number | null; favorites?: number }>({})
   const [busy, setBusy] = useState<{ vote: boolean; favorite: boolean }>({ vote: false, favorite: false })
   const [access, setAccess] = useState<WorldAccess | 'checking'>(world ? 'checking' : 'allowed')
   const [thumbFailed, setThumbFailed] = useState(false)
@@ -154,9 +157,15 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     void readSigned(place.id).then((read) => {
       if (!live || read == null) return
       setSigned(read)
-      if (wrote.current) return
-      confirmed.current = votesOf(read)
-      setVotes(confirmed.current)
+      const fresh = votesOf(read)
+      const take = (field: Field, keys: (keyof Votes)[]): void => {
+        const state = writes.current[field]
+        if (state === 'answered') return
+        for (const key of keys) confirmed.current = { ...confirmed.current, [key]: fresh[key] }
+        if (state === 'none') setVotes((v) => ({ ...v, ...Object.fromEntries(keys.map((k) => [k, fresh[k]])) }))
+      }
+      take('vote', ['like', 'dislike'])
+      take('favorite', ['favorite'])
     })
     return () => {
       live = false
@@ -175,16 +184,19 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   }, [world, worldName, wallet, communityKey, communitiesLoaded])
 
   const vote = (next: boolean | null, error: string): void => {
-    wrote.current = true
+    writes.current.vote = 'sent'
     setVotes((v) => ({ ...v, like: next === true, dislike: next === false }))
     setBusy((b) => ({ ...b, vote: true }))
     setPlaceLike(place.id, next).then(
       (result) => {
+        writes.current.vote = 'answered'
         confirmed.current = { ...confirmed.current, like: result.user_like, dislike: result.user_dislike }
+        setCounts((c) => ({ ...c, likeRate: likeRateOf(result.likes, result.dislikes) }))
         setVotes((v) => ({ ...v, like: result.user_like, dislike: result.user_dislike }))
         setBusy((b) => ({ ...b, vote: false }))
       },
       () => {
+        writes.current.vote = 'none'
         setVotes((v) => ({ ...v, like: confirmed.current.like, dislike: confirmed.current.dislike }))
         setBusy((b) => ({ ...b, vote: false }))
         showToast(error, { tone: 'error' })
@@ -193,16 +205,19 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   }
   const favorite = (): void => {
     const next = !votes.favorite
-    wrote.current = true
+    writes.current.favorite = 'sent'
     setVotes((v) => ({ ...v, favorite: next }))
     setBusy((b) => ({ ...b, favorite: true }))
     setPlaceFavorite(place.id, next).then(
       (result) => {
+        writes.current.favorite = 'answered'
         confirmed.current = { ...confirmed.current, favorite: result.user_favorite }
+        setCounts((c) => ({ ...c, favorites: result.favorites }))
         setVotes((v) => ({ ...v, favorite: result.user_favorite }))
         setBusy((b) => ({ ...b, favorite: false }))
       },
       () => {
+        writes.current.favorite = 'none'
         setVotes((v) => ({ ...v, favorite: confirmed.current.favorite }))
         setBusy((b) => ({ ...b, favorite: false }))
         showToast(FAVORITE_ERROR, { tone: 'error' })
@@ -273,7 +288,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
           </span>
           <span aria-label="Like rate">
             <MaskIcon src={likeRateIcon} size={24} />
-            {likeRateText(signed?.like_rate ?? place.like_rate)}
+            {likeRateText(counts.likeRate !== undefined ? counts.likeRate : (signed?.like_rate ?? place.like_rate))}
           </span>
         </p>
         <div className={styles.row}>
@@ -337,7 +352,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
         <div className={styles.facts}>
           <section className={styles.section}>
             <h3 className={styles.label}>FAVORITES</h3>
-            <p className={styles.value}>{compactNumber(signed?.favorites ?? place.favorites)}</p>
+            <p className={styles.value}>{compactNumber(counts.favorites ?? signed?.favorites ?? place.favorites)}</p>
           </section>
           <section className={styles.section}>
             <h3 className={styles.label}>UPDATED</h3>

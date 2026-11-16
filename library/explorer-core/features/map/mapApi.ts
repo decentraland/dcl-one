@@ -276,7 +276,7 @@ export async function fetchPoiParcels(signal?: AbortSignal): Promise<Vec2[]> {
   if (fixedPublicReads != null) return fixedPublicReads.pois
   const res = await fetch(`${serviceUrl('dclLists')}/pois`, { method: 'POST', signal })
   if (!res.ok) {
-    await res.body?.cancel()
+    await res.body?.cancel().catch(() => undefined)
     throw new Error(`The points of interest list returned ${res.status}`)
   }
   const body = (await res.json()) as { data?: unknown }
@@ -302,7 +302,7 @@ export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
   if (fixedPublicReads != null) return fixedPublicReads.peers
   const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers`, { signal })
   if (!res.ok) {
-    await res.body?.cancel()
+    await res.body?.cancel().catch(() => undefined)
     throw new Error(`The connected players list returned ${res.status}`)
   }
   const body = (await res.json()) as { peers?: unknown }

@@ -139,6 +139,38 @@ describe('place detail', () => {
     expect(like).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('takes the signed read for the fields not written, and a refused vote goes back to the read', async () => {
+    const session = fakeSession()
+    let read: (place: { id: string; user_like: boolean; user_dislike: boolean; user_favorite: boolean }) => void = () => undefined
+    vi.mocked(session.places.readSigned).mockReturnValue(new Promise((resolve) => (read = resolve)))
+    let refuse: (e: Error) => void = () => undefined
+    vi.mocked(setPlaceFavorite).mockResolvedValue({ favorites: 1521, user_favorite: true })
+    vi.mocked(setPlaceLike).mockReturnValue(new Promise((_, reject) => (refuse = reject)))
+    show(session, PLAZA)
+    const like = screen.getByRole('button', { name: 'Like' })
+    const favorite = screen.getByRole('button', { name: 'Favorite' })
+    fireEvent.click(favorite)
+    await waitFor(() => expect(favorite).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike' }))
+    await act(async () => read({ id: 'plaza', user_like: true, user_dislike: false, user_favorite: false }))
+    expect(favorite).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Dislike' })).toHaveAttribute('aria-pressed', 'true')
+    await act(async () => refuse(new Error('refused')))
+    expect(like).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Dislike' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('shows the like rate and favourites the write returns', async () => {
+    vi.mocked(setPlaceLike).mockResolvedValue({ likes: 1, dislikes: 3, user_like: true, user_dislike: false })
+    vi.mocked(setPlaceFavorite).mockResolvedValue({ favorites: 7, user_favorite: true })
+    show(fakeSession(), PLAZA)
+    expect(screen.getByLabelText('Like rate')).toHaveTextContent('88%')
+    fireEvent.click(screen.getByRole('button', { name: 'Like' }))
+    await waitFor(() => expect(screen.getByLabelText('Like rate')).toHaveTextContent('25%'))
+    fireEvent.click(screen.getByRole('button', { name: 'Favorite' }))
+    expect(await screen.findByText('7')).toBeInTheDocument()
+  })
+
   it('keeps a favourite in flight when a vote is sent', async () => {
     vi.mocked(setPlaceFavorite).mockReturnValue(new Promise(() => undefined))
     vi.mocked(setPlaceLike).mockReturnValue(new Promise(() => undefined))

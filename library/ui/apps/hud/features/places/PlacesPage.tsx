@@ -31,17 +31,15 @@ export function PlacesPage({
   /** Shown in the lobby's section modal; `onTravel` closes it once a jump goes ahead. */
   compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
-  onTeleport: (x: number, y: number) => void
-  onVisitWorld: (realm: string) => void
+  onTeleport: (x: number, y: number) => boolean
+  onVisitWorld: (realm: string) => boolean
 }): React.JSX.Element | null {
   if (!places.open && compact == null) return null
 
   const travel = (place: DiscoverPlace): boolean => {
     const t = placeTeleport(place)
     if (!t) return false
-    if (t.kind === 'world') onVisitWorld(t.realm)
-    else onTeleport(t.x, t.y)
-    return true
+    return t.kind === 'world' ? onVisitWorld(t.realm) : onTeleport(t.x, t.y)
   }
 
   if (compact != null) {

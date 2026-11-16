@@ -84,16 +84,21 @@ export interface FriendLocation {
   title: string
 }
 
-/** Read once per set of online friends. */
+const LOCATION_TTL_MS = 60_000
+
+/** Read once per set of online friends; a location over a minute old is read again. */
 export function useFriendLocations(online: Friend[]): Map<string, FriendLocation> {
   const ids = useMemo(() => online.map((f) => f.address.toLowerCase()).sort(), [online])
   const key = ids.join(',')
   const [locations, setLocations] = useState<Map<string, FriendLocation>>(new Map())
   const known = useRef(locations)
   known.current = locations
+  const readAt = useRef(new Map<string, number>())
   useEffect(() => {
-    const missing = ids.filter((id) => !known.current.has(id))
+    const now = Date.now()
+    const missing = ids.filter((id) => !known.current.has(id) || now - (readAt.current.get(id) ?? 0) > LOCATION_TTL_MS)
     if (missing.length === 0) return
+    for (const id of missing) readAt.current.set(id, now)
     let live = true
     fetchWhereabouts(missing)
       .then(async (found) => {

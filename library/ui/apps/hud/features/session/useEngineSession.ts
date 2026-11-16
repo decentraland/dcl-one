@@ -440,13 +440,14 @@ export interface MapState {
   y: number
   open: boolean
   toggle: () => void
-  teleport: (x: number, y: number) => void
+  /** False when the startup lobby refused the pick (still signing in); true once travel started. */
+  teleport: (x: number, y: number) => boolean
   /** Teleport to a Genesis City place: from outside Genesis the parcel carries the Genesis realm,
    *  so the engine changes realm first. In Genesis already it is a plain teleport — a realm-carrying
    *  teleport is a full realm reconnect, like changeRealm, even to the realm the player is in. */
-  teleportToPlace: (x: number, y: number) => void
+  teleportToPlace: (x: number, y: number) => boolean
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
-  changeRealm: (realm: string) => void
+  changeRealm: (realm: string) => boolean
 }
 
 /** Live player pose for the minimap: position in world metres, yaws in degrees. */
@@ -544,8 +545,10 @@ export interface LobbyDataState {
   /** Prefetches the events and communities the lobby's widgets list; the events land in
    *  `events.data`'s lobby query. */
   warm: () => void
-  /** Stays true after the first answer. */
+  /** True once this account's list answered; false again after sign-out. */
   communitiesLoaded: boolean
+  /** A page or panel is open over the lobby. */
+  covered: boolean
 }
 
 /** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
@@ -917,7 +920,7 @@ const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
 export const BRIDGE_CALL_TIMEOUT_MS = 30_000
-const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
+export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
@@ -2709,18 +2712,24 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // the world starts instead, and the lobby closes into it.
   const startupLobbyRef = useRef(false)
   const pickRef = useRef<(dest: Destination) => boolean>(() => false)
-  // True whenever the startup lobby is up, so the caller never travels in-world instead.
-  const pickFromStartupLobby = useCallback((dest: Destination): boolean => {
-    if (!startupLobbyRef.current) return false
-    if (pickRef.current(dest)) closeAllPanelsRef.current()
-    else showToast(SIGNING_IN_PICK)
-    return true
+  // Null when the startup lobby is not up; otherwise whether it took the pick, so the caller never
+  // travels in-world instead.
+  const pickFromStartupLobby = useCallback((dest: Destination): boolean | null => {
+    if (!startupLobbyRef.current) return null
+    if (pickRef.current(dest)) {
+      closeAllPanelsRef.current()
+      return true
+    }
+    showToast(SIGNING_IN_PICK)
+    return false
   }, [])
   const closeAllPanelsRef = useRef<() => void>(() => undefined)
   const changeRealm = useCallback(
-    (realm: string) => {
-      if (pickFromStartupLobby({ kind: 'world', realm })) return
+    (realm: string): boolean => {
+      const picked = pickFromStartupLobby({ kind: 'world', realm })
+      if (picked != null) return picked
       travel({ kind: 'changeRealm', realm })
+      return true
     },
     [travel, pickFromStartupLobby]
   )
@@ -3193,18 +3202,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [bridgeCall]
   )
   const teleport = useCallback(
-    (x: number, y: number) => {
-      if (pickFromStartupLobby({ kind: 'parcel', x, y })) return
+    (x: number, y: number): boolean => {
+      const picked = pickFromStartupLobby({ kind: 'parcel', x, y })
+      if (picked != null) return picked
       setLobbyOpen(false)
       driverRef.current?.send({ kind: 'teleport', x, y })
+      return true
     },
     [pickFromStartupLobby]
   )
   const teleportToPlace = useCallback(
-    (x: number, y: number) => {
-      if (pickFromStartupLobby({ kind: 'parcel', x, y })) return
+    (x: number, y: number): boolean => {
+      const picked = pickFromStartupLobby({ kind: 'parcel', x, y })
+      if (picked != null) return picked
       if (!isGenesisSatelliteView(satelliteView)) travel({ kind: 'teleport', realm: DEFAULT_REALM, x, y })
       else teleport(x, y)
+      return true
     },
     [satelliteView, teleport, travel, pickFromStartupLobby]
   )
@@ -4107,6 +4120,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setActiveVoiceChats([])
     setActiveVoiceChatsLoaded(false)
     setCommunities([])
+    setCommunitiesLoaded(false)
     setCommunityCards({})
     setCommunityInvites(null)
     setPendingCount(null)
@@ -4838,7 +4852,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     playerReady,
     lobbyStageReady,
     lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
-    lobbyData: { warm: warmLobby, communitiesLoaded },
+    lobbyData: { warm: warmLobby, communitiesLoaded, covered: anyPanelOpenExceptLobby },
     homeScene,
     avatarPreviewRect,
     pickDestination,
