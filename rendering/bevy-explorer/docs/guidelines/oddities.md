@@ -36,7 +36,8 @@ than once. Check here before correcting something surprising.
   characters of its `id` as the suffix (`#0000` for a shorter id) and the voice bars while
   `talking` is set; it appears once the avatar is built. The HUD's preview avatars and a scene
   entity that only restyles a player get none, and avatar modifier areas hide players' tags
-  only.
+  only. An avatar that is not visible (its own visibility or a parent's) or is scaled to
+  nothing has no tag.
 - **The imposter store is multi-realm by design.** The fetch URL carries the realm's about
   URL, and each tile's CRC is derived from the scene set at bake time. A CRC mismatch after a
   publish falls back to an empty imposter on purpose; that is staleness handling, not silent

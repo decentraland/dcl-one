@@ -258,6 +258,31 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
         assert_eq!(name_of(&app, guide).as_deref(), shown, "{name:?}");
     }
 
+    // an avatar with no tag is remembered as such: its shape is read again only once changed
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(AvatarShape(shape("guide-0001", Some(""))));
+    app.update();
+    app.update();
+    let unnamed = SceneAvatarNametag {
+        named: false,
+        talking: false,
+    };
+    assert_eq!(app.world().get::<SceneAvatarNametag>(guide), Some(&unnamed));
+    let read = app
+        .world()
+        .entity(guide)
+        .get_change_ticks::<SceneAvatarNametag>()
+        .unwrap();
+    app.update();
+    let kept = app
+        .world()
+        .entity(guide)
+        .get_change_ticks::<SceneAvatarNametag>()
+        .unwrap();
+    assert_eq!(read.changed.get(), kept.changed.get());
+    assert_eq!(name_of(&app, guide), None);
+
     // the scene drops the avatar
     app.world_mut().entity_mut(guide).remove::<AvatarShape>();
     app.update();
@@ -479,6 +504,60 @@ fn hiding_takes_the_tag_and_showing_gives_one_back() {
     app.update();
     assert_eq!(tag_of(&app, ada), None);
     assert_eq!(free_tags(&mut app).len(), 1);
+}
+
+#[test]
+fn an_avatar_its_scene_hides_keeps_no_tag() {
+    let mut app = pool_app();
+    let guide = spawn_player(&mut app, "Guide", 10.0);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::VISIBLE);
+    app.update();
+    assert!(tag_of(&app, guide).is_some());
+
+    // hidden by its own visibility or a parent's
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::HIDDEN);
+    app.update();
+    assert_eq!(tag_of(&app, guide), None);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::VISIBLE);
+    app.update();
+    assert!(tag_of(&app, guide).is_some());
+}
+
+#[test]
+fn an_avatar_scaled_to_nothing_keeps_no_tag() {
+    let mut app = pool_app();
+    let guide = spawn_player(&mut app, "Guide", 10.0);
+    app.update();
+    assert!(tag_of(&app, guide).is_some());
+
+    let at = |scale: Vec3| {
+        GlobalTransform::from(bevy::math::Affine3A::from_scale_rotation_translation(
+            scale,
+            Quat::IDENTITY,
+            Vec3::new(0.0, 0.0, -10.0),
+        ))
+    };
+    // nothing at all, the sliver a scale of nothing becomes, flattened along one axis, and
+    // not a number
+    for scale in [
+        Vec3::ZERO,
+        Vec3::splat(f32::EPSILON),
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::splat(f32::NAN),
+    ] {
+        *app.world_mut().get_mut::<GlobalTransform>(guide).unwrap() = at(scale);
+        app.update();
+        assert_eq!(tag_of(&app, guide), None, "{scale}");
+        *app.world_mut().get_mut::<GlobalTransform>(guide).unwrap() = at(Vec3::splat(0.5));
+        app.update();
+        assert!(tag_of(&app, guide).is_some(), "{scale}");
+    }
 }
 
 #[test]

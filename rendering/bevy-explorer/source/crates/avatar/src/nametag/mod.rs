@@ -43,7 +43,7 @@ use scene_runner::{
 };
 
 use crate::{
-    dynamic_nametag::{NametagHeadOffset, NametagsVisible},
+    dynamic_nametag::{avatar_units, NametagHeadOffset, NametagsVisible},
     AvatarSelection, AvatarShape, BeyondMaxAvatars,
 };
 
@@ -258,9 +258,11 @@ impl NametagContent {
     }
 }
 
-/// On a scene's avatar whose [`NametagContent`] comes from its [`AvatarShape`].
+/// On a scene's avatar whose [`AvatarShape`] was read for its nametag, until the shape changes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SceneAvatarNametag {
+    /// The shape gives the avatar a [`NametagContent`]; an empty name gives none.
+    pub named: bool,
     /// The scene marks the avatar as talking: its tag shows the voice bars.
     pub talking: bool,
 }
@@ -472,22 +474,22 @@ fn resolve_scene_avatar_content(
         let content = (!system_scenes.contains(scene_entity.root))
             .then(|| NametagContent::from_shape(&shape.0))
             .flatten();
-        let Some(content) = content else {
-            if marker.is_some() {
-                commands
-                    .entity(avatar)
-                    .try_remove::<(NametagContent, SceneAvatarNametag)>();
-            }
-            continue;
+        // an avatar with no tag is marked too: its shape is not read again until it changes
+        let resolved = SceneAvatarNametag {
+            named: content.is_some(),
+            talking: content.is_some() && shape.0.talking == Some(true),
         };
-        let talking = SceneAvatarNametag {
-            talking: shape.0.talking == Some(true),
-        };
-        if marker != Some(&talking) {
-            commands.entity(avatar).try_insert(talking);
+        if marker != Some(&resolved) {
+            commands.entity(avatar).try_insert(resolved);
         }
-        if current != Some(&content) {
-            commands.entity(avatar).try_insert(content);
+        match content {
+            Some(content) if current != Some(&content) => {
+                commands.entity(avatar).try_insert(content);
+            }
+            None if marker.is_some_and(|marker| marker.named) => {
+                commands.entity(avatar).try_remove::<NametagContent>();
+            }
+            _ => {}
         }
     }
     for avatar in &dropped {
@@ -583,6 +585,7 @@ fn acquire_and_release_tags(
             Has<HiddenNametag>,
             Has<BeyondMaxAvatars>,
             Option<&PlayerModifiers>,
+            Option<&InheritedVisibility>,
         ),
         (With<NametagContent>, With<AttachPoints>),
     >,
@@ -599,11 +602,14 @@ fn acquire_and_release_tags(
     };
 
     let mut free = free.iter();
-    for (player, transform, shown, is_local, hidden, beyond_max, modifiers) in &players {
+    for (player, transform, shown, is_local, hidden, beyond_max, modifiers, drawn) in &players {
+        // a scene hides its avatars by their visibility, their parents' or a scale of nothing
         let wanted = visible.0
             && !hidden
             && !beyond_max
             && !modifiers.is_some_and(|modifiers| modifiers.hide)
+            && drawn.is_none_or(|drawn| drawn.get())
+            && avatar_units(transform).is_some()
             && view.shows(transform.translation(), is_local);
         match (wanted, shown) {
             (true, None) => {

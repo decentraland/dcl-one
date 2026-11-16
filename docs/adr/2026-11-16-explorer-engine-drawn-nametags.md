@@ -62,11 +62,12 @@ scene draws none.
   a shorter id), never the verified or official badge, and the voice bars while `talking` is
   set. A scene entity that only restyles a player gets none, nor do the HUD's preview avatars,
   which a system scene makes. Avatar modifier areas act on players, so they do not hide these
-  tags.
+  tags; a scene hides its avatar's tag by hiding the avatar.
 - **Tags are pooled.** A tag is released when its player is out of range, behind the camera,
-  hidden by an avatar modifier area, beyond the avatar cap, the local player in first person, or
-  when nametags are off. Released tags keep their mesh handle and wait hidden; at most 32 wait,
-  and the rest are despawned.
+  hidden by an avatar modifier area, beyond the avatar cap, the local player in first person,
+  not visible (its own visibility or a parent's), scaled to nothing, or when nametags are off.
+  Released tags keep their mesh handle and wait hidden; at most 32 wait, and the rest are
+  despawned.
 - **Meshes rebuild on change only.** A tag's mesh is rebuilt when its content changes, while its
   bubble animates, or when the glyph atlas is repacked. An idle tag costs one transform write a
   frame.

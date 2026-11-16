@@ -1216,8 +1216,17 @@ fn process_avatar(
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+    (
+        name_and_parent,
+        local_transforms,
+        previous_avatar,
+        scene_ent,
+        previous_animator,
+        mut contexts,
+        timestamp,
+    ): (
         Query<(&Name, &ChildOf)>,
+        Query<(&Transform, &ChildOf)>,
         Query<&PreviousAvatar>,
         Query<&SceneEntity>,
         Query<
@@ -1795,13 +1804,12 @@ fn process_avatar(
             .entity(avatar_ent)
             .try_insert((AvatarProcessed, Visibility::Inherited));
 
-        // the head bone's units, in the avatar's own: a scene's scale of the avatar is in both
-        // global scales, and the nametag's anchor applies it again
-        let avatar_scale = root_gt.compute_transform().scale.y;
+        // the head bone's units, in the avatar's own: the nametag's anchor applies a scene's
+        // scale of the avatar, which the local transforms below the avatar leave out. A scene
+        // may hold the avatar at a scale of nothing while it is built
         let head_scale = target_armature_entities
             .get("avatar_head")
-            .and_then(|head| instance_ents.get(*head).ok())
-            .map(|(_, _, gt, ..)| gt.compute_transform().scale.y / avatar_scale);
+            .and_then(|head| scale_below(*head, avatar_ent, &local_transforms));
         commands.entity(root_player_entity.parent()).try_insert((
             AvatarMaterials(instance_scene_materials.values().map(|h| h.id()).collect()),
             NametagHeadOffset::above_head(
@@ -1919,6 +1927,23 @@ fn reparent_attach_point(
             target_armature_entities.keys()
         );
     }
+}
+
+/// The height scale of `entity` in the units of its ancestor `root`: its own and that of each
+/// entity between them. Nothing for an entity not below `root`.
+fn scale_below(
+    entity: Entity,
+    root: Entity,
+    transforms: &Query<(&Transform, &ChildOf)>,
+) -> Option<f32> {
+    let mut scale = 1.0;
+    let mut current = entity;
+    while current != root {
+        let (transform, parent) = transforms.get(current).ok()?;
+        scale *= transform.scale.y;
+        current = parent.parent();
+    }
+    Some(scale)
 }
 
 /// How far a skinned mesh reaches above the head bone, along that bone and in its units, read

@@ -1,4 +1,7 @@
-use bevy::{math::FloatOrd, prelude::*};
+use bevy::{
+    math::{FloatOrd, Mat3A, Vec3A},
+    prelude::*,
+};
 use common::{
     sets::PostUpdateSets,
     structs::{AttachPoints, AvatarDynamicState, MoveKind},
@@ -19,6 +22,8 @@ const HEAD_OFFSET_BOUNDED: f32 = 1.0;
 const HEAD_TOP_MIN: f32 = 0.1;
 /// the offset of an avatar whose meshes gave no bounds
 const HEAD_OFFSET_DEFAULT: f32 = 0.4;
+/// an avatar scaled below this on an axis is scaled to nothing
+const SCALE_MIN: f32 = 1e-6;
 /// how much higher the nametag sits over a glider
 const GLIDE_OFFSET: f32 = 0.8;
 
@@ -96,6 +101,20 @@ fn nametag_height(head: f32, head_scale: f32, others: [f32; 3], offset: f32, gli
     }
 }
 
+/// An avatar's height scale, and the way from the world's axes back to the avatar's own. A
+/// scene can scale, turn and tilt an avatar: heights are the world's, straight up, counted in
+/// the avatar's units, so the offsets grow and shrink with it, and the anchor, the avatar's
+/// child, takes what is placed in the world back through the avatar's whole transform. An
+/// avatar scaled to nothing has no such way back, and no place for a nametag.
+pub(crate) fn avatar_units(avatar: &GlobalTransform) -> Option<(f32, Mat3A)> {
+    let to_world = avatar.affine().matrix3;
+    // a scale of nothing reaches here as a sliver, on any of the axes
+    let scales = [to_world.x_axis, to_world.y_axis, to_world.z_axis].map(Vec3A::length);
+    let to_avatar = to_world.inverse();
+    (scales.into_iter().all(|scale| scale > SCALE_MIN) && to_avatar.is_finite())
+        .then_some((scales[1], to_avatar))
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn dynamic_nametag_position(
     players: Query<(
@@ -113,15 +132,9 @@ pub(crate) fn dynamic_nametag_position(
             continue;
         };
         let origin = position_gt.translation();
-        // a scene can scale, turn and tilt an avatar. Heights are the world's, straight up,
-        // counted in the avatar's units, so the offsets grow and shrink with it
-        let scale = position_gt.compute_transform().scale.y;
-        // the anchor is the avatar's child: what is placed in the world goes back through the
-        // avatar's whole transform. An avatar scaled to nothing has no such way back
-        let to_avatar = position_gt.affine().matrix3.inverse();
-        if scale <= f32::EPSILON || !to_avatar.is_finite() {
+        let Some((scale, to_avatar)) = avatar_units(position_gt) else {
             continue;
-        }
+        };
         let head_position = global_transforms
             .get(attach_points.head)
             .unwrap_or(position_gt)
