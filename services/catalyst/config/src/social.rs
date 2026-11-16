@@ -719,8 +719,9 @@ pub struct SocialConfig {
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`),
-    /// served at /badges/assets.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`)
+    /// or uploaded by the admin `PUT`, served at /badges/assets; a shared
+    /// volume when several processes serve the badges routes.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
 

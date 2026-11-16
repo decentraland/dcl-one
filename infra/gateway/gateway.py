@@ -306,9 +306,11 @@ def render(table, cfg, mime):
     # concurrent uploads are capped as on the deploy routes.
     locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
         f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
-    # The admin art upload (PUT) shares its path with the public read.
+    # The admin art upload (PUT) shares its path with the public read: only a PUT
+    # counts toward its own connection cap ($badge_asset_upload_key).
     locations += location('~ "^/badges/assets/.+$"', proxy("apis",
-        f"client_max_body_size {BADGES_ASSET_CAP}; {uploads}"))
+        f"client_max_body_size {BADGES_ASSET_CAP}; "
+        f"limit_conn badge_asset_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
@@ -507,6 +509,9 @@ http {{
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
     limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    # An empty key is not counted: badge art reads share no upload cap.
+    map $request_method $badge_asset_upload_key {{ PUT $binary_remote_addr; default ""; }}
+    limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;
     limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;

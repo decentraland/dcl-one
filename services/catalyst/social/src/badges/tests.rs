@@ -1937,6 +1937,10 @@ async fn admins_upload_catalog_art_to_the_assets_directory() {
         let (status, _, _) = send(app(state.clone()), put(bad, Some("s3cret"), body)).await;
         assert_eq!(status, expected, "{bad}");
     }
+    // past the router's 1 MiB limit: the route's own limit applies
+    let large = [&png[..], &vec![0u8; 2 * super::MAX_BODY_BYTES]].concat();
+    let (status, _, _) = send(app(state.clone()), put(path, Some("s3cret"), &large)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _, _) = send(app(state.clone()), put(path, Some("s3cret"), &png)).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let get = Request::builder()

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use tokio::io::AsyncWriteExt;
 
 /// A relative path made of plain segments: no `..`, no absolute, no
 /// backslashes, no NUL, so an override directory can never be escaped.
@@ -50,6 +51,7 @@ fn respond(path: &str, bytes: Vec<u8>) -> Response {
         [
             (header::CONTENT_TYPE, content_type(path).to_string()),
             (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
         ],
         Body::from(bytes),
     )
@@ -64,8 +66,10 @@ pub fn is_png(bytes: &[u8]) -> bool {
     bytes.starts_with(PNG_SIGNATURE)
 }
 
-/// Writes `bytes` at the sanitized `path` under `dir`, whole or not at all:
-/// a hidden temporary file (never served) renamed over the target.
+/// Writes `bytes` at the sanitized `path` under `dir`, whole or not at all,
+/// across a crash too: a hidden temporary file (never served), synced, then
+/// renamed over the target and the directory synced. A failure removes the
+/// temporary file.
 pub async fn store(dir: &Path, path: &str, bytes: &[u8]) -> std::io::Result<()> {
     let target = dir.join(path);
     let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
@@ -77,12 +81,19 @@ pub async fn store(dir: &Path, path: &str, bytes: &[u8]) -> std::io::Result<()> 
         name.to_string_lossy(),
         uuid::Uuid::new_v4().simple()
     ));
-    tokio::fs::write(&temporary, bytes).await?;
-    if let Err(error) = tokio::fs::rename(&temporary, &target).await {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(error);
+    let written = async {
+        let mut file = tokio::fs::File::create(&temporary).await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await?;
+        drop(file);
+        tokio::fs::rename(&temporary, &target).await?;
+        tokio::fs::File::open(parent).await?.sync_all().await
     }
-    Ok(())
+    .await;
+    if written.is_err() {
+        let _ = tokio::fs::remove_file(&temporary).await;
+    }
+    written
 }
 
 /// The file under `assets_dir`, else 404 (no directory configured, a
@@ -122,6 +133,19 @@ mod tests {
             .collect();
         assert_eq!(names, ["normal.png"]);
         assert_eq!(std::fs::read(folder.join("normal.png")).unwrap(), png);
+        // a target that cannot be replaced (a directory) leaves no temporary
+        std::fs::create_dir_all(folder.join("hrm.png/x")).unwrap();
+        assert!(
+            store(&dir, "traveler/starter/2d/hrm.png", &png)
+                .await
+                .is_err()
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["hrm.png", "normal.png"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -163,6 +187,7 @@ mod tests {
         let resp = serve(Some(&dir), "traveler/starter/3d/basecolor.png").await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(resp.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
             .await
             .unwrap();

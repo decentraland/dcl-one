@@ -1721,11 +1721,15 @@ catalog rows, and the bootstrap seed reaches only new databases.
    leaves it complete until such a write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
    the badges routes refuse bodies over 1 MiB (413), the backfill's over
-   64 MiB.
+   64 MiB and an art upload's over 16 MiB.
 2. Make the art reachable: upload it to the CDN that
-   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
-   into `BADGES_ASSETS_DIR` under the same relative paths when the base is
-   `<node>/badges/assets`.
+   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or, when the
+   base is `<node>/badges/assets`, put each file into `BADGES_ASSETS_DIR`
+   under the same relative path: mirror it there, or `PUT
+   /badges/assets/{path}` with the admin bearer and the PNG as the body (204;
+   only a path the badge or one of its tiers names, else 404). The upload is
+   written on the process that receives it, so every process serving the
+   badges routes must mount the same directory (a shared volume).
 3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
    awardable. An active badge with no evaluator, backfill import or presence
    configuration (`social.presence_badges`) is named in a warning at startup,

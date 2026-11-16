@@ -238,6 +238,14 @@ class ConfigurationTest(unittest.TestCase):
         _, regexes = self.worlds_locations()
         body = next(body for regex, body in regexes if regex.search("/badges/assets/traveler/starter/2d/normal.png"))
         self.assertIn(f"client_max_body_size {gateway.BADGES_ASSET_CAP};", body)
+        # public reads share no upload budget: only PUTs are keyed
+        self.assertNotIn("deploy_uploads", body)
+        self.assertIn("limit_conn badge_asset_uploads", body)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn('map $request_method $badge_asset_upload_key { PUT $binary_remote_addr; default ""; }', text)
+        self.assertIn("limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;", text)
         self.assertFalse(any(regex.search("/x/badges/assets/a.png") for regex, _ in regexes
                              if f"client_max_body_size {gateway.BADGES_ASSET_CAP};" in _))
 
