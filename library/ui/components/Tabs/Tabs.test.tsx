@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { Tabs } from './Tabs'
+import { Tabs, type TabsLinkProps } from './Tabs'
 
 describe('Tabs', () => {
   describe('when it has an href', () => {
@@ -20,6 +20,26 @@ describe('Tabs', () => {
       expect(all).toHaveAttribute('tabindex', '0')
       expect(mine).toHaveAttribute('aria-selected', 'false')
       expect(mine).toHaveAttribute('tabindex', '-1')
+    })
+  })
+
+  describe('when it has an href and a link component', () => {
+    it('renders the tab through that component with the tab semantics', () => {
+      const RouterLink = vi.fn(({ href, ...props }: TabsLinkProps) => (
+        <a data-router="" href={href} {...props} />
+      ))
+      render(
+        <div role="tablist" aria-label="Profile sections">
+          <Tabs label="Places" href="/profile/places" id="places" linkComponent={RouterLink} />
+        </div>
+      )
+      const tab = screen.getByRole('tab', { name: 'Places' })
+      expect(tab).toHaveAttribute('data-router')
+      expect(tab).toHaveAttribute('href', '/profile/places')
+      expect(tab).toHaveAttribute('id', 'places')
+      expect(tab).toHaveAttribute('aria-selected', 'false')
+      expect(tab).toHaveAttribute('tabindex', '-1')
+      expect(RouterLink.mock.calls[0]?.[0]).not.toHaveProperty('linkComponent')
     })
   })
 

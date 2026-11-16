@@ -1,6 +1,6 @@
-/* TODO(figma-ds): replace with the Figma-generated profile layout's styles.
- * The source's radial gradient (#7434B1 -> #481C6C -> #2B1040) has no token; the closest brand
- * tokens stand in for it and are listed as a visual difference. */
+/* The profile frame around the shared TabsBar and Tabs: brand gradient, centred content, header, tab
+ * bar and an optional avatar column. The source's radial gradient (#7434B1 -> #481C6C -> #2B1040) has
+ * no token; the closest brand tokens stand in for it. */
 .root {
   position: relative;
   isolation: isolate;
@@ -26,10 +26,6 @@
   width: 100%;
   max-width: 1650px;
   margin: 0 auto;
-}
-
-.tabs {
-  width: 100%;
 }
 
 .body {

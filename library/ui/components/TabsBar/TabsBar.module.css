@@ -18,6 +18,24 @@
     flex-wrap: wrap;
     gap: var(--dcl-space-16);
   }
+
+  /* After the variants, so it replaces their inline padding. */
+  .insetContent {
+    padding-inline: var(--dcl-space-16);
+  }
+
+  @media (min-width: 1024px) {
+    .insetContent {
+      padding-inline: var(--dcl-space-32);
+    }
+  }
+
+  /* No block padding: the tabs keep the Figma 64px and their indicator sits on the bar's bottom rule.
+     The underline tabs draw their focus ring inside their box, so the scroller does not clip it. */
+  .scrollable {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
 }
 
 @layer dcl.components {

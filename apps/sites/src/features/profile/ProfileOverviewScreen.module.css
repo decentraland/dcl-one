@@ -1,5 +1,6 @@
-/* TODO(figma-ds): replace with the Figma-generated profile overview's styles.
- * The source's link color #57C2FF has no token; the link token stands in for it. */
+/* The Overview tab: the avatar's full-body snapshot, and About, details and links in the source's
+ * translucent card. The design system has no equivalent. The source's link color #57C2FF has no
+ * token; the link token stands in for it. */
 .root {
   position: relative;
   display: flex;
@@ -124,5 +125,29 @@
   .surface {
     gap: var(--dcl-space-32);
     padding: 30px 40px;
+  }
+}
+
+.body {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 360px;
+}
+
+.bodyImage {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+}
+
+@media (min-width: 1024px) {
+  .body {
+    height: 706px;
   }
 }
