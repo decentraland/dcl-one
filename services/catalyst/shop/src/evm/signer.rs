@@ -118,7 +118,10 @@ pub enum Rebroadcast {
     Settled,
     /// It had none and was re-sent (or the node already holds it).
     Sent,
-    /// It can never mine: a finalized transaction holds its nonce.
+    /// On this look it can never mine: a finalized transaction holds its
+    /// nonce, and neither its receipt nor the transaction itself is found.
+    /// One look can be wrong (a lagging backend, a bounded transaction
+    /// index), so the caller acts only on two looks minutes apart.
     Dead,
 }
 
@@ -405,10 +408,11 @@ impl DirectSigner {
     /// receipt alone decides the outcome.
     ///
     /// A transaction whose nonce another transaction took can never mine. It
-    /// is [`Rebroadcast::Dead`] only when that is final: the relayer's
+    /// looks [`Rebroadcast::Dead`] only when that is final: the relayer's
     /// `finalized` transaction count has passed the recorded nonce and,
-    /// read after it, there is still no receipt, so no reorg can mine it. The
-    /// caller may then release the leg for a new transaction. When only the
+    /// read after it, neither the receipt nor the transaction is found, so no
+    /// reorg can mine it. The caller releases the leg only when a second look
+    /// minutes later agrees. When only the
     /// `latest` count has passed, the answer is a retryable `RelayerTimeout`
     /// until finality decides.
     pub async fn rebroadcast(&self, tx_hash: &str, raw_hex: &str) -> Result<Rebroadcast, ApiError> {
@@ -436,13 +440,21 @@ impl DirectSigner {
                 return Ok(Rebroadcast::Settled);
             }
             if finalized.is_some_and(|count| count > nonce) {
-                tracing::error!(
-                    tx_hash = %tx_hash,
-                    nonce,
-                    relayer = %self.relayer_address,
-                    "recorded transaction can never mine: another finalized transaction holds its nonce"
-                );
-                return Ok(Rebroadcast::Dead);
+                // A second, independent lookup: a node that knows the
+                // transaction (mined or not) contradicts the missing receipt.
+                if self.transaction_unknown(tx_hash).await {
+                    tracing::warn!(
+                        tx_hash = %tx_hash,
+                        nonce,
+                        relayer = %self.relayer_address,
+                        "recorded transaction looks dead: a finalized transaction holds its nonce"
+                    );
+                    return Ok(Rebroadcast::Dead);
+                }
+                return Err(ApiError::RelayerTimeout(format!(
+                    "recorded transaction {tx_hash} has no receipt but the node knows it; retry \
+                     to settle"
+                )));
             }
             tracing::warn!(tx_hash = %tx_hash, nonce, "another transaction holds the recorded nonce; waiting for finality");
             return Err(ApiError::RelayerTimeout(format!(
@@ -457,6 +469,18 @@ impl DirectSigner {
             }
         }
         Ok(Rebroadcast::Sent)
+    }
+
+    /// Whether `eth_getTransactionByHash` answers `null` for `tx_hash`; an
+    /// error proves nothing and reads as known.
+    async fn transaction_unknown(&self, tx_hash: &str) -> bool {
+        matches!(
+            self.chain
+                .rpc()
+                .call("eth_getTransactionByHash", json!([tx_hash]))
+                .await,
+            Ok(serde_json::Value::Null)
+        )
     }
 
     /// The relayer's transaction count at `block` (`latest`, `finalized`):

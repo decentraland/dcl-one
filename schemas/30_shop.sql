@@ -16382,7 +16382,9 @@ CREATE INDEX fed_seen_nonces_expires_idx ON shop.fed_seen_nonces (expires_at);
 -- A leg's signed transaction (`signed_tx`, `forward_signed_tx`) is recorded
 -- with its hash before it is broadcast, so a resume re-sends those bytes and
 -- signs no second transaction for the leg unless a finalized transaction
--- holds the recorded one's nonce, so it can never mine. `write_ahead` marks
+-- holds the recorded one's nonce, so it can never mine: two such looks at
+-- least ten minutes apart (the first kept in `dead_seen_at`) release the
+-- leg, and its hash is kept in `released_tx_hashes`. `write_ahead` marks
 -- a claim made under that rule: only such a claim with no recorded
 -- transaction is ever bought afresh.
 CREATE TABLE shop.broker_purchases (
@@ -16406,6 +16408,8 @@ CREATE TABLE shop.broker_purchases (
     signed_tx text,
     forward_signed_tx text,
     write_ahead boolean NOT NULL DEFAULT false,
+    dead_seen_at timestamp without time zone,
+    released_tx_hashes text[],
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT broker_purchases_status_known

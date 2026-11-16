@@ -689,18 +689,21 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                     "broker buy {key:?} is 'forwarding' without a forward_tx_hash"
                 ))
             })?;
-            if let Some(raw) = row.forward_signed_tx.as_deref()
-                && signer.rebroadcast(&fwd_tx, raw).await? == Rebroadcast::Dead
-            {
-                // The buy mined and the token is with the relayer; the recorded
-                // forward never will, so a new one is signed in its place.
-                if !release_dead_forward(state, key, &fwd_tx).await? {
-                    return Err(ApiError::Conflict(format!(
-                        "broker buy {key:?} changed state concurrently; retry"
-                    )));
+            if let Some(raw) = row.forward_signed_tx.as_deref() {
+                if signer.rebroadcast(&fwd_tx, raw).await? == Rebroadcast::Dead {
+                    // The buy mined and the token is with the relayer; once the
+                    // recorded forward is confirmed dead, one new forward is
+                    // signed in its place.
+                    dead_look(state, key, &fwd_tx).await?;
+                    if !release_dead_forward(state, key, &fwd_tx).await? {
+                        return Err(ApiError::Conflict(format!(
+                            "broker buy {key:?} changed state concurrently; retry"
+                        )));
+                    }
+                    let token_id = resume_token_id(ctx, &row).await?;
+                    return drive_forward(ctx, token_id).await;
                 }
-                let token_id = resume_token_id(ctx, &row).await?;
-                return drive_forward(ctx, token_id).await;
+                clear_dead_look(state, key).await?;
             }
             let outcome = signer.await_receipt(&fwd_tx).await?;
             match outcome {
@@ -897,8 +900,9 @@ async fn record_forward(
 /// Re-sends the buy leg recorded under `key`, unless it already has a
 /// receipt; a claim recorded without its bytes is left to its receipt. A
 /// recorded buy that can never mine (a finalized transaction holds its
-/// nonce) spent nothing: the claim is released to `error`, which the next
-/// buy request re-arms, and this call answers 409.
+/// nonce, confirmed by two looks; see [`dead_look`]) spent nothing: the
+/// claim is released to `error` with the hash kept in `released_tx_hashes`,
+/// the next buy request re-arms it, and this call answers 409.
 pub(crate) async fn rebroadcast_recorded_buy(
     state: &SharedState,
     signer: &DirectSigner,
@@ -914,12 +918,15 @@ pub(crate) async fn rebroadcast_recorded_buy(
     .flatten();
     let Some(raw) = raw else { return Ok(()) };
     if signer.rebroadcast(tx_hash, &raw).await? != Rebroadcast::Dead {
-        return Ok(());
+        return clear_dead_look(state, key).await;
     }
+    dead_look(state, key, tx_hash).await?;
     let released = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'error', tx_hash = NULL, signed_tx = NULL, \
+         released_tx_hashes = array_append(released_tx_hashes, tx_hash), dead_seen_at = NULL, \
          updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1 AND status = 'sent' AND tx_hash = $2 AND write_ahead",
+         WHERE idempotency_key = $1 AND status = 'sent' AND tx_hash = $2 AND write_ahead \
+           AND dead_seen_at IS NOT NULL",
     )
     .bind(key)
     .bind(tx_hash)
@@ -934,6 +941,67 @@ pub(crate) async fn rebroadcast_recorded_buy(
     )))
 }
 
+/// How long apart two dead looks at a recorded leg must be before it is
+/// released: one lookup can be wrong (a lagging load-balanced backend), two
+/// minutes apart agreeing are taken as final.
+const DEAD_CONFIRM_SECS: i64 = 600;
+
+/// The oldest claim a dead look may release. Nodes may prune the lookup
+/// index of old transactions, so for an older claim a missing receipt is
+/// not evidence: it is logged and left for manual reconciliation.
+const DEAD_RELEASE_MAX_AGE_DAYS: i64 = 7;
+
+/// Records a dead look at the recorded leg `tx_hash` and decides: `Ok` when
+/// an earlier look at least [`DEAD_CONFIRM_SECS`] ago agrees (release it);
+/// a retryable `RelayerTimeout` after a first look; `Conflict` for a claim
+/// older than [`DEAD_RELEASE_MAX_AGE_DAYS`], which needs reconciliation.
+async fn dead_look(state: &SharedState, key: &str, tx_hash: &str) -> Result<(), ApiError> {
+    let now = crate::evm::now();
+    let looked: Option<(bool, bool)> = sqlx::query_as(
+        "UPDATE shop.broker_purchases SET dead_seen_at = COALESCE(dead_seen_at, $3) \
+         WHERE idempotency_key = $1 \
+           AND ((status = 'sent' AND tx_hash = $2) OR (status = 'forwarding' AND forward_tx_hash = $2)) \
+         RETURNING dead_seen_at <= $3 - make_interval(secs => $4) AS confirmed, \
+                   created_at >= $3 - make_interval(days => $5) AS recent",
+    )
+    .bind(key)
+    .bind(tx_hash)
+    .bind(now)
+    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(DEAD_RELEASE_MAX_AGE_DAYS as i32)
+    .fetch_optional(&state.pool)
+    .await?;
+    match looked {
+        None => Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        ))),
+        Some((_, false)) => {
+            tracing::error!(idempotency_key = %key, tx_hash = %tx_hash, "recorded broker transaction looks dead but its claim is too old to trust a missing receipt; reconcile manually");
+            Err(ApiError::Conflict(format!(
+                "broker buy {key:?}'s recorded transaction {tx_hash} looks dead, but the claim \
+                 is older than {DEAD_RELEASE_MAX_AGE_DAYS} days \u{2014} reconcile manually"
+            )))
+        }
+        Some((false, true)) => Err(ApiError::RelayerTimeout(format!(
+            "broker buy {key:?}'s recorded transaction {tx_hash} looks dead; a retry at least \
+             {DEAD_CONFIRM_SECS} s later confirms it before anything is released"
+        ))),
+        Some((true, true)) => Ok(()),
+    }
+}
+
+/// Forgets an earlier dead look once a look finds the recorded leg alive.
+async fn clear_dead_look(state: &SharedState, key: &str) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET dead_seen_at = NULL \
+         WHERE idempotency_key = $1 AND dead_seen_at IS NOT NULL",
+    )
+    .bind(key)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
 /// Clears a recorded forward that can never mine so a new one can be
 /// recorded: the row goes back to `bought` (the buy mined; the token is with
 /// the relayer). Fenced on the dead forward still being the recorded one.
@@ -944,8 +1012,11 @@ async fn release_dead_forward(
 ) -> Result<bool, ApiError> {
     let released = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'bought', forward_tx_hash = NULL, \
-         forward_signed_tx = NULL, updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1 AND status = 'forwarding' AND forward_tx_hash = $2",
+         forward_signed_tx = NULL, \
+         released_tx_hashes = array_append(released_tx_hashes, forward_tx_hash), \
+         dead_seen_at = NULL, updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'forwarding' AND forward_tx_hash = $2 \
+           AND dead_seen_at IS NOT NULL",
     )
     .bind(key)
     .bind(fwd_tx)

@@ -3287,6 +3287,11 @@ struct ScriptedChain {
     drop_sends: std::sync::atomic::AtomicU32,
     taken_nonces: std::sync::atomic::AtomicU32,
     finalized_taken_nonces: std::sync::atomic::AtomicU32,
+    /// Hashes the node knows (`eth_getTransactionByHash`) without a receipt.
+    known: Mutex<Vec<String>>,
+    /// Hashes with a receipt though this node never took them (another
+    /// backend did).
+    mined_elsewhere: Mutex<Vec<String>>,
     accepted: Mutex<Vec<Vec<u8>>>,
     mint: Mutex<Option<(Address, Address)>>,
 }
@@ -3367,9 +3372,21 @@ async fn spawn_scripted_chain(chain: Arc<ScriptedChain>) -> String {
                 accepted.push(bytes);
                 ok(json!(format!("{hash:#x}")))
             }
+            "eth_getTransactionByHash" => {
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                if chain.accepted_hashes().contains(&hash)
+                    || chain.known.lock().unwrap().contains(&hash)
+                    || chain.mined_elsewhere.lock().unwrap().contains(&hash)
+                {
+                    return ok(json!({ "hash": hash }));
+                }
+                ok(Value::Null)
+            }
             "eth_getTransactionReceipt" => {
                 let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
-                if !chain.accepted_hashes().contains(&hash) {
+                if !chain.accepted_hashes().contains(&hash)
+                    && !chain.mined_elsewhere.lock().unwrap().contains(&hash)
+                {
                     return ok(Value::Null);
                 }
                 let logs = match *chain.mint.lock().unwrap() {
@@ -3827,53 +3844,103 @@ async fn a_recorded_forward_that_was_not_broadcast_is_resent_by_the_key_only_res
     clear_items_pass(&pool).await;
 }
 
+/// Moves a claim's first dead look (and, with `age`, its claim time) into
+/// the past, as a later retry would find them.
+async fn age_dead_look(pool: &PgPool, key: &str, minutes: i64, claim_days: Option<i64>) {
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET dead_seen_at = $2 - make_interval(mins => $3), \
+         created_at = COALESCE($2 - make_interval(days => $4), created_at) \
+         WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .bind(now())
+    .bind(minutes as i32)
+    .bind(claim_days.map(|d| d as i32))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn dead_seen(pool: &PgPool, key: &str) -> (bool, Option<Vec<String>>) {
+    sqlx::query_as(
+        "SELECT dead_seen_at IS NOT NULL, released_tx_hashes FROM shop.broker_purchases \
+         WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// A NAME buy recorded under `key` whose send never reached the node.
+async fn recorded_unsent_name_buy(
+    pool: &PgPool,
+    chain: &Arc<ScriptedChain>,
+    name: &str,
+) -> (axum::Router, String, Value, String) {
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": name, "buyerAddress": BUYER });
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    let recorded = recorded_purchase(pool, &key).await.tx_hash.unwrap();
+    (app, key, body, recorded)
+}
+
 /// A recorded transaction whose nonce another transaction took can never
 /// mine. While that other transaction is not final, the retry neither
 /// re-sends nor re-signs (a reorg could still mine ours) and answers 504.
-/// Once it is final, nothing was spent: the claim is released (409) and the
-/// next request buys with a new transaction, the only one the chain mines.
+/// Once it is final, a first dead look is only noted (504); a second look
+/// ten minutes later agrees, so the claim is released (409) with the dead
+/// hash kept, and the next request buys with a new transaction, the only
+/// one the chain mines.
 #[tokio::test]
 async fn a_recorded_transaction_whose_nonce_was_finally_taken_is_released_and_bought_again() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let chain = Arc::new(ScriptedChain::default());
-    chain
-        .drop_sends
-        .store(1, std::sync::atomic::Ordering::SeqCst);
-    let (state, _) = scripted_state(&pool, chain.clone()).await;
-    let app = router(state);
-    let key = format!("names-{}", Uuid::new_v4());
-    let body = json!({ "mode": "mint", "name": "nonceless", "buyerAddress": BUYER });
-
-    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
-    assert_eq!(status, 504, "{reply}");
-    let dead = recorded_purchase(&pool, &key).await.tx_hash.unwrap();
+    let (app, key, body, dead) = recorded_unsent_name_buy(&pool, &chain, "nonceless").await;
 
     chain
         .taken_nonces
         .store(1, std::sync::atomic::Ordering::SeqCst);
     let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
     assert_eq!(status, 504, "not final yet: wait, never re-sign: {reply}");
-    let row = recorded_purchase(&pool, &key).await;
-    assert_eq!(
-        (row.status.as_str(), row.tx_hash.as_deref()),
-        ("sent", Some(dead.as_str()))
-    );
-    assert!(chain.accepted_hashes().is_empty());
+    assert_eq!(dead_seen(&pool, &key).await, (false, None));
 
     chain
         .finalized_taken_nonces
         .store(1, std::sync::atomic::Ordering::SeqCst);
     let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "one dead look is only noted: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("sent", Some(dead.as_str()))
+    );
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "a second look right after is not enough");
+
+    age_dead_look(&pool, &key, 11, None).await;
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
     assert_eq!(
         status, 409,
-        "a final dead transaction releases the claim: {reply}"
+        "two looks ten minutes apart release the claim: {reply}"
     );
     let row = recorded_purchase(&pool, &key).await;
     assert_eq!(
         (row.status.as_str(), row.tx_hash, row.signed_tx),
         ("error", None, None)
+    );
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, Some(vec![dead.clone()]))
     );
     assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
 
@@ -3891,9 +3958,91 @@ async fn a_recorded_transaction_whose_nonce_was_finally_taken_is_released_and_bo
     delete_key(&pool, "broker_purchases", &key).await;
 }
 
+/// A single lookup can be wrong. A node that still knows the transaction
+/// contradicts a missing receipt, so nothing is noted; a first dead look
+/// later contradicted by a receipt (a lagging backend) is forgotten, and the
+/// mined buy is confirmed, never released or bought again.
+#[tokio::test]
+async fn a_dead_look_contradicted_by_a_later_receipt_releases_nothing() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, recorded) = recorded_unsent_name_buy(&pool, &chain, "lagging").await;
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+
+    chain.known.lock().unwrap().push(recorded.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, None),
+        "the node knows it"
+    );
+
+    chain.known.lock().unwrap().clear();
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+
+    age_dead_look(&pool, &key, 11, None).await;
+    chain.mined_elsewhere.lock().unwrap().push(recorded.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the receipt settles it: {reply}");
+    assert_eq!(reply["txHash"], recorded.as_str());
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash),
+        ("confirmed", Some(recorded))
+    );
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, None),
+        "the dead look is forgotten"
+    );
+    assert!(
+        chain.accepted_hashes().is_empty(),
+        "nothing was bought again"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A claim older than the release window may have lost its receipt to a
+/// pruned lookup index, so a dead look there is never released: it is left
+/// `sent` for manual reconciliation.
+#[tokio::test]
+async fn an_old_claim_that_looks_dead_is_left_for_reconciliation() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, recorded) = recorded_unsent_name_buy(&pool, &chain, "pruned").await;
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    age_dead_look(&pool, &key, 11, Some(8)).await;
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 409, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!((row.status.as_str(), row.tx_hash), ("sent", Some(recorded)));
+    assert_eq!(dead_seen(&pool, &key).await.1, None, "nothing released");
+    assert!(chain.accepted_hashes().is_empty());
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
 /// A recorded forward whose nonce a final transaction took can never mine;
-/// the buy did, so the key-only resume signs one new forward in its place
-/// and settles the claim.
+/// the buy did. A first dead look is only noted; once a second look ten
+/// minutes later agrees, the key-only resume signs one new forward in its
+/// place and settles the claim.
 #[tokio::test]
 async fn a_recorded_forward_that_can_never_mine_is_replaced_by_one_new_forward() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
@@ -3936,11 +4085,20 @@ async fn a_recorded_forward_that_can_never_mine_is_replaced_by_one_new_forward()
     chain
         .finalized_taken_nonces
         .store(1, std::sync::atomic::Ordering::SeqCst);
+    let first = crate::checkout::broker::resume(&state, &key).await;
+    assert!(
+        matches!(first, Err(ApiError::RelayerTimeout(_))),
+        "{first:?}"
+    );
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "forwarding");
+
+    age_dead_look(&pool, &key, 11, None).await;
     let forward = crate::checkout::broker::resume(&state, &key).await.unwrap();
     assert_ne!(forward, dead);
     let row = recorded_purchase(&pool, &key).await;
     assert_eq!(row.status, "confirmed");
     assert_eq!(row.forward_tx_hash.as_deref(), Some(forward.as_str()));
+    assert_eq!(dead_seen(&pool, &key).await, (false, Some(vec![dead])));
     assert_eq!(
         chain.accepted_hashes(),
         vec![buy, forward],
