@@ -1,4 +1,4 @@
-//! The content history prune: a sync-only node drops the deployments no
+//! The content history prune: a node drops the deployments no
 //! pointer is served by any more (superseded by a newer entity over the
 //! same pointers, or unpublished), their `content_files` rows and the blobs
 //! nothing else names, once they have been out of `active_pointers` for the
@@ -18,9 +18,10 @@
 //! covers what a restart can replay (minutes); the cost of a re-offer is a
 //! download, never a wrong pointer.
 //!
-//! An authoritative node (`CONTENT_WRITES_ENABLED`) keeps its history, so
-//! the job refuses to run beside the switch, and a pass with the switch off
-//! still keeps every row a local deployment superseded.
+//! Pruning is the operator's choice (`CONTENT_HISTORY_PRUNE_ENABLED`),
+//! independent of `CONTENT_WRITES_ENABLED`: only peer deployments go, which
+//! peers still hold, while local deployments and the rows they superseded
+//! always stay.
 //!
 //! Superseded at: a row has no such column; it is the later of the row's own
 //! `local_timestamp` (a late replay lands already superseded) and its
@@ -76,8 +77,6 @@ pub const SERIES: [&str; 6] = [
 pub struct PruneOptions {
     /// `CONTENT_HISTORY_PRUNE_ENABLED`.
     pub enabled: bool,
-    /// `CONTENT_WRITES_ENABLED`: an authoritative node keeps its history.
-    pub content_writes_enabled: bool,
     /// How long a row stays after it left `active_pointers`
     /// (`CONTENT_HISTORY_PRUNE_GRACE_HOURS`).
     pub grace: Duration,
@@ -96,7 +95,6 @@ impl PruneOptions {
     pub fn from_config(config: &Config) -> Self {
         Self {
             enabled: config.content.content_history_prune_enabled,
-            content_writes_enabled: config.writes.content_writes_enabled,
             grace: Duration::from_secs(
                 config
                     .content
@@ -123,13 +121,7 @@ impl PruneOptions {
 
     /// Why a pass would not run; `None` when it runs.
     pub fn skip_reason(&self) -> Option<&'static str> {
-        if !self.enabled {
-            Some("CONTENT_HISTORY_PRUNE_ENABLED=false")
-        } else if self.content_writes_enabled {
-            Some("CONTENT_WRITES_ENABLED=true: an authoritative node keeps its deployment history")
-        } else {
-            None
-        }
+        (!self.enabled).then_some("CONTENT_HISTORY_PRUNE_ENABLED=false")
     }
 }
 
@@ -382,8 +374,8 @@ pub async fn run_once(
     run(pool, storage, opts, None).await
 }
 
-/// Spawns the periodic job, or logs once why it does not run (the flag off,
-/// an authoritative node) and spawns nothing. Answers whether it runs.
+/// Spawns the periodic job, or logs once why it does not run (the flag off)
+/// and spawns nothing. Answers whether it runs.
 pub fn spawn(jobs: &Jobs, pool: PgPool, storage: Arc<Storage>, opts: PruneOptions) -> bool {
     if let Some(reason) = opts.skip_reason() {
         tracing::info!(reason, "content history prune: not running");
@@ -443,7 +435,6 @@ mod tests {
     fn options(grace: Duration, batch: usize) -> PruneOptions {
         PruneOptions {
             enabled: true,
-            content_writes_enabled: false,
             grace,
             batch,
             pause_between_batches: Duration::ZERO,
@@ -596,24 +587,6 @@ mod tests {
         assert_eq!(rows, 7);
 
         let grace = Duration::from_secs(86_400);
-        let refused = run_once(
-            &pool,
-            &storage,
-            &PruneOptions {
-                content_writes_enabled: true,
-                ..options(grace, 1)
-            },
-        )
-        .await
-        .unwrap();
-        assert!(
-            refused
-                .skipped
-                .as_deref()
-                .unwrap()
-                .starts_with("CONTENT_WRITES_ENABLED=true"),
-            "{refused:?}"
-        );
         let off = run_once(
             &pool,
             &storage,

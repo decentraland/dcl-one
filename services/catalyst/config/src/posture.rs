@@ -155,13 +155,6 @@ fn credits_manager(lookup: &Lookup) -> Option<String> {
     mainnet(lookup).then(|| CREDITS_MANAGER_MAINNET.to_string())
 }
 
-/// History pruning drops superseded peer deployments; a node taking local
-/// deploys keeps its history.
-fn prune_unless_content_writes(lookup: &Lookup) -> Option<String> {
-    let writes = lookup("CONTENT_WRITES_ENABLED").is_some_and(|v| v.trim() == "true");
-    Some((!writes).to_string())
-}
-
 fn denylist_or_decentraland(lookup: &Lookup) -> Option<String> {
     Some(
         set(lookup, "DENYLIST_JSON_URL")
@@ -190,16 +183,8 @@ const ROWS: &[Row] = &[
         "https://asset-bundle-registry.decentraland.org/denylist",
     ),
     same("sync", "PHASED_SYNC", "true"),
-    row(
-        "sync",
-        "CONTENT_HISTORY_PRUNE_ENABLED",
-        From(
-            "true, false while CONTENT_WRITES_ENABLED=true",
-            prune_unless_content_writes,
-        ),
-        Is("false"),
-        Is("false"),
-    ),
+    // Independent of CONTENT_WRITES_ENABLED: local deploys are never pruned.
+    mirrored("sync", "CONTENT_HISTORY_PRUNE_ENABLED"),
     mirrored("mirrors", "EXPLORER_MIRRORS_ENABLED"),
     mirrored("mirrors", "PLACES_MIRROR_UPSTREAM"),
     mirrored("mirrors", "EVENTS_MIRROR_UPSTREAM"),

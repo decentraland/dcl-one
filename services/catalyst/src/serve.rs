@@ -624,8 +624,7 @@ pub async fn serve(
         );
     }
     // The content history prune (src/content/history_prune.rs): behind
-    // CONTENT_HISTORY_PRUNE_ENABLED, and off beside the writes switch (an
-    // authoritative node keeps its history); it logs once why it is not running.
+    // CONTENT_HISTORY_PRUNE_ENABLED; it logs once why it is not running.
     content::history_prune::spawn(
         &jobs,
         pool.clone(),

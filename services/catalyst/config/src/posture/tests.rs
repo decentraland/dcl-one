@@ -553,7 +553,10 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
     );
-    assert!(!c.content.content_history_prune_enabled);
+    assert!(
+        c.content.content_history_prune_enabled,
+        "content writes leave the prune default alone"
+    );
 
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
