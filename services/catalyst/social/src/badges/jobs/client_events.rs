@@ -169,8 +169,9 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
             }
             "vertical-height-reached" => {
                 // The Unity explorer sends no height: it reports on reaching the gain.
+                // An explicit null is not missing (upstream's `null < 500` holds).
                 let height = match m.get("height") {
-                    None | Some(Value::Null) => None,
+                    None => None,
                     Some(h) => match number(h).filter(|h| *h <= MAX_HEIGHT) {
                         Some(h) => Some(h),
                         None => {

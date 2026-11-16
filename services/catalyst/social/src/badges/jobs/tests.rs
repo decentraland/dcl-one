@@ -465,11 +465,23 @@ async fn a_height_reached_without_a_height_completes_vertical_voyager() {
     let a = fresh_address();
     let a = a.as_str();
     client_event(&pool, a, "vertical-height-reached", None, now(), json!({})).await;
+    // an explicit null is not a missing height
+    let b = fresh_address();
+    client_event(
+        &pool,
+        b.as_str(),
+        "vertical-height-reached",
+        None,
+        now(),
+        json!({"height": null}),
+    )
+    .await;
     drain_client_events(&p).await;
     assert_eq!(
         progress(&pool, a, "vertical_voyager").await,
         Some((1, json!({"steps": 1}), true))
     );
+    assert_eq!(progress(&pool, b.as_str(), "vertical_voyager").await, None);
 }
 
 #[tokio::test]

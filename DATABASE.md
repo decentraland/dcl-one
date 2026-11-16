@@ -1506,7 +1506,11 @@ default, and social writes are), each a reader of tables other areas own, with o
   above 5,000 m is passed (no scene is that tall; one without a height, as
   the Unity explorer sends it, counts as reached) and a `passport-opened`
   receiver must be a wallet address. Times are Segment's `received_at`, as
-  upstream stamped arrival, so a client cannot backdate or space its events;
+  upstream stamped arrival, so a client cannot backdate or space its events.
+  Segment stamps a whole batch with one `received_at`, so emotes or scene
+  stays a client delivers late in one batch (after a retry or offline)
+  collapse into one minute or one moment: a deliberate trade against
+  client-set times;
 - `content.deployments` by `id` (rarity badges, profile pro, land architect,
   the store half of open for business), a wearable's rarity from its active
   entity or `shop.items`;

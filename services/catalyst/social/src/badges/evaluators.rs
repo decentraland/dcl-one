@@ -189,10 +189,9 @@ pub fn social_butterfly(p: &mut Progress, user: &str, receiver: &str) {
 }
 
 /// `vertical-voyager.ts`: a height of at least 500 completes it, the document
-/// becomes `{steps: 1, height_reached}`.
-/// `vertical-voyager.ts`: a height below the gain needed is not enough; an
-/// event without one (the Unity explorer's) completes the badge, as
-/// upstream's `undefined < 500` let it.
+/// becomes `{steps: 1, height_reached}`; an event without one (the Unity
+/// explorer's) completes it with `{steps: 1}`, as upstream's
+/// `undefined < 500` let it.
 pub fn vertical_voyager(p: &mut Progress, height: Option<f64>) {
     if p.completed || height.is_some_and(|h| h.is_nan() || h < ELEVATION_NEEDED) {
         return;
@@ -351,10 +350,11 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
     }
     let list = array(p, published_key(badge_id));
     for (item_id, created_at_ms) in items {
+        let item = item_key(item_id);
         let known = list.iter().any(|v| {
             v.get("itemId")
                 .and_then(Value::as_str)
-                .is_some_and(|i| i.eq_ignore_ascii_case(item_id))
+                .is_some_and(|i| item_key(i) == item)
         });
         if !known {
             list.push(json!({ "itemId": item_id, "createdAt": created_at_ms }));
@@ -362,6 +362,17 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
     }
     let total = i32::try_from(items.len()).unwrap_or(i32::MAX);
     p.steps = p.steps.max(total);
+}
+
+/// A creator list item id as `<contract>-<item>` lowercased, from that form
+/// or a collections URN (`urn:decentraland:<network>:collections-v2:<contract>:<item>`).
+fn item_key(id: &str) -> String {
+    let id = id.to_ascii_lowercase();
+    let parts: Vec<&str> = id.split(':').collect();
+    match parts.as_slice() {
+        ["urn", "decentraland", _, _, contract, item, ..] => format!("{contract}-{item}"),
+        _ => id,
+    }
 }
 
 /// The buyers' purchase list key (`emotionista.ts`, `fashionista.ts`).
@@ -719,6 +730,8 @@ mod tests {
         ];
         creator(&mut p, EMOTE_CREATOR, &items);
         assert_eq!(p.steps, 3);
+        let listed = p.state["published_emotes"].as_array().unwrap().len();
+        assert_eq!(listed, 3, "the URN entries stand for their items");
         // a stored count above the mirror's is kept
         let mut q = progress(9, json!({}));
         creator(&mut q, EMOTE_CREATOR, &items);
