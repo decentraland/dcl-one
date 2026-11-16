@@ -241,7 +241,7 @@ impl Rig {
     }
 
     /// On `pool`, e.g. an owned database that no other fixture's voice poll
-    /// sweeps (`rpc::tests::fanout::OwnedDatabase`).
+    /// sweeps (`db::scratch::OwnedDatabase`).
     async fn with_pool(
         settings: Settings,
         explore: impl FnOnce(&PgPool) -> crate::explore::SharedState,
@@ -579,11 +579,9 @@ async fn a_deleted_community_does_not_suppress_a_live_one_for_the_same_wallet() 
 }
 
 /// GET /v1/referral-progress marks the stats viewed only while social
-/// writes go through: off or held, the stats still answer and nothing is
-/// marked.
+/// writes go through: off, the stats still answer and nothing is marked.
 #[tokio::test]
 async fn the_referral_viewed_mark_waits_for_social_writes() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
@@ -603,14 +601,8 @@ async fn the_referral_viewed_mark_waits_for_social_writes() {
     let on = crate::writes::guard(router(rig.state.clone()), true);
     let (status, _) = hit(&off, Case::new("get", path).signed(&referrer).await).await;
     assert_eq!(status, StatusCode::OK, "off: the stats still answer");
-    let lab = StampLab::new();
-    let case = Case::new("get", path).signed(&referrer).await;
-    let (status, _) = scoped(lab.stamps.clone(), hit(&on, case)).await;
-    assert_eq!(status, StatusCode::OK, "held: the stats still answer");
     assert_eq!(marked().await, 0);
-    let lab = StampLab::fresh();
-    let case = Case::new("get", path).signed(&referrer).await;
-    let (status, _) = scoped(lab.stamps.clone(), hit(&on, case)).await;
+    let (status, _) = hit(&on, Case::new("get", path).signed(&referrer).await).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(marked().await, 1);
     rig.finish();
@@ -1115,6 +1107,24 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "not accepted friends");
+    sqlx::query("INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2)")
+        .bind(friend.address.as_str())
+        .bind(user.address.as_str())
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    let (status, _) = hit(app, Case::new("get", &messages).signed(&user).await).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a block closes the friend DM"
+    );
+    sqlx::query("DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2")
+        .bind(friend.address.as_str())
+        .bind(user.address.as_str())
+        .execute(&rig.pool)
+        .await
+        .unwrap();
 
     let (status, _) = hit(
         app,

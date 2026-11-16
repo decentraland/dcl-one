@@ -578,6 +578,41 @@ mod scene_log_budget_tests {
         );
     }
 
+    // A scene that subscribes but never calls a topic op still has its inbox moved into its
+    // topic queues each tick, so the bounded inbox does not fill between consumes.
+    #[test]
+    fn each_tick_drains_the_topic_inbox() {
+        let (sx, _rx) = scene_response_channel();
+        let mut s = crdt_state();
+        s.put(SceneResponseSender::new(dcl_types::SceneId::DUMMY, sx));
+        let state = std::rc::Rc::new(std::cell::RefCell::new(s));
+        futures_lite::future::block_on(super::comms_api::op_comms_subscribe_topic(
+            state.clone(),
+            Some("t".to_owned()),
+        ))
+        .unwrap();
+        let inbox = std::mem::take(&mut **state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>())
+            .into_iter()
+            .find_map(|call| match call {
+                common::rpc::RpcCall::SubscribeSceneTopics { sender } => Some(sender),
+                _ => None,
+            })
+            .expect("subscribe asks the engine for topic messages");
+        let mut payload = 1u16.to_le_bytes().to_vec();
+        payload.extend(b"thello");
+        inbox.send(("0x1".to_owned(), payload)).unwrap();
+
+        super::engine::crdt_send_to_renderer(state.clone(), &[]);
+
+        let mut state = state.borrow_mut();
+        assert_eq!(state.borrow::<SceneResourceCounters>().comms_msgs_in, 1);
+        let queued = state
+            .borrow_mut::<super::comms_api::SceneTopics>()
+            .consume("t");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].data, "hello");
+    }
+
     // An oversized batch is refused at ingress: the scene is reported as errored and flagged
     // for shutdown, and no Ok frame is built — so the offending scene dies without a giant
     // frame ever reaching the shared connection.

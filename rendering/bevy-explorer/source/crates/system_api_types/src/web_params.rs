@@ -79,6 +79,7 @@ fn delivery(field: &str) -> Delivery {
         | "portables"
         | "preview"
         | "imposter_source"
+        | "bevy_variants"
         | "content_server"
         | "log_fps"
         | "gpu_bytes_per_frame"

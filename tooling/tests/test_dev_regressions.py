@@ -1,5 +1,7 @@
 """CI inventory fixtures and a dependency-free Cargo build-context regression."""
 import importlib.util
+import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -14,7 +16,441 @@ guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
 
+class AuthStressTests(unittest.TestCase):
+    def test_external_timeout_preserves_partial_diagnostics_and_failure(self):
+        for output in (b'RPC_WORKLOAD_latest\nFD count=42\n\xff',
+                       'RPC_WORKLOAD_latest\nFD count=42\n', None):
+            for show_output in (False, True):
+                with self.subTest(output=output, show_output=show_output):
+                    error = subprocess.TimeoutExpired(['fixture'], 210, output=output)
+                    with mock.patch.object(guard, 'external_inventory'), \
+                            mock.patch.object(guard.subprocess, 'run', side_effect=error) as execute, \
+                            mock.patch('builtins.print') as printed, \
+                            mock.patch.object(guard, 'verify_external_result') as verify, \
+                            self.assertRaises(subprocess.TimeoutExpired) as raised:
+                        guard.run_external('fixture', 'required', show_output=show_output)
+                    self.assertIs(raised.exception, error)
+                    expected = output.decode(errors='replace') if isinstance(output, bytes) else output or ''
+                    printed.assert_any_call(expected, flush=True)
+                    self.assertEqual(execute.call_args.kwargs['timeout'], 210)
+                    self.assertEqual(execute.call_args.kwargs['stderr'], subprocess.STDOUT)
+                    verify.assert_not_called()
+
+    def test_auth_stress_workflow_requires_one_prepared_run_per_platform(self):
+        workflow = (ROOT / '.github/workflows/development.yml').read_text()
+        guard.validate_auth_stress_workflow(workflow)
+        command = '          python3 tooling/dev-regressions.py --auth-stress\n'
+        for changed in [workflow.replace(command, ''), workflow.replace(command, command * 2),
+                        workflow.replace('      - name: Run provisioned auth stress\n',
+                                         '      - name: Run provisioned auth stress\n        if: false\n'),
+                        workflow.replace('          prepare_catalyst_test_resources\n', ''),
+                        workflow.replace('        if: matrix.shard == 2\n', ''),
+                        workflow.replace('        shard: [1, 2, 3]\n', '        shard: [1, 3]\n')]:
+            with self.subTest(changed=changed):
+                with self.assertRaises(ValueError):
+                    guard.validate_auth_stress_workflow(changed)
+
+    def test_auth_stress_compiles_same_graph_and_runs_exact_ignored_body_once(self):
+        with mock.patch.object(guard, 'compiled_targets', return_value={'dcl_auth': 'fixture'}) as compile, \
+                mock.patch.object(guard, 'run_external') as execute:
+            guard.check_auth_stress()
+        compile.assert_called_once_with(guard.SELECTION.split(), ROOT / 'services/catalyst',
+                                        selected={'dcl_auth'}, kind='lib')
+        execute.assert_called_once_with('fixture', guard.AUTH_STRESS, show_output=True)
+
+    def test_auth_stress_never_displaces_ordinary_controls(self):
+        name = 'rpc_validator::tests::controlled_rpc_workload_measures_latest_and_fallback_at_the_verification_envelope'
+        self.assertIn(name, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, [name for _, _, name in guard.EXTERNAL])
+        for script in ['tooling/dev-test.sh', 'tooling/catalyst-test.sh']:
+            self.assertNotIn('prepare_catalyst_test_resources', (ROOT / script).read_text())
+
+    def test_auth_stress_preserves_successful_workload_output_and_rejects_missing_target(self):
+        name = guard.AUTH_STRESS
+        output = f'test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s\n'
+        with mock.patch.object(guard, 'run', side_effect=[f'{name}: test\n', f'{name}: test\n']), \
+                mock.patch.object(guard.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)) as execute:
+            guard.run_external('fixture', name, show_output=True)
+        self.assertIn('--show-output', execute.call_args.args[0])
+        with mock.patch.object(guard, 'compiled_targets', return_value={}), \
+                mock.patch.object(guard, 'run_external') as execute, \
+                self.assertRaisesRegex(ValueError, 'auth stress library target missing'):
+            guard.check_auth_stress()
+        execute.assert_not_called()
+
+
 class InventoryTests(unittest.TestCase):
+    def test_maintenance_review_regressions_resolve_exact_source_and_inventory(self):
+        cases = {
+            "comms/src/gatekeeper/admission/cluster/fence.rs": ("gatekeeper::admission::cluster::fence::tests::", [
+                "selected_replay_rotates_beyond_queue_capacity_without_a_global_tick_and_retains_old_sources",
+                "healthy_owned_replay_waits_for_renewal_but_a_new_desire_is_due_immediately",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/tests.rs": ("gatekeeper::admission::cluster::subscriber::tests::", [
+                "shutdown_settles_all_selected_targets_independently_of_due_maintenance_filter",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/wallet_queue/tests.rs": ("gatekeeper::admission::cluster::subscriber::wallet_queue::tests::", [
+                "maintenance_has_lifetime_credit_item_and_running_bounds_with_event_headroom",
+                "maintenance_credit_remains_charged_until_uncertain_mutation_settles",
+                "maintenance_capacity_notifications_refill_more_than_the_global_queue_without_a_timer",
+                "an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_wallet_work",
+            ]),
+        }
+        required = guard.MANDATORY_ARCHIPELAGO[("catalyst_comms", "lib")]
+        for path, (prefix, names) in cases.items():
+            source = (ROOT / "services/catalyst" / path).read_text()
+            for name in names:
+                self.assertEqual(len(re.findall(r"\bfn\s+" + name + r"\s*\(", source)), 1)
+                self.assertEqual(required.count(prefix + name), 1)
+
+    def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
+        cases = [
+            ("tests/pulse_cluster_lookup.rs", "", [
+                "real_selection_retirement_exchange_requires_complete_absence_and_exact_source",
+            ]),
+            ("comms/src/protocol/bus/cluster.rs", "protocol::bus::cluster::tests::", [
+                "selection_retirement_codec_is_exact_bounded_and_negative_only",
+            ]),
+            ("comms/src/pulse/cluster/assignments.rs", "pulse::cluster::assignments::current_tests::", [
+                "retirement_requires_complete_absence_and_survives_record_and_control_gc",
+                "retirement_withholds_blocked_pending_and_successor_current_evidence",
+            ]),
+            ("tests/comms_v4_assignment_fence/recovery.rs", "recovery::", [
+                "started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
+                "started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
+                "started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement",
+                "started_selected_retirement_waits_for_a_lease_and_preserves_a_real_foreign_successor",
+            ]),
+        ]
+        for path, prefix, names in cases:
+            target = ("pulse_cluster_lookup", "test") if path == "tests/pulse_cluster_lookup.rs" else (("comms_v4_assignment_fence", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            source = (ROOT / "services/catalyst" / path).read_text(encoding="utf-8")
+            bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+            for name in names:
+                with self.subTest(target=target, name=name):
+                    self.assertIn(prefix + name, required)
+                    self.assertEqual(bodies.count(name), 1)
+
+    def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
+        target = "archipelago_control_extensions_websocket"
+        catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))
+        required = set(catalog["catalyst"][target]) | set(guard.MANDATORY_ARCHIPELAGO[(target, "test")])
+        source = (ROOT / "services/catalyst/tests" / (target + ".rs")).read_text(encoding="utf-8")
+        bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+        for name in sorted(required):
+            with self.subTest(name=name):
+                self.assertEqual(bodies.count(name), 1, "mandatory selectors must track the actual current socket test body")
+        self.assertIn("configured_replica_signaling_cannot_steal_a_fresh_foreign_room", required)
+
+    def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
+        bodies = {
+            ("catalyst_comms", "lib"): [
+                "archipelago::observations::tests::saturated_heartbeats_cannot_drop_or_overtake_a_waiting_disconnect",
+                "archipelago::observations::tests::disconnect_waiters_retain_admission_credit_across_repeated_churn",
+                "archipelago::observations::tests::disconnect_admission_ignores_link_readiness_but_counts_bus_and_shutdown_loss",
+                "archipelago::observations::tests::refused_observations_count_every_loss_without_logging_on_the_socket_path",
+                "pulse::statistics::tests::draining_changes_releases_bytes_while_the_backlog_stays_nonempty",
+                "stats::tests::indexed_changes_preserve_order_and_rebuild_after_removal_and_recovery",
+                "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
+                "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
+                "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
+                "gatekeeper::bus::broker::tests::cancelled_terminal_heads_cannot_publish_after_a_link_rebuild",
+                "gatekeeper::bus::broker::tests::retained_head_is_bounded_and_cancellation_before_sdk_start_prevents_publication",
+                "gatekeeper::bus::broker::tests::retained_capability_rejects_every_non_disconnect_payload",
+                "archipelago::observations::tests::shutdown_deadline_cancels_unsubmitted_disconnect_and_counts_all_forced_loss_once",
+                "gatekeeper::bus::broker::tests::retained_sdk_deadline_and_link_changes_leave_submission_unconfirmed",
+                "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
+                "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
+                "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
+                "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+                "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+                "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
+                "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+                "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+                "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
+            ],
+            ("catalyst_content", "lib"): [
+                "write_path_tests::a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile",
+            ],
+            ("pulse_nats_live", "test"): [
+                "cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
+            ],
+        }
+        for target, names in bodies.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                others = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [
+                    (others, ""),
+                    (others + f"{name}_renamed: test\n", ""),
+                    (normal, f"{name}: test\n"),
+                    (normal + f"{name}: test\n", ""),
+                    (others + f"{name}: benchmark\n", ""),
+                ]:
+                    with self.subTest(target=target, name=name, changed=changed, ignored=ignored), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_statistics_boundary_bodies_remain_required_and_unignored(self):
+        targets = {
+            ("catalyst_comms", "lib"): [
+                "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+                "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+                "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
+            ],
+            ("catalyst", "lib"): [
+                "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+                "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
+            ],
+        }
+        for target, names in targets.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                without = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [(without, ""), (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
+        for target in [("catalyst_comms", "lib"), ("pulse_cluster_lookup", "test"),
+                       ("comms_v4_assignment_fence", "test")]:
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in required:
+                others = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [
+                    (others, ""),
+                    (others + f"{name}_renamed: test\n", ""),
+                    (normal, f"{name}: test\n"),
+                    (normal + f"{name}: test\n", ""),
+                    (others + f"{name}: benchmark\n", ""),
+                ]:
+                    with self.subTest(target=target, name=name, changed=changed, ignored=ignored), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_rpc_diagnostic_body_cannot_disappear_from_the_ordinary_inventory(self):
+        name = "rpc_validator::tests::workload_transport_diagnostics_keep_io_causes_without_endpoint_data"
+        required = guard.MANDATORY_ARCHIPELAGO[("dcl_auth", "lib")]
+        others = "".join(f"{entry}: test\n" for entry in required if entry != name)
+        normal = others + f"{name}: test\n"
+        guard.verify(required, normal, "", "auth diagnostics")
+        for changed, ignored in [
+            (others, ""),
+            (others + f"{name}_renamed: test\n", ""),
+            (normal, f"{name}: test\n"),
+            (normal + f"{name}: test\n", ""),
+        ]:
+            with self.subTest(normal=changed, ignored=ignored), self.assertRaises(ValueError):
+                guard.verify(required, changed, ignored, "auth diagnostics")
+
+    def test_exact_engine_inventory_requires_one_unignored_test_and_no_other_entries(self):
+        validate = getattr(guard, "verify_exact", None)
+        self.assertTrue(callable(validate), "the isolated engine process needs an exact inventory guard")
+        validate(["configured"], "configured: test\n", "", "engine")
+        for normal, ignored in [
+            ("", ""),
+            ("renamed: test\n", ""),
+            ("configured: test\nextra: test\n", ""),
+            ("configured: test\nextra: benchmark\n", ""),
+            ("configured: benchmark\n", ""),
+            ("configured: test\n", "configured: test\n"),
+            ("configured: test\n", "extra: test\n"),
+            ("configured: test\n", "extra: benchmark\n"),
+            ("configured: test\nconfigured: test\n", ""),
+        ]:
+            with self.subTest(normal=normal, ignored=ignored), self.assertRaises(ValueError):
+                validate(["configured"], normal, ignored, "engine")
+        with self.assertRaises(ValueError):
+            validate(["configured", "extra"], "configured: test\nextra: test\n", "", "engine")
+
+    def test_exact_engine_guard_reads_both_executable_inventories(self):
+        with mock.patch.object(guard, "run", side_effect=["configured: test\n", ""]) as execute:
+            guard.check_executable(["configured"], "engine", "isolated engine", exact=True)
+        self.assertEqual(execute.call_args_list, [
+            mock.call(["engine", "--list", "--format", "terse"]),
+            mock.call(["engine", "--list", "--ignored", "--format", "terse"]),
+        ])
+        with mock.patch.object(guard, "run", side_effect=["configured: test\nextra: test\n", ""]), \
+             self.assertRaises(ValueError):
+            guard.check_executable(["configured"], "engine", "isolated engine", exact=True)
+
+    def test_external_result_requires_exact_success_without_skips(self):
+        validate = getattr(guard, "verify_external_result", None)
+        self.assertTrue(callable(validate), "provisioned tests need an exact execution-result guard")
+        validate("required", "test required ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s\n")
+        for output in ["test result: ok. 0 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.00s\n",
+                       "test required ... ignored\ntest result: ok. 0 passed; 0 failed; 1 ignored; 9 filtered out; finished in 0.00s\n",
+                       "test other ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s\n"]:
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                validate("required", output)
+
+    def test_external_result_rejects_duplicate_or_failed_summary(self):
+        good = "test required ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n"
+        guard.verify_external_result("required", good)
+        for output in [good + good, good.replace("1 passed", "2 passed"),
+                       good.replace("0 failed", "1 failed"), good.split("test result:")[0]]:
+            with self.subTest(output=output), self.assertRaises(ValueError):
+                guard.verify_external_result("required", output)
+
+    def test_external_inventory_selects_the_exact_ignored_body(self):
+        output = "test required ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n"
+        with mock.patch.object(guard, "run", side_effect=["required: test\nother: test\n", "required: test\n"]), \
+             mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as execute:
+            guard.run_external("fixture", "required")
+        self.assertEqual(execute.call_args.args[0], ["fixture", "required", "--exact", "--ignored", "--test-threads=1", "--color", "never"])
+        for normal, ignored in [("other: test\n", ""), ("required: test\n", ""),
+                                ("required: test\nrequired: test\n", "required: test\n")]:
+            with self.subTest(normal=normal), mock.patch.object(guard, "run", side_effect=[normal, ignored]), \
+                 mock.patch.object(guard.subprocess, "run") as execute, self.assertRaises(ValueError):
+                guard.run_external("fixture", "required")
+            execute.assert_not_called()
+
+    def test_external_process_failure_is_not_a_pass(self):
+        with mock.patch.object(guard, "run", side_effect=["required: test\n", "required: test\n"]), \
+             mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 7, "failed")), \
+             self.assertRaisesRegex(ValueError, "failed \\(7\\)"):
+            guard.run_external("fixture", "required")
+
+    def test_external_prerequisites_fail_before_compilation(self):
+        for environment in [{}, {"PULSE_NATS_SERVER_BIN": "missing", "CATALYST_TEST_DATABASE_URL": "fixture"}]:
+            with mock.patch.dict(guard.os.environ, environment, clear=True), \
+                 mock.patch.object(guard, "run") as execute, self.assertRaisesRegex(ValueError, "PULSE_NATS_SERVER_BIN"):
+                guard.check_external()
+            execute.assert_not_called()
+        with mock.patch.object(Path, "is_file", return_value=True), mock.patch.object(guard.os, "access", return_value=True):
+            with self.assertRaisesRegex(ValueError, "CATALYST_TEST_DATABASE_URL"):
+                guard.external_prerequisites({"PULSE_NATS_SERVER_BIN": "fixture"})
+            self.assertEqual(guard.external_prerequisites({"PULSE_NATS_SERVER_BIN": "fixture", "CATALYST_TEST_DATABASE_URL": "fixture"}), "fixture")
+
+    def test_external_target_selection_includes_lib_and_root_integration(self):
+        import json
+        artifacts = [
+            {"reason": "compiler-artifact", "executable": "unit", "profile": {"test": True}, "target": {"name": "catalyst_comms", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "socket", "profile": {"test": True}, "target": {"name": "archipelago_socket_bounds", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "config", "profile": {"test": True}, "target": {"name": "catalyst_config", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "auth", "profile": {"test": True}, "target": {"name": "dcl_auth", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "owner", "profile": {"test": True}, "target": {"name": "archipelago_control_extensions_websocket", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "content", "profile": {"test": True}, "target": {"name": "catalyst_content", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "root", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "root-bin", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["bin"]}},
+            {"reason": "compiler-artifact", "executable": "retry", "profile": {"test": True}, "target": {"name": "retry_keeps_the_record_until_written", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "retry-lib", "profile": {"test": True}, "target": {"name": "retry_keeps_the_record_until_written", "kind": ["lib"]}},
+            {"reason": "compiler-artifact", "executable": "engine", "profile": {"test": True}, "target": {"name": "stats_metrics_engine", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "engine-lib", "profile": {"test": True}, "target": {"name": "stats_metrics_engine", "kind": ["lib"]}},
+        ]
+        output = "\n".join(map(json.dumps, artifacts))
+        required = {(entry["target"]["name"], entry["target"]["kind"][0]): [f"required_{index}"]
+                    for index, entry in enumerate(artifacts) if entry["executable"] not in ("root-bin", "retry-lib", "engine-lib")}
+        with mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
+             mock.patch.dict(guard.os.environ, {}, clear=True), \
+             mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+             mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
+             mock.patch.object(guard, "run", return_value=output) as build, \
+             mock.patch.object(guard, "check_executable") as mandatory, \
+             mock.patch.object(guard, "run_external") as execute:
+            guard.check_external()
+        self.assertEqual([call.args[0] for call in execute.call_args_list], ["unit", "socket", "socket"])
+        self.assertEqual([call.args[1] for call in execute.call_args_list], [entry[2] for entry in guard.EXTERNAL])
+        self.assertEqual([call.args[0] for call in mandatory.call_args_list], list(required.values()))
+        self.assertEqual([call.args[1] for call in mandatory.call_args_list], ["unit", "socket", "config", "auth", "owner", "content", "root", "retry", "engine"])
+        self.assertEqual(mandatory.call_args_list[-1].kwargs, {"exact": True})
+        self.assertEqual(build.call_args.args[0], ["cargo", "test", "--locked", *guard.SELECTION.split(), "--no-run", "--message-format=json-render-diagnostics"])
+        for absent, kind in (("content", "lib"), ("root", "lib"), ("retry", "test"), ("engine", "test")):
+            incomplete = "\n".join(json.dumps(entry) for entry in artifacts if entry["executable"] != absent)
+            with self.subTest(absent=absent), mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
+                 mock.patch.dict(guard.os.environ, {}, clear=True), \
+                 mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+                 mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
+                 mock.patch.object(guard, "run", return_value=incomplete), \
+                 mock.patch.object(guard, "check_executable"), mock.patch.object(guard, "run_external") as execute, \
+                 self.assertRaisesRegex(ValueError, f"missing provisioned {kind} target"):
+                guard.check_external()
+            execute.assert_not_called()
+        with mock.patch.dict(guard.os.environ, {}, clear=True), \
+             mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+             mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")), \
+             mock.patch.object(guard, "run", return_value=""), self.assertRaisesRegex(ValueError, "missing provisioned"):
+            guard.check_external()
+
+    def test_one_shard_of_a_run_executes_the_provisioned_tests(self):
+        setting = guard.EXTERNAL_SHARD
+        self.assertEqual(guard.external_shard({}), (True, "1/1"))
+        self.assertEqual(guard.external_shard({"CATALYST_TEST_SHARD": "", setting: ""}), (True, "1/1"))
+        # A run that sets neither variable executes them.
+        for total in range(1, 6):
+            for chosen in range(1, total + 1):
+                owners = [guard.external_shard({"CATALYST_TEST_SHARD": f"{index}/{total}", setting: str(chosen)})
+                          for index in range(1, total + 1)]
+                self.assertEqual([index for index, (execute, _) in enumerate(owners, 1) if execute], [chosen])
+                self.assertEqual({owner for _, owner in owners}, {f"{chosen}/{total}"})
+            # Without the setting the first shard executes them.
+            self.assertEqual([guard.external_shard({"CATALYST_TEST_SHARD": f"{index}/{total}"})[0]
+                              for index in range(1, total + 1)], [True] + [False] * (total - 1))
+        for environment in [{"CATALYST_TEST_SHARD": "1/3", setting: "4"}, {"CATALYST_TEST_SHARD": "3/3", setting: "0"},
+                            {"CATALYST_TEST_SHARD": "2/3", setting: "2/3"}, {"CATALYST_TEST_SHARD": "1/3", setting: " 2"},
+                            {setting: "2"}, {"CATALYST_TEST_SHARD": "4/3", setting: "2"},
+                            {"CATALYST_TEST_SHARD": "0/3"}, {"CATALYST_TEST_SHARD": "2"}]:
+            with self.subTest(environment=environment), self.assertRaises(ValueError):
+                guard.external_shard(environment)
+
+    def test_the_other_shards_check_the_provisioned_tests_and_do_not_run_them(self):
+        import json
+        artifacts = [{"reason": "compiler-artifact", "executable": executable, "profile": {"test": True},
+                      "target": {"name": name, "kind": [kind]}}
+                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "archipelago_socket_bounds", "test")]]
+        output = "\n".join(map(json.dumps, artifacts))
+        names = [entry[2] for entry in guard.EXTERNAL]
+
+        def check(environment, listed):
+            with mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", {("catalyst_comms", "lib"): ["required"]}), \
+                 mock.patch.dict(guard.os.environ, environment, clear=True), \
+                 mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
+                 mock.patch.object(guard.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "nats fixture")) as process, \
+                 mock.patch.object(guard, "run", side_effect=lambda command, *rest: output if command[0] == "cargo" else listed) as called, \
+                 mock.patch.object(guard, "check_executable") as mandatory, \
+                 mock.patch.object(guard, "run_external") as execute:
+                guard.check_external()
+            return called, mandatory, execute, process
+
+        listed = "".join(name + ": test\n" for name in names)
+        for shard in ("1/3", "3/3"):
+            called, mandatory, execute, process = check({"CATALYST_TEST_SHARD": shard, guard.EXTERNAL_SHARD: "2"}, listed)
+            execute.assert_not_called()
+            # Only the version probe of the broker starts a process; no test body runs.
+            self.assertEqual([call.args[0] for call in process.call_args_list], [["nats", "--version"]])
+            self.assertEqual(mandatory.call_count, 1)
+            self.assertEqual([call.args[0] for call in called.call_args_list[1:]],
+                             [[executable, "--list", *ignored, "--format", "terse"]
+                              for executable in ("unit", "socket", "socket") for ignored in ([], ["--ignored"])])
+        called, mandatory, execute, _ = check({"CATALYST_TEST_SHARD": "2/3", guard.EXTERNAL_SHARD: "2"}, listed)
+        self.assertEqual([call.args for call in execute.call_args_list], list(zip(("unit", "socket", "socket"), names)))
+        self.assertEqual(mandatory.call_count, 1)
+        # A shard that does not run the tests still fails when one is renamed or no longer ignored.
+        with self.assertRaisesRegex(ValueError, "absent/renamed or annotation changed"):
+            check({"CATALYST_TEST_SHARD": "1/3", guard.EXTERNAL_SHARD: "2"}, listed.replace(names[1], "renamed"))
+        with self.assertRaisesRegex(ValueError, guard.EXTERNAL_SHARD):
+            check({"CATALYST_TEST_SHARD": "1/3", guard.EXTERNAL_SHARD: "4"}, listed)
+
+    def test_runtime_rejects_missing_filtered_or_conditional_external_checks(self):
+        script = (ROOT / "tooling/dev-test.sh").read_text()
+        commands = [guard.EXTERNAL_COMMAND,
+                    "python3 tooling/archipelago-fixtures.py check",
+                    "python3 -m unittest discover -s tooling/tests -p 'test_archipelago_fixtures.py'"]
+        guard.validate_runtime_script(script)
+        for command in commands:
+            for changed in ["", command + "\n      " + command, command + " || true",
+                            "if false; then " + command + "; fi", "if false; then\n      " + command + "\n      fi"]:
+                with self.subTest(command=command, changed=changed), self.assertRaises(ValueError):
+                    guard.validate_runtime_script(script.replace(command, changed))
+
     def test_database_generator_tracks_root_across_shared_cargo_target(self):
         # Exercise Cargo's cached build-script dependency contract, not its source text.
         with tempfile.TemporaryDirectory(prefix="db-build-context-") as temporary:
@@ -101,7 +537,7 @@ class InventoryTests(unittest.TestCase):
                     self.assertIn(f"NESTED_CONTEXT_{marker}_{relative.stem}".encode(), generated[0])
                     self.assertNotIn(f"NESTED_CONTEXT_{other}_{relative.stem}".encode(), generated[0])
                 ordered = [Path("schemas/00_context.sql"), *release_definitions, Path("schemas/45_after_release.sql")]
-                positions = [generated[0].index(f"-- ════ {path} ════".encode()) for path in ordered]
+                positions = [generated[0].index(f"-- ════ {path.as_posix()} ════".encode()) for path in ordered]
                 self.assertEqual(positions, sorted(positions), "nested release DDL follows filename order")
                 self.assertEqual(
                     {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_state},
@@ -133,6 +569,7 @@ class InventoryTests(unittest.TestCase):
         for invocation in [guard.BROAD.replace("--workspace", "-p catalyst-comms"),
                            guard.BROAD + " --exclude catalyst", guard.BROAD + " case_name",
                            guard.BROAD + " -- --skip required", guard.BROAD + " -- --ignored",
+                           guard.BROAD.replace(" --features catalyst/test-support", ""),
                            guard.BROAD.replace("catalyst-test.sh", "catalyst-test.sh --test unrelated")]:
             with self.subTest(invocation=invocation), self.assertRaises(ValueError):
                 guard.validate_invocation(invocation, {})
@@ -146,7 +583,8 @@ class InventoryTests(unittest.TestCase):
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
             mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
             mock.patch.dict(guard.os.environ, clear=True),
-            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
+            mock.patch.object(Path, "read_text", side_effect=["", manifest, "", ""]),
+            mock.patch.object(guard, "validate_auth_stress_workflow"),
             mock.patch.object(guard, "verify_resolution"),
             mock.patch.object(guard, "validate_runtime_script"),
             mock.patch.object(guard, "validate_test_script"),
@@ -197,6 +635,94 @@ class InventoryTests(unittest.TestCase):
                 guard.validate_runtime_script(bad)
 
 
+    def test_engine_receipt_is_emitted_once_without_unrelated_success_output(self):
+        import json
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="matcher-receipt-") as temporary:
+            directory = Path(temporary)
+            count = directory / "executions"
+            executables = [directory / name for name in ["stats_metrics_engine-fixture", "ordinary-fixture"]]
+            for executable in executables:
+                executable.write_text(
+                    '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
+                    + "printf '%s' 'test configured_stats_engine_and_http_contract ... '\n"
+                    + "printf '\\n%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
+                    + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
+                )
+                executable.chmod(0o755)
+            result = subprocess.run(
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                 + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
+                 *(executable.as_posix() for executable in executables)],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(count.read_text().splitlines(), [path.name for path in executables])
+            receipts = [line for line in result.stdout.splitlines() if line.startswith("STATS_ENGINE_RECEIPT ")]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(json.loads(receipts[0].removeprefix("STATS_ENGINE_RECEIPT ")), {"completed": 32})
+            self.assertNotIn("private success detail", result.stdout)
+            self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
+            self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
+            for executable in executables:
+                log = (directory / (executable.name + ".log")).read_text()
+                self.assertEqual(log.splitlines()[0], "test configured_stats_engine_and_http_contract ... ")
+                self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
+                self.assertIn("private success detail", log)
+
+    def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        # "B" sorts before "a" in byte order and after it in a language locale.
+        keys = [(f"tests/{name}.rs", "test") for name in "gfeDcBa"] + [("src/lib.rs", "lib"), ("src/main.rs", "bin")]
+
+        def run(value, hashes, keys=keys, locale="C"):
+            # One line per test binary, as the build step writes it: source file, kind, executable.
+            rows = [f"{source}\t{kind}\t/target/debug/deps/{hashed}\n" for (source, kind), hashed in zip(keys, hashes)]
+            with tempfile.TemporaryDirectory() as logs:
+                Path(logs, "binaries").write_text("".join(rows))
+                env = {**os.environ, "logs": logs, "LC_ALL": locale}
+                env.pop("CATALYST_TEST_SHARD", None)
+                if value is not None:
+                    env["CATALYST_TEST_SHARD"] = value
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", select], env=env,
+                                        capture_output=True, text=True)
+                return (result.returncode, Path(logs, "shard").read_text().split() if result.returncode == 0 else [],
+                        result.stderr)
+
+        # Two machines give one binary two hashes; the lib and the bin of one crate share a name.
+        here = [f"catalyst-{index:02x}" if source.startswith("src/") else f"{source[6]}-{index:02x}"
+                for index, (source, _) in enumerate(keys)]
+        there = [name[:-2] + f"{255 - index:02x}" for index, name in enumerate(here)]
+        in_byte_order = [hashed for _, hashed in sorted(zip(keys, here))]
+        self.assertEqual(run(None, here)[:2], (0, [f"/target/debug/deps/{name}" for name in in_byte_order]))
+        # The other locale must give plain sort another order here, or this test cannot see a list that follows it.
+        language = "en_US.UTF-8"
+        lines = "tests/B.rs\ntests/a.rs\n"
+        sorted_there = subprocess.run(["sort"], input=lines, env={**os.environ, "LC_ALL": language},
+                                      capture_output=True, text=True).stdout
+        other_order = sorted_there != lines
+        for total in (1, 2, 3, 4, 7, 9):
+            shards = [run(f"{index}/{total}", here) for index in range(1, total + 1)]
+            self.assertEqual([code for code, _, _ in shards], [0] * total)
+            self.assertEqual(sorted(name for _, shard, _ in shards for name in shard),
+                             sorted(f"/target/debug/deps/{name}" for name in here))
+            # A shard on another machine, with other hashes and another locale, takes the same targets.
+            for index, (_, shard, _) in enumerate(shards if other_order else [], 1):
+                other = run(f"{index}/{total}", there, locale=language)[1]
+                self.assertEqual([here[there.index(name.rsplit("/", 1)[1])] for name in other],
+                                 [name.rsplit("/", 1)[1] for name in shard])
+        code, _, error = run("1/3", here + ["catalyst-ff"], keys=keys + [("src/lib.rs", "lib")])
+        self.assertEqual(code, 1)
+        self.assertIn("one source file and kind: src/lib.rs\tlib", error)
+        # A tab inside the path of a binary stays in the list.
+        self.assertEqual(run(None, ["a\tb"], keys=[("tests/a.rs", "test")])[1], ["/target/debug/deps/a", "b"])
+        for bad in ("3", "0/3", "4/3", "1/0", "a/b", "1/3/3", "/3", "2/3x", " 2/3", "02/03", "-1/3"):
+            with self.subTest(bad=bad):
+                self.assertEqual(run(bad, here)[0], 1)
+        if not other_order:
+            self.skipTest(f"sort does not follow {language} on this machine: the other locale was not checked")
+
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         guard.validate_test_script(script)
@@ -205,10 +731,17 @@ class InventoryTests(unittest.TestCase):
                     script.replace("set -euo pipefail", "set -uo pipefail"),
                     script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
                     script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
-                    script.replace('run "$jobs" < "$logs/binaries"', 'run "$jobs" < <(head -n 1 "$logs/binaries")'),
+                    script.replace('run "$jobs" < "$logs/shard"', 'run "$jobs" < <(head -n 1 "$logs/shard")'),
+                    script.replace("'NR % n == i % n'", "'NR == 1'"),
+                    script.replace('${CATALYST_TEST_SHARD:-1/1}', '${CATALYST_TEST_SHARD:-1/2}'),
+                    script.replace('[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && ', ''),
                     script.replace('< "$logs/others"', '< <(head -n 1 "$logs/others")'),
                     script.replace('run "$socket_jobs" < "$logs/sockets"\n', ''),
-                    script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
+                    script.replace('artifact["executable"], sep="\\t")', 'artifact["executable"], sep="\\t") if "comms" not in artifact["executable"] else None'),
+                    script.replace('LC_ALL=C sort "$logs/binaries" | cut -f3-', 'sort -k3 "$logs/binaries" | cut -f3-'),
+                    script.replace('LC_ALL=C sort "$logs/binaries" | cut -f3-', 'sort "$logs/binaries" | cut -f3-'),
+                    script.replace('[ -z "$same" ] || ', ''),
+                    script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:
             with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
@@ -278,7 +811,7 @@ class InventoryTests(unittest.TestCase):
 
 
 class DevScriptTests(unittest.TestCase):
-    def run_fixture(self, scenario="good", ci="true"):
+    def run_fixture(self, scenario="good", ci="true", platform="Darwin", kernel="65536"):
         bash = shutil.which("bash")
         if os.name == "nt":
             bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
@@ -301,7 +834,15 @@ if [ "$1" = env ]; then
   fi
 fi''')
             executable("nats-server", 'echo "nats:$*" >> "$CALLS"; [ "$SCENARIO" != bad-nats ]; echo "nats-server fixture"')
-            executable("python3", 'echo "python:$*" >> "$CALLS"; [ "$SCENARIO" != guard-fail ]')
+            # Exercise the macOS resource branch on every host without depending
+            # on /usr/sbin or changing the machine's actual resource limits.
+            executable("uname", '[ "$*" = -s ]; echo "$FIXTURE_PLATFORM"')
+            executable("sysctl", '''[ "$*" = '-n kern.maxfilesperproc' ]
+echo "resource:sysctl $*" >> "$CALLS"
+echo "$FIXTURE_KERNEL"''')
+            executable("python3", '''echo "python:$*" >> "$CALLS"
+[ "$SCENARIO" != guard-fail ]
+if [ "$SCENARIO" = external-fail ] && [ "$*" = "tooling/dev-regressions.py --archipelago-external" ]; then exit 8; fi''')
             executable("cargo", 'echo "cargo:$*" >> "$CALLS"; if [ "$1" = check ] && [ "$SCENARIO" = check-fail ]; then exit 7; fi')
             executable("make", r'''echo "make:$*" >> "$CALLS"
 [ "$PULSE_NATS_SERVER_BIN" = "$ARCHIPELAGO_NATS_SERVER_BIN" ]
@@ -313,7 +854,8 @@ echo verified-exports >> "$CALLS"''')
                 (tools / "nats-server").unlink()
             environment = dict(os.environ, CALLS=log.as_posix(), FIXTURE_ROOT=root.as_posix(),
                                FIXTURE_PG=" " if scenario == "blank-pg" else "postgres://fixture",
-                               SCENARIO=scenario, EXPECTED_CI=ci if ci is not None else "unset")
+                               SCENARIO=scenario, EXPECTED_CI=ci if ci is not None else "unset",
+                               FIXTURE_PLATFORM=platform, FIXTURE_KERNEL=kernel)
             environment.pop("FOUNDATION_DEV_TEST_DATABASE_URL", None)
             if scenario == "missing-pg":
                 environment["FIXTURE_PG"] = ""
@@ -325,10 +867,31 @@ echo verified-exports >> "$CALLS"''')
             command = 'export PATH="$1:/usr/bin:/bin"; bash "$2" rust'
             if os.name == "nt":
                 command = 'export PATH="$(cygpath -u "$1"):/usr/bin:/bin"; bash "$2" rust'
+            command = '''ulimit() {
+  case "$*" in -Sn) echo 65536 ;; -Hn) echo unlimited ;; *) return 77 ;; esac
+}
+export -f ulimit
+''' + command
             result = subprocess.run([bash, "-c", command, "fixture", tools.as_posix(),
                                      (ROOT / "tooling/dev-test.sh").as_posix()], env=environment,
                                     text=True, capture_output=True)
             return result, log.read_text() if log.exists() else ""
+
+    def test_macos_ordinary_suite_does_not_probe_stress_resources(self):
+        result, calls = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("resource:sysctl", calls)
+        self.assertNotIn("descriptors", result.stdout)
+        self.assertIn("verified-exports", calls)
+        self.assertEqual(calls.count("foundation:down"), 1, calls)
+
+    def test_macos_stock_kernel_runs_ordinary_suite_without_stress_floor(self):
+        result, calls = self.run_fixture(kernel="61440")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("resource:sysctl", calls)
+        for command in ("python:", "cargo:", "make:"):
+            self.assertIn(command, calls)
+        self.assertEqual(calls.count("foundation:down"), 1, calls)
 
     def test_good_exports_cleanup_and_one_broad_run(self):
         for ci in ["true", "false", None]:
@@ -339,6 +902,15 @@ echo verified-exports >> "$CALLS"''')
             self.assertEqual(calls.count("foundation:down"), 1, calls)
             self.assertIn("foundation:up --postgres-only", calls)
             self.assertIn("foundation:wait --postgres-only", calls)
+            self.assertEqual(calls.count("python:tooling/dev-regressions.py --archipelago-external"), 1, calls)
+            self.assertEqual(calls.count("python:tooling/archipelago-fixtures.py check"), 1, calls)
+
+    def test_external_failure_stops_before_broad_runtime(self):
+        result, calls = self.run_fixture("external-fail")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("python:tooling/dev-regressions.py --archipelago-external", calls)
+        self.assertNotIn("make:", calls)
+        self.assertEqual(calls.count("foundation:down"), 1, calls)
 
     def test_vendor_compile_failure_stops_before_runtime(self):
         result, calls = self.run_fixture("check-fail")

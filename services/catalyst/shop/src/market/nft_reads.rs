@@ -38,7 +38,7 @@ use super::orders::Order;
 use super::wire::{ApiError, Histogram, Network, NftCategory, consolidate, fix_urn};
 use super::{MarketplaceState, Source, unavailable};
 use crate::land_authz::indexer::ReadySnapshot;
-use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
+use crate::land_authz::{LandNetwork, land_network_of_registry};
 
 /// The deepest window the index serves (`first + skip`); the total is an
 /// exact count up to this bound and the bound past it.
@@ -106,15 +106,14 @@ fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
 }
 
 /// The land_authz index is the LAND/estate source: published, recent, and
-/// indexed from the mainnet registries these reads name. A yes/no for the
-/// gates only: a read of the index runs on [`land_snapshot`].
-pub async fn land_ready(pool: &PgPool) -> bool {
-    use crate::land_authz::NETWORK_MAINNET;
+/// indexed from `net`'s registries. A yes/no for the gates only: a read of
+/// the index runs on [`land_snapshot`].
+pub async fn land_ready(pool: &PgPool, net: LandNetwork) -> bool {
     crate::land_authz::indexer::ready_cursor(
         pool,
-        NETWORK_MAINNET,
-        LAND_REGISTRY_MAINNET,
-        ESTATE_REGISTRY_MAINNET,
+        net.network,
+        net.land_registry,
+        net.estate_registry,
     )
     .await
     .is_some()
@@ -123,15 +122,14 @@ pub async fn land_ready(pool: &PgPool) -> bool {
 /// [`land_ready`] as the snapshot the LAND/estate reads run on: the check
 /// and every read see one state
 /// ([`crate::land_authz::indexer::ReadySnapshot`]), so a rebind of the
-/// cursor between them cannot join these registries' rights to another
-/// registry's estate links. A database error reads as not ready.
-pub async fn land_snapshot(pool: &PgPool) -> Option<ReadySnapshot> {
-    use crate::land_authz::NETWORK_MAINNET;
+/// cursor between them cannot join `net`'s rights to another registry's
+/// estate links. A database error reads as not ready.
+pub async fn land_snapshot(pool: &PgPool, net: LandNetwork) -> Option<ReadySnapshot> {
     match crate::land_authz::indexer::ready_snapshot(
         pool,
-        NETWORK_MAINNET,
-        LAND_REGISTRY_MAINNET,
-        ESTATE_REGISTRY_MAINNET,
+        net.network,
+        net.land_registry,
+        net.estate_registry,
     )
     .await
     {
@@ -183,11 +181,19 @@ enum ReadConnError {
     Pool(sqlx::Error),
 }
 
-/// The connection a read of `sources` runs on: the land snapshot when it
-/// reads LAND, else a pool connection.
-async fn open_read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, ReadConnError> {
+/// The connection a read of `sources` runs on: the snapshot of `land`'s
+/// index when it reads LAND (unavailable on a network without LAND),
+/// else a pool connection.
+async fn open_read_conn(
+    pool: &PgPool,
+    land: Option<LandNetwork>,
+    sources: Sources,
+) -> Result<ReadConn, ReadConnError> {
     if sources.land {
-        return land_snapshot(pool)
+        let Some(net) = land else {
+            return Err(ReadConnError::LandUnavailable);
+        };
+        return land_snapshot(pool, net)
             .await
             .map(ReadConn::Land)
             .ok_or(ReadConnError::LandUnavailable);
@@ -200,11 +206,17 @@ async fn open_read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Rea
 
 /// [`open_read_conn`] for a route: a LAND read whose index is not ready
 /// answers its unavailable envelope.
-async fn read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Response> {
-    open_read_conn(pool, sources).await.map_err(|e| match e {
-        ReadConnError::LandUnavailable => land_unavailable(),
-        ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
-    })
+async fn read_conn(
+    pool: &PgPool,
+    land: Option<LandNetwork>,
+    sources: Sources,
+) -> Result<ReadConn, Response> {
+    open_read_conn(pool, land, sources)
+        .await
+        .map_err(|e| match e {
+            ReadConnError::LandUnavailable => land_unavailable(),
+            ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
+        })
 }
 
 /// [`nft_prices`]'s error when the LAND index stopped being ready after
@@ -214,9 +226,11 @@ async fn read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Response
 pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
     "the nft prices read LAND, and the land-authz index is not published";
 
-/// `Err(envelope)` unless every index `sources` needs for `f` is published.
+/// `Err(envelope)` unless every index `sources` needs for `f` is published;
+/// LAND reads the index of `land`'s registries (`ETH_NETWORK`'s).
 pub async fn require_ready(
     pool: &PgPool,
+    land: Option<LandNetwork>,
     f: &NftFilters,
     sources: Sources,
 ) -> Result<(), Response> {
@@ -241,7 +255,11 @@ pub async fn require_ready(
             ));
         }
     }
-    if sources.land && !land_ready(pool).await {
+    let land_ready = match land {
+        Some(net) => land_ready(pool, net).await,
+        None => false,
+    };
+    if sources.land && !land_ready {
         return Err(land_unavailable());
     }
     Ok(())
@@ -296,8 +314,10 @@ fn reads_geography(f: &NftFilters) -> bool {
 /// current members, a parcel's estate from its membership row; with
 /// `geography`, the squid's distance to a plaza and road adjacency from
 /// `land_proximity` (an estate: its parcels' least known distance, -1 when
-/// none has one, and whether any touches a road), else NULL.
-fn land_source(geography: bool) -> String {
+/// none has one, and whether any touches a road), else NULL. The rows are
+/// `net`'s registries; with `None` the source matches no row.
+fn land_source(net: Option<LandNetwork>, geography: bool) -> String {
+    let (land, estate) = net.map_or(("", ""), |n| (n.land_registry, n.estate_registry));
     let (geo_columns, geo_join) = if geography {
         (
             format!(
@@ -311,10 +331,9 @@ fn land_source(geography: bool) -> String {
                                    JOIN land_authz.token_right pt ON pt.token_address = '{land}' AND pt.token_id = m.land_token_id \
                                    JOIN shop.land_proximity p ON p.x = pt.x AND p.y = pt.y \
                                    WHERE m.estate_token_id = tr.token_id AND p.adjacent_to_road) END AS adjacent_to_road",
-                land = LAND_REGISTRY_MAINNET
             ),
             format!(
-                "LEFT JOIN shop.land_proximity lp ON tr.token_address = '{LAND_REGISTRY_MAINNET}' AND lp.x = tr.x AND lp.y = tr.y"
+                "LEFT JOIN shop.land_proximity lp ON tr.token_address = '{land}' AND lp.x = tr.x AND lp.y = tr.y"
             ),
         )
     } else {
@@ -344,9 +363,7 @@ fn land_source(geography: bool) -> String {
          LEFT JOIN LATERAL (SELECT e.block_time FROM land_authz.authz_event e WHERE e.block_number = tr.updated_block AND e.log_index = tr.updated_log) touched ON true \
          LEFT JOIN LATERAL (SELECT max(s.block_time) AS sold_at FROM shop.nft_event s WHERE s.network = 'ethereum' AND s.contract_address = tr.token_address \
                             AND s.token_id = tr.token_id AND s.kind = 'order_successful') sold ON true \
-         WHERE tr.token_address IN ('{land}', '{estate}') AND tr.owner IS NOT NULL",
-        land = LAND_REGISTRY_MAINNET,
-        estate = ESTATE_REGISTRY_MAINNET,
+         WHERE tr.token_address IN ('{land}', '{estate}') AND tr.owner IS NOT NULL"
     )
 }
 
@@ -576,7 +593,7 @@ async fn require_sources(
     f: &NftFilters,
     sources: Sources,
 ) -> Result<(), Response> {
-    require_ready(&state.pool, f, sources).await?;
+    require_ready(&state.pool, state.land_network(), f, sources).await?;
     if needs_orders(f) {
         super::trades::require_ready(state).await?;
     }
@@ -584,12 +601,14 @@ async fn require_sources(
 }
 
 /// The candidate set with its order legs as `c` (a CTE chain), for the
-/// page, the total and the histograms. `now_ms` is the bound clock, `since`
-/// the trades floor (`trades::mirrored_since`).
+/// page, the total and the histograms. LAND reads `land`'s registries,
+/// `now_ms` is the bound clock, `since` the trades floor
+/// (`trades::mirrored_since`).
 pub fn build_candidates(
     b: &mut Builder,
     f: &NftFilters,
     sources: Sources,
+    land: Option<LandNetwork>,
     now_ms: i64,
     since: Option<chrono::NaiveDateTime>,
 ) -> String {
@@ -601,7 +620,7 @@ pub fn build_candidates(
         parts.push(names_source());
     }
     if sources.land {
-        parts.push(land_source(reads_geography(f)));
+        parts.push(land_source(land, reads_geography(f)));
     }
     let base = parts.join(" UNION ALL ");
     let with_orders = needs_orders(f);
@@ -647,6 +666,7 @@ pub fn build_candidates(
 pub fn build_nfts_query(
     f: &NftFilters,
     sources: Sources,
+    land: Option<LandNetwork>,
     first: i64,
     skip: i64,
     now_ms: i64,
@@ -657,7 +677,7 @@ pub fn build_nfts_query(
 ) {
     let page = {
         let mut b = Builder::new();
-        let ctes = build_candidates(&mut b, f, sources, now_ms, since);
+        let ctes = build_candidates(&mut b, f, sources, land, now_ms, since);
         let mut wheres = Vec::new();
         push_filters(&mut b, f, &mut wheres);
         let lim = b.bind_i64(first);
@@ -672,7 +692,7 @@ pub fn build_nfts_query(
     };
     let total = {
         let mut b = Builder::new();
-        let ctes = build_candidates(&mut b, f, sources, now_ms, since);
+        let ctes = build_candidates(&mut b, f, sources, land, now_ms, since);
         let mut wheres = Vec::new();
         push_filters(&mut b, f, &mut wheres);
         let cap = b.bind_i64(MAX_WINDOW + 1);
@@ -801,6 +821,7 @@ fn row_to_result(
         chain_id: network.chain_id(),
         issued_id: r.get("issued_text"),
         trade_id: Some(String::new()),
+        payee: None,
     });
     let nft = Nft {
         active_order_id: order.as_ref().map(|o| o.id.clone()),
@@ -879,10 +900,11 @@ pub async fn list_nfts(
     let sources = sources_for(f);
     require_sources(state, f, sources).await?;
     // The page, its total and the estates' parcels read one state.
-    let mut conn = read_conn(&state.pool, sources).await?;
+    let land = state.land_network();
+    let mut conn = read_conn(&state.pool, land, sources).await?;
     let now_ms = Utc::now().timestamp_millis();
     let ((page_sql, page_args), (total_sql, total_args)) =
-        build_nfts_query(f, sources, first, skip, now_ms, trades_since(state));
+        build_nfts_query(f, sources, land, first, skip, now_ms, trades_since(state));
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(page_sql), page_args)
         .fetch_all(&mut *conn)
         .await
@@ -935,7 +957,8 @@ pub async fn require_prices_sources(
 pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
     let f = on_sale(f);
     let sources = sources_for(&f);
-    let mut conn = open_read_conn(&state.pool, sources)
+    let land = state.land_network();
+    let mut conn = open_read_conn(&state.pool, land, sources)
         .await
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => NFT_PRICES_LAND_UNAVAILABLE.to_string(),
@@ -946,6 +969,7 @@ pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Hist
         &mut b,
         &f,
         sources,
+        land,
         Utc::now().timestamp_millis(),
         trades_since(state),
     );
@@ -978,12 +1002,14 @@ pub async fn estate_sizes(state: &MarketplaceState, f: &NftFilters) -> Result<Hi
         ..Default::default()
     };
     require_sources(state, &f, sources).await?;
-    let mut conn = read_conn(&state.pool, sources).await?;
+    let land = state.land_network();
+    let mut conn = read_conn(&state.pool, land, sources).await?;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,
         &f,
         sources,
+        land,
         Utc::now().timestamp_millis(),
         trades_since(state),
     );
@@ -1027,10 +1053,11 @@ fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescriptio
     }
 }
 
-/// The source SQL that describes `contract`'s tokens.
+/// The source SQL that describes `contract`'s tokens; a LAND or estate
+/// registry of any network reads that network's rows.
 fn source_of(net: ChainNet, contract: &str) -> String {
-    if contract == LAND_REGISTRY_MAINNET || contract == ESTATE_REGISTRY_MAINNET {
-        land_source(false)
+    if let Some(land) = land_network_of_registry(contract) {
+        land_source(Some(land), false)
     } else if contract == DCL_REGISTRAR {
         names_source()
     } else {
@@ -1105,6 +1132,7 @@ pub async fn asset_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET};
     use crate::market::nfts::parse_filters;
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -1162,8 +1190,15 @@ mod tests {
             ("network", "MATIC"),
         ]))
         .unwrap();
-        let ((page, _), (total, _)) =
-            build_nfts_query(&f, sources_for(&f), 100, 6_000, 1_700_000_000_000, None);
+        let ((page, _), (total, _)) = build_nfts_query(
+            &f,
+            sources_for(&f),
+            None,
+            100,
+            6_000,
+            1_700_000_000_000,
+            None,
+        );
         assert!(
             page.contains("c.name ILIKE")
                 && page.contains("c.owner = $")
@@ -1193,7 +1228,8 @@ mod tests {
             ("sortBy", "cheapest_parcel"),
         ]))
         .unwrap();
-        let ((page, _), _) = build_nfts_query(&on_sale, sources_for(&on_sale), 10, 0, 1, None);
+        let ((page, _), _) =
+            build_nfts_query(&on_sale, sources_for(&on_sale), None, 10, 0, 1, None);
         assert!(
             page.contains("unified_trades")
                 && page.contains("shop.nft_order o")
@@ -1213,7 +1249,7 @@ mod tests {
             ("sortBy", "cheapest"),
         ]))
         .unwrap();
-        let ((page, _), _) = build_nfts_query(&names, sources_for(&names), 10, 0, 1, None);
+        let ((page, _), _) = build_nfts_query(&names, sources_for(&names), None, 10, 0, 1, None);
         assert!(
             page.contains("shop.nft_order o")
                 && page.contains("c.order_price >= $")
@@ -1240,7 +1276,8 @@ mod tests {
                 ..Default::default()
             }
         );
-        let ((page, _), _) = build_nfts_query(&f, sources_for(&f), 10, 0, 1, None);
+        let ((page, _), _) =
+            build_nfts_query(&f, sources_for(&f), Some(LAND_MAINNET), 10, 0, 1, None);
         assert!(
             page.contains("shop.land_proximity")
                 && page.contains("c.adjacent_to_road")
@@ -1249,7 +1286,15 @@ mod tests {
             "{page}"
         );
         let plain = parse_filters(&pairs(&[("category", "parcel")])).unwrap();
-        let ((page, _), _) = build_nfts_query(&plain, sources_for(&plain), 10, 0, 1, None);
+        let ((page, _), _) = build_nfts_query(
+            &plain,
+            sources_for(&plain),
+            Some(LAND_MAINNET),
+            10,
+            0,
+            1,
+            None,
+        );
         assert!(!page.contains("land_proximity"), "{page}");
     }
 
@@ -1258,7 +1303,7 @@ mod tests {
     #[test]
     fn land_images_carry_the_configured_base_only() {
         for geography in [false, true] {
-            let sql = land_source(geography);
+            let sql = land_source(Some(LAND_MAINNET), geography);
             assert!(!sql.contains("://"), "{sql}");
         }
         assert_eq!(
@@ -1320,7 +1365,7 @@ mod tests {
         }
         let rows: Vec<(String, i32, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT c.token_id::text, c.distance_to_plaza, c.adjacent_to_road FROM ({}) c WHERE c.token_id = ANY($1::numeric[]) ORDER BY c.token_id",
-            land_source(true)
+            land_source(Some(LAND_MAINNET), true)
         )))
         .bind(&ids)
         .fetch_all(&pool)

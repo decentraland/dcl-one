@@ -1,4 +1,5 @@
 use super::*;
+use crate::pulse::hardening::WriterStep;
 
 #[test]
 fn connection_limiter_precedes_admission_and_rolls_back_refused_pre_auth() {
@@ -1050,6 +1051,402 @@ async fn future_dated_signature_is_consumed_before_reply_and_across_restart() {
     let _ = std::fs::remove_file(path.with_extension("replay-journal.tmp"));
 }
 
+struct JournalPath(std::path::PathBuf);
+
+impl JournalPath {
+    fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "catalyrst-pulse-server-{label}-{}-{id}.tsv",
+            std::process::id()
+        )))
+    }
+}
+
+impl Drop for JournalPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("replay-journal.tmp"));
+        let _ = std::fs::remove_file(self.0.with_extension("replay-journal.lock"));
+    }
+}
+
+fn journaled_server(
+    path: &std::path::Path,
+    now_ms: i64,
+) -> (PulseServer, std::sync::mpsc::Sender<WriterStep>) {
+    let mut server = PulseServer::with_config(4, 2, &[50], false);
+    let (policy, gate) = HandshakeReplayPolicy::durable_gated(
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        path,
+        now_ms,
+    );
+    server.replay_policy = policy;
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    (server, gate)
+}
+
+async fn journal_settled(server: &mut PulseServer) -> Vec<HeldHandshake> {
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        loop {
+            let ready = server.take_journaled();
+            if !ready.is_empty() {
+                return ready;
+            }
+            server.replay_policy.journal_progressed().await;
+        }
+    })
+    .await
+    .expect("the journal writer reports progress")
+}
+
+#[tokio::test]
+async fn a_handshake_is_answered_only_after_its_journal_sync() {
+    let path = JournalPath::new("answer-after-sync");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    {
+        let (mut server, gate) = journaled_server(&path.0, timestamp);
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+                .is_none()
+        );
+        let resync = client_msg(client_message::Message::Resync(Default::default()));
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &resync, timestamp, 2)
+                .is_none(),
+            "the peer's next packet waits behind its handshake"
+        );
+        assert!(
+            server.take_journaled().is_empty(),
+            "no answer before the sync"
+        );
+        assert!(!server.is_authenticated(1));
+
+        gate.send(WriterStep::Write).unwrap();
+        let ready = journal_settled(&mut server).await;
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].peer, 1);
+        assert_eq!(ready[0].packets.len(), 1);
+        match server.recheck_held(1, ready[0].action.clone()) {
+            Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+            other => panic!("expected the held admission, got {other:?}"),
+        }
+        assert!(
+            std::fs::read_to_string(&path.0)
+                .unwrap()
+                .contains(&format!("\t{wallet}\t{timestamp}\n"))
+        );
+    }
+
+    let mut restarted = PulseServer::with_config(4, 2, &[50], false);
+    restarted.replay_policy = HandshakeReplayPolicy::durable_after_restart(
+        true,
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        &path.0,
+        timestamp,
+    )
+    .unwrap();
+    restarted
+        .peers
+        .insert(2, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    assert!(matches!(
+        restarted.dispatch(2, channel::RELIABLE, &bytes, timestamp, 0),
+        Action::Reject {
+            reason: DisconnectReason::HandshakeReplayRejected,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn a_crash_before_the_journal_sync_answers_nothing_of_that_batch() {
+    let path = JournalPath::new("crash-before-sync");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    {
+        let (mut server, gate) = journaled_server(&path.0, timestamp);
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+                .is_none()
+        );
+        // Crash: the writer stops before the batch reaches the file.
+        drop(gate);
+        assert!(
+            server
+                .take_journaled()
+                .iter()
+                .all(|held| matches!(held.action, Action::Reject { reply: None, .. })),
+            "a batch that never synced is never answered"
+        );
+        assert!(!server.is_authenticated(1));
+    }
+
+    // The pair was never answered, so losing it with the batch admits nothing twice.
+    let mut restarted = PulseServer::with_config(4, 2, &[50], false);
+    restarted.replay_policy = HandshakeReplayPolicy::durable_after_restart(
+        true,
+        crate::pulse::handshake::MAX_TIMESTAMP_SKEW_MS,
+        4,
+        &path.0,
+        timestamp,
+    )
+    .unwrap();
+    restarted
+        .peers
+        .insert(2, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    match restarted.dispatch(2, channel::RELIABLE, &bytes, timestamp, 0) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("the unanswered pair is admitted once after restart, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_failed_journal_sync_refuses_the_held_handshake_without_an_answer() {
+    let path = JournalPath::new("failed-sync");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    gate.send(WriterStep::Fail).unwrap();
+    let ready = journal_settled(&mut server).await;
+    assert_eq!(ready.len(), 1);
+    assert_eq!(
+        ready[0].action,
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::ServerFull
+        }
+    );
+    assert_eq!(
+        server.peers[&1].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+}
+
+#[tokio::test]
+async fn a_panicked_journal_writer_wakes_the_loop_to_refuse_held_handshakes() {
+    let path = JournalPath::new("writer-panic");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    gate.send(WriterStep::Panic).unwrap();
+    // The event loop waits on the writer's progress, not on polling: the panic must wake it.
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        server.replay_policy.journal_progressed(),
+    )
+    .await
+    .expect("a writer panic wakes the event loop");
+    let ready = server.take_journaled();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(
+        ready[0].action,
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::ServerFull
+        }
+    );
+    assert_eq!(
+        server.peers[&1].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+}
+
+#[tokio::test]
+async fn a_peer_that_floods_while_its_handshake_is_held_is_refused() {
+    let path = JournalPath::new("held-overflow");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    let filler = vec![0u8; 4096];
+    for _ in 0..8 {
+        assert!(
+            server
+                .dispatch_or_hold(1, channel::RELIABLE, &filler, timestamp, 2)
+                .is_none()
+        );
+    }
+    let held = server.held_handshakes.front().unwrap();
+    assert!(held.overflowed);
+    assert!(held.packets.is_empty(), "nothing more of the peer is kept");
+    gate.send(WriterStep::Write).unwrap();
+    let ready = journal_settled(&mut server).await;
+    assert_eq!(
+        ready[0].action,
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::InputRateExceeded
+        }
+    );
+    assert_eq!(
+        server.peers[&1].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+}
+
+#[tokio::test]
+async fn a_held_handshake_is_answered_on_release_before_the_packets_behind_it() {
+    let path = JournalPath::new("release-over-enet");
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let host = Host::bind(HostConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        max_peers: 2,
+        channel_limit: 3,
+    })
+    .await
+    .unwrap();
+    let addr = host.local_addr().unwrap();
+    let mut transports = Transports::enet_only(host, 2);
+    let mut client = rusty_enet::Host::new(
+        std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
+        rusty_enet::HostSettings {
+            peer_limit: 1,
+            channel_limit: 3,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    client.connect(addr, 3, 0).unwrap();
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    server.peers.clear();
+    let mut peer = None;
+    let mut connected = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while peer.is_none() || !connected {
+        assert!(std::time::Instant::now() < deadline);
+        if let Some(Event::Connect { peer: id, .. }) = transports.service().await.unwrap() {
+            server
+                .connect_pending(id as u32, "127.0.0.1".into(), 0)
+                .unwrap();
+            peer = Some(id as u32);
+        }
+        if let Some(rusty_enet::Event::Connect { .. }) = client.service().unwrap() {
+            connected = true;
+        }
+    }
+    let peer = peer.unwrap();
+
+    let profile = client_msg(client_message::Message::ProfileAnnouncement(
+        ProfileVersionAnnouncement { version: 7 },
+    ));
+    for data in [bytes, profile] {
+        client
+            .peer_mut(rusty_enet::PeerID(0))
+            .send(channel::RELIABLE, &rusty_enet::Packet::reliable(data))
+            .unwrap();
+    }
+    client.flush();
+    let mut received = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while received < 2 {
+        assert!(std::time::Instant::now() < deadline, "packets missing");
+        let _ = client.service().unwrap();
+        if let Some(Event::Receive {
+            peer: id,
+            channel,
+            packet,
+        }) = transports.service().await.unwrap()
+        {
+            server
+                .receive(
+                    &mut transports,
+                    id as u32,
+                    channel,
+                    &packet.data,
+                    timestamp,
+                    1,
+                )
+                .await
+                .unwrap();
+            received += 1;
+        }
+    }
+    assert!(!server.is_authenticated(peer), "no answer before the sync");
+    assert_eq!(server.profiles.get(peer), 0);
+
+    gate.send(WriterStep::Write).unwrap();
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        server.replay_policy.journal_progressed(),
+    )
+    .await
+    .unwrap();
+    server.release_journaled(&mut transports).await.unwrap();
+    assert!(server.is_authenticated(peer));
+    assert_eq!(server.identity.peer_by_wallet(&wallet), Some(peer));
+    assert_eq!(
+        server.profiles.get(peer),
+        7,
+        "the packet behind the handshake is applied after it"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "handshake answer missing"
+        );
+        let _ = transports.service().await.unwrap();
+        if let Some(rusty_enet::Event::Receive { packet, .. }) = client.service().unwrap() {
+            assert!(matches!(
+                ServerMessage::decode(packet.data()).unwrap(),
+                ServerMessage {
+                    message: Some(server_message::Message::Handshake(HandshakeResponse {
+                        success: true,
+                        ..
+                    }))
+                }
+            ));
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_disconnect_drops_the_held_handshake() {
+    let path = JournalPath::new("disconnect-held");
+    let (bytes, _, timestamp) = signed_handshake_request().await;
+    let (mut server, gate) = journaled_server(&path.0, timestamp);
+    assert!(
+        server
+            .dispatch_or_hold(1, channel::RELIABLE, &bytes, timestamp, 1)
+            .is_none()
+    );
+    server.remove_peer_state(1);
+    // A new connection reusing the slot is not answered with the old outcome.
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    gate.send(WriterStep::Write).unwrap();
+    let issued = server.replay_policy.journal_issued();
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        while server.replay_policy.journal_progress().durable_through < issued {
+            server.replay_policy.journal_progressed().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(server.take_journaled().is_empty());
+}
+
 #[tokio::test]
 async fn a_stepped_back_wall_clock_cannot_reopen_a_used_handshake() {
     let (bytes, _, timestamp) = signed_handshake_request().await;
@@ -1113,7 +1510,7 @@ async fn replay_memory_exhaustion_is_transient_capacity_without_eviction() {
     assert_eq!(
         server
             .replay_policy
-            .try_admit(timestamp, "other-wallet", &other),
+            .try_admit(timestamp, None, "other-wallet", &other),
         Ok(())
     );
     server
@@ -1129,9 +1526,69 @@ async fn replay_memory_exhaustion_is_transient_capacity_without_eviction() {
     assert_eq!(
         server
             .replay_policy
-            .try_admit(timestamp + 2, "other-wallet", &other),
+            .try_admit(timestamp + 2, None, "other-wallet", &other),
         Err(ReplayRejection::Duplicate)
     );
+}
+
+#[tokio::test]
+async fn replay_table_is_bounded_per_source() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_source(2);
+    let signed = timestamp.to_string();
+    for other in ["0x1", "0x2"] {
+        assert_eq!(
+            server
+                .replay_policy
+                .try_admit(timestamp, Some("192.0.2.1"), other, &signed),
+            Ok(())
+        );
+    }
+    for (peer, ip) in [(1, "192.0.2.1"), (2, "192.0.2.2")] {
+        let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+        state.ip = Some(ip.into());
+        server.peers.insert(peer, state);
+    }
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Reject { reply, reason } => {
+            assert_eq!(reason, DisconnectReason::PreAuthIpLimitExhausted);
+            assert!(reply.is_none());
+        }
+        other => panic!("expected the source's quota to refuse, got {other:?}"),
+    }
+    // The refused pair was not consumed: the same signed bytes from another source are admitted.
+    match server.dispatch(2, channel::RELIABLE, &bytes, timestamp, 2) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("another source should authenticate, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn whitelisted_source_is_not_held_to_the_replay_quota() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_source(1);
+    server.ip_limiter_options.whitelist =
+        crate::pulse::hardening::IpWhitelist::parse("192.0.2.1").unwrap();
+    assert_eq!(
+        server.replay_policy.try_admit(
+            timestamp,
+            Some("192.0.2.1"),
+            "0x1",
+            &timestamp.to_string()
+        ),
+        Ok(())
+    );
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.1".into());
+    server.peers.insert(1, state);
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("a whitelisted source should authenticate, got {other:?}"),
+    }
 }
 
 #[test]

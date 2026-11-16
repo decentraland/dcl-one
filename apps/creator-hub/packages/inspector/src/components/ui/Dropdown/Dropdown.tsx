@@ -1,0 +1,253 @@
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { VscChevronDown as DownArrowIcon } from 'react-icons/vsc';
+import cx from 'classnames';
+import { isMixedValue } from '../utils';
+import { usePopoverPosition } from '../usePopoverPosition';
+import { useContainerSize } from '../../../hooks/useContainerSize';
+import { Label } from '../Label';
+import { Message, MessageType } from '../Message';
+import { Option } from './Option';
+import { OptionList } from './OptionList';
+import { SelectedOption } from './SelectedOption';
+import type { Props as OptionProp } from './Option/types';
+import {
+  FONT_SIZE,
+  FONT_WEIGHT,
+  WIDTH_CONST,
+  ICON_SIZE,
+  isMultipleOptionSelected,
+  isOptionSelected,
+  MIXED_VALUE_LABEL,
+} from './utils';
+import type { Props } from './types';
+import './Dropdown.css';
+
+const Dropdown = React.forwardRef<HTMLInputElement, Props>((props, parentRef) => {
+  const {
+    className,
+    disabled,
+    empty,
+    error,
+    info,
+    label,
+    options,
+    searchable,
+    value,
+    multiple,
+    trigger,
+    menuAlign,
+    onChange,
+    placeholder = '',
+  } = props;
+  const [showOptions, setShowOptions] = useState(false);
+  const [isFocused, setFocus] = useState(false);
+  const [menuScope, setMenuScope] = useState<string | null>(null);
+  const isField = useMemo(() => !trigger, [trigger]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const optionListRef = useRef<HTMLDivElement>(null);
+
+  const setContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef.current = node;
+      if (typeof parentRef === 'function') parentRef(node as never);
+      else if (parentRef) (parentRef as React.MutableRefObject<unknown>).current = node;
+    },
+    [parentRef],
+  );
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setFocus(true);
+      if (showOptions) {
+        // Clear search text when closing the dropdown
+        setShowOptions(false);
+      } else {
+        // The menu is portalled out of the panel, so panel-scoped styles can no longer reach it
+        // by descendant selector. A scope declared on an ancestor rides along to the menu instead.
+        setMenuScope(
+          containerRef.current
+            ?.closest('[data-dropdown-scope]')
+            ?.getAttribute('data-dropdown-scope') ?? null,
+        );
+        setShowOptions(true);
+      }
+    },
+    [showOptions, setShowOptions, setFocus],
+  );
+
+  const handleCloseDropdown = useCallback(() => {
+    setShowOptions(false);
+    setFocus(false);
+  }, [setShowOptions, setFocus]);
+
+  const containerSize = useContainerSize(containerRef);
+  const menuPosition = usePopoverPosition({
+    anchorRef: containerRef,
+    popoverRef: optionListRef,
+    open: showOptions,
+    onDismiss: handleCloseDropdown,
+    // A trigger dropdown sizes its menu to the content, so let the hook measure it.
+    width: isField ? containerSize.width : undefined,
+    align: menuAlign,
+    gap: 1,
+  });
+
+  const handleRemoveOption = useCallback(
+    (e: any, option: Partial<OptionProp>) => {
+      if (option !== undefined) {
+        const values = typeof value === 'string' ? value.split(',') : (value as any[]);
+        const optionValue = values.filter(v => v !== option.value);
+        onChange &&
+          onChange({
+            ...e,
+            target: {
+              ...e?.target,
+              value: optionValue,
+            },
+          });
+      }
+    },
+    [multiple, value, onChange],
+  );
+
+  const isMixed = useMemo(() => isMixedValue(value), [value]);
+
+  const selectedValue = useMemo(() => {
+    if (isMixed) {
+      return undefined;
+    }
+    if (multiple) {
+      return options.filter(option => isMultipleOptionSelected(value as any[], option.value));
+    } else {
+      return options.find(option => isOptionSelected(value, option.value));
+    }
+  }, [options, value, multiple, isMixed]);
+
+  const minWidth = useMemo(() => {
+    if (options.length > 0) {
+      const horizontalPadding = 16;
+      const iconWidth = ICON_SIZE + 4;
+      const selectedIconWidth = iconWidth;
+      let leftIconWidth = 0;
+      let rightIconWidth = 0;
+      const _minWidth = options.reduce((width, option) => {
+        const label = option.label ?? option.value?.toString() ?? option.header ?? '';
+        const labelWidth = label.length * FONT_SIZE * FONT_WEIGHT;
+        leftIconWidth = Math.max(leftIconWidth, option.leftIcon ? iconWidth : 0);
+        rightIconWidth = Math.max(rightIconWidth, option.rightIcon ? iconWidth : 0);
+        return Math.max(
+          width,
+          (labelWidth + selectedIconWidth + leftIconWidth + rightIconWidth) / WIDTH_CONST,
+        );
+      }, 0);
+
+      // To calculate the option's max width, we need to substract the drop icon width, the horizontal padding and the left and right icon width
+      const maxWidth =
+        isField && containerSize.width
+          ? containerSize.width - (iconWidth + leftIconWidth + rightIconWidth + horizontalPadding)
+          : Number.MAX_SAFE_INTEGER;
+
+      return Math.min(_minWidth, maxWidth);
+    }
+  }, [options, empty, containerSize, isField]);
+
+  const renderMessage = useCallback(() => {
+    if (error) {
+      return (
+        <Message
+          text={error}
+          type={MessageType.ERROR}
+        />
+      );
+    } else if (info) {
+      return (
+        <Message
+          text={info}
+          type={MessageType.INFO}
+          icon={false}
+        />
+      );
+    }
+
+    return null;
+  }, [error, info]);
+
+  const renderPlaceholder = useCallback(() => {
+    if (isMixed) {
+      return (
+        <Option
+          className="DropdownPlaceholder mixed"
+          value={MIXED_VALUE_LABEL}
+          minWidth={minWidth}
+        />
+      );
+    }
+    return selectedValue ? (
+      <SelectedOption
+        selectedValue={selectedValue}
+        minWidth={minWidth}
+        multiple={multiple}
+        onRemove={handleRemoveOption}
+      />
+    ) : (
+      <Option
+        className="DropdownPlaceholder"
+        value={placeholder}
+        minWidth={minWidth}
+      />
+    );
+  }, [selectedValue, placeholder, minWidth, multiple, handleRemoveOption, isMixed]);
+
+  return (
+    <div className={cx('Dropdown', { Field: isField, Trigger: !!trigger })}>
+      <Label text={label} />
+      <div
+        className={cx('DropdownContainer', className, {
+          focused: isFocused,
+          disabled: !!disabled,
+          open: !!showOptions,
+          error: !!error,
+        })}
+        onClick={handleClick}
+        ref={setContainerRef}
+        role="combobox"
+        aria-expanded={showOptions}
+        aria-label={props['aria-label']}
+      >
+        {isField ? renderPlaceholder() : trigger}
+        {showOptions
+          ? createPortal(
+              <OptionList
+                ref={optionListRef}
+                className={className}
+                scope={menuScope ?? undefined}
+                style={{
+                  top: menuPosition.top,
+                  left: menuPosition.left,
+                  width: isField ? containerSize.width : undefined,
+                }}
+                options={options}
+                searchable={searchable}
+                selectedValue={selectedValue}
+                multiple={multiple}
+                onChange={onChange}
+                isField={isField}
+              />,
+              document.body,
+            )
+          : null}
+        {isField && (
+          <div className="DropIcon">
+            <DownArrowIcon size={ICON_SIZE} />
+          </div>
+        )}
+      </div>
+      {renderMessage()}
+    </div>
+  );
+});
+
+export default React.memo(Dropdown);

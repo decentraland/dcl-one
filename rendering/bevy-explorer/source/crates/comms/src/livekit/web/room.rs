@@ -17,6 +17,17 @@ pub struct Room {
     local_participant: LocalParticipant,
 }
 
+struct ConnectingRoom(Option<RoomId>);
+
+impl Drop for ConnectingRoom {
+    fn drop(&mut self) {
+        if let Some(id) = self.0 {
+            unregister_room_events(id);
+            send_command(LivekitCommand::DropRoom(id));
+        }
+    }
+}
+
 impl Room {
     pub async fn connect(
         url: &str,
@@ -29,6 +40,7 @@ impl Room {
         let id = NEXT_ROOM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // registered before the connect so no event is missed
         let (receiver, metadata) = register_room_events(id);
+        let mut connecting = ConnectingRoom(Some(id));
 
         let reply = request(|request| LivekitCommand::Connect {
             request,
@@ -40,22 +52,27 @@ impl Room {
         .await;
 
         match reply {
-            Ok(Reply::Connect(Ok(connected))) => Ok((
-                Room {
-                    id,
-                    name: connected.name,
-                    metadata,
-                    local_participant: connected.local_participant,
-                },
-                receiver,
-            )),
+            Ok(Reply::Connect(Ok(connected))) => {
+                connecting.0 = None;
+                Ok((
+                    Room {
+                        id,
+                        name: connected.name,
+                        metadata,
+                        local_participant: connected.local_participant,
+                    },
+                    receiver,
+                ))
+            }
             Ok(Reply::Connect(Err(err))) => {
                 unregister_room_events(id);
-                Err(RoomError(err))
+                Err(err)
             }
             Ok(other) => {
                 unregister_room_events(id);
-                Err(RoomError(format!("unexpected reply to connect: {other:?}")))
+                Err(RoomError::from(format!(
+                    "unexpected reply to connect: {other:?}"
+                )))
             }
             Err(err) => {
                 unregister_room_events(id);
@@ -67,8 +84,10 @@ impl Room {
     pub async fn close(&self) -> RoomResult<()> {
         let room = self.id;
         match request(|request| LivekitCommand::Close { request, room }).await? {
-            Reply::Close(result) => result.map_err(RoomError),
-            other => Err(RoomError(format!("unexpected reply to close: {other:?}"))),
+            Reply::Close(result) => result.map_err(RoomError::from),
+            other => Err(RoomError::from(format!(
+                "unexpected reply to close: {other:?}"
+            ))),
         }
     }
 
@@ -83,11 +102,15 @@ impl Room {
     pub fn local_participant(&self) -> LocalParticipant {
         self.local_participant.clone()
     }
+
+    pub(crate) fn dispose(&self) {
+        unregister_room_events(self.id);
+        send_command(LivekitCommand::DropRoom(self.id));
+    }
 }
 
 impl Drop for Room {
     fn drop(&mut self) {
-        unregister_room_events(self.id);
-        send_command(LivekitCommand::DropRoom(self.id));
+        self.dispose();
     }
 }

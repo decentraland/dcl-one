@@ -3,6 +3,7 @@
 import type { AcceptedParam, BootMode, HudHost } from '@explorer-core/hostContract'
 
 export const BASE_DOMAIN = 'decentraland.org'
+export const BUILD_VERSION: HudHost['BUILD_VERSION'] = 'test'
 export const nativeProfileImage: HudHost['nativeProfileImage'] = (raw) => raw
 export const siteUrl: HudHost['siteUrl'] = (path) => `https://${BASE_DOMAIN}${path}`
 export const serviceUrl: HudHost['serviceUrl'] = (name) => `https://${name}.${BASE_DOMAIN}`
@@ -14,6 +15,8 @@ export const acceptedEntryParams = (): AcceptedParam[] => []
 export const entryRealm: HudHost['entryRealm'] = (q) => q.get('realm') || null
 export const ownShopItemUrl: HudHost['ownShopItemUrl'] = () => null
 export const IN_WORLD_SHOP = false
+export const donations: HudHost['donations'] = null
+export const siteRevision: HudHost['siteRevision'] = () => null
 export const bootMode = (): BootMode => ({ systemScene: null, hideHud: false, autoLogin: null })
 export const unattendedRun: HudHost['unattendedRun'] = () => null
 export const engineExited: HudHost['engineExited'] = () => false
@@ -25,5 +28,5 @@ export const hostEntryParams: HudHost['hostEntryParams'] = () => []
 export const exitUrl: HudHost['exitUrl'] = () => 'https://decentraland.org'
 
 // Fails the type check when the contract gains a member this stub lacks, as each real host does.
-const host: HudHost = { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

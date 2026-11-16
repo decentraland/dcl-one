@@ -10,27 +10,30 @@
 //! envelope and a `Retry-After`; the reads keep answering. The one `POST`
 //! that is a read, the batch place gallery `/api/places/images`, stays open.
 //! The middleware is `builder::writes` ([`Gate`]): one switch, one
-//! implementation, this router's open path and envelope.
+//! implementation, this router's open path and envelope. It is layered on
+//! each write route's own methods ([`route`]), so a path or method the
+//! router does not serve answers its 404 rather than the 503.
 
-use axum::Router;
 use axum::http::{Method, StatusCode, header};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
+use axum::routing::MethodRouter;
 
 use super::http::ResponseError;
-use crate::shared::writes::{Gate, Refusal, guard_with};
+use crate::shared::writes::Gate;
 
 /// The paths (as this router sees them, after any nest prefix is stripped)
 /// whose non-GET methods stay open while writes are disabled.
 const OPEN_WHILE_DISABLED: &[&str] = &["/api/places/images"];
 
-pub const DISABLED_MESSAGE: &str = "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const DISABLED_MESSAGE: &str =
+    "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false)";
 
 fn gate(writes_enabled: bool) -> Gate {
     Gate {
         enabled: writes_enabled,
         open_while_disabled: OPEN_WHILE_DISABLED,
-        refuse: refused_response,
-        blobs: true,
+        refuse: disabled_response,
     }
 }
 
@@ -43,15 +46,8 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
 /// `Retry-After` so a client does not hammer a node that will not change
 /// its mind soon.
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("creator", DISABLED_MESSAGE);
-    let body =
-        serde_json::to_string(&ResponseError::new(message)).expect("a string field serializes");
+    let body = serde_json::to_string(&ResponseError::new(DISABLED_MESSAGE))
+        .expect("a string field serializes");
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -63,29 +59,36 @@ pub fn refused_response(refusal: &Refusal) -> Response {
         .into_response()
 }
 
-/// Wraps the router in the gate. Applied before `main.rs` nests it, so the
-/// path the gate sees is the route-local one.
-pub fn guard(router: Router, writes_enabled: bool) -> Router {
-    guard_with(router, gate(writes_enabled))
+/// Puts the gate in front of the methods `route` serves (and only those:
+/// its 405 fallback stays outside the gate).
+pub fn route<S>(route: MethodRouter<S>, writes_enabled: bool) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    route.route_layer(middleware::from_fn_with_state(
+        gate(writes_enabled),
+        crate::shared::writes::gate,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Request;
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
     use tower::ServiceExt;
 
     fn app(enabled: bool) -> Router {
         let inner = Router::new()
-            .route("/api/images", post(|| async { "uploaded" }))
+            .route("/api/images", route(post(|| async { "uploaded" }), enabled))
             .route(
                 "/api/images/{id}",
-                get(|| async { "bytes" }).delete(|| async { "deleted" }),
+                get(|| async { "bytes" }).merge(route(delete(|| async { "deleted" }), enabled)),
             )
             .route("/api/places/images", post(|| async { "gallery" }));
-        Router::new().nest("/camera-reel-service", guard(inner, enabled))
+        Router::new().nest("/camera-reel-service", inner)
     }
 
     async fn call(app: &Router, method: &str, path: &str) -> (StatusCode, String) {
@@ -179,32 +182,5 @@ mod tests {
             res.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json"
         );
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{DAY, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/camera-reel-service/api/images").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.write_aged(crate::shared::writes::restore::Stamp::Drill, 9 * DAY);
-            let (status, body) = call(&app, "POST", "/camera-reel-service/api/images").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(
-                v["message"],
-                "creator writes are held on this node: the last passing restore drill (drill.json) is 9 d old, past WRITES_DRILL_MAX_AGE_DAYS=8"
-            );
-            let (status, _) = call(&app, "GET", "/camera-reel-service/api/images/x").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

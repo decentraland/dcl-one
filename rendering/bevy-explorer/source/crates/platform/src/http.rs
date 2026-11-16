@@ -20,6 +20,12 @@ async fn with_timeout<F: Future>(dur: Duration, fut: F) -> Result<F::Output, Ela
     }
 }
 
+/// `fut`'s output if it resolves within `dur`, else `None`. The future is dropped when the
+/// timer wins.
+pub async fn within<F: Future>(dur: Duration, fut: F) -> Option<F::Output> {
+    with_timeout(dur, fut).await.ok()
+}
+
 /// A successfully-fetched response: its headers and fully-read body.
 pub struct FetchedResponse {
     pub headers: reqwest::header::HeaderMap,
