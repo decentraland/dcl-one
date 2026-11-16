@@ -1,12 +1,54 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
-import { isNativeHud } from '@hud-host'
+import { isNativeHud, serviceUrl, siteRevision } from '@hud-host'
 import type { EngineSession } from '../session/useEngineSession'
 import type { DebugSection } from './DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],
   actions: [['Open lobby', 'hud/lobby'], ['Sign out and open sign-in', 'hud/signout'], ['Report a bug', 'hud/report']]
+}
+
+const deploymentSection = (): DebugSection => ({
+  title: 'Deployment', query: 'hud/deployment', poll: false, actions: [],
+  fields: [
+    ...(siteRevision() === null ? [] : [['Sites', 'sites'] as [string, string]]),
+    [`Catalyst (${serviceUrl('catalyst').replace(/^https?:\/\//, '')})`, 'catalyst']
+  ]
+})
+
+const unreported = (revision: string, by: string): string | undefined =>
+  revision === '' || revision.toLowerCase() === 'unknown' ? `not reported ${by}`
+    : revision === 'unversioned' ? 'unversioned build' : undefined
+
+async function catalystRevision(): Promise<{ revision: string } | { reason: string }> {
+  let body: unknown
+  try {
+    const response = await fetch(`${serviceUrl('catalyst')}/content/status`, { signal: AbortSignal.timeout(5000) })
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {})
+      return { reason: `status ${response.status}` }
+    }
+    body = await response.json()
+  } catch (error) {
+    const unreadable = (error as { name?: unknown } | null)?.name === 'SyntaxError'
+    return { reason: unreadable ? 'answered without a status' : 'no answer from the node' }
+  }
+  if (!body || typeof body !== 'object') return { reason: 'answered without a status' }
+  const revision = (body as { commitHash?: unknown }).commitHash
+  if (typeof revision !== 'string') return { reason: 'not reported by the node' }
+  const reason = unreported(revision, 'by the node')
+  return reason ? { reason } : { revision }
+}
+
+async function readDeployment(): Promise<string> {
+  const unavailable: Record<string, string> = {}
+  const site = siteRevision()
+  const siteReason = site === null ? undefined : unreported(site, 'by Sites')
+  if (siteReason) unavailable.sites = siteReason
+  const catalyst = await catalystRevision()
+  if ('reason' in catalyst) unavailable.catalyst = catalyst.reason
+  return JSON.stringify({ sites: siteReason ? null : site, catalyst: 'revision' in catalyst ? catalyst.revision : null, unavailable })
 }
 
 const REQUEST = 'dcl-debug-panel'
@@ -79,9 +121,10 @@ export function useDebugPanel(session: EngineSession) {
     switch (line) {
       case '/debug_panel': {
         const sections: DebugSection[] = JSON.parse(await s.runDebugCommand(line))
-        return JSON.stringify([...sections, sessionSection])
+        return JSON.stringify([...sections, sessionSection, deploymentSection()])
       }
       case 'hud/session': return JSON.stringify({ phase: s.phase, ready: s.login.engineReady })
+      case 'hud/deployment': return readDeployment()
       case 'hud/lobby': closeDebugPanel(); s.lobbyPage.toggle(); return 'Opened lobby'
       case 'hud/signout': closeDebugPanel(); s.logout(); return 'Signed out'
       case 'hud/report':

@@ -62,7 +62,7 @@ engine.addEntity({
 ### Prerequisites for Development
 
 - **Node.js** 22.x or higher
-- **npm** (comes with Node.js)
+- **pnpm**, at the version the workspace's `package.json` pins (`corepack enable` provides it)
 - **Docker** (for running local content server)
 - **@dcl/sdk-commands** installed globally or locally
 
@@ -98,14 +98,14 @@ You can develop this repo locally and test it within the Web Editor by doing the
 
 Go to this repo in your machine and do this:
 
-1. Run `npm run start` to watch for changes and start the SDK7 dev server (on port `8001` by default).
+1. Run `pnpm run start` to watch for changes and start the SDK7 dev server (on port `8001` by default).
 2. On a new terminal, run `docker-compose up` to start the local content server on `http://localhost:9000/asset-packs`
-3. On a new terminal, run `npm run upload` to upload all assets to your local content server (copy the `.env.example` into `.env` if you haven't done that before).
+3. On a new terminal, run `pnpm run upload` to upload all assets to your local content server (copy the `.env.example` into `.env` if you haven't done that before).
 4. Copy the path to the `bin/index.js` in this repo (`<checkout>/packages/asset-packs/bin/index.js`).
 
 Go to the `packages/inspector` in this monorepo and do this:
 
-1. Run `npm start` to start a local dev server. It should start by default on port `8000`.
+1. Run `pnpm start` to start a local dev server. It should start by default on port `8000`.
 
 Go to the `packages/creator-hub` in this monorepo and do this:
 
@@ -114,7 +114,7 @@ Go to the `packages/creator-hub` in this monorepo and do this:
 3. Set the `VITE_ASSET_PACKS_JS_PORT` to the port where the SDK7 started running in the first section (`8001`).
 4. Set the `VITE_ASSET_PACKS_JS_PATH` env var in `.env` to the path to the `bin/index.js` that you copied in the first section.
 5. Set the `VITE_ASSET_PACKS_CONTENT_URL` env var in `.env` to be `http://localhost:9000/asset-packs` (this is the content server we started in the first section).
-6. Run `npm start` to start the builder local server which should start on port `3000`
+6. Run `pnpm start` to start the builder local server which should start on port `3000`
 
 Now you are all set, you can start developing the SDK7 scene in this repo, use it from the local Builder and test it by previewing the scene, which should use your local Builder Server serving the development javascript files.
 
@@ -126,7 +126,7 @@ When you add a **new** asset locally it won't appear in the Asset Packs tab auto
 
 #### Option 1 — Docker (full local stack, recommended)
 
-The existing docker-compose setup handles everything. `npm run upload` now also uploads `catalog.json` as `asset-packs/latest/catalog.json` to MinIO, mirroring what CI does on S3.
+The existing docker-compose setup handles everything. `pnpm run upload` now also uploads `catalog.json` as `asset-packs/latest/catalog.json` to MinIO, mirroring what CI does on S3.
 
 Follow the steps in [Local Development](#local-development) above, then open the inspector with:
 

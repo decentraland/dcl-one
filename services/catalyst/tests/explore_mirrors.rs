@@ -587,8 +587,8 @@ async fn sweep_fuse_refuses_mass_deletion_but_allows_small_sweeps() {
 
 /// The restart/resume proof: shutdown cancels the worlds pass after the first
 /// page; the cursor and pass start persist; the next run resumes at page 2
-/// (never re-fetching page 1), completes, and the sweep honours the original
-/// pass start.
+/// (never re-fetching page 1) and finishes, but incomplete: the cursor cannot
+/// prove the interrupted run skipped nothing.
 #[tokio::test]
 async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
     let Some(db) = db::scratch_database().await else {
@@ -633,7 +633,7 @@ async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
     .await
     .unwrap();
     assert_eq!(out.resumed_from, Some(100));
-    assert!(out.complete);
+    assert!(!out.complete, "a resumed pass never counts as complete");
     assert_eq!(
         out.upserted, 250,
         "the resumed pass counts the rows before the kill"
@@ -656,8 +656,108 @@ async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
         Some(started),
         "the resumed pass keeps its original start"
     );
-    assert_eq!(marker.last_complete_pass_rows, Some(250));
+    assert_eq!(marker.last_pass_complete, Some(false));
+    assert_eq!(marker.last_pass_rows, Some(250));
+    assert_eq!(marker.last_complete_pass_at, None);
+    assert_eq!(marker.lag_secs, None);
+
+    let out = places_mirror::run_worlds_pass(
+        &client(),
+        &pool,
+        &up.source(),
+        HOUR,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(out.complete && out.resumed_from.is_none());
+    let status = mirror_state::status(&pool).await.unwrap();
+    let marker = status.iter().find(|m| m.mirror == "worlds").unwrap();
+    assert_eq!(
+        marker.last_complete_pass_rows,
+        Some(250),
+        "the next fresh pass restores the marker"
+    );
     assert!(marker.lag_secs.is_some());
+    db.teardown().await;
+}
+
+/// A page skipped before an interruption is not in the persisted cursor, so
+/// the resumed pass must not report the catalogue fresh nor sweep: here the
+/// first page fails and is skipped, shutdown lands on the second, and the
+/// resumed run fetches the rest cleanly.
+#[tokio::test]
+async fn a_resumed_worlds_pass_after_a_skipped_page_is_incomplete_and_never_sweeps() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    // A row of the failing first page last stamped by an earlier pass beyond
+    // the grace window: a complete pass would sweep it.
+    assert!(
+        places_mirror::upsert_world(&pool, &synthetic_world(0))
+            .await
+            .unwrap()
+    );
+    sqlx::query(
+        "UPDATE explore.place SET fetched_at = timezone('UTC', now()) - interval '3 hours' WHERE world",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let pages: Vec<Vec<Value>> = vec![
+        (0..100).map(synthetic_world).collect(),
+        (100..200).map(synthetic_world).collect(),
+        (200..250).map(synthetic_world).collect(),
+    ];
+    let up = serve_upstream("/api/worlds", pages, 100, true, vec![], Some(100)).await;
+    let cancel = CancellationToken::new();
+    let run = {
+        let (pool, source, cancel) = (pool.clone(), up.source(), cancel.clone());
+        tokio::spawn(async move {
+            places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &cancel).await
+        })
+    };
+    up.hold.notified().await;
+    cancel.cancel();
+    let out = run.await.unwrap().unwrap();
+    assert!(out.cancelled && out.failed_pages == 1 && !out.fetched_all);
+
+    let out = places_mirror::run_worlds_pass(
+        &client(),
+        &pool,
+        &up.source(),
+        HOUR,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.resumed_from, Some(100));
+    assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(out.fetched_all, "it fetched every page it asked for");
+    assert!(!out.complete);
+    assert_eq!(out.swept, 0);
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.place WHERE id = 'w000.dcl.eth'"
+        )
+        .await,
+        1,
+        "the row of the skipped page survives"
+    );
+    let status = mirror_state::status(&pool).await.unwrap();
+    let marker = status.iter().find(|m| m.mirror == "worlds").unwrap();
+    assert_eq!(marker.last_pass_complete, Some(false));
+    assert_eq!(marker.last_complete_pass_at, None);
+    assert!(
+        marker
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("resumed at offset 100")),
+        "{:?}",
+        marker.last_error
+    );
     db.teardown().await;
 }
 
@@ -1969,12 +2069,145 @@ async fn a_cancelled_events_pass_resumes_from_its_persisted_cursor() {
     .await
     .unwrap();
     assert_eq!(out.resumed_from, Some(500));
-    assert!(out.complete);
+    assert!(!out.complete, "a resumed pass never counts as complete");
     assert_eq!(out.upserted, 540);
     assert_eq!(up.offsets(), vec![0, 500, 500]);
     assert_eq!(
         count(&pool, "SELECT count(*) FROM explore.event").await,
         540
+    );
+    let marker = mirror_state::status(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.mirror == "events")
+        .unwrap();
+    assert_eq!(marker.last_pass_complete, Some(false));
+    assert_eq!(marker.last_complete_pass_at, None);
+    db.teardown().await;
+}
+
+/// A resumed pass that stops at the offset ceiling fails no page or row, yet
+/// it did not reach the listing's end: `fetched_all` says so, and the job
+/// reports it as a failure rather than a clean resume.
+#[tokio::test]
+async fn a_resumed_worlds_pass_stopped_at_the_offset_ceiling_did_not_fetch_all() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let up = serve_upstream("/api/worlds", vec![], 100, false, vec![], None).await;
+    let source = up.source();
+    mirror_state::begin_pass(&pool, places_mirror::WORLDS_MIRROR, source.base())
+        .await
+        .unwrap();
+    mirror_state::advance(&pool, places_mirror::WORLDS_MIRROR, 100_000, 0)
+        .await
+        .unwrap();
+
+    let out =
+        places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &CancellationToken::new())
+            .await
+            .unwrap();
+    assert_eq!(out.resumed_from, Some(100_000));
+    assert_eq!((out.failed_pages, out.failed_rows), (0, 0));
+    assert!(!out.fetched_all && !out.complete && !out.cancelled);
+    assert!(up.offsets().is_empty(), "{:?}", up.offsets());
+    db.teardown().await;
+}
+
+/// The events leg of the skipped-page resume: the first page fails and is
+/// skipped, shutdown lands on the second, and the resumed run fetches the
+/// rest cleanly. The pass stays incomplete, so neither the unlisted check nor
+/// the sweep touches a row the skipped page would have refreshed.
+#[tokio::test]
+async fn a_resumed_events_pass_after_a_skipped_page_is_incomplete_and_never_sweeps() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    // A row of the failing first page last stamped by an earlier pass beyond
+    // the grace window: a complete pass would sweep it.
+    sqlx::query(
+        "INSERT INTO explore.event (id, name, raw, fetched_at) \
+         VALUES ('stale', 'stale', '{}', timezone('UTC', now()) - interval '3 hours')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let events = fixture_events();
+    let first: Vec<Value> = (0..5)
+        .flat_map(|copy| {
+            events.iter().enumerate().map(move |(i, e)| {
+                let mut e = e.clone();
+                e["id"] = Value::String(format!("first-page-{copy}-{i}"));
+                e
+            })
+        })
+        .collect();
+    let mut second: Vec<Value> = events.iter().take(40).cloned().collect();
+    for (i, e) in second.iter_mut().enumerate() {
+        e["id"] = Value::String(format!("second-page-{i}"));
+    }
+    let up = serve_upstream(
+        "/api/events",
+        vec![first, second],
+        500,
+        true,
+        vec![],
+        Some(500),
+    )
+    .await;
+    let cancel = CancellationToken::new();
+    let run = {
+        let (pool, source, cancel) = (pool.clone(), up.source(), cancel.clone());
+        tokio::spawn(async move {
+            events_mirror::run_pass(&client(), &pool, &source, HOUR, &cancel).await
+        })
+    };
+    up.hold.notified().await;
+    cancel.cancel();
+    let out = run.await.unwrap().unwrap();
+    assert!(out.cancelled && out.failed_pages == 1 && !out.fetched_all);
+
+    let out = events_mirror::run_pass(
+        &client(),
+        &pool,
+        &up.source(),
+        HOUR,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.resumed_from, Some(500));
+    assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(out.fetched_all, "it fetched every page it asked for");
+    assert!(!out.complete);
+    assert_eq!((out.swept, out.unlisted_gone), (0, 0));
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.event WHERE id = 'stale'"
+        )
+        .await,
+        1,
+        "the row of the skipped page survives"
+    );
+    let marker = mirror_state::status(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.mirror == "events")
+        .unwrap();
+    assert_eq!(marker.last_pass_complete, Some(false));
+    assert_eq!(marker.last_complete_pass_at, None);
+    assert!(
+        marker
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("resumed at offset 500")),
+        "{:?}",
+        marker.last_error
     );
     db.teardown().await;
 }

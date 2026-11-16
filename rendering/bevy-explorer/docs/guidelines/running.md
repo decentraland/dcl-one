@@ -185,6 +185,9 @@ Pulse and LiveKit rooms show one connection button. It changes from **Disconnect
 to **Connect** when paused, and is disabled when there is no controllable connection.
 
 World and Scene Loading show where the player is and which load stage is active.
+Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
+this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
+is Performance's client version.
 Performance and Memory and limits expose the engine's measurements and budgets.
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
@@ -225,7 +228,8 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
-- `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
+- `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
+  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,

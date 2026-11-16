@@ -1,0 +1,92 @@
+/* The screen's 1080 rows, centred vertically on the canvas; positions are from the frame's top-left. */
+.frame {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% - 540px);
+  height: 1080px;
+}
+.back {
+  position: absolute;
+  left: 200px;
+  top: 320px;
+}
+.logo {
+  position: absolute;
+  left: 200px;
+  top: 383px;
+  width: 50px;
+  height: 50px;
+}
+.title {
+  position: absolute;
+  left: 200px;
+  top: 450px;
+  height: 46px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  font-size: var(--type-48);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+.description {
+  position: absolute;
+  left: 200px;
+  top: 519px;
+  width: 500px;
+  margin: 0;
+  font-size: var(--type-16);
+  line-height: 20px;
+  letter-spacing: -0.0073em;
+}
+.code {
+  position: absolute;
+  left: 200px;
+  top: 600px;
+}
+.result {
+  position: absolute;
+  left: 197.3px;
+  top: 673.7px;
+  width: 403.4px;
+  height: 20px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.0105em;
+}
+.successIcon {
+  color: var(--green);
+}
+.incorrectIcon {
+  color: var(--signin-incorrect);
+}
+.resend {
+  position: absolute;
+  left: 327px;
+  top: 730px;
+  width: 140px;
+  height: 46px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-regular);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.resend:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+}
+/* 578x812, its right edge 710px right of the canvas centre */
+.padlock {
+  position: absolute;
+  left: calc(50% + 92px);
+  top: 134px;
+  width: 578px;
+  height: 812px;
+  pointer-events: none;
+}

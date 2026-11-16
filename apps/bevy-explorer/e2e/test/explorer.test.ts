@@ -146,7 +146,7 @@ describe('Explorer', () => {
   test('voiceState carries the call', async () => {
     const fake = new FakeConsole({
       voice_state: JSON.stringify({
-        mic: { available: true, enabled: false },
+        mic: { available: true, enabled: false, sceneBlocked: false },
         livekit: true,
         connected: true,
         rooms: [],
