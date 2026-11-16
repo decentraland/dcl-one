@@ -79,7 +79,7 @@ impl Credits {
             kick: Arc::new(Notify::new()),
             usage_chain: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.into(),
-            notifications_cdn_url: catalyst_social::notifications::DEFAULT_CDN_URL.into(),
+            notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.into(),
         }
     }
 

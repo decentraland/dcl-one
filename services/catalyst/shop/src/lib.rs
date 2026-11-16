@@ -25,6 +25,7 @@
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
+#[cfg(test)]
 pub(crate) use catalyst_comms as comms;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
@@ -36,7 +37,6 @@ pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;
 pub(crate) use catalyst_price as price;
 pub(crate) use catalyst_shared as shared;
-pub(crate) use catalyst_social as social;
 pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;

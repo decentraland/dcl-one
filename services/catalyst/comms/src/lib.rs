@@ -5,7 +5,7 @@
 //! Worlds, social and shop call it; it imports nothing from worlds, social or
 //! above. It also owns the vocabulary comms shares with the crates above it: the
 //! world identity types (`world_identity`), the access vocabulary of a world
-//! join (`access`), the per-key rate limiter (`limits`), the worlds error
+//! join (`access`), the per-key rate limiter (`limits`, from `shared`), the worlds error
 //! envelope (`worlds_envelope`), the switch a side write asks (`writes`) and
 //! the worlds signed-fetch verifier (`signed_fetch`).
 
@@ -24,7 +24,7 @@ pub mod archipelago;
 pub mod deny_list;
 pub mod gatekeeper;
 pub mod interfaces;
-pub mod limits;
+pub use crate::shared::limits;
 pub mod metrics;
 pub mod presence;
 pub mod protocol;

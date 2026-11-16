@@ -36,7 +36,7 @@ separate from the current runtime described here.
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
-| `rooms`, `world_identity`, `access`, `limits`, `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds, social and shop use |
+| `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
 
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
@@ -53,7 +53,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::AccessPolicy` | `worlds::policy::Policy` | may this wallet enter this world, scene or parcel |
 | `interfaces::SceneIdentity` | `worlds::rooms::SceneResolver` | a world's active scene and the resolved room; room names are `comms::rooms` |
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
-| `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
+| `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |

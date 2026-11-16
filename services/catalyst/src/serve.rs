@@ -13,6 +13,8 @@ use crate::{
     price, shop, storage, worlds,
 };
 
+#[path = "serve_adapters.rs"]
+mod adapters;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -1054,10 +1056,12 @@ pub async fn serve(
     social
         .rpc
         .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
-    market.attach_profile_images(social.profile_images.clone());
+    market.attach_profile_images(Arc::new(adapters::ShopProfileFaces(
+        social.profile_images.clone(),
+    )));
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
-        Arc::new(social.notifications.email.clone()),
+        Arc::new(adapters::ShopMailer(social.notifications.email.clone())),
         shop::subscriptions::Settings {
             shop_base_url: config.shop.shop_base_url.clone(),
             delivery_interval: Duration::from_secs(config.shop.shop_notify_delivery_interval_secs),

@@ -1,4 +1,4 @@
-//! The per-key token bucket the social and comms surfaces throttle with: the
+//! The per-key token bucket the social, comms and shop surfaces throttle with: the
 //! friendship and block RPC mutations
 //! (`social::rpc::limits::FriendshipMutationLimiter`) and the plaintext
 //! direct-message sends (`social::communities::friends`, 60 per signer per
