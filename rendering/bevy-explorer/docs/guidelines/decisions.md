@@ -614,13 +614,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
   Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
   Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
-  and Badges, then Sign Out (an account on the web) and Exit (where the page can
+  and Badges, then Sign Out (a sign-in on the web, a guest's included) and Exit (where the page can
   close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
   and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
   a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and
   Gallery.
   The end-to-end suite reads these buttons by name
   (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
+- **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
+  guest. The next start does not sign it in on its own, and Play as guest brings the same guest
+  back: its kept sign-in, or its kept wallet session once that sign-in has run out.
 - **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
   a destination of this HUD, and matching another client's tab row is not grounds for dropping
   it.

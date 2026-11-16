@@ -58,7 +58,8 @@ describe('shell login requests', () => {
 
   it('createGuest keeps the guest with its key and hands the app the public identity', async () => {
     const { request } = await shell()
-    const login = (await request('createGuest', undefined)) as { address: string; identity: AuthIdentity; guest?: boolean }
+    const { wallet, ...login } = (await request('createGuest', undefined)) as { address: string; identity: AuthIdentity; guest?: boolean; wallet: string | null }
+    expect(wallet).toBe('new')
     expect(login.address).toBe(GUEST)
     expect(login.guest).toBe(true)
     expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
@@ -215,6 +216,19 @@ describe('shell login requests', () => {
     await request('logout', undefined)
     expect(localStorage.getItem(`single-sign-on-${ACCOUNT}`)).toBeNull()
     expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
+  })
+
+  it('a guest that signs out is not signed in again on its own, and PLAY AS GUEST brings it back with no new wallet', async () => {
+    const { request } = await shell()
+    const first = (await request('createGuest', undefined)) as { address: string; wallet: string | null }
+    expect(first).toMatchObject({ address: GUEST, wallet: 'new' })
+    await request('logout', undefined)
+    // the next page load finds no sign-in to start with
+    expect(await (await shell()).request('identity', undefined)).toBeNull()
+
+    const { request: again } = await shell()
+    expect(await again('createGuest', undefined)).toMatchObject({ address: GUEST, guest: true, wallet: null })
+    expect(await again('identity', undefined)).toMatchObject({ address: GUEST, guest: true })
   })
 
   it('signing with an account replaces the guest', async () => {

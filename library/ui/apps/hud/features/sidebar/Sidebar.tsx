@@ -206,9 +206,10 @@ export function Sidebar({
   }, [configOpen])
 
   const profile = session.profile.data
-  // Sign Out is for an account on the web. A guest's stored identity is its one way back and the
-  // sign-out keeps it, and the desktop client cannot end its engine session from the page.
-  const signOutOffered = session.login.signedInAs === 'fully_registered' && !isNativeHud()
+  // Sign Out is for a sign-in on the web, a guest's included: as unity-explorer's, a guest that signs
+  // out is kept, and PLAY AS GUEST brings it back. The desktop client cannot end its engine session
+  // from the page, and a sign-in the scene owns is not the page's to end.
+  const signOutOffered = session.login.signedInAs != null && !isNativeHud()
   const voiceState = nearby.blocked ? 'blocked' : !nearby.hearing ? 'off' : nearby.speaking ? 'speaking' : 'hearing'
   const voiceOn = voiceState === 'hearing' || voiceState === 'speaking'
   const launcher = developmentBuild && (

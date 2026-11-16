@@ -1,6 +1,7 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { playAsGuest } from '@explorer-core/shell/guestLogin'
 import {
   clearGuestLogin,
   clearStoredLogins,
@@ -9,7 +10,6 @@ import {
   publicLogin,
   rootAddress,
   storeAccountLogin,
-  storeGuestLogin,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
 import { completeEmailSignIn, startEmailSignIn } from '@explorer-core/shell/emailLogin'
@@ -48,15 +48,14 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       if (!login.guest) clearGuestLogin()
       return personalSign(ephemeral.privateKey, message)
     }
-    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts),
-    // created and kept here like a sign-in. Any earlier guest is replaced.
+    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
+    // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
       // thirdweb serves its guest wallet only to Decentraland's domains; elsewhere it's a key made here
-      const identity = await createGuestIdentity(webGuestBackendFor(location.hostname))
-      storeGuestLogin(identity)
-      held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(location.hostname))
+      held = login
       pinned = true
-      return publicLogin(held)
+      return { ...publicLogin(held), wallet }
     }
     // The autopilot's guest, the only identity a benchmark run signs in with: one account kept in this
     // profile, made here with no network call, so the run is never a new account. The root key is the

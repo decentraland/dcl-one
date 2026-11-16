@@ -70,7 +70,7 @@ const SIGN_OUT_ROW: Selector = { name: 'Sign Out', role: 'button' }
 /** The question the Sign Out row asks: a dialog named as its title, with Cancel and Sign Out. */
 const SIGN_OUT_QUESTION: Selector = { name: 'Sign out?', role: 'dialog' }
 const NOTIFICATIONS_PANEL: Selector = { name: 'Close notifications', role: 'button' }
-/** The Sign Out row is for an account on the web: the standalone and a guest have none. */
+/** The Sign Out row is for a sign-in on the web, a guest's included: the standalone has none. */
 const NO_SIGN_OUT = target.transport === 'native' ? 'the standalone: its Me panel has no Sign Out row' : undefined
 /** The confirmed sign-out ends its session, so it has one of its own. */
 const SIGN_OUT_SESSION: OpenOptions = { signIn: 'fresh', firstLogin: { name: 'E2eSignOut' } }

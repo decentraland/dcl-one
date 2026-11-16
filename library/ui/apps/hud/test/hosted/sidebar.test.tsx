@@ -150,12 +150,13 @@ describe('sidebar panels', () => {
       return act(() => resetPopups())
     })
 
-    // An account on the web only. A guest's stored identity is its one way back and the sign-out
-    // keeps it; the desktop client cannot end its engine session from the page; a sign-in the scene
-    // owns is not the page's to end.
+    // A sign-in on the web, a guest's included (the sign-out keeps the guest, as unity-explorer's); the
+    // desktop client cannot end its engine session from the page; a sign-in the scene owns is not the
+    // page's to end.
     it.each([
       ['an account on the web', 'fully_registered', false, true],
-      ['a guest', 'guest', false, false],
+      ['a guest on the web', 'guest', false, true],
+      ['a guest on the desktop client', 'guest', true, false],
       ['a session with a sign-in the scene owns', null, false, false],
       ['an account on the desktop client', 'fully_registered', true, false]
     ] as const)('%s (signed in as %s, native %s): the row is there -> %s', async (_who, signedInAs, isNative, shown) => {

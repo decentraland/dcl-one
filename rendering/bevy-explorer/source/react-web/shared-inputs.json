@@ -698,6 +698,10 @@
           "kind": "regular"
         },
         {
+          "name": "guestLogin.ts",
+          "kind": "regular"
+        },
+        {
           "name": "sign.ts",
           "kind": "regular"
         }
@@ -760,6 +764,10 @@
         },
         {
           "name": "guestIdentity.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "guestWalletEvent.test.ts",
           "kind": "regular"
         },
         {
@@ -5484,7 +5492,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
-      "sha256": "42c531891e4b37d3782183b78e6cdf7a1c6a4df9756354afe3e7fa688bb5c15b"
+      "sha256": "5ba8504b6b33fb5fb6c2ed7e3ed18225efbd3d52eb79edfdd91d02c34cc49891"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
@@ -5668,7 +5676,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
-      "sha256": "5eacf9c98f6d4dbd08c44a5c1bbb77bbe3bde9631ef31f252d6c5687cc0b6d9e"
+      "sha256": "0707ef1afabc3947e52ad64e3fbdf468ab15271cfde10a910969be90aef4a54e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
@@ -5794,7 +5802,7 @@
     },
     {
       "path": "library/explorer-core/engine/EngineDriver.ts",
-      "sha256": "fe68a5ccb7769295bb85f50e5915fc977b9ae56374b93e5b2135fd2a0d9e32bf"
+      "sha256": "3d128cd3ce783090dc2bd16c1158549053ff15e30460a3c4d4c304db57a1182e"
     },
     {
       "path": "library/explorer-core/engine/avatarEquip.ts",
@@ -5890,15 +5898,15 @@
     },
     {
       "path": "library/explorer-core/features/auth/guest.ts",
-      "sha256": "54c5a1d35976cf7aeb25695a6d3f8fd51c7161146887e776f628597099ce00f2"
+      "sha256": "41fbc2a4bb42e0c3f4ce691f58dac18305be8ace38891d7a4340188da5e4a0ee"
     },
     {
       "path": "library/explorer-core/features/auth/guestWalletEvent.ts",
-      "sha256": "e8180e1a4f0691cd3fc8f613e7bb1624b41fcb423eba53e317b16621cbf3ea48"
+      "sha256": "d721c5beb8889e8979eba32eaae06210d9e10e550970da473c0ff700e57c42af"
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
-      "sha256": "dd9816458b10c7a0fe6fc1b243076b46670db037d68fb1e95038f745b37cf28d"
+      "sha256": "3a0c8446a4bda65983be92644b1e9eda9575fc95e4ec3d837b6e4725d411ea1a"
     },
     {
       "path": "library/explorer-core/features/auth/thirdweb.ts",
@@ -6245,6 +6253,10 @@
       "sha256": "4140451e05e4bd199030898f4f790ef0d82511a205d747906672ecbc88bf4db0"
     },
     {
+      "path": "library/explorer-core/shell/guestLogin.ts",
+      "sha256": "927df5cbee53ce1dbcc629cdfec060448cc9343965ba0dcd201461aad707ef17"
+    },
+    {
       "path": "library/explorer-core/shell/sign.ts",
       "sha256": "06d50dd908575fafc3c167180964324bd311c03679bede1606325f4f5d6772c2"
     },
@@ -6302,7 +6314,11 @@
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
-      "sha256": "cb69d33c7167be62e30fa7c3935dacc2c8a25899de98b16ac743b2f8d9b327ed"
+      "sha256": "00c4c10909337439c1530fe6de9e3af57e7be36dcc0cde5920e6aa4d731b30d8"
+    },
+    {
+      "path": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "sha256": "a2ceb8a45dde0094e91d218dbd03187739c988bdccbcc2d3493ecf97e832bd03"
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
@@ -6350,7 +6366,7 @@
     },
     {
       "path": "library/explorer-core/test/storedLogin.test.ts",
-      "sha256": "1acf0b01313484b46b6bf360097401c7db534aa95cc8fd4c1bfde16e81015b8c"
+      "sha256": "39b4dfd2940c855fb2e375a441214089b249f621fd2fff7f00794338ef014661"
     },
     {
       "path": "library/explorer-core/test/utm.test.ts",
@@ -9074,7 +9090,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "51d9f179f0637583a8a86717bd6385e8fb92147155013338b7436988d7cea823"
+      "sha256": "5625a313725cfa02039efe33d21605c6210ffc04920d7a431cc106ecb8e61ad4"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -9682,7 +9698,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "24d29332920e42adab5f9abf014a9178ac673881a3b85dd94b7c151831d31005"
+      "sha256": "5aa7bf3dd6ab476748965247651e44f3b33c494d25a85ba027806476dce14012"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -11263,6 +11279,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/guest.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/shell/guestLogin.ts",
+      "to": "library/explorer-core/features/auth/sso.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/analytics.boot.test.ts",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:dynamic"
@@ -11594,6 +11640,21 @@
     },
     {
       "from": "library/explorer-core/test/guestIdentity.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestIdentity.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestIdentity.test.ts",
+      "to": "library/explorer-core/features/auth/thirdweb.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestIdentity.test.ts",
       "to": "library/explorer-core/shell/sign.ts",
       "kind": "native:runtime"
     },
@@ -11605,6 +11666,36 @@
     {
       "from": "library/explorer-core/test/guestIdentity.test.ts",
       "to": "library/explorer-core/shell/sign.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/features/auth/guestWalletEvent.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/features/auth/guestWalletEvent.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/features/auth/guestWalletEvent.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/guestWalletEvent.test.ts",
+      "to": "library/explorer-core/lib/analytics.ts",
       "kind": "test:runtime"
     },
     {
@@ -39639,6 +39730,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
+      "to": "library/explorer-core/shell/guestLogin.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
+      "to": "library/explorer-core/shell/guestLogin.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
       "to": "library/explorer-core/shell/sign.ts",
       "kind": "production:runtime"
     },
@@ -40549,6 +40650,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/shell/guestLogin.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/shell/sign.ts",
       "kind": "type"
     },
@@ -40620,6 +40726,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/guestIdentity.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/guestWalletEvent.test.ts",
       "kind": "type"
     },
     {

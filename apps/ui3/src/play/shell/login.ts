@@ -1,6 +1,7 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { playAsGuest } from '@explorer-core/shell/guestLogin'
 import {
   clearGuestLogin,
   clearStoredLogins,
@@ -9,7 +10,6 @@ import {
   publicLogin,
   rootAddress,
   storeAccountLogin,
-  storeGuestLogin,
   type AuthIdentity,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
@@ -48,14 +48,13 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       if (!login.guest) clearGuestLogin()
       return personalSign(ephemeral.privateKey, message)
     }
-    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts),
-    // created and kept here like a sign-in. Any earlier guest is replaced.
+    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
+    // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
-      const identity = await createGuestIdentity(webGuestBackendFor(location.hostname))
-      storeGuestLogin(identity)
-      held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(location.hostname))
+      held = login
       pinned = true
-      return publicLogin(held)
+      return { ...publicLogin(held), wallet }
     }
     // Email sign-in (features/startup): the code is sent, then checked here, and the account's
     // identity kept like the sign-in page's, key included.
