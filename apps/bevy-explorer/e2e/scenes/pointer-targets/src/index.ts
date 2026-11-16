@@ -17,13 +17,13 @@ import { Vector3 } from '@dcl/sdk/math'
  * pointer-targets: the targets of `specs/visual/pointer.test.ts`, which hovers and clicks them
  * through `/hover_entity` and `/click_entity`.
  *
- * The player spawns at (8, 0, 8). The near target has its own lane at z = 1.
- * The wall at (15, 3, 12), 0.5 by 6 by 6, blocks the target at (16, 1, 12),
- * while leaving the ray to `far` (58, 1, 8), 50 m out, clear from the
- * third-person camera. The obstacle lane stays beyond the camera-to-far ray.
- * `model` is the avocado glTF at (10, 0, 12), with its pointer events on the container.
- * The fixture asset has its mesh centred over its node origin and is about 2.4 m tall,
- * keeping its collider within the default 10 m pointer reach.
+ * The player spawns at (8, 0, 8) facing +X, so the camera sits on the line z = 8 and every ray
+ * starts there. Two lanes keep the cases apart:
+ *   - z = 4: `near` (12, 1, 4), then `wall` (14, 3, 4), 0.5 by 6 by 6, then `behind` (16, 1, 4),
+ *     which the wall hides from the camera;
+ *   - z = 8: `far` (58, 1, 8), 50 m out.
+ * So the wall blocks only `behind`.
+ * `model` is the avocado glTF at (10, 0, 12), scaled 4, with its pointer events on the container.
  * The avocado has no `_collider` mesh, so its visible meshes collide on CL_POINTER and CL_PHYSICS
  * (`visibleMeshesCollisionMask`) for the pointer ray to hit it.
  *
@@ -46,7 +46,7 @@ function box(position: Vector3, scale: Vector3 = Vector3.One()): Entity {
 }
 
 export function main() {
-  const near = box(Vector3.create(12, 1, 1))
+  const near = box(Vector3.create(12, 1, 4))
   PointerEvents.create(near, {
     pointerEvents: [
       { eventType: PointerEventType.PET_DOWN, eventInfo: { button: InputAction.IA_POINTER, hoverText: 'Near' } },
@@ -54,9 +54,9 @@ export function main() {
     ],
   })
 
-  box(Vector3.create(15, 3, 12), Vector3.create(0.5, 6, 6))
+  box(Vector3.create(14, 3, 4), Vector3.create(0.5, 6, 6))
 
-  const behind = box(Vector3.create(16, 1, 12))
+  const behind = box(Vector3.create(16, 1, 4))
   PointerEvents.create(behind, {
     pointerEvents: [{ eventType: PointerEventType.PET_DOWN, eventInfo: { button: InputAction.IA_POINTER, hoverText: 'Behind' } }],
   })
@@ -69,7 +69,7 @@ export function main() {
   })
 
   const model = engine.addEntity()
-  Transform.create(model, { position: Vector3.create(10, 0, 12) })
+  Transform.create(model, { position: Vector3.create(10, 0, 12), scale: Vector3.create(4, 4, 4) })
   GltfContainer.create(model, {
     src: 'assets/avocado.glb',
     visibleMeshesCollisionMask: ColliderLayer.CL_POINTER | ColliderLayer.CL_PHYSICS,

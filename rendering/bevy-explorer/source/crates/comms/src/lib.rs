@@ -16,7 +16,6 @@ pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
 pub mod profile;
-pub mod public_voice;
 pub mod pulse;
 pub mod recovery;
 pub mod room_connection;
