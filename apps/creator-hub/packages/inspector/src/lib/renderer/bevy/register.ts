@@ -412,7 +412,7 @@ export function registerBevyRenderer(): void {
         // which also restarts the agent, so its avatar-visibility state is re-sent.
         onReady: () => {
           bevy.camera.reset();
-          syncAvatarVisibility();
+          syncEditCameraVisibility();
         },
       });
       // The player's avatar is only shown while the scene RUNS or the user drives
@@ -422,12 +422,12 @@ export function registerBevyRenderer(): void {
       // For the same reason, entities the scene attaches to its camera are hidden
       // then: the engine's camera entity is the editor's fly-camera, so they would
       // hang in front of the view (the forward bridge enacts it).
-      const syncAvatarVisibility = () => {
+      const syncEditCameraVisibility = () => {
         cameraBridge.setAvatarVisible(!isEditingWithFreeCamera());
         forwardBridge?.refreshCameraAttachments();
       };
-      const offAvatarVisibilityMode = bevy.editorCamera.onModeChange(syncAvatarVisibility);
-      const offAvatarVisibilityRun = bevy.sceneRun.onRunChange(syncAvatarVisibility);
+      const offEditCameraVisibilityMode = bevy.editorCamera.onModeChange(syncEditCameraVisibility);
+      const offEditCameraVisibilityRun = bevy.sceneRun.onRunChange(syncEditCameraVisibility);
       bevy.setCameraModePoster(mode => cameraBridge.setMode(mode));
       bevy.setFocusPoster(position => cameraBridge.focus(position));
       bevy.setResetPoster(position => cameraBridge.reset(position));
@@ -680,8 +680,8 @@ export function registerBevyRenderer(): void {
           disconnectWheelZoom();
           disconnectFlyInput();
           disconnectInputFocus();
-          offAvatarVisibilityMode();
-          offAvatarVisibilityRun();
+          offEditCameraVisibilityMode();
+          offEditCameraVisibilityRun();
           disconnectShiftSnap();
           modifiers.disconnect();
           disconnectPreview();

@@ -435,6 +435,7 @@ describe('createForwardEditBridge', () => {
 
   describe('when entities are attached to the camera', () => {
     let hide: boolean;
+    let inspectReply: string | null;
 
     const drain = async () => {
       await new Promise(r => setTimeout(r, 0));
@@ -463,6 +464,7 @@ describe('createForwardEditBridge', () => {
 
     beforeEach(() => {
       hide = true;
+      inspectReply = null;
       bridge.disconnect();
       bridge = createForwardEditBridge({
         context: ctx,
@@ -471,7 +473,9 @@ describe('createForwardEditBridge', () => {
         hideCameraAttachments: () => hide,
         send: async (cmd, args) => {
           sent.push({ cmd, args });
-          return '';
+          if (cmd !== 'inspect_component') return '';
+          if (inspectReply === null) throw new Error('entity has no component');
+          return inspectReply;
         },
       });
     });
@@ -527,6 +531,71 @@ describe('createForwardEditBridge', () => {
       await ctx.engine.update(1);
       await drain();
       expect(lastVisibility(entity)).toBe(true);
+    });
+
+    it('should not rescan the hierarchy when a Transform write keeps its parent', async () => {
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      const scan = vi.spyOn(ctx.engine, 'getEntitiesWith');
+
+      ctx.Transform.getMutable(child).position = { x: 0, y: 1, z: 1 };
+      await ctx.engine.update(1);
+      await drain();
+
+      expect(scan.mock.calls.some(([component]) => component === ctx.Transform)).toBe(false);
+      scan.mockRestore();
+    });
+
+    it('should restore the visibility the running scene gave an attachment after Pause → Play', async () => {
+      hide = false;
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      bridge.setSceneFrozen(false);
+
+      // Pause with the free camera: the scene code had hidden the item.
+      inspectReply = JSON.stringify({ visible: false });
+      hide = true;
+      bridge.setSceneFrozen(true);
+      bridge.refreshCameraAttachments();
+      await drain();
+      expect(sent.some(s => s.cmd === 'inspect_component' && s.args[0] === String(child))).toBe(
+        true,
+      );
+      expect(lastVisibility(child)).toBe(false);
+
+      hide = false;
+      bridge.setSceneFrozen(false);
+      bridge.refreshCameraAttachments();
+      await drain();
+      expect(lastVisibility(child)).toBe(false);
+    });
+
+    it('should show an attachment on Play when the paused scene had no visibility for it', async () => {
+      hide = false;
+      const child = addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      bridge.setSceneFrozen(false);
+
+      hide = true;
+      bridge.setSceneFrozen(true);
+      bridge.refreshCameraAttachments();
+      await drain();
+
+      hide = false;
+      bridge.setSceneFrozen(false);
+      bridge.refreshCameraAttachments();
+      await drain();
+      expect(lastVisibility(child)).toBe(true);
+    });
+
+    it('should not read runtime visibility before the scene has run', async () => {
+      addEntity('Gun', ctx.engine.CameraEntity);
+      await ctx.engine.update(1);
+      await drain();
+      expect(sent.some(s => s.cmd === 'inspect_component')).toBe(false);
     });
 
     it('should hide them again when overrides are replayed after a reload', async () => {

@@ -346,15 +346,19 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // already live in the engine, so we never `/new_entity` here — ensureInstantiated
   // only matters for a NEW entity edited before its model instantiates (a no-op
   // for entities the engine already loaded).
+  // Decided inside the queued task, after any runtime-visibility capture queued
+  // ahead of it has landed (see captureRuntimeVisibility).
   const forwardEditorVisibility = (entity: Entity) => {
-    const hideValue = context.editorComponents.Hide.getOrNull(entity) as
-      | { value?: boolean }
-      | null
-      | undefined;
-    const visible = !hideValue?.value && !hiddenCameraAttachments.has(entity);
     enqueue(entity, async () => {
+      const hideValue = context.editorComponents.Hide.getOrNull(entity) as
+        | { value?: boolean }
+        | null
+        | undefined;
+      const hidden = !!hideValue?.value || hiddenCameraAttachments.has(entity);
+      const runtime = runtimeVisibility.get(entity);
+      if (!hidden) runtimeVisibility.delete(entity);
       await ensureInstantiated(entity);
-      await forwardSet(entity, 'VisibilityComponent', { visible });
+      await forwardSet(entity, 'VisibilityComponent', { visible: !hidden && (runtime ?? true) });
     });
   };
 
@@ -372,7 +376,11 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     const authoredGltf = context.getForwardableComponent(GLTF_CONTAINER) as {
       getOrNull?: (e: Entity) => unknown;
     } | null;
-    // A real authored model wins — never override it with a placeholder.
+    // A real authored model wins — never override it with a placeholder. This
+    // only sees the editor's data: a GltfContainer that scene code adds to a
+    // Placeholder entity at runtime is replaced on Pause and removed on the next
+    // Play, until Stop reloads the scene. Placeholder items are model-less, so
+    // their scripts don't do that.
     if (authoredGltf?.getOrNull?.(entity) != null) return;
     const placeholder =
       deleted || !frozen
@@ -397,10 +405,14 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // gets its own value because the engine only inherits a parent's visibility
   // when that parent opts in with propagate_to_children.
   let hiddenCameraAttachments = new Set<Entity>();
+  // Each entity's Transform parent as of the last scan, so a Transform write that
+  // keeps its parent (a move) skips the rescan. Empty while not hiding.
+  let knownParents = new Map<Entity, Entity | undefined>();
   const findCameraAttachments = (): Set<Entity> => {
     const attached = new Set<Entity>();
-    if (!hideCameraAttachments()) return attached;
     const parents = new Map<Entity, Entity | undefined>();
+    knownParents = parents;
+    if (!hideCameraAttachments()) return attached;
     for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
       parents.set(entity, transform.parent);
     }
@@ -424,15 +436,47 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     const previous = hiddenCameraAttachments;
     hiddenCameraAttachments = findCameraAttachments();
     for (const entity of hiddenCameraAttachments) {
-      if (all || !previous.has(entity)) forwardEditorVisibility(entity);
+      if (all || !previous.has(entity)) {
+        if (!previous.has(entity)) captureRuntimeVisibility(entity);
+        forwardEditorVisibility(entity);
+      }
     }
     for (const entity of previous) {
       if (!hiddenCameraAttachments.has(entity)) forwardEditorVisibility(entity);
     }
   }
+  const parentChanged = (entity: Entity, op: CrdtMessageType, value: unknown): boolean => {
+    if (op === CrdtMessageType.DELETE_COMPONENT || !knownParents.has(entity)) return true;
+    const transform = (value ?? context.Transform.getOrNull(entity)) as {
+      parent?: Entity;
+    } | null;
+    return knownParents.get(entity) !== transform?.parent;
+  };
+
+  // A Pause hides camera attachments over whatever visibility the running scene
+  // last gave them. Read that value from the engine before the hide lands (a
+  // frozen scene's console reads see its last tick, not our queued writes), so
+  // the next Play restores it instead of forcing them visible. A scene that hasn't
+  // run since it loaded has nothing of its own to keep: the editor rule applies.
+  let hasRunSinceLoad = false;
+  const runtimeVisibility = new Map<Entity, boolean>();
+  const captureRuntimeVisibility = (entity: Entity) => {
+    if (!hasRunSinceLoad) return;
+    enqueue(entity, async () => {
+      try {
+        const reply = await send('inspect_component', [String(entity), 'VisibilityComponent']);
+        const visible = (JSON.parse(reply) as { visible?: unknown } | null)?.visible;
+        if (typeof visible === 'boolean') runtimeVisibility.set(entity, visible);
+      } catch {
+        // No VisibilityComponent (the engine replies with an error) means visible.
+      }
+    });
+  };
+
   const forgetEntity = (entity: Entity) => {
     instantiated.delete(entity);
     hiddenCameraAttachments.delete(entity);
+    runtimeVisibility.delete(entity);
   };
 
   const MESH_COLLIDER = 'core::MeshCollider';
@@ -571,7 +615,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // A reparent can move a subtree onto or off the camera.
       if (
         component.componentName === context.Transform.componentName &&
-        (hiddenCameraAttachments.size > 0 || hideCameraAttachments())
+        (hiddenCameraAttachments.size > 0 || hideCameraAttachments()) &&
+        parentChanged(entity, op, value)
       ) {
         refreshCameraAttachments();
       }
@@ -755,6 +800,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   };
 
   const setSceneFrozen = (frozen: boolean) => {
+    if (!frozen) hasRunSinceLoad = true;
     setPlaybackFrozen(frozen);
     for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
       forwardPlaceholder(entity, false, frozen);
@@ -771,6 +817,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   //  - the fresh entities lost the forwarded overrides (placeholder GLTF, editor
   //    visibility, pointer-pickable mask, animation pause) — replay them.
   const reconcileAfterReload = () => {
+    hasRunSinceLoad = false;
+    runtimeVisibility.clear();
     for (const [entity] of context.engine.getEntitiesWith(context.Name)) {
       instantiated.add(entity);
     }
