@@ -338,9 +338,13 @@ pub async fn resolve_and_pin(url: &reqwest::Url) -> Option<SocketAddr> {
 
 /// Whether `ip` is outside the public internet: loopback, RFC 1918, link-local,
 /// unspecified, broadcast, multicast, documentation, shared (`100.64.0.0/10`),
-/// `0.0.0.0/8`, benchmarking and reserved IPv4; loopback, unspecified,
-/// multicast, unique-local, link-local, site-local and local-use NAT64 IPv6.
-/// An IPv6 address that embeds an IPv4 one is judged by the embedded address.
+/// `0.0.0.0/8`, IETF protocol assignments (`192.0.0.0/24`), the 6to4 relay
+/// anycast (`192.88.99.0/24`), benchmarking and reserved IPv4; loopback,
+/// unspecified, multicast, unique-local, link-local, site-local, discard-only
+/// (`100::/64`), documentation (`2001:db8::/32`), Teredo (`2001::/32`) and
+/// local-use NAT64 IPv6. An IPv6 address that embeds an IPv4 one (IPv4-mapped,
+/// IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4) is judged by the embedded
+/// address.
 pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -358,6 +362,10 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
                         // Benchmarking 198.18.0.0/15 and reserved 240.0.0.0/4.
                         || (o[0] == 198 && (o[1] & 0xfe) == 18)
                         || o[0] >= 240
+                        // IETF protocol assignments 192.0.0.0/24 and the
+                        // deprecated 6to4 relay anycast 192.88.99.0/24.
+                        || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                        || (o[0] == 192 && o[1] == 88 && o[2] == 99)
                 }
         }
         IpAddr::V6(v6) => {
@@ -374,6 +382,12 @@ pub fn is_blocked_ip(ip: IpAddr) -> bool {
                 || (s[0] & 0xffc0) == 0xfec0
                 // Local-use NAT64 64:ff9b:1::/48, whose embedding is operator-chosen.
                 || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1)
+                // Teredo 2001::/32: the relay decides where the tunnel lands.
+                || (s[0] == 0x2001 && s[1] == 0)
+                // Documentation 2001:db8::/32.
+                || (s[0] == 0x2001 && s[1] == 0xdb8)
+                // Discard-only 100::/64.
+                || (s[0] == 0x100 && s[1] == 0 && s[2] == 0 && s[3] == 0)
         }
     }
 }
@@ -1178,6 +1192,14 @@ mod tests {
             "198.19.255.255",
             "240.0.0.1",
             "250.1.2.3",
+            "192.0.0.8",
+            "192.88.99.1",
+            "64:ff9b::c000:8",
+            "2002:c058:6301::",
+            "2001:0:4136:e378:8000:63bf:f5ff:fffe",
+            "[2001::1]",
+            "100::1",
+            "2001:db8::1",
             "localhost",
             "router",
             "svc.internal",
@@ -1219,6 +1241,10 @@ mod tests {
             "198.17.0.1",
             "198.20.0.1",
             "223.1.1.1",
+            "192.0.1.1",
+            "192.88.100.1",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
         ] {
             assert!(
                 !is_private_or_internal_host(host),
