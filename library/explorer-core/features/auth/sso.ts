@@ -9,7 +9,6 @@
 
 import { attributionParams, sessionId } from '../../lib/analytics'
 import { inShell, postToShell, shellRequest } from '../../lib/shell'
-import { GUEST_SESSION_KEY } from './thirdweb'
 import { AUTH_RETURN_PARAM } from './authReturn'
 
 export { AUTH_RETURN_PARAM }
@@ -147,11 +146,10 @@ export function resumeGuestLogin(): StoredLogin | null {
   return guest
 }
 
-// Forget the guest account. Without its session id the wallet cannot be reached again.
-export function clearGuestLogin(): void {
-  localStorage.removeItem(GUEST_IDENTITY_KEY)
-  localStorage.removeItem(GUEST_SESSION_KEY)
-  localStorage.removeItem(GUEST_SIGNED_OUT_KEY)
+/** Keep the guest for PLAY AS GUEST without signing it in on its own, as unity-explorer does after a
+ *  sign-out and when an account signs in. */
+export function signOutGuest(): void {
+  if (localStorage.getItem(GUEST_IDENTITY_KEY) != null) localStorage.setItem(GUEST_SIGNED_OUT_KEY, '1')
 }
 
 export function loginExpired(login: StoredLogin): boolean {
@@ -236,5 +234,5 @@ export function clearStoredLogins(): void {
     if (key && key.startsWith(SSO_PREFIX)) keys.push(key)
   }
   keys.forEach((k) => localStorage.removeItem(k))
-  if (localStorage.getItem(GUEST_IDENTITY_KEY) != null) localStorage.setItem(GUEST_SIGNED_OUT_KEY, '1')
+  signOutGuest()
 }

@@ -3,12 +3,12 @@
 import { webGuestBackendFor } from '@explorer-core/features/auth/guest'
 import { playAsGuest } from '@explorer-core/shell/guestLogin'
 import {
-  clearGuestLogin,
   clearStoredLogins,
   getStoredLogin,
   loginExpired,
   publicLogin,
   rootAddress,
+  signOutGuest,
   storeAccountLogin,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
@@ -44,8 +44,8 @@ export async function request(method: unknown, params: unknown): Promise<unknown
         throw new Error(`not signed in as ${signer}`)
       }
       pinned = true
-      // Signing in with an account replaces the guest (an expired one included).
-      if (!login.guest) clearGuestLogin()
+      // An account signing in keeps the guest for PLAY AS GUEST, not signed in on its own (unity-explorer's).
+      if (!login.guest) signOutGuest()
       return personalSign(ephemeral.privateKey, message)
     }
     // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept

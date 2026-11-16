@@ -5492,7 +5492,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/login.ts",
-      "sha256": "5ba8504b6b33fb5fb6c2ed7e3ed18225efbd3d52eb79edfdd91d02c34cc49891"
+      "sha256": "4a2edd10afddab325089c4563026f8e96ed1356acb1cd49848df850f19e3bd43"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
@@ -5676,7 +5676,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
-      "sha256": "0707ef1afabc3947e52ad64e3fbdf468ab15271cfde10a910969be90aef4a54e"
+      "sha256": "c6179e141baa8e8fa1b1e715bdcd29b13dc52b7462d4236adc46dea328997fe0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
@@ -5906,7 +5906,7 @@
     },
     {
       "path": "library/explorer-core/features/auth/sso.ts",
-      "sha256": "3a0c8446a4bda65983be92644b1e9eda9575fc95e4ec3d837b6e4725d411ea1a"
+      "sha256": "7edc0bed269a2066d06e37a61b2c7280bcb3814f508d0b207297c3b4849b94ff"
     },
     {
       "path": "library/explorer-core/features/auth/thirdweb.ts",
@@ -10346,21 +10346,6 @@
     {
       "from": "library/explorer-core/features/auth/sso.ts",
       "to": "library/explorer-core/features/auth/authReturn.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/auth/sso.ts",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/auth/sso.ts",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/auth/sso.ts",
-      "to": "library/explorer-core/features/auth/thirdweb.ts",
       "kind": "test:runtime"
     },
     {

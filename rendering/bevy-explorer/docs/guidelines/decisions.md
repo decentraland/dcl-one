@@ -622,8 +622,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The end-to-end suite reads these buttons by name
   (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
 - **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
-  guest. The next start does not sign it in on its own, and Play as guest brings the same guest
-  back: its kept sign-in, or its kept wallet session once that sign-in has run out.
+  guest, and so does an account signing in on the web. The next start does not sign the guest in
+  on its own, and Play as guest brings the same guest back: its kept sign-in, or its kept wallet
+  session once that sign-in has run out.
 - **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
   a destination of this HUD, and matching another client's tab row is not grounds for dropping
   it.

@@ -98,16 +98,23 @@ describe('shell login requests', () => {
     expect(await again('identity', undefined)).toMatchObject({ address: GUEST, guest: true })
   })
 
-  it('signing with an account replaces the guest', async () => {
-    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 2)))
+  it('an account signing in keeps the guest, not signed in on its own, for Play as guest', async () => {
+    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 20)))
     localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 30)))
     localStorage.setItem(`thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f`, 'session')
     const { request } = await shell()
     expect(await request('identity', undefined)).toMatchObject({ address: ACCOUNT })
-    expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
 
     await request('sign', { signer: EPHEMERAL, message: 'hello' })
-    expect(localStorage.getItem('dcl-guest-identity')).toBeNull()
-    expect(localStorage.getItem('thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f')).toBeNull()
+    expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
+    expect(localStorage.getItem('thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f')).toBe('session')
+    // the next start is the account's, though the guest's sign-in runs longer than the account's now does
+    localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 10)))
+    expect(await (await shell()).request('identity', undefined)).toMatchObject({ address: ACCOUNT })
+
+    // signed out of the account, Play as guest brings the same guest back
+    const { request: again } = await shell()
+    await again('logout', undefined)
+    expect(await again('createGuest', undefined)).toMatchObject({ address: GUEST, guest: true, wallet: null })
   })
 })
