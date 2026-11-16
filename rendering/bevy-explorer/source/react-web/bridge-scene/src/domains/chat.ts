@@ -22,7 +22,7 @@ export function registerChat(ctx: Ctx): void {
   // The engine draws the chat bubbles; a translation (or the original back) replaces the text of
   // the one still showing this message.
   ctx.on('chatBubbleText', (msg) => {
-    BevyApi.consoleCommand?.('/chat_bubble_text', [msg.messageId, msg.message]).catch((e: unknown) => {
+    BevyApi.consoleCommand?.('chat_bubble_text', [msg.messageId, msg.message]).catch((e: unknown) => {
       console.error('[chat] chat bubble text failed', e)
     })
   })

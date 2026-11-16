@@ -339,6 +339,43 @@ fn a_tag_stands_on_its_anchor_facing_the_camera() {
     );
 }
 
+/// `PlayerUpdate` has moved the player by the time tags are placed, and nothing has propagated
+/// the move to its `GlobalTransform` yet.
+#[test]
+fn a_tag_follows_a_player_that_moved_this_frame() {
+    let mut app = pool_app();
+    let ada = spawn_player(&mut app, "Ada", 10.0);
+    app.update();
+    let tag = tag_of(&app, ada).unwrap();
+    let fov = 60f32.to_radians();
+    let mut cameras = app
+        .world_mut()
+        .query_filtered::<Entity, With<PrimaryCamera>>();
+    let camera = cameras.single(app.world()).unwrap();
+    app.world_mut()
+        .entity_mut(camera)
+        .insert(Projection::Perspective(PerspectiveProjection {
+            fov,
+            ..Default::default()
+        }));
+
+    // the global transform still says 10 m
+    app.world_mut()
+        .entity_mut(ada)
+        .insert(Transform::from_xyz(0.0, 0.0, -30.0));
+    app.world_mut().run_system_once(place_tags).unwrap();
+    let transform = *app.world().get::<Transform>(tag).unwrap();
+    assert!(transform.translation.distance(Vec3::new(0.0, 0.0, -30.0)) < 1e-5);
+    assert!((transform.scale.x - tag_scale(30.0, fov)).abs() < 1e-7);
+
+    // under a parent the player's own transform is not its place in the world
+    let parent = app.world_mut().spawn_empty().id();
+    app.world_mut().entity_mut(ada).insert(ChildOf(parent));
+    app.world_mut().run_system_once(place_tags).unwrap();
+    let transform = *app.world().get::<Transform>(tag).unwrap();
+    assert!(transform.translation.distance(Vec3::new(0.0, 0.0, -10.0)) < 1e-5);
+}
+
 /// The nametag shader compiles on this machine's adapter, in a renderer with no window: a tag
 /// of every kind of quad in front of a camera with the prepasses and depth of field (whose
 /// focus target a transparent material must write). Needs a GPU, so `#[ignore]`d and skipped

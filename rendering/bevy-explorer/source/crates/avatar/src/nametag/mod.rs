@@ -771,10 +771,19 @@ fn build_tags(
                     generation,
                 });
             }
-            // the last mesh shows until the glyphs are in
+            // the last mesh shows until the glyphs are in, unless the atlas it samples has been
+            // rebuilt: the shared material already binds the new one, where its UVs point at
+            // other glyphs
             Err(Pending { .. }) => {
                 if !awaiting {
                     commands.entity(tag).insert(AwaitingGlyphs);
+                }
+                if nametag
+                    .built
+                    .as_ref()
+                    .is_some_and(|built| built.generation != generation)
+                {
+                    visibility.set_if_neq(Visibility::Hidden);
                 }
             }
         }
@@ -919,7 +928,7 @@ fn tag_quads(
 #[allow(clippy::type_complexity)]
 fn place_tags(
     camera: Query<(&Transform, &Projection), (With<PrimaryCamera>, Without<Nametag>)>,
-    owners: Query<(&GlobalTransform, &AttachPoints)>,
+    owners: Query<(&GlobalTransform, &AttachPoints, Has<ChildOf>)>,
     anchors: Query<&Transform, Without<Nametag>>,
     mut tags: Query<(
         &NametagOf,
@@ -938,8 +947,14 @@ fn place_tags(
     };
 
     for (owner, mut nametag, mut transform, mut mesh_tag, mut mesh) in &mut tags {
-        let Ok((player, attach_points)) = owners.get(owner.0) else {
+        let Ok((global, attach_points, parented)) = owners.get(owner.0) else {
             continue;
+        };
+        // a player with no parent is where its own transform says: its global one is a frame
+        // behind here once the player has moved
+        let player = match anchors.get(owner.0) {
+            Ok(local) if !parented => GlobalTransform::from(*local),
+            _ => *global,
         };
         let Ok(anchor) = anchors.get(attach_points.nametag) else {
             continue;

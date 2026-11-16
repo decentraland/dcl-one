@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
 /// The colour of a name with no profile to derive one from.
 pub const UNCLAIMED_NAME_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
@@ -13,7 +14,13 @@ pub fn name_color(name: &str, address: &str, claimed: bool) -> Color {
         .next()
         .unwrap_or_default()
         .chars()
-        .filter(|c| c.is_alphabetic() || c.is_numeric())
+        // letters and numbers only, as the HUD's `\p{L}\p{N}`: no combining marks
+        .filter(|c| {
+            matches!(
+                c.general_category_group(),
+                GeneralCategoryGroup::Letter | GeneralCategoryGroup::Number
+            )
+        })
         .collect::<String>();
     if base.is_empty() {
         return Color::WHITE;
@@ -52,7 +59,8 @@ mod tests {
         color.to_srgba().to_hex().to_lowercase()
     }
 
-    /// The colours `userNameColor` in `library/explorer-core/engine/nameColor.ts` gives.
+    /// The colours `userNameColor` in `library/explorer-core/engine/nameColor.ts` gives; its test
+    /// checks the same vectors.
     #[test]
     fn matches_the_hud() {
         for (name, address, claimed, expected) in [
@@ -91,6 +99,13 @@ mod tests {
                 "0x00000000000000000000000000000000deadbeef",
                 false,
                 "#40daff",
+            ),
+            // a combining vowel sign is neither a letter nor a number
+            (
+                "राम",
+                "0x0000000000000000000000000000000000000001",
+                true,
+                "#ff4092",
             ),
         ] {
             assert_eq!(hex(name_color(name, address, claimed)), expected, "{name}");
