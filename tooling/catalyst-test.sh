@@ -4,8 +4,6 @@
 # most one test thread per core: after the others when the pool would oversubscribe the cores.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
 set -euo pipefail
-source "$(dirname "$0")/catalyst-test-resources.sh"
-prepare_catalyst_test_resources
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root/services/catalyst"
 receipts="$root/.cache/dev"
