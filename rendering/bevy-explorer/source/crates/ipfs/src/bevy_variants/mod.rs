@@ -207,6 +207,10 @@ const VARIANT_FETCH: FetchPolicy = FetchPolicy {
 /// Consecutive transport failures (manifest or variant) after which the service is treated as
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
 const BREAKER_FAILURES: u32 = 5;
+/// How long an avatar waits for a model reloading from its original after its `glb` variant
+/// failed, before it assembles without it. Long enough for the original's download on a slow
+/// link; past it the avatar is built as it was before variants.
+const MODEL_RELOAD_WAIT: Duration = Duration::from_secs(120);
 
 /// One variant of an original: where it is served, and the class its path's prefix letter
 /// names. The path also identifies it (failed variants, caches): abgen keeps a path's bytes
@@ -420,6 +424,8 @@ struct Session {
     /// Fallbacks from a variant that was chosen, by its format.
     fallbacks_by_format: BTreeMap<String, u64>,
     recent: VecDeque<Fallback>,
+    /// Models reloading from their original after their `glb` variant failed, and since when.
+    reloading: HashMap<PathBuf, web_time::Instant>,
 }
 
 impl Session {
@@ -555,6 +561,32 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
+    /// Whether the model at `path`, which failed to load, will still come back from its
+    /// original: it was read from a `glb` variant, whose failure reloads it, or that reload is
+    /// under way. A reload stops counting after [`MODEL_RELOAD_WAIT`].
+    fn model_reload_pending(&self, path: &Path) -> bool {
+        let mut session = self.session.lock().unwrap();
+        session
+            .reloading
+            .retain(|_, since| since.elapsed() < MODEL_RELOAD_WAIT);
+        session.reloading.contains_key(path)
+            || session.served.get(path).is_some_and(|served| {
+                <Gltf as VariantAsset>::FORMATS.contains(&served.format.as_str())
+            })
+    }
+
+    fn reload_started(&self, path: &Path) {
+        self.session
+            .lock()
+            .unwrap()
+            .reloading
+            .insert(path.to_owned(), web_time::Instant::now());
+    }
+
+    fn reload_finished(&self, path: &Path) {
+        self.session.lock().unwrap().reloading.remove(path);
+    }
+
     /// Marks the variant served for `path` bad, if there was one of `formats`, and returns the
     /// url of its cached copy: the asset should be reloaded (from its original), and the copy
     /// dropped.
@@ -606,6 +638,13 @@ impl IpfsIo {
     /// reprocessed as if it were the original).
     pub fn served_bevy_variant(&self, path: &Path) -> bool {
         self.bevy_variants.is_served(path)
+    }
+
+    /// Whether the model at `path`, which failed to load, is about to load again from its
+    /// original because its `glb` variant failed. An avatar waits for it instead of assembling
+    /// without that piece.
+    pub fn bevy_variant_model_reload_pending(&self, path: &Path) -> bool {
+        self.bevy_variants.model_reload_pending(path)
     }
 
     /// Drops the cached copy of the variant fetched from `url`: it was rejected, and must not be
@@ -896,7 +935,13 @@ impl Plugin for BevyVariantsPlugin {
             .world()
             .contains_resource::<Events<AssetLoadFailedEvent<Gltf>>>()
         {
-            app.add_systems(Update, fall_back_from_failed_variants::<Gltf>);
+            app.add_systems(
+                Update,
+                (
+                    fall_back_from_failed_variants::<Gltf>,
+                    finish_model_reloads.after(fall_back_from_failed_variants::<Gltf>),
+                ),
+            );
         }
     }
 }
@@ -929,29 +974,54 @@ impl VariantAsset for Image {
 }
 
 /// Only `glb`: a `glb-br` variant is the original byte for byte, so a glTF loader failure on
-/// it is the original's own (a Draco GLB, repaired by image processing) and needs no reload.
+/// it is the original's own and a reload would fail the same way. A Draco original fails on the
+/// web through its `glb-br` copy too, and isn't repaired: image processing skips paths read
+/// from a variant, and the copy stays served. abgen decodes Draco before it builds a `glb`
+/// variant, so this only happens where the `glb` variant isn't taken (no BC on the GPU) or has
+/// failed.
 impl VariantAsset for Gltf {
     const FORMATS: &'static [&'static str] = &["glb"];
 }
 
 /// Reloads from its original each texture or `glb` model whose variant failed to load. A GLB
-/// that never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`).
+/// that never loaded reloads whole; a scene's container retries it (`retry_repaired_gltfs`),
+/// and an avatar waits for it (`bevy_variant_model_reload_pending`).
 fn fall_back_from_failed_variants<A: VariantAsset>(
     mut failed: EventReader<AssetLoadFailedEvent<A>>,
     ipfs: Res<IpfsResource>,
     server: Res<AssetServer>,
 ) {
     for event in failed.read() {
-        if let Some(url) = ipfs.bevy_variants.decode_failed(
+        match ipfs.bevy_variants.decode_failed(
             event.path.path(),
             &event.error.to_string(),
             A::FORMATS,
         ) {
-            server.reload(event.path.without_label().into_owned());
-            let io = ipfs.clone();
-            IoTaskPool::get()
-                .spawn_compat(async move { io.forget_variant(&url).await })
-                .detach();
+            Some(url) => {
+                ipfs.bevy_variants.reload_started(event.path.path());
+                server.reload(event.path.without_label().into_owned());
+                let io = ipfs.clone();
+                IoTaskPool::get()
+                    .spawn_compat(async move { io.forget_variant(&url).await })
+                    .detach();
+            }
+            // the original's own failure: a reload from it is over
+            None => ipfs.bevy_variants.reload_finished(event.path.path()),
+        }
+    }
+}
+
+/// Ends the wait on a model reloading from its original once it has loaded.
+fn finish_model_reloads(
+    mut events: EventReader<AssetEvent<Gltf>>,
+    ipfs: Res<IpfsResource>,
+    server: Res<AssetServer>,
+) {
+    for event in events.read() {
+        if let AssetEvent::LoadedWithDependencies { id } = event {
+            if let Some(path) = server.get_path(*id) {
+                ipfs.bevy_variants.reload_finished(path.path());
+            }
         }
     }
 }

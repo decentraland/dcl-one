@@ -702,6 +702,48 @@ fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
         .starts_with("glb variant failed to load"));
 }
 
+/// An avatar waits on a model whose `glb` variant failed: from the failure until the
+/// original's reload is over, `model_reload_pending` holds. A `glb-br` copy's failure never
+/// reloads, so nothing waits on it.
+#[test]
+fn a_failed_glb_model_is_pending_until_its_original_reloads() {
+    let variants = BevyVariants::default();
+    let path = content_path("wearable.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "wearable.glb".to_owned(),
+            variant: served_path_of("glb", VARIANT_CID),
+            format: "glb".to_owned(),
+            url: "https://abgen.example/bevy/g4/variant".to_owned(),
+        },
+        false,
+    );
+    // failed, the fallback not yet run: still served from the variant
+    assert!(variants.model_reload_pending(&path));
+    variants.decode_failed(&path, "x", <Gltf as VariantAsset>::FORMATS);
+    variants.reload_started(&path);
+    assert!(variants.model_reload_pending(&path));
+    variants.reload_finished(&path);
+    assert!(!variants.model_reload_pending(&path));
+
+    let br = content_path("draco.glb");
+    variants.served(
+        &br,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "draco.glb".to_owned(),
+            variant: served_path_of("glb-br", VARIANT_CID),
+            format: "glb-br".to_owned(),
+            url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+        },
+        false,
+    );
+    assert!(!variants.model_reload_pending(&br));
+    assert!(!variants.model_reload_pending(&content_path("never-a-variant.glb")));
+}
+
 #[test]
 fn a_variant_that_fails_to_decode_is_marked_bad_once() {
     let variants = BevyVariants::default();

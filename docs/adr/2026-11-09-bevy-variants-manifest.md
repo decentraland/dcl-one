@@ -104,6 +104,9 @@ Classes:
   materials stay as in the original. A Brotli copy sits beside it at
   `{path}.br` only when it is smaller, and the server sends it, with
   `Content-Encoding: br`, to a client that asks for `{path}` and accepts `br`.
+  A cache in front of that server must key on the encoding (`Vary:
+  Accept-Encoding`): a cached `br` body sent to native, which doesn't decode
+  it, fails the `glTF` check and loses the `g` variants for the session.
 - `m`, a `glb-br` model: the original `.glb`, byte for byte, with a Brotli copy
   beside it at `{path}.br`, stored with `Content-Encoding: br`. A CDN does not
   pick the copy by `Accept-Encoding`, so a reader asks for `{path}.br` by name.
@@ -162,8 +165,9 @@ Excluded from variants: source maps, audio, video and scene code.
   in memory. The loader picks sRGB or linear for each image from how the
   materials use it. An embedded KTX2 that does not unwrap fails the GLB's load,
   and a GLB that fails to load from a `glb` variant is reloaded from the
-  original. The asset keeps the original path, so every user of the model
-  shares one loaded copy. Image processing skips a GLB read from a variant.
+  original. A scene's container retries it; an avatar waits for that reload
+  (up to two minutes) instead of assembling without the piece. The asset
+  keeps the original path, so every user of the model shares one loaded copy. Image processing skips a GLB read from a variant.
 
 ## Consequences
 
