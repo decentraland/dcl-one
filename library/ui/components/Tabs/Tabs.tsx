@@ -1,5 +1,6 @@
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from 'react'
 import styles from './Tabs.module.css'
+import { secureRel } from '../../link.helpers'
 
 type TabsBaseProps = {
   label: ReactNode
@@ -21,11 +22,19 @@ type TabsButtonProps = TabsBaseProps & { href?: undefined } & Omit<
     'children' | 'type' | 'role'
   >
 
-export type TabsProps = TabsLinkProps | TabsButtonProps
+type PanelTabsProps = TabsLinkProps | TabsButtonProps
 
 /** One tab of a TabsBar: a link when it has `href` (works without script), otherwise a button. */
-export function Tabs(props: TabsProps) {
-  const { label, selected = false, variant = 'underline', device, className, tabIndex, ...rest } = props
+function PanelTabs(props: PanelTabsProps) {
+  const {
+    label,
+    selected = false,
+    variant = 'underline',
+    device,
+    className,
+    tabIndex,
+    ...rest
+  } = props
   const classes = [styles.root, styles[variant], device && styles[device], className]
     .filter(Boolean)
     .join(' ')
@@ -47,4 +56,40 @@ export function Tabs(props: TabsProps) {
       {label}
     </button>
   )
+}
+
+export type TabsNavigationProps = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  'children' | 'aria-current' | 'dangerouslySetInnerHTML' | 'role'
+> & {
+  mode: 'navigation'
+  href: string
+  label: string
+  selected?: boolean
+  variant?: never
+  device?: never
+}
+/** Panel tabs remain the default; route navigation must declare its distinct intent. */
+export type TabsProps = PanelTabsProps
+export function Tabs(props: (TabsProps & { mode?: 'panel' }) | TabsNavigationProps) {
+  if (props.mode === 'navigation') {
+    const { mode, label, selected = false, className, target, rel, ...anchor } = props
+    return (
+      <a
+        {...anchor}
+        target={target}
+        rel={secureRel(target, rel)}
+        dangerouslySetInnerHTML={undefined}
+        role={undefined}
+        data-mode={mode}
+        className={[styles.routeRoot, className].filter(Boolean).join(' ')}
+        aria-current={selected ? 'page' : undefined}
+        data-label={label}
+      >
+        <span className={styles.routeLabel}>{label}</span>
+      </a>
+    )
+  }
+  const { mode, ...panel } = props
+  return <PanelTabs {...panel} data-mode={mode} />
 }

@@ -430,8 +430,8 @@ mod tests {
                 .with_bus(bus),
         );
         let app = router(state);
-        let fence = PgAssignmentFence::new(pool.clone(), AUDIENCE.into()).unwrap();
-        let safety = super::super::cluster::safety::SafetyStore::new(pool.clone())
+        let fence = PgAssignmentFence::unfenced_test(pool.clone(), AUDIENCE.into()).unwrap();
+        let safety = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone())
             .snapshot(&owner.wallet())
             .await
             .unwrap();
@@ -623,7 +623,7 @@ mod tests {
     }
 
     async fn seed(pool: &sqlx::PgPool, wallet: &str, session: &str, island: &str, lapsed: bool) {
-        let safety = super::super::cluster::safety::SafetyStore::new(pool.clone())
+        let safety = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone())
             .snapshot(wallet)
             .await
             .unwrap();
@@ -679,7 +679,7 @@ mod tests {
             Arc::new(crate::presence::Presence::new()),
             Arc::new(crate::interfaces::test_support::StubDirectory::default()),
         )
-        .with_cluster(config)
+        .with_cluster_for_test(config)
         .unwrap();
         use crate::gatekeeper::bus::{InProcessBus, NatsBus};
         use crate::protocol::pulse::decentraland::pulse::{PeerClusterSnapshot, PendingTakeover};
@@ -850,7 +850,8 @@ mod tests {
                     sqlx::query("UPDATE social.island_admission_fences SET token_floor=floor(extract(epoch FROM clock_timestamp()))::bigint+10 WHERE wallet=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
                 }
                 "hazard" => {
-                    let store = super::super::cluster::safety::SafetyStore::new(pool.clone());
+                    let store =
+                        super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone());
                     let operation = crate::protocol::pulse::decentraland::pulse::PendingTakeover {
                         takeover_id: "final-wait".into(),
                         displaced_session: SESSION_A.into(),
@@ -1233,7 +1234,7 @@ mod tests {
             tokio::time::timeout(ISLAND_REFRESH_DEADLINE, reader.entered.notified())
                 .await
                 .expect("refresh prelude reached the final fence read");
-            let store = super::super::cluster::safety::SafetyStore::new(pool.clone());
+            let store = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone());
             let mut held = store.lock(&owner.wallet()).await.unwrap();
             reader.release.notify_one();
             wait_for_final_sql_lock(&pool, &label, "social.island_admission_fences").await;

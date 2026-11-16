@@ -505,13 +505,48 @@ impl CommsState {
     /// The island feed's settings, the NATS link of `NATS_URL` and, with a
     /// v4 audience, the realm-lane fence. Before
     /// [`Self::with_room_authority_key`], whose island rooms read the fence.
-    pub fn with_cluster(
-        mut self,
+    pub fn with_cluster(self, config: admission::cluster::ClusterConfig) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_cluster_for_test(
+        self,
         config: admission::cluster::ClusterConfig,
     ) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, false)
+    }
+    fn with_cluster_inner(
+        mut self,
+        config: admission::cluster::ClusterConfig,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let config = config.normalized();
+        anyhow::ensure!(
+            !generation_required
+                || config.nats_url.is_none()
+                || config.control_v4_audience.is_some(),
+            "configured island credentials require a deployment audience and fenced Pulse generation"
+        );
         self.island_safety = admission::cluster::safety::SafetyStore::new(self.pool.clone());
         self.assignments = admission::cluster::fence_for(self.pool.clone(), &config)?;
+        #[cfg(any(test, feature = "test-support"))]
+        if !generation_required {
+            self.island_safety =
+                admission::cluster::safety::SafetyStore::unfenced_test(self.pool.clone());
+            self.assignments = config
+                .control_v4_audience
+                .clone()
+                .map(|audience| {
+                    admission::cluster::fence::PgAssignmentFence::unfenced_test_with_limit(
+                        self.pool.clone(),
+                        audience,
+                        config.peer_state_max,
+                    )
+                    .map(Arc::new)
+                })
+                .transpose()
+                .map_err(|error| anyhow::anyhow!("fixture fence: {error}"))?;
+        }
         self.bus = match config.nats_url.clone() {
             Some(url) => Arc::new(bus::BrokerBus::new(Some(url), "catalyst-comms")),
             None => {
@@ -555,7 +590,21 @@ impl CommsState {
     /// Mounts the Pulse room authority with `PULSE_ROOM_AUTHORITY_KEY` (32
     /// base64url bytes, distinct from the LiveKit secret); `None` leaves the
     /// route unmounted and the application relay unusable.
-    pub fn with_room_authority_key(mut self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+    pub fn with_room_authority_key(self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_room_authority_key_for_test(
+        self,
+        encoded_key: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, false)
+    }
+    fn with_room_authority_key_inner(
+        mut self,
+        encoded_key: Option<&str>,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let Some(encoded) = encoded_key.map(str::trim).filter(|k| !k.is_empty()) else {
             tracing::info!(
                 "PULSE_ROOM_AUTHORITY_KEY unset; the Pulse room authority is not mounted (application relay off)"
@@ -575,12 +624,33 @@ impl CommsState {
             )
             .with_assignments(self.assignment_reader()),
         );
-        let authority = admission::relay_authority::RelayAuthority::new(
-            policy,
-            self.livekit.api_key.clone(),
-            self.livekit.api_secret.as_bytes().to_vec(),
-            service_key,
-        )
+        let authority = if generation_required {
+            let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
+                anyhow!("room authority requires a deployment audience and fenced Pulse generation")
+            })?;
+            admission::relay_authority::RelayAuthority::new_with_generation(
+                policy,
+                self.livekit.api_key.clone(),
+                self.livekit.api_secret.as_bytes().to_vec(),
+                service_key,
+                self.pool.clone(),
+                audience,
+            )
+        } else {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                admission::relay_authority::RelayAuthority::unfenced_test(
+                    policy,
+                    self.livekit.api_key.clone(),
+                    self.livekit.api_secret.as_bytes().to_vec(),
+                    service_key,
+                )
+            }
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                return Err(anyhow!("unfenced room authority is unavailable"));
+            }
+        }
         .map_err(|e| anyhow!("PULSE_ROOM_AUTHORITY_KEY: {e}"))?;
         self.relay_authority = Some(Arc::new(authority));
         tracing::info!(

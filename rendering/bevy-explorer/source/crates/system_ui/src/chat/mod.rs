@@ -11,6 +11,7 @@ use analytics::{
     data_definition::{SegmentEvent, SegmentEventChatMessageSent},
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
+use avatar::nametag::bubble::{BubbleKind, ChatBubbleRequest};
 use bevy::{color::palettes::css, prelude::*};
 
 use bevy_console::{ConsoleCommand, ConsoleCommandEntered, ConsoleConfiguration, PrintConsoleLine};
@@ -738,12 +739,28 @@ fn pipe_chats_to_scene(
         comms::private_chat::CommunityChatReceived,
     >,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] community_channels: Res<comms::private_chat::CommunityChannels>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
-    players: Query<&ForeignPlayer>,
+    mut bubbles: EventWriter<ChatBubbleRequest>,
+    players: Query<(Entity, &ForeignPlayer)>,
     primary_player: Res<PrimaryPlayerRes>,
     wallet: Res<Wallet>,
 ) {
+    // a community's name for the bubble of one of its messages
+    #[cfg(feature = "livekit")]
+    let community =
+        |id: &str| BubbleKind::Community(community_channels.name(id).map(str::to_owned));
+    #[cfg(not(feature = "livekit"))]
+    let community = |_: &str| BubbleKind::Community(None);
+    #[cfg(feature = "livekit")]
+    let player_of = |address: Address| {
+        players
+            .iter()
+            .find(|(_, player)| player.address == address)
+            .map(|(entity, _)| entity)
+    };
+
     senders.extend(requests.read().filter_map(|ev| {
         if let SystemApi::GetChatStream(sender) = ev {
             Some(sender.clone())
@@ -768,7 +785,7 @@ fn pipe_chats_to_scene(
             let player_address = players
                 .get(chat_event.sender)
                 .ok()
-                .map(|fp| fp.address)
+                .map(|(_, fp)| fp.address)
                 .or_else(|| {
                     if chat_event.sender == primary_player.0 {
                         wallet.address()
@@ -798,6 +815,26 @@ fn pipe_chats_to_scene(
 
             let message_id = chat_message_id(player_address, chat_event.timestamp);
             debug!("chat {message_id}: {}", chat_event.message);
+
+            // the message shows over its author: a nearby one, or the local user's own in a
+            // DM (whose channel is the partner's wallet) or a community
+            let bubble = if chat_event.channel == "Nearby" {
+                Some(BubbleKind::Nearby)
+            } else if let Some(recipient) = chat_event.channel.as_h160() {
+                Some(BubbleKind::Dm {
+                    recipient: Some(recipient),
+                })
+            } else {
+                comms::community_chat::community_id(&chat_event.channel).map(community)
+            };
+            if let Some(kind) = bubble {
+                bubbles.write(ChatBubbleRequest {
+                    sender: chat_event.sender,
+                    kind,
+                    message: chat_event.message.clone(),
+                    message_id: message_id.clone(),
+                });
+            }
             (format!("{player_address:#x}"), message_id)
         };
 
@@ -821,6 +858,14 @@ fn pipe_chats_to_scene(
         let partner = format!("{:#x}", dm.from);
         let message_id = chat_message_id(dm.from, dm.timestamp);
         debug!("dm {message_id}: {}", dm.message);
+        if let Some(sender) = player_of(dm.from) {
+            bubbles.write(ChatBubbleRequest {
+                sender,
+                kind: BubbleKind::Dm { recipient: None },
+                message: dm.message.clone(),
+                message_id: message_id.clone(),
+            });
+        }
         for sender in senders.iter() {
             let _ = sender.send(ChatMessage {
                 sender_address: partner.clone(),
@@ -841,6 +886,14 @@ fn pipe_chats_to_scene(
         let channel = comms::community_chat::channel_for(&chat.community_id);
         let message_id = chat_message_id(chat.from, chat.timestamp);
         debug!("{channel} {message_id}: {}", chat.message);
+        if let Some(sender) = player_of(chat.from) {
+            bubbles.write(ChatBubbleRequest {
+                sender,
+                kind: community(&chat.community_id),
+                message: chat.message.clone(),
+                message_id: message_id.clone(),
+            });
+        }
         for sender in senders.iter() {
             let _ = sender.send(ChatMessage {
                 sender_address: format!("{:#x}", chat.from),
