@@ -24,11 +24,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
   sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
   place of the `/fog` density while the scene is active.
-- **A root light source is lux.** Point and spot light intensities are scaled to the sky
-  preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root entity
-  replaces the sun and keeps its intensity as lux, unscaled: the Unity client creates no light
-  for a light source without a type, so there is no unit to match, and scenes already set it in
-  lux here.
+- **A root light source replaces what it sets.** Point and spot light intensities are scaled to
+  the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
+  entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
+  unscaled: the Unity client creates no light for a light source without a type, so there is no
+  unit to match, and scenes already set it in lux here. Without an intensity the sky preset's
+  light stays: the lamps' default of 16000 is not applied to the sun, where it is over four
+  times the preset's noon.
+- **The light sets with the sun.** From sunset until the swing to the moon, and from the swing
+  back until sunrise, the directional light stays on the sun's arc below the horizon while the
+  intensity curve fades it, as in Unity. It grazes walls from under the horizon and floors get
+  no direct light; at most a tenth of a light unit points upward. It is not clamped to the
+  horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.

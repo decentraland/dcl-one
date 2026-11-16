@@ -365,8 +365,8 @@ fn apply_global_light(
 
     // the diffuse ambient light is the Trilight ambient map (sky_envmap.rs): the preset's three
     // colours at the phase, or a scene's own sky colours where it authors them (zenith, horizon
-    // and nadir for sky, equator and ground), tinted and scaled by a scene's ambient override,
-    // and by the setting relative to the default where the ambient is the preset's
+    // and nadir for sky, equator and ground). A scene's ambient override tints and scales all
+    // three, and so does the setting relative to its default, authored colours included
     let ambient_tint = next_light.ambient_color.to_linear().to_vec3()
         * next_light.ambient_brightness
         * (setting.graphics.ambient_brightness as f32 / AMBIENT_BRIGHTNESS_DEFAULT as f32);
