@@ -129,6 +129,11 @@ pub trait Broker: Send + Sync {
     /// Delivers the line into escrow; `Ok` is the forward transaction hash.
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError>;
 
+    /// Drives the buy already claimed under `idempotency_key` to escrow
+    /// custody from its recorded state alone, re-checking nothing about the
+    /// item or trade; `Ok` is the forward transaction hash.
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError>;
+
     async fn reclaim(
         &self,
         collection: &str,
@@ -187,6 +192,18 @@ impl EconomyBroker {
         (status, message)
     }
 
+    /// A broker refusal as the outbox sees it: timeouts, conflicts, rate
+    /// limits and server errors are worth another attempt.
+    fn broker_error(e: crate::evm::errors::ApiError) -> BrokerError {
+        let (code, msg) = Self::status_and_message(e);
+        let msg = format!("broker status {code}: {msg}");
+        if code == 408 || code == 409 || code == 429 || (500..600).contains(&code) {
+            BrokerError::Retryable(msg)
+        } else {
+            BrokerError::Terminal(msg)
+        }
+    }
+
     fn tx_hash_of(v: &Value) -> Result<String, ApiError> {
         v.get("txHash")
             .and_then(|v| v.as_str())
@@ -243,16 +260,19 @@ impl Broker for EconomyBroker {
         match crate::checkout::broker::buy(State(self.state.clone()), headers, Ok(Json(body))).await
         {
             Ok(Json(v)) => Self::tx_hash_of(&v).map_err(|e| BrokerError::Retryable(e.to_string())),
-            Err(e) => {
-                let (code, msg) = Self::status_and_message(e);
-                let msg = format!("broker status {code}: {msg}");
-                if code == 408 || code == 409 || code == 429 || (500..600).contains(&code) {
-                    Err(BrokerError::Retryable(msg))
-                } else {
-                    Err(BrokerError::Terminal(msg))
-                }
-            }
+            Err(e) => Err(Self::broker_error(e)),
         }
+    }
+
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError> {
+        if !self.state.settings.data_writes_enabled {
+            return Err(BrokerError::Retryable(
+                "DATA_WRITES_ENABLED=false: the economy broker resumes no buys on this node".into(),
+            ));
+        }
+        crate::checkout::broker::resume(&self.state, idempotency_key)
+            .await
+            .map_err(Self::broker_error)
     }
 
     async fn reclaim(
@@ -345,6 +365,12 @@ impl Broker for NoBroker {
     }
 
     async fn buy(&self, _req: &BuyRequest) -> Result<String, BrokerError> {
+        Err(BrokerError::Retryable(
+            "the economy broker is not configured on this node".into(),
+        ))
+    }
+
+    async fn resume(&self, _idempotency_key: &str) -> Result<String, BrokerError> {
         Err(BrokerError::Retryable(
             "the economy broker is not configured on this node".into(),
         ))

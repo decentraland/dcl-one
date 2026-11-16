@@ -14,7 +14,7 @@
 // `smart wearable fixture started` and shows one UI label, read through the scene commands after
 // `/set_scene` points them at it. The stop goes through `/stop_portable`, the console line the
 // HUD's `Stop` sends, and the restart through the HUD's `Portable experiences` popover. Build the
-// fixture first: `npm run build-scenes -- smart-wearable`.
+// fixture first: `pnpm run build-scenes smart-wearable`.
 //
 // The third serves the same project as a parcel scene at the spawn, its `scene.json` rewritten to
 // `featureToggles.portableExperiences: disabled`: standing in it pauses the fixture (blocked, still
@@ -74,7 +74,7 @@ try {
   fixture = await buildPreviewWearable(FIXTURE_DIR, PREVIEW_WEARABLE_URN)
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
-  fixtureError = new Error(`the smart-wearable fixture is not ready (${message}); run \`npm run build-scenes -- smart-wearable\` in apps/bevy-explorer/e2e`, { cause: error })
+  fixtureError = new Error(`the smart-wearable fixture is not ready (${message}); run \`pnpm run build-scenes smart-wearable\` in apps/bevy-explorer/e2e`, { cause: error })
 }
 
 // An ephemeral port: the visual realm holds the configured one in the same process.

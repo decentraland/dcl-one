@@ -1,4 +1,5 @@
 mod atmosphere_params;
+mod cloud_motion;
 mod coast;
 mod day_night;
 mod debug_panel;
@@ -110,6 +111,7 @@ impl Plugin for VisualsPlugin {
         app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
+        app.add_plugins(cloud_motion::CloudMotionPlugin);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
         app.add_console_command::<CloudDensityConsoleCommand, _>(cloud_density_console_command);
         app.add_console_command::<CloudShadowConsoleCommand, _>(cloud_shadow_console_command);
@@ -188,7 +190,7 @@ fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,
     mut atmosphere: AtmosphereMut<NishitaCloud>,
-    cloud: Res<CloudCover>,
+    cloud_settings: (Res<CloudCover>, Option<Res<cloud_motion::CloudMotion>>),
     mut sun: Query<(
         Entity,
         &DirectionalLightLayer,
@@ -207,6 +209,8 @@ fn apply_global_light(
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
 ) {
+    let (cloud, cloud_motion) = cloud_settings;
+    let pinned_clouds = cloud_motion.is_some_and(|motion| !motion.enabled());
     let (scene_global_light, environment) = scene_light;
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
@@ -296,7 +300,9 @@ fn apply_global_light(
     } else {
         0.0
     };
-    if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
+    if pinned_clouds {
+        atmosphere.scene_cloud_rotation = 0.0;
+    } else if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
         atmosphere.scene_cloud_rotation = (atmosphere.scene_cloud_rotation as f64
             + speed as f64 * time.delta_secs_f64())
         .rem_euclid(std::f64::consts::TAU) as f32;
@@ -304,7 +310,12 @@ fn apply_global_light(
         atmosphere.scene_cloud_rotation = 0.0;
     }
 
-    if atmosphere.cloudy != cloud.cover {
+    if pinned_clouds {
+        // A fixed phase and coverage must not depend on time spent loading the scene.
+        atmosphere.time = 0.0;
+        atmosphere.cloudy = cloud.cover;
+        *cloud_dt = cloud.speed;
+    } else if atmosphere.cloudy != cloud.cover {
         *cloud_dt = (*cloud_dt + time.delta_secs() * 20.0)
             .min(80.0 * (atmosphere.cloudy - cloud.cover).abs())
             .max(1.0);
@@ -318,7 +329,7 @@ fn apply_global_light(
     }
 
     // An explicit angular speed controls the authored cloud layer, including a static zero.
-    if environment.cloud_speed.is_none() || !procedural_clouds {
+    if !pinned_clouds && (environment.cloud_speed.is_none() || !procedural_clouds) {
         atmosphere.time += time.delta_secs() * *cloud_dt;
     }
 
