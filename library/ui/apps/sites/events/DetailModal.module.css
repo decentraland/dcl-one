@@ -219,3 +219,60 @@ a.location:hover {
     display: none;
   }
 }
+
+/* The live kicker and the host row */
+
+.liveBadge {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  height: var(--dcl-space-24);
+  padding: 0 var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-system-red);
+  color: var(--dcl-neutrals-white);
+  text-transform: uppercase;
+}
+
+.creatorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+}
+
+.avatar {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-lavender);
+  color: var(--dcl-neutrals-white);
+  object-fit: cover;
+}
+
+.by {
+  composes: text626f64792f7873 from '../../../foundations/typography/text-styles.module.css';
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creator {
+  color: var(--dcl-brand-ruby);
+  text-decoration: none;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}

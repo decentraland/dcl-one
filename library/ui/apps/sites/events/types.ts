@@ -1,9 +1,8 @@
 import type { MouseEvent } from 'react'
 
 /**
- * The card contract the /events page renders through. It follows `WhatsOnCardData`
- * (`../../home/WhatsOn.tsx`) and adds only what events need. The shared EventCard and PlaceCard
- * will be wired to these props inside the slot files, so the page does not change when they land.
+ * The data the /events page hands its sections. `cards.tsx` maps it onto the public cards: PlaceCard
+ * (live variant) for Live Now, EventCard for Upcoming and the day columns.
  */
 type EventCardCreator = {
   name: string
@@ -46,8 +45,6 @@ type JumpIn = {
 type LiveEventCardProps = EventCardData & {
   live: boolean
   jumpIn?: JumpIn
-  /** Loads the first card's image eagerly: it is the rail's largest paint. */
-  eager?: boolean
 }
 
 /** Upcoming: an event starting within the day. */

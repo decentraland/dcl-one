@@ -473,6 +473,41 @@
     }
   }
 
+  /* A touch screen of any width cannot hover to reveal JUMP IN, so the live card keeps the By row and a
+     JUMP IN row under it, as on a phone, at its own cover and corners. */
+  @media (hover: none) {
+    .liveSwap {
+      height: auto;
+      display: flex;
+      flex-direction: column;
+      gap: min(1.974cqw, var(--dcl-space-8));
+    }
+
+    .liveBy,
+    .liveCard:hover .liveBy:has(+ .liveJump),
+    .liveCard:focus-within .liveBy:has(+ .liveJump) {
+      position: static;
+      opacity: 1;
+    }
+
+    .liveJump {
+      position: relative;
+      height: min(11.764cqw, 47.674px);
+      opacity: 1;
+      transform: none;
+      pointer-events: auto;
+    }
+  }
+
+  .visuallyHidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .topRow {
     position: relative;
     z-index: 1;

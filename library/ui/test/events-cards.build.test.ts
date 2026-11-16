@@ -68,7 +68,7 @@ beforeEach(async () => {
   })
   await session.navigate(server.resolvedUrls!.local[0]!)
   await evaluate(
-    `(async()=>{for(let n=0;n<100 && document.querySelectorAll('article').length!==5;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==3||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
   )
   await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
   await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
@@ -110,7 +110,7 @@ describe('when Events cards reveal their controls', () => {
       })
       await evaluate(`scrollTo(0,0);document.activeElement?.blur()`)
       await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
-      const selector = 'article[class*="liveCard"]'
+      const selector = 'div[class*="liveCard"]'
       const before = await rect(selector)
       const sectionBefore = await rect('section[aria-labelledby]:nth-of-type(2)')
       await hover(selector)
@@ -121,7 +121,7 @@ describe('when Events cards reveal their controls', () => {
       expect(sectionAfter.y - after.y).toBeCloseTo(sectionBefore.y - before.y, 1)
     }
   )
-  it.each(['smallCard', 'dayCard'])(
+  it.each(['compact', 'day'])(
     'should swap time for controls without resizing the %s on hover and focus',
     async (variant) => {
       await session.send('Emulation.setDeviceMetricsOverride', {
@@ -173,7 +173,7 @@ describe('when Events cards reveal their controls', () => {
       const titles = await evaluate<
         { height: number; lineHeight: number; footerInside: boolean; clamp: string }[]
       >(
-        `(()=>[...document.querySelectorAll('article[class*="smallCard"]')].map(card=>{const title=card.querySelector('h3'),style=getComputedStyle(title),footer=card.querySelector('[class*="cardFooter"]');return {height:title.getBoundingClientRect().height,lineHeight:parseFloat(style.lineHeight),clamp:style.webkitLineClamp,footerInside:footer.getBoundingClientRect().bottom<=card.getBoundingClientRect().bottom}}))()`
+        `(()=>[...document.querySelectorAll('article[class*="compact"]')].map(card=>{const title=card.querySelector('h3'),style=getComputedStyle(title),footer=card.querySelector('[class*="footer"]');return {height:title.getBoundingClientRect().height,lineHeight:parseFloat(style.lineHeight),clamp:style.webkitLineClamp,footerInside:footer.getBoundingClientRect().bottom<=card.getBoundingClientRect().bottom}}))()`
       )
       expect(titles).toHaveLength(2)
       for (const title of titles) {
@@ -204,7 +204,7 @@ describe('when Events cards reveal their controls', () => {
       )
     ).toBe(true)
     await evaluate(
-      `document.querySelectorAll('article[class*="smallCard"]')[1].querySelector('h3 a').focus()`
+      `document.querySelectorAll('article[class*="compact"]')[1].querySelector('h3 a').focus()`
     )
     await session.send('Input.dispatchKeyEvent', {
       type: 'keyDown',
@@ -219,21 +219,21 @@ describe('when Events cards reveal their controls', () => {
       modifiers: 8
     })
     const focused = await evaluate<{ label: string; first: boolean; opacity: string }>(
-      `(()=>{const card=document.querySelector('article[class*="smallCard"]');return {label:document.activeElement.getAttribute('aria-label'),first:card.contains(document.activeElement),opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity}})()`
+      `(()=>{const card=document.querySelector('article[class*="compact"]');return {label:document.activeElement.getAttribute('aria-label'),first:card.contains(document.activeElement),opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity}})()`
     )
     expect(focused.label).toContain('Copy link:')
     expect(focused.first).toBe(true)
     await evaluate(`new Promise(r=>setTimeout(r,250))`)
     expect(
       await evaluate(
-        `getComputedStyle(document.querySelector('article[class*="smallCard"] [class*="actions"]')).opacity`
+        `getComputedStyle(document.querySelector('article[class*="compact"] [class*="actions"]')).opacity`
       )
     ).toBe('1')
   })
   it('should let uncovered footer space open the card instead of intercepting the pointer', async () => {
-    await hover('article[class*="smallCard"]')
+    await hover('article[class*="compact"]')
     const hit = await evaluate<boolean>(
-      `(()=>{const card=document.querySelector('article[class*="smallCard"]'),footer=card.querySelector('[class*="cardFooter"]').getBoundingClientRect(),target=document.elementFromPoint(footer.right-1,footer.top+footer.height/2);return target?.closest('a')===card.querySelector('h3 a')})()`
+      `(()=>{const card=document.querySelector('article[class*="compact"]'),footer=card.querySelector('[class*="footer"]').getBoundingClientRect(),target=document.elementFromPoint(footer.right-1,footer.top+footer.height/2);return target?.closest('a')===card.querySelector('h3 a')})()`
     )
     expect(hit).toBe(true)
   })
@@ -244,9 +244,9 @@ describe('when Events cards reveal their controls', () => {
       deviceScaleFactor: 1,
       mobile: false
     })
-    await hover('article[class*="smallCard"]')
+    await hover('article[class*="compact"]')
     const contained = await evaluate<boolean>(
-      `(()=>{const card=document.querySelector('article[class*="smallCard"]'),r=card.getBoundingClientRect();return [...card.querySelectorAll('button,a[aria-label*="calendar"]')].every(el=>{const b=el.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom})})()`
+      `(()=>{const card=document.querySelector('article[class*="compact"]'),r=card.getBoundingClientRect();return [...card.querySelectorAll('button,a[aria-label*="calendar"]')].every(el=>{const b=el.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom})})()`
     )
     expect(contained).toBe(true)
   })
@@ -260,14 +260,14 @@ describe('when Events cards reveal their controls', () => {
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
     await evaluate(`document.activeElement?.blur()`)
     const state = await evaluate<{ hover: boolean; visible: string; sizes: number[] }>(
-      `(()=>{const card=document.querySelector('article[class*="smallCard"]');return {hover:matchMedia('(hover: hover)').matches,visible:getComputedStyle(card.querySelector('[class*="actions"]')).visibility,sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
+      `(()=>{const card=document.querySelector('article[class*="compact"]');return {hover:matchMedia('(hover: hover)').matches,visible:getComputedStyle(card.querySelector('[class*="actions"]')).visibility,sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
     )
     expect(state.hover).toBe(false)
     expect(state.visible).toBe('visible')
     expect(state.sizes).toEqual([44, 44, 44])
     expect(
       await evaluate(
-        `getComputedStyle(document.querySelector('article[class*="smallCard"] [class*="time"]')).opacity`
+        `getComputedStyle(document.querySelector('article[class*="compact"] [class*="time"]')).opacity`
       )
     ).toBe('1')
   })

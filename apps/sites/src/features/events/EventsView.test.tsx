@@ -138,6 +138,8 @@ describe("EventsView", () => {
         .getByRole("link", { name: /Jump In/ })
         .getAttribute("href"),
     ).toMatch(/\/play\/\?position=1%2C95$/);
+    // The presence count, not a registration count, named for assistive technology.
+    expect(within(section).getByText("6 online")).toBeTruthy();
   });
 
   it("should open the app on an Android phone instead of the web explorer", async () => {

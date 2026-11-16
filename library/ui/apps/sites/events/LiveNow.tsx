@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { GeneralLive } from '../../../foundations/icons'
-import { LiveEventCardSlot } from './cards/LiveEventCardSlot'
-import type { LiveEventCardProps } from './cards/types'
+import { LiveNowCard } from './cards'
+import type { LiveEventCardProps } from './types'
 import { Rail } from './Rail'
 import styles from './LiveNow.module.css'
 
@@ -18,7 +18,7 @@ function LiveNow({ cards }: { cards: readonly LiveEventCardProps[] }) {
       <Rail label="live scenes" count={cards.length} trackClassName={styles.track}>
         {cards.map((card) => (
           <div key={card.id} className={styles.slide}>
-            <LiveEventCardSlot {...card} />
+            <LiveNowCard {...card} />
           </div>
         ))}
       </Rail>

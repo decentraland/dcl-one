@@ -14,7 +14,7 @@ import type {
   LiveEventCardProps,
   RemindControl,
   UpcomingEventCardProps,
-} from "@dcl/one-ui/apps/sites/events/cards/types";
+} from "@dcl/one-ui/apps/sites/events/types";
 
 import { useAuth } from "@/data/lib/auth/context";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
@@ -224,7 +224,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const profiles = useCreatorProfiles(creatorGroups);
   // Counted once both reads settled, so a client navigation never reports the empty first render.
   useViewedOnce(sid, !live.isPending && !upcoming.isPending, liveItems.length, upcomingEvents.length, offset);
-  const liveCards: LiveEventCardProps[] = liveItems.map((item, index): LiveEventCardProps => {
+  const liveCards: LiveEventCardProps[] = liveItems.map((item): LiveEventCardProps => {
     if (item.kind === "event") {
       const href = eventHref(item.event.id, search);
       return {
@@ -238,7 +238,6 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         creator: eventCreator(item.event, profiles),
         live: true,
         jumpIn: jumpIn(eventTarget(item.event)),
-        eager: index === 0,
       };
     }
     const target = placeTarget(item.place);
@@ -254,7 +253,6 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       creator: placeCreator(item.place, profiles),
       live: false,
       jumpIn: jumpIn(target),
-      eager: index === 0,
     };
   });
 

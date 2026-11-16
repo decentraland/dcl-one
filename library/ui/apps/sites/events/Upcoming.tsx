@@ -1,6 +1,6 @@
 import { useId } from 'react'
-import { UpcomingEventCardSlot } from './cards/UpcomingEventCardSlot'
-import type { UpcomingEventCardProps } from './cards/types'
+import { UpcomingCard } from './cards'
+import type { UpcomingEventCardProps } from './types'
 import { PageDots, useScrollPages } from './Rail'
 import styles from './Upcoming.module.css'
 
@@ -20,7 +20,7 @@ function Upcoming({ cards }: { cards: readonly UpcomingEventCardProps[] }) {
       <ul ref={ref} className={styles.grid} onScroll={sync}>
         {cards.map((card) => (
           <li key={card.id} className={styles.item}>
-            <UpcomingEventCardSlot {...card} />
+            <UpcomingCard {...card} />
           </li>
         ))}
       </ul>

@@ -7,8 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { UpcomingEventCardSlot } from "@dcl/one-ui/apps/sites/events/cards/UpcomingEventCardSlot";
-import { ExperienceCardSlot } from "@dcl/one-ui/apps/sites/events/cards/ExperienceCardSlot";
+import { DayCard, UpcomingCard } from "@dcl/one-ui/apps/sites/events/cards";
 vi.hoisted(() =>
   Object.assign(window, {
     __vite_plugin_react_preamble_installed__: true,
@@ -43,9 +42,9 @@ describe("when event cards reveal their actions", () => {
     (kind) => {
       render(
         kind === "upcoming" ? (
-          <UpcomingEventCardSlot {...props} />
+          <UpcomingCard {...props} />
         ) : (
-          <ExperienceCardSlot {...props} live={false} />
+          <DayCard {...props} live={false} />
         ),
       );
       expect(screen.getByText("Tomorrow").closest("time")?.dateTime).toBe(
@@ -68,7 +67,7 @@ describe("when event cards reveal their actions", () => {
   );
   it("should toggle a reminder without opening the card", () => {
     const open = vi.fn();
-    render(<UpcomingEventCardSlot {...props} onOpen={open} />);
+    render(<UpcomingCard {...props} onOpen={open} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Remind me: Poker Night" }),
     );
@@ -77,7 +76,7 @@ describe("when event cards reveal their actions", () => {
   });
   it("should copy the actual card link without navigating", async () => {
     const open = vi.fn();
-    render(<UpcomingEventCardSlot {...props} onOpen={open} />);
+    render(<UpcomingCard {...props} onOpen={open} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Copy link: Poker Night" }),
     );
@@ -91,7 +90,7 @@ describe("when event cards reveal their actions", () => {
   });
   it("should report a clipboard failure without changing the reminder", async () => {
     copy.mockRejectedValue(new Error("denied"));
-    render(<UpcomingEventCardSlot {...props} />);
+    render(<UpcomingCard {...props} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Copy link: Poker Night" }),
     );
@@ -102,7 +101,7 @@ describe("when event cards reveal their actions", () => {
   });
   it("should handle a missing clipboard API", async () => {
     vi.stubGlobal("navigator", {});
-    render(<UpcomingEventCardSlot {...props} />);
+    render(<UpcomingCard {...props} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Copy link: Poker Night" }),
     );
@@ -112,7 +111,7 @@ describe("when event cards reveal their actions", () => {
   });
   it("should recover when copying succeeds after a denied attempt", async () => {
     copy.mockRejectedValueOnce(new Error("denied"));
-    render(<UpcomingEventCardSlot {...props} />);
+    render(<UpcomingCard {...props} />);
     const button = screen.getByRole("button", {
       name: "Copy link: Poker Night",
     });

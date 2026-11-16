@@ -5,13 +5,14 @@ import {
   GeneralClose,
   GeneralCopy,
   GeneralJumpIn,
+  GeneralLive,
   GeneralMapPin,
   GeneralPlayers,
   GeneralPublic
 } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
-import { Badges, CreatorRow } from './cards/parts'
-import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './cards/types'
+import dclLogo from '../assets/dcl-logo.svg'
+import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
 import { Dialog } from './Dialog'
 import styles from './DetailModal.module.css'
 
@@ -107,6 +108,32 @@ function LocationChip({ location }: { location: Location }) {
   )
 }
 
+/** "By <host>"; the host link sits beside the detail's other controls. */
+function CreatorRow({ creator }: { creator: EventCardCreator }) {
+  const src = creator.avatarUrl ?? (creator.foundation ? dclLogo : undefined)
+  return (
+    <div className={styles.creatorRow}>
+      {src ? (
+        <img className={styles.avatar} src={src} alt="" loading="lazy" />
+      ) : (
+        <span className={styles.avatar} aria-hidden="true">
+          {creator.name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <p className={styles.by}>
+        By{' '}
+        {creator.href ? (
+          <a className={styles.creator} href={creator.href}>
+            {creator.name}
+          </a>
+        ) : (
+          <span className={styles.creator}>{creator.name}</span>
+        )}
+      </p>
+    </div>
+  )
+}
+
 function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
   return (
     <Button href={jumpIn.href} onClick={jumpIn.onJumpIn}>
@@ -174,7 +201,10 @@ function EventDetailModal(props: EventDetailModalProps) {
         onClose={props.onClose}
         kicker={
           live ? (
-            <Badges live inline />
+            <span className={styles.liveBadge}>
+              <GeneralLive size={16} aria-hidden="true" />
+              LIVE
+            </span>
           ) : when ? (
             <time className={styles.when} dateTime={when.dateTime}>
               {when.label}
@@ -183,7 +213,7 @@ function EventDetailModal(props: EventDetailModalProps) {
         }
       >
         <div className={styles.meta}>
-          {creator ? <CreatorRow creator={creator} prefix="By" /> : null}
+          {creator ? <CreatorRow creator={creator} /> : null}
           <LocationChip location={location} />
         </div>
         <div className={styles.actions}>
@@ -251,7 +281,7 @@ function PlaceDetailModal(props: PlaceDetailModalProps) {
       <Hero titleId={titleId} title={props.title} image={props.image} onClose={props.onClose}>
         {creator ? (
           <div className={styles.meta}>
-            <CreatorRow creator={creator} prefix="By" />
+            <CreatorRow creator={creator} />
           </div>
         ) : null}
         <div className={styles.actions}>

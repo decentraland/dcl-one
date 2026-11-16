@@ -1,4 +1,4 @@
-import type { EventCardCreator, EventCardTime } from "@dcl/one-ui/apps/sites/events/cards/types";
+import type { EventCardCreator, EventCardTime } from "@dcl/one-ui/apps/sites/events/types";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 import {

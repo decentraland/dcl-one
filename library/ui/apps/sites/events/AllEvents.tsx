@@ -1,9 +1,8 @@
 import { useId, type CSSProperties, type MouseEvent } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
-import { ExperienceCardSlot } from './cards/ExperienceCardSlot'
-import { UpcomingEventCardSlot } from './cards/UpcomingEventCardSlot'
-import type { ExperienceCardProps } from './cards/types'
+import { DayCard, UpcomingCard } from './cards'
+import type { ExperienceCardProps } from './types'
 import styles from './AllEvents.module.css'
 
 type AllEventsDay = {
@@ -69,7 +68,7 @@ function DayColumn({ day }: { day: AllEventsDay }) {
       {day.cards.length ? (
         day.cards.map((card) => (
           <li key={card.id}>
-            <ExperienceCardSlot {...card} />
+            <DayCard {...card} />
           </li>
         ))
       ) : (
@@ -159,7 +158,7 @@ function AllEvents({
             >
               {list.map((card) => (
                 <li key={card.id}>
-                  <UpcomingEventCardSlot {...card} />
+                  <UpcomingCard {...card} />
                 </li>
               ))}
             </ul>

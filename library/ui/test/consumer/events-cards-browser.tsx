@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { LiveNow } from '../../apps/sites/events/LiveNow'
 import { Upcoming } from '../../apps/sites/events/Upcoming'
-import { ExperienceCardSlot } from '../../apps/sites/events/cards/ExperienceCardSlot'
+import { DayCard } from '../../apps/sites/events/cards'
 import '../../foundations/foundations.css'
 const base = {
   id: 'event',
@@ -34,7 +34,7 @@ createRoot(document.getElementById('root')!).render(
       ]}
     />
     <section data-day>
-      <ExperienceCardSlot {...base} live={false} />
+      <DayCard {...base} live={false} />
     </section>
   </main>
 )
