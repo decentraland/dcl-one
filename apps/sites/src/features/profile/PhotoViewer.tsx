@@ -71,9 +71,11 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
   const closeRef = useRef<HTMLButtonElement>(null);
   const [detailsVisible, setDetailsVisible] = useState(true);
   const titleId = useId();
+  // Where focus was when the viewer opened, read once on the first render, before any effect moves
+  // it, so a re-run of the effects (React's StrictMode) cannot record the dialog instead.
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
 
   useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     const { overflow } = document.body.style;
     document.body.style.overflow = "hidden";
@@ -81,7 +83,7 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
       document.body.style.overflow = overflow;
       if (opener?.isConnected) opener.focus();
     };
-  }, []);
+  }, [opener]);
 
   // Stepping to another photo, or hiding the panel, can unmount the link that held focus; the
   // dialog takes it back so its keys keep working. The first render is left to the effect above,
@@ -183,8 +185,9 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
             ) : null}
           </div>
           {detailsVisible ? (
-            <section className={styles.details} aria-labelledby={titleId}>
-              <div className={styles.detailsScroll}>
+            <div className={styles.details}>
+              {/* A tab stop, so the keyboard can scroll a long panel that has no link in it. */}
+              <section className={styles.detailsScroll} aria-labelledby={titleId} tabIndex={0}>
                 <div className={styles.header}>
                   <h2 id={titleId} className={styles.sectionTitle}>
                     information
@@ -229,8 +232,8 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
                     </ul>
                   </>
                 ) : null}
-              </div>
-            </section>
+              </section>
+            </div>
           ) : null}
         </div>
       </div>

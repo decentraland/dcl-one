@@ -80,6 +80,12 @@ function jumpInHref(photo: ProfilePhoto): string | undefined {
   return playUrl({ position: `${x.trim()},${y.trim()}`, realm: WORLD_REALM.test(raw) ? raw : undefined });
 }
 
+/** "Genesis Plaza 0,1": the scene, and its parcel when the photo has one. */
+function placeLabel(photo: ProfilePhoto): string {
+  const { name, x, y } = photo.scene;
+  return PARCEL.test(x.trim()) && PARCEL.test(y.trim()) ? `${name} ${x.trim()},${y.trim()}` : name;
+}
+
 /** "kurd-2026-11-10.jpg": who took it and the day, as a file name. */
 function downloadName(photo: ProfilePhoto): string {
   const name = photo.author.name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "photo";
@@ -97,7 +103,7 @@ function viewerDetails(photo: ProfilePhoto, faces: Record<string, { picture?: st
   return {
     date: formatPhotoDate(photo.dateTime) || undefined,
     takenBy: photo.author.name && takenByHref ? { name: photo.author.name, href: takenByHref } : undefined,
-    place: { label: `${photo.scene.name} ${photo.scene.x},${photo.scene.y}`, jumpInHref: jumpInHref(photo) },
+    place: { label: placeLabel(photo), jumpInHref: jumpInHref(photo) },
     people: photo.people.map((person) => ({
       name: person.name || shortAddress(person.address),
       href: personHref(person.address),
@@ -195,7 +201,8 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
 
   // The open photo is looked up among the ones shown, so the arrows follow the grid.
   const openIndex = openId === null ? -1 : shown.findIndex((photo) => photo.id === openId);
-  const settled = query.data !== undefined && !query.isPlaceholderData;
+  // The public list kept after a failed signed read counts as settled too.
+  const settled = data !== undefined && !query.isPlaceholderData;
   const lookupId = settled && openId !== null && openIndex === -1 && isPhotoId(openId) ? openId : null;
   // A link to a loaded photo the filter hides (the owner's private one) shows every photo instead.
   const hiddenByFilter = openId !== null && openIndex === -1 && rows.some((photo) => photo.id === openId);

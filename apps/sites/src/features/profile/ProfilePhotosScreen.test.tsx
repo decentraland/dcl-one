@@ -2,6 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -80,17 +81,18 @@ function profile(over: Partial<ProfileVM> = {}): ProfileVM {
   return { ...emptyProfile(A), name: "kurd", ...over };
 }
 
-function show({ own = false, path = `/profile/${A}/photos` } = {}) {
+function show({ own = false, path = `/profile/${A}/photos`, strict = false } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [{ path: "*", element: <ProfilePhotosScreen profile={profile()} own={own} tabs={tabs} onTab={vi.fn()} /> }],
     { initialEntries: [path] },
   );
-  render(
+  const tree = (
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   return { client, router };
 }
 
@@ -338,6 +340,22 @@ describe("profile photos, the owner's visibility filter", () => {
     net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { isPublic: false })]));
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("tablist", { name: "Photos shown" })).toBeTruthy();
+  });
+
+  it("reads a link past the loaded pages while the signed read has failed, opening it only if public", async () => {
+    auth.state = { identity: null, isConnected: true, address: A };
+    net.fetchUserPhotos.mockImplementation(async (_a: string, _p: unknown, opts: { identity?: unknown }) => {
+      if (opts.identity) throw new Error("401");
+      return page([photo(0)], 40);
+    });
+    net.fetchPhoto.mockResolvedValue(photo(31, { id: uuid(31) }));
+    const { router } = show({ own: true, path: `/profile/${A}/photos?photo=${uuid(31)}` });
+    await tile(0);
+
+    act(() => auth.set({ identity, isConnected: true, address: A }));
+
+    expect(await screen.findByRole("dialog", { name: `${tileName(31)}, 1 of 1` })).toBeTruthy();
+    expect(router.state.location.search).toBe(`?photo=${uuid(31)}`);
   });
 
   it("reads the public gallery, without the filter, when the owner has no identity in this browser", async () => {
@@ -656,6 +674,37 @@ describe("profile photos, the viewer", () => {
     await user.click(await screen.findByRole("button", { name: /^Photo at Plaza 0/ }));
 
     expect(screen.getByRole("link", { name: "Download photo" }).getAttribute("download")).toBe(fileName);
+  });
+
+  it("returns focus to the photo on close under StrictMode's double effects", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
+    show({ strict: true });
+    const opener = await tile(0);
+    await user.click(opener);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("lets the keyboard reach the information panel when it holds no link", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(
+      page([photo(0, { author: { name: "", address: "not-a-wallet" }, scene: { name: "Nowhere", x: "", y: "" } })]),
+    );
+    show();
+    await user.click(await screen.findByRole("button", { name: /^Photo at Nowhere/ }));
+    const panel = screen.getByRole("region", { name: "information" });
+
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+
+    expect(document.activeElement).toBe(panel);
+    // Without a parcel the place is the scene alone, not "Nowhere ,".
+    expect(within(panel).getByText("Nowhere")).toBeTruthy();
+    expect(within(panel).queryByText(/Nowhere ,/)).toBeNull();
   });
 
   it("keeps Shift+Tab inside after a click on the photo", async () => {
