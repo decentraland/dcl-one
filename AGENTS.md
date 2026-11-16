@@ -55,6 +55,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Read the [layout ADR](docs/adr/2026-10-19-organizing-library-services-folders.md) before adding, moving or renaming a folder or crate; record layout changes as a new ADR.
 - `library/` depends only on library code.
 - `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` fails on any other copy.
+- JavaScript projects install with pnpm ([ADR](docs/adr/2026-11-13-pnpm-default-package-manager.md)); published `@dcl/*` packages carry nothing pnpm-specific.
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.

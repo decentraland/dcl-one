@@ -81,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.27.0 --dir react-web run bundle:native
+corepack pnpm@11.28.12 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.28.12 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.28.12 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@11.28.12 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```

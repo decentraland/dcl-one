@@ -995,9 +995,9 @@ jobs:
         env:
           pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: |
-          corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+          corepack pnpm@11.28.12 --dir react-web install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.28.12 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.28.12 --dir react-web/bridge-scene --filter @dcl/hashing build
       - name: Save the pnpm store from main
         if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1034,11 +1034,11 @@ jobs:
       - name: Export the compiled bridge scene for the CDN
         # The web job linted and tested the scene; its compiled bin/ is not part of the artifact.
         run: |
-          corepack pnpm@11.27.0 exec sdk-commands build --production
+          corepack pnpm@11.28.12 exec sdk-commands build --production
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
-          corepack pnpm@11.27.0 run export-web
+          corepack pnpm@11.28.12 run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
       - name: Upload the stamped package for publication
         if: needs.build-deploy-web.outputs.publish == 'true'

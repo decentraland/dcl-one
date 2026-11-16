@@ -89,10 +89,10 @@ jobs:
         shell: bash
       - name: Bundle react HUD (page + bridge scene -> assets/)
         run: |-
-          cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-          cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.27.0 --filter @dcl/hashing build && cd ..
-          corepack pnpm@11.27.0 run bundle:native
+          cd react-web && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts
+          cd bridge-scene && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.28.12 --filter @dcl/hashing build && cd ..
+          corepack pnpm@11.28.12 run bundle:native
         shell: bash
       - name: Install ninja (macos)
         if: runner.os == 'macos'

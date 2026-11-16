@@ -1,4 +1,6 @@
 nodeLinker: hoisted
+# The workspace packages stay out of the root node_modules, as the SDK's own resolution and tests expect.
+hoistWorkspacePackages: false
 packages:
   - packages/@dcl/*
   - ../hashing
