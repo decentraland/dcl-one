@@ -352,11 +352,59 @@
     margin-left: auto;
   }
 
+  /* The catalogue card's motion, as the web profile's card moved (decentraland-ui2 CatalogCard): on
+     hover or keyboard focus it lifts 4px (200ms), its ring comes out from behind its edge to 4px off
+     it (300ms), the actions slide up from the bottom of the info as the creator and price rows fade
+     (300ms and 200ms), all ease-in-out. The info clips the actions while they slide. */
+  .catalogue {
+    transition: transform 200ms ease-in-out;
+  }
+
+  .catalogue::after {
+    inset: 0;
+    transition:
+      opacity 300ms ease-in-out,
+      inset 300ms ease-in-out;
+  }
+
+  .catalogue:hover,
+  .catalogue:focus-within {
+    transform: translateY(-4px);
+  }
+
+  .catalogue:hover::after,
+  .catalogue:has(:focus-visible)::after,
+  .catalogue.selected::after {
+    inset: -8px;
+  }
+
+  .catalogue .info {
+    overflow: hidden;
+  }
+
+  .catalogue .actions {
+    transform: translateY(100%);
+    transition:
+      opacity 300ms ease-in-out,
+      transform 300ms ease-in-out;
+  }
+
+  .catalogue.hasActions:hover .actions,
+  .catalogue.hasActions:has(:focus-visible) .actions {
+    transform: translateY(0);
+  }
+
+  .catalogue .creator,
+  .catalogue .meta {
+    transition: opacity 200ms ease-in-out;
+  }
+
   @media (hover: none) {
     .catalogue .actions {
       position: static;
       opacity: 1;
       pointer-events: auto;
+      transform: none;
     }
 
     .catalogue.hasActions:hover .creator,
@@ -438,13 +486,24 @@
     }
   }
 
+  /* Reduced motion: every state shows at once in its final place; nothing lifts or slides. */
   @media (prefers-reduced-motion: reduce) {
     .sheen {
       animation: none;
     }
 
-    .card::after {
+    .card::after,
+    .catalogue,
+    .catalogue .actions,
+    .catalogue .creator,
+    .catalogue .meta {
       transition: none;
+    }
+
+    .catalogue:hover,
+    .catalogue:focus-within,
+    .catalogue .actions {
+      transform: none;
     }
   }
 }
