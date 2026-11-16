@@ -22,9 +22,10 @@ import {
   loadedRows,
   loadMore,
   NameRow,
-  receivedAny,
   useCategoryTabs,
+  unreadyState,
   useFocusNewRows,
+  useRouterClick,
   type CategoryOption,
   type CollectiblesState,
 } from "./collectibles";
@@ -73,12 +74,20 @@ function tokenHref(asset: ProfileAsset): string {
 
 /** A NAME's Edit (under Create) and Transfer (its token's transfer page). */
 function NameActions({ asset }: { asset: ProfileAsset }) {
+  const routerClick = useRouterClick();
+  const transfer = `${tokenHref(asset)}/transfer`;
   return (
     <>
-      <Button href={MANAGE_NAMES_HREF} variant="secondary" size="sm" aria-label={`Edit ${asset.name}`}>
+      <Button
+        href={MANAGE_NAMES_HREF}
+        onClick={routerClick(MANAGE_NAMES_HREF)}
+        variant="secondary"
+        size="sm"
+        aria-label={`Edit ${asset.name}`}
+      >
         Edit
       </Button>
-      <Button href={`${tokenHref(asset)}/transfer`} size="sm" aria-label={`Transfer ${asset.name}`}>
+      <Button href={transfer} onClick={routerClick(transfer)} size="sm" aria-label={`Transfer ${asset.name}`}>
         Transfer
       </Button>
     </>
@@ -86,6 +95,7 @@ function NameActions({ asset }: { asset: ProfileAsset }) {
 }
 
 function AssetCard({ asset }: { asset: ProfileAsset }) {
+  const routerClick = useRouterClick();
   const href = tokenHref(asset);
   return (
     <CollectibleCard
@@ -101,7 +111,7 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
         asset.category === "ens" ? (
           <NameActions asset={asset} />
         ) : (
-          <Button href={href} size="sm" aria-label={`View ${asset.name}`}>
+          <Button href={href} onClick={routerClick(href)} size="sm" aria-label={`View ${asset.name}`}>
             View
           </Button>
         )
@@ -116,83 +126,58 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   const query = useProfileAssets(profile.address, category);
   const rows = query.data ? loadedRows(query.data) : [];
   const focus = useFocusNewRows(rows.length, query.dataUpdatedAt + query.errorUpdatedAt);
+  const routerClick = useRouterClick();
 
   const { filters, panel } = useCategoryTabs("Assets shown", CATEGORY_TABS, category, setCategory);
 
-  let state: CollectiblesState;
-  // With no data yet, a Try again refetch puts the query back to pending, so it shows as loading.
-  if (query.isError && !query.data) {
-    state = {
-      kind: "error",
-      message: "Assets are unavailable right now.",
-      action: (
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => {
-            focus.expectRowsFrom(0);
-            void query.refetch();
-          }}
-        >
-          Try again
-        </Button>
-      ),
-    };
-  } else if (!query.data) {
-    state = { kind: "loading", label: "Loading assets" };
-  } else {
-    if (rows.length === 0 && receivedAny(query.data)) {
-      // Every row of the page failed to read: not an empty list, and later pages may still read.
-      state = {
-        kind: "error",
-        message: "These assets could not be read right now.",
-        action: loadMore(query, "assets", () => focus.expectRowsFrom(0)),
-      };
-    } else if (rows.length === 0) {
-      state =
-        category !== null
-          ? { kind: "empty-note", message: countLabel(0) }
-          : own
-            ? {
-                kind: "empty",
-                label: "No assets yet",
-                children: (
-                  <EmptyMessage
-                    icon={<BackpackUpperBody size={56} />}
-                    title="No assets yet"
-                    subtitle="Go to the Shop and start creating your unique look"
-                    action={
-                      <Button href={SHOP_HREF} size="md">
-                        Go to the Shop
-                      </Button>
-                    }
-                  />
-                ),
-              }
-            : {
-                kind: "empty-note",
-                message: "Wearables, names and lands you own will appear here.",
-              };
-    } else {
-      const names = category === "ens";
-      state = {
-        kind: "list",
-        count: countLabel(catalogueTotal(query.data)),
-        layout: names ? "rows" : "grid",
-        children: rows.map((asset) => (
-          <CollectiblesItem key={asset.id}>
-            {names ? (
-              <NameRow name={asset.name} actions={<NameActions asset={asset} />} />
-            ) : (
-              <AssetCard asset={asset} />
-            )}
-          </CollectiblesItem>
-        )),
-        listRef: focus.listRef,
-        more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
-      };
-    }
-  }
+  const names = category === "ens";
+  // Assets is only offered on the owner's own profile, so its empty state speaks to the owner.
+  const state: CollectiblesState =
+    unreadyState(
+      query,
+      rows,
+      {
+        noun: "assets",
+        unavailable: "Assets are unavailable right now.",
+        unreadable: "These assets could not be read right now.",
+      },
+      focus,
+    ) ??
+    (!query.data || rows.length === 0
+      ? category !== null
+        ? { kind: "empty-note", message: countLabel(0) }
+        : {
+            kind: "empty",
+            label: "No assets yet",
+            children: (
+              <EmptyMessage
+                icon={<BackpackUpperBody size={56} />}
+                title="No assets yet"
+                subtitle="Go to the Shop and start creating your unique look"
+                action={
+                  <Button href={SHOP_HREF} onClick={routerClick(SHOP_HREF)} size="md">
+                    Go to the Shop
+                  </Button>
+                }
+              />
+            ),
+          }
+      : {
+          kind: "list",
+          count: countLabel(catalogueTotal(query.data)),
+          layout: names ? "rows" : "grid",
+          children: rows.map((asset) => (
+            <CollectiblesItem key={asset.id}>
+              {names ? (
+                <NameRow name={asset.name} actions={<NameActions asset={asset} />} />
+              ) : (
+                <AssetCard asset={asset} />
+              )}
+            </CollectiblesItem>
+          )),
+          listRef: focus.listRef,
+          more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
+        });
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="assets" onTab={onTab}>

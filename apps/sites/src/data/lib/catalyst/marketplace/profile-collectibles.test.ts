@@ -265,6 +265,23 @@ describe("fetchProfileAssets", () => {
     expect(items[0]?.image).toBeUndefined();
   });
 
+  it("names a parcel the catalogue calls by its category by its coordinates", async () => {
+    // What the catalyst sends for an unnamed token: its capitalized category.
+    json.mockResolvedValue({
+      data: [
+        token({ category: "parcel", name: "Parcel", data: { parcel: { x: "162", y: "-133", description: null, estate: null } } }),
+        token({ id: "e-1", category: "estate", name: "Estate", data: { estate: { size: 2, description: null, parcels: [] } } }),
+        token({ id: "n-1", category: "ens", name: "Ens", data: { ens: { subdomain: "" } } }),
+        token({ id: "p-2", category: "parcel", name: "Parcel", data: { parcel: { x: null, y: null } } }),
+      ],
+      total: 4,
+    });
+
+    const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
+
+    expect(items.map((row) => row.name)).toEqual(["Parcel 162,-133", "Estate", "Untitled", "Untitled"]);
+  });
+
   it("names a parcel without a name by its coordinates, and keeps a row whose name is null", async () => {
     json.mockResolvedValue({
       data: [
