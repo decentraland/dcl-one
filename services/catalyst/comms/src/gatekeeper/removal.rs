@@ -1592,8 +1592,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_unleased_moderation_job_survives_unknown_recovered_island_and_removes_voice_target()
-     {
+    async fn durable_moderation_pass_survives_unknown_recovered_island_and_removes_voice_target() {
         if std::env::var("CATALYST_TEST_DATABASE_URL")
             .ok()
             .is_none_or(|value| value.trim().is_empty())

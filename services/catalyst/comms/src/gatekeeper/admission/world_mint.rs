@@ -825,7 +825,9 @@ mod throttle_tests {
         // between the observed wait and the edit's commit is therefore a
         // refused stamp, never an early one: only that refusal reruns the
         // scenario, and every accepted stamp must follow the edit.
+        let mut refusals = Vec::new();
         for _ in 0..5 {
+            let started = std::time::Instant::now();
             let mut edit = pool.begin().await.unwrap();
             sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
                 .bind(world.key())
@@ -839,16 +841,24 @@ mod throttle_tests {
             // the edit's row lock. The bound only ends a hang.
             let cutoff = tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 loop {
-                    let blocked: Option<NaiveDateTime> = sqlx::query_scalar(
-                        "SELECT timezone('UTC',clock_timestamp()) FROM pg_stat_activity \
-                         WHERE application_name=$1 AND wait_event_type='Lock'",
+                    let waiting: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity \
+                         WHERE application_name=$1 AND wait_event_type='Lock')",
                     )
                     .bind(&label)
-                    .fetch_optional(&mut *edit)
+                    .fetch_one(&pool)
                     .await
                     .unwrap();
-                    if blocked.is_some() || stamp.is_finished() {
-                        return blocked;
+                    if waiting {
+                        let now: NaiveDateTime =
+                            sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+                                .fetch_one(&mut *edit)
+                                .await
+                                .unwrap();
+                        return Some(now);
+                    }
+                    if stamp.is_finished() {
+                        return None;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
                 }
@@ -863,12 +873,21 @@ mod throttle_tests {
                     return;
                 }
                 Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => {
-                    eprintln!("stamp gave up at its lock timeout; rerunning the edit");
+                    let elapsed = started.elapsed();
+                    eprintln!(
+                        "stamp gave up at its lock timeout after {elapsed:?}; rerunning the edit"
+                    );
+                    refusals.push((elapsed, error.to_string()));
                 }
                 Err(error) => panic!("stamp failed: {error}"),
             }
         }
-        panic!("every stamp gave up at its lock timeout");
+        let elapsed: Vec<_> = refusals.iter().map(|(elapsed, _)| *elapsed).collect();
+        let last = refusals.last().map_or("", |(_, error)| error.as_str());
+        panic!(
+            "every stamp gave up at its lock timeout ({} attempts, elapsed {elapsed:?}); last: {last}",
+            refusals.len()
+        );
     }
 
     /// Concurrent attempts each reserve atomically: only `max` get past the throttle.
