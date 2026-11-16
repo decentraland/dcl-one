@@ -26,12 +26,11 @@ use std::{
     fmt::{Display, Formatter},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc, LazyLock, Mutex,
+        Arc, Mutex,
     },
 };
 
-use bevy::prelude::*;
-use dashmap::DashMap;
+use bevy::{platform::collections::HashMap, prelude::*};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use media::MediaId;
 use once_cell::sync::OnceCell;
@@ -381,7 +380,7 @@ static HOST: OnceCell<HostHandle> = OnceCell::new();
 static NEXT_ROOM_ID: AtomicU32 = AtomicU32::new(1);
 static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 /// Engine-side: requests awaiting their [`Reply`].
-static PENDING: LazyLock<DashMap<RequestId, oneshot::Sender<Reply>>> = LazyLock::new(DashMap::new);
+static PENDING: Mutex<HashMap<RequestId, oneshot::Sender<Reply>>> = Mutex::new(HashMap::new());
 /// Engine-side: a room's event queue (the receiver is what [`Room::connect`] returns) and the
 /// metadata the page last reported for it.
 struct RoomChannel {
@@ -389,14 +388,14 @@ struct RoomChannel {
     metadata: Arc<Mutex<String>>,
 }
 
-static ROOM_EVENTS: LazyLock<DashMap<RoomId, RoomChannel>> = LazyLock::new(DashMap::new);
+static ROOM_EVENTS: Mutex<HashMap<RoomId, RoomChannel>> = Mutex::new(HashMap::new());
 
 /// Removes its request from [`PENDING`] when dropped; a no-op once the reply was taken.
 struct PendingGuard(RequestId);
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        PENDING.remove(&self.0);
+        PENDING.lock().unwrap().remove(&self.0);
     }
 }
 
@@ -416,7 +415,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
     };
     let request = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let (sender, receiver) = oneshot::channel();
-    PENDING.insert(request, sender);
+    PENDING.lock().unwrap().insert(request, sender);
     let _pending = PendingGuard(request);
     if host.commands.unbounded_send(command(request)).is_err() {
         return Err(RoomError::from("livekit host is gone".to_owned()));
@@ -429,7 +428,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
 fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Arc<Mutex<String>>) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let metadata = Arc::new(Mutex::new(String::new()));
-    ROOM_EVENTS.insert(
+    ROOM_EVENTS.lock().unwrap().insert(
         room,
         RoomChannel {
             events: sender,
@@ -441,13 +440,13 @@ fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Ar
 
 /// Records the metadata the page reported for `room` at connect.
 fn set_room_metadata(room: RoomId, metadata: &str) {
-    if let Some(channel) = ROOM_EVENTS.get(&room) {
+    if let Some(channel) = ROOM_EVENTS.lock().unwrap().get(&room) {
         metadata.clone_into(&mut channel.metadata.lock().unwrap());
     }
 }
 
 fn unregister_room_events(room: RoomId) {
-    ROOM_EVENTS.remove(&room);
+    ROOM_EVENTS.lock().unwrap().remove(&room);
 }
 
 pub fn setup_microphone_permission() {
@@ -503,8 +502,9 @@ pub fn dispatch_page_events(
                 if let Reply::Connect(Ok(connected)) = &reply {
                     set_room_metadata(connected.room, &connected.metadata);
                 }
-                match PENDING.remove(&request) {
-                    Some((_, sender)) => {
+                let sender = PENDING.lock().unwrap().remove(&request);
+                match sender {
+                    Some(sender) => {
                         // the requester may have been aborted
                         let _ = sender.send(reply);
                     }
@@ -512,21 +512,18 @@ pub fn dispatch_page_events(
                 }
             }
             LivekitEvent::Room { room, event } => {
-                // the entry's guard ends with this block: `remove` under it would deadlock
-                let receiver_gone = {
-                    let Some(channel) = ROOM_EVENTS.get(&room) else {
-                        debug!("event for unknown room {room}: {event:?}");
-                        continue;
-                    };
-                    // the metadata is written before the event that reports it is forwarded
-                    if let RoomEvent::RoomMetadataChanged { metadata } = &event {
-                        channel.metadata.lock().unwrap().clone_from(metadata);
-                    }
-                    channel.events.send(event).is_err()
+                let mut rooms = ROOM_EVENTS.lock().unwrap();
+                let Some(channel) = rooms.get(&room) else {
+                    debug!("event for unknown room {room}: {event:?}");
+                    continue;
                 };
-                if receiver_gone {
+                // the metadata is written before the event that reports it is forwarded
+                if let RoomEvent::RoomMetadataChanged { metadata } = &event {
+                    channel.metadata.lock().unwrap().clone_from(metadata);
+                }
+                if channel.events.send(event).is_err() {
                     // the engine's LivekitRoom is gone
-                    ROOM_EVENTS.remove(&room);
+                    rooms.remove(&room);
                 }
             }
             LivekitEvent::Microphone {
