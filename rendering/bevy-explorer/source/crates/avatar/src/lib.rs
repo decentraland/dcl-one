@@ -48,6 +48,7 @@ pub mod jump_marker;
 pub mod mask_material;
 pub mod material_cache;
 pub mod npc_dynamics;
+pub mod pause_hidden;
 pub mod point_at_ik;
 pub mod point_at_marker;
 mod two_bone_ik;
@@ -141,6 +142,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
+        app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
         app.add_plugins(JumpMarkerPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
