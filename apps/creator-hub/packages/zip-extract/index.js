@@ -6,23 +6,31 @@
 //
 // It never makes a link: a link entry is skipped. It writes below `dir` only: a name that leaves
 // `dir`, and a folder of `dir` that is a link to another place, both stop the extraction.
-// It reads stored and deflated entries. Zip64, encrypted and multi-disk archives are refused.
+// It reads stored and deflated entries, also in zip64 archives. Encrypted and multi-disk archives
+// are refused.
+//
+// It reads only the end record and the central directory into memory. It sends the data of each
+// entry from the archive to the target file in small parts, so the memory use does not grow with
+// the size of an entry. It stops an entry as soon as it is larger than the size it states, and it
+// removes the file of an entry that fails.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
-const { promisify } = require('node:util');
-
-const inflateRaw = promisify(zlib.inflateRaw);
+const { pipeline } = require('node:stream/promises');
 
 const END_SIGNATURE = 0x06054b50;
 const END_SIZE = 22;
 const MAX_COMMENT_SIZE = 0xffff;
+const ZIP64_END_SIGNATURE = 0x06064b50;
+const ZIP64_END_SIZE = 56;
+const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
+const ZIP64_LOCATOR_SIZE = 20;
+const ZIP64_EXTRA = 0x0001;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const CENTRAL_SIZE = 46;
 const LOCAL_SIGNATURE = 0x04034b50;
 const LOCAL_SIZE = 30;
-const ZIP64_16 = 0xffff;
 const ZIP64_32 = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const METHOD_STORED = 0;
@@ -31,50 +39,148 @@ const HOST_UNIX = 3;
 const TYPE_MASK = 0o170000;
 const TYPE_LINK = 0o120000;
 const TYPE_FOLDER = 0o040000;
+const READ_SIZE = 1 << 20;
+const INFLATE_SIZE = 1 << 16;
 
-function findEnd(buffer) {
-  const lowest = Math.max(0, buffer.length - END_SIZE - MAX_COMMENT_SIZE);
-  for (let at = buffer.length - END_SIZE; at >= lowest; at--) {
-    if (buffer.readUInt32LE(at) !== END_SIGNATURE) continue;
-    if (at + END_SIZE + buffer.readUInt16LE(at + 20) === buffer.length) return at;
+function readUInt64(buffer, at) {
+  const value = buffer.readBigUInt64LE(at);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Damaged zip archive: a zip64 value is out of range');
+  }
+  return Number(value);
+}
+
+// Gives fewer bytes than `length` only at the end of the file.
+async function readAt(handle, length, position) {
+  const buffer = Buffer.alloc(length);
+  let done = 0;
+  while (done < length) {
+    const { bytesRead } = await handle.read(buffer, done, length - done, position + done);
+    if (bytesRead === 0) break;
+    done += bytesRead;
+  }
+  return buffer.subarray(0, done);
+}
+
+async function* readRange(handle, start, length, fileName) {
+  for (let done = 0; done < length; ) {
+    const size = Math.min(length - done, READ_SIZE);
+    const buffer = Buffer.allocUnsafe(size);
+    const { bytesRead } = await handle.read(buffer, 0, size, start + done);
+    if (bytesRead === 0) throw new Error(`Damaged zip archive: the data of "${fileName}" is cut`);
+    done += bytesRead;
+    yield buffer.subarray(0, bytesRead);
+  }
+}
+
+async function findEnd(handle, fileSize) {
+  const tailSize = Math.min(fileSize, ZIP64_LOCATOR_SIZE + END_SIZE + MAX_COMMENT_SIZE);
+  const tailStart = fileSize - tailSize;
+  const tail = await readAt(handle, tailSize, tailStart);
+  const lowest = Math.max(0, tail.length - END_SIZE - MAX_COMMENT_SIZE);
+  for (let at = tail.length - END_SIZE; at >= lowest; at--) {
+    if (tail.readUInt32LE(at) !== END_SIGNATURE) continue;
+    if (at + END_SIZE + tail.readUInt16LE(at + 20) === tail.length) {
+      return { tail, at, position: tailStart + at };
+    }
   }
   throw new Error('Not a zip archive: the end record is missing');
 }
 
-function readEntries(buffer) {
-  const end = findEnd(buffer);
-  const count = buffer.readUInt16LE(end + 10);
-  const size = buffer.readUInt32LE(end + 12);
-  const start = buffer.readUInt32LE(end + 16);
-  if (count === ZIP64_16 || size === ZIP64_32 || start === ZIP64_32) {
-    throw new Error('Zip64 archives are not supported');
+// Gives the place of the central directory, from the zip64 end record when the archive has one.
+async function findDirectory(handle, fileSize) {
+  const { tail, at, position } = await findEnd(handle, fileSize);
+  const locator = at - ZIP64_LOCATOR_SIZE;
+  if (locator < 0 || tail.readUInt32LE(locator) !== ZIP64_LOCATOR_SIGNATURE) {
+    if (tail.readUInt16LE(at + 4) !== 0 || tail.readUInt16LE(at + 6) !== 0) {
+      throw new Error('Multi-disk archives are not supported');
+    }
+    return {
+      count: tail.readUInt16LE(at + 10),
+      size: tail.readUInt32LE(at + 12),
+      start: tail.readUInt32LE(at + 16),
+      limit: position,
+    };
   }
-  if (buffer.readUInt16LE(end + 4) !== 0 || buffer.readUInt16LE(end + 6) !== 0) {
+
+  if (tail.readUInt32LE(locator + 4) !== 0 || tail.readUInt32LE(locator + 16) > 1) {
     throw new Error('Multi-disk archives are not supported');
   }
-  if (start + size > end) throw new Error('Damaged zip archive: the directory is out of range');
+  const recordAt = readUInt64(tail, locator + 8);
+  const record = await readAt(handle, ZIP64_END_SIZE, recordAt);
+  if (
+    recordAt + ZIP64_END_SIZE > position - ZIP64_LOCATOR_SIZE ||
+    record.length !== ZIP64_END_SIZE ||
+    record.readUInt32LE(0) !== ZIP64_END_SIGNATURE
+  ) {
+    throw new Error('Damaged zip archive: the zip64 end record is missing');
+  }
+  if (record.readUInt32LE(16) !== 0 || record.readUInt32LE(20) !== 0) {
+    throw new Error('Multi-disk archives are not supported');
+  }
+  return {
+    count: readUInt64(record, 32),
+    size: readUInt64(record, 40),
+    start: readUInt64(record, 48),
+    limit: recordAt,
+  };
+}
+
+// The zip64 field holds, in this order, each size and the offset that its record sets to
+// 0xffffffff.
+function zip64Values(directory, from, to, fileName) {
+  for (let at = from; at + 4 <= to; at += 4 + directory.readUInt16LE(at + 2)) {
+    if (directory.readUInt16LE(at) !== ZIP64_EXTRA) continue;
+    let field = at + 4;
+    const end = Math.min(to, field + directory.readUInt16LE(at + 2));
+    return () => {
+      if (field + 8 > end)
+        throw new Error(`Damaged zip archive: the zip64 field of "${fileName}" is cut`);
+      field += 8;
+      return readUInt64(directory, field - 8);
+    };
+  }
+  throw new Error(`Damaged zip archive: the zip64 field of "${fileName}" is missing`);
+}
+
+async function readEntries(handle, fileSize) {
+  const { count, size, start, limit } = await findDirectory(handle, fileSize);
+  if (start + size > limit) throw new Error('Damaged zip archive: the directory is out of range');
+  const directory = await readAt(handle, size, start);
 
   const entries = [];
-  let at = start;
+  let at = 0;
   for (let index = 0; index < count; index++) {
-    if (at + CENTRAL_SIZE > end || buffer.readUInt32LE(at) !== CENTRAL_SIGNATURE) {
+    if (at + CENTRAL_SIZE > size || directory.readUInt32LE(at) !== CENTRAL_SIGNATURE) {
       throw new Error('Damaged zip archive: a directory record is missing');
     }
-    const nameSize = buffer.readUInt16LE(at + 28);
-    const next =
-      at + CENTRAL_SIZE + nameSize + buffer.readUInt16LE(at + 30) + buffer.readUInt16LE(at + 32);
-    if (next > end) throw new Error('Damaged zip archive: a directory record is cut');
-    const host = buffer.readUInt16LE(at + 4) >> 8;
-    entries.push({
-      fileName: buffer.toString('utf8', at + CENTRAL_SIZE, at + CENTRAL_SIZE + nameSize),
-      flags: buffer.readUInt16LE(at + 8),
-      method: buffer.readUInt16LE(at + 10),
-      crc32: buffer.readUInt32LE(at + 16),
-      compressedSize: buffer.readUInt32LE(at + 20),
-      uncompressedSize: buffer.readUInt32LE(at + 24),
-      mode: host === HOST_UNIX ? buffer.readUInt32LE(at + 38) >>> 16 : 0,
-      localOffset: buffer.readUInt32LE(at + 42),
-    });
+    const nameSize = directory.readUInt16LE(at + 28);
+    const extraStart = at + CENTRAL_SIZE + nameSize;
+    const extraEnd = extraStart + directory.readUInt16LE(at + 30);
+    const next = extraEnd + directory.readUInt16LE(at + 32);
+    if (next > size) throw new Error('Damaged zip archive: a directory record is cut');
+    const host = directory.readUInt16LE(at + 4) >> 8;
+    const entry = {
+      fileName: directory.toString('utf8', at + CENTRAL_SIZE, extraStart),
+      flags: directory.readUInt16LE(at + 8),
+      method: directory.readUInt16LE(at + 10),
+      crc32: directory.readUInt32LE(at + 16),
+      compressedSize: directory.readUInt32LE(at + 20),
+      uncompressedSize: directory.readUInt32LE(at + 24),
+      mode: host === HOST_UNIX ? directory.readUInt32LE(at + 38) >>> 16 : 0,
+      localOffset: directory.readUInt32LE(at + 42),
+    };
+    if (
+      entry.uncompressedSize === ZIP64_32 ||
+      entry.compressedSize === ZIP64_32 ||
+      entry.localOffset === ZIP64_32
+    ) {
+      const value = zip64Values(directory, extraStart, extraEnd, entry.fileName);
+      if (entry.uncompressedSize === ZIP64_32) entry.uncompressedSize = value();
+      if (entry.compressedSize === ZIP64_32) entry.compressedSize = value();
+      if (entry.localOffset === ZIP64_32) entry.localOffset = value();
+    }
+    entries.push(entry);
     at = next;
   }
   return entries;
@@ -108,35 +214,52 @@ async function makeFolder(root, folder, fileName) {
   await fs.promises.mkdir(folder, { recursive: true });
 }
 
-async function readContent(buffer, entry) {
-  if (entry.flags & FLAG_ENCRYPTED) throw new Error(`Entry "${entry.fileName}" is encrypted`);
-  if (entry.compressedSize === ZIP64_32 || entry.uncompressedSize === ZIP64_32) {
-    throw new Error('Zip64 archives are not supported');
-  }
-  const local = entry.localOffset;
-  if (local + LOCAL_SIZE > buffer.length || buffer.readUInt32LE(local) !== LOCAL_SIGNATURE) {
+async function dataStart(handle, fileSize, entry) {
+  const local = await readAt(handle, LOCAL_SIZE, entry.localOffset);
+  if (local.length !== LOCAL_SIZE || local.readUInt32LE(0) !== LOCAL_SIGNATURE) {
     throw new Error(`Damaged zip archive: no data for "${entry.fileName}"`);
   }
-  const start =
-    local + LOCAL_SIZE + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
-  if (start + entry.compressedSize > buffer.length) {
+  const start = entry.localOffset + LOCAL_SIZE + local.readUInt16LE(26) + local.readUInt16LE(28);
+  if (start + entry.compressedSize > fileSize) {
     throw new Error(`Damaged zip archive: the data of "${entry.fileName}" is cut`);
   }
-  const data = buffer.subarray(start, start + entry.compressedSize);
+  return start;
+}
 
-  let content;
-  if (entry.method === METHOD_STORED) {
-    content = data;
-  } else if (entry.method === METHOD_DEFLATED) {
-    // The limit stops an entry that grows above the size it states.
-    content = await inflateRaw(data, { maxOutputLength: Math.max(entry.uncompressedSize, 1) });
-  } else {
+async function writeContent(handle, fileSize, entry, target) {
+  if (entry.flags & FLAG_ENCRYPTED) throw new Error(`Entry "${entry.fileName}" is encrypted`);
+  if (entry.method !== METHOD_STORED && entry.method !== METHOD_DEFLATED) {
     throw new Error(`Entry "${entry.fileName}" uses the unsupported method ${entry.method}`);
   }
-  if (content.length !== entry.uncompressedSize || zlib.crc32(content) !== entry.crc32) {
-    throw new Error(`Damaged zip archive: "${entry.fileName}" fails its size or checksum`);
+  const start = await dataStart(handle, fileSize, entry);
+  const damaged = () =>
+    new Error(`Damaged zip archive: "${entry.fileName}" fails its size or checksum`);
+
+  const stages = [readRange(handle, start, entry.compressedSize, entry.fileName)];
+  if (entry.method === METHOD_DEFLATED) {
+    stages.push(zlib.createInflateRaw({ chunkSize: INFLATE_SIZE }));
   }
-  return content;
+  const output = await fs.promises.open(target, 'w', entry.mode & 0o777 || 0o644);
+  let size = 0;
+  let crc32 = 0;
+  try {
+    await pipeline(...stages, async chunks => {
+      for await (const chunk of chunks) {
+        size += chunk.length;
+        if (size > entry.uncompressedSize) throw damaged();
+        crc32 = zlib.crc32(chunk, crc32);
+        for (let done = 0; done < chunk.length; ) {
+          done += (await output.write(chunk, done)).bytesWritten;
+        }
+      }
+    });
+    if (size !== entry.uncompressedSize || crc32 !== entry.crc32) throw damaged();
+  } catch (error) {
+    await output.close();
+    await fs.promises.rm(target, { force: true });
+    throw error;
+  }
+  await output.close();
 }
 
 async function extract(zipPath, options) {
@@ -145,28 +268,31 @@ async function extract(zipPath, options) {
   }
   await fs.promises.mkdir(options.dir, { recursive: true });
   const root = await fs.promises.realpath(options.dir);
-  const buffer = await fs.promises.readFile(zipPath);
+  const handle = await fs.promises.open(zipPath, 'r');
+  try {
+    const { size: fileSize } = await handle.stat();
+    for (const entry of await readEntries(handle, fileSize)) {
+      if (entry.fileName.startsWith('__MACOSX/')) continue;
+      if (options.onEntry) options.onEntry(entry);
 
-  for (const entry of readEntries(buffer)) {
-    if (entry.fileName.startsWith('__MACOSX/')) continue;
-    if (options.onEntry) options.onEntry(entry);
+      const target = path.join(root, ...pathParts(entry.fileName));
+      const type = entry.mode & TYPE_MASK;
+      if (type === TYPE_LINK) continue;
 
-    const target = path.join(root, ...pathParts(entry.fileName));
-    const type = entry.mode & TYPE_MASK;
-    if (type === TYPE_LINK) continue;
+      if (type === TYPE_FOLDER || entry.fileName.endsWith('/')) {
+        await makeFolder(root, target, entry.fileName);
+        continue;
+      }
 
-    if (type === TYPE_FOLDER || entry.fileName.endsWith('/')) {
-      await makeFolder(root, target, entry.fileName);
-      continue;
+      await makeFolder(root, path.dirname(target), entry.fileName);
+      const present = await fs.promises.lstat(target).catch(() => undefined);
+      if (present && !present.isFile()) {
+        throw new Error(`Entry "${entry.fileName}" would replace something that is not a file`);
+      }
+      await writeContent(handle, fileSize, entry, target);
     }
-
-    await makeFolder(root, path.dirname(target), entry.fileName);
-    const present = await fs.promises.lstat(target).catch(() => undefined);
-    if (present && !present.isFile()) {
-      throw new Error(`Entry "${entry.fileName}" would replace something that is not a file`);
-    }
-    const content = await readContent(buffer, entry);
-    await fs.promises.writeFile(target, content, { mode: entry.mode & 0o777 || 0o644 });
+  } finally {
+    await handle.close();
   }
 }
 
