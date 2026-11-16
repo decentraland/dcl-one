@@ -372,19 +372,33 @@ pub async fn ensure_target_not_protected(
         tracing::error!(error, %place_id, "places lookup failed while checking a ban target for protection");
         service_unavailable(PLACE_LOOKUP_UNAVAILABLE_MSG)
     })?;
-    if let Some(row) = row {
-        let (extra, leases) = tokio::join!(try_get_extra_addresses(state, row), async {
-            if row.world {
-                BTreeSet::new()
-            } else {
-                get_lease_holders_for_parcels(state, &row.positions).await
-            }
-        });
-        let mut protected = extra?;
-        protected.extend(leases);
-        if protected.contains(target.as_str()) {
-            return Err(ApiError::bad_request("Cannot ban this address"));
-        }
+    if let Some(row) = row
+        && try_get_extended_holders(state, row)
+            .await?
+            .contains(target.as_str())
+    {
+        return Err(ApiError::bad_request("Cannot ban this address"));
     }
     Ok(())
+}
+
+/// The addresses that hold a place through its other permission surfaces
+/// (upstream's `hasExtendedPermissions` and `hasLandLease`): the extra
+/// addresses, plus the lease holders of a Genesis place. The extra addresses
+/// must be readable (else 503); an unreadable lease document reads as no
+/// holder, as in the `/scene-admin` listing.
+pub async fn try_get_extended_holders(
+    state: &CommsState,
+    place: &PlaceInfo,
+) -> Result<BTreeSet<String>, ApiError> {
+    let (extra, leases) = tokio::join!(try_get_extra_addresses(state, place), async {
+        if place.world {
+            BTreeSet::new()
+        } else {
+            get_lease_holders_for_parcels(state, &place.positions).await
+        }
+    });
+    let mut holders = extra?;
+    holders.extend(leases);
+    Ok(holders)
 }

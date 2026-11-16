@@ -867,6 +867,96 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
     }
 }
 
+/// Upstream's `isSceneOwnerOrAdmin` also admits the place's extended
+/// holders to the ban listings: a world deployment or streaming grantee, a
+/// LAND operator and a lease holder reach the store, an outsider still gets
+/// 401, and an extended surface that cannot be read is 503.
+#[tokio::test]
+async fn toolkit_ban_listings_admit_extended_holders() {
+    let holder = address_of(KEY);
+    let lease = axum::Router::new().route(
+        "/authorizations.json",
+        axum::routing::get({
+            let holder = holder.clone();
+            move || async move { Json(json!([{ "addresses": [holder], "plots": ["42,42"] }])) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let lease_url = format!(
+        "http://{}/authorizations.json",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    let app = |policy: StubPolicy, lease_url: Option<String>| {
+        let settings = Settings {
+            lease_authorizations_url: lease_url,
+            ..Settings::for_tests()
+        };
+        let mut state = comms_state(lazy_pool(), settings);
+        state.scenes = Arc::new(ToolkitScenes);
+        state.policy = Arc::new(policy);
+        super::super::router(Arc::new(state))
+    };
+    let world = metadata("MiXeD.dcl.eth", "SceneB", "1,1");
+    let genesis = metadata("main", "GenesisA", "42,42");
+    let grantee = StubPolicy {
+        protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
+        ..StubPolicy::default()
+    };
+    let operator = StubPolicy {
+        land: Ok(Some(Arc::new(Some(LandOperators {
+            owner: "0x000000000000000000000000000000000000dead".into(),
+            operator: Some(holder.clone()),
+            ..Default::default()
+        })))),
+        ..StubPolicy::default()
+    };
+    let unreadable = StubPolicy {
+        protected: Err(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: "world permissions",
+            reason_for_operators: "fixture".into(),
+        }),
+        ..StubPolicy::default()
+    };
+    for (case, app, meta, outcome) in [
+        (
+            "world grantee",
+            app(grantee, None),
+            &world,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "LAND operator",
+            app(operator, None),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "lease holder",
+            app(StubPolicy::default(), Some(lease_url.clone())),
+            &genesis,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+        (
+            "unreadable world grants",
+            app(unreadable, None),
+            &world,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ] {
+        for path in ["/scene-bans", "/scene-bans/addresses"] {
+            let (status, value) = call(&app, "GET", path, meta, Value::Null, KEY).await;
+            assert_eq!(status, outcome, "{case} {path}: {value}");
+            if outcome == StatusCode::INTERNAL_SERVER_ERROR {
+                let (status, value) =
+                    call(&app, "GET", path, meta, Value::Null, OUTSIDER_KEY).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{case} {path}: {value}");
+            }
+        }
+    }
+    server.abort();
+}
+
 #[tokio::test]
 async fn toolkit_scene_provider_fault_and_extended_targets_fail_before_media() {
     let (url, media, server) = media_fixture().await;

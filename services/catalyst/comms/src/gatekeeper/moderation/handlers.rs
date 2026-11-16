@@ -24,7 +24,9 @@ use crate::gatekeeper::auth::{
     authorize_moderator, require_service_token, service_token_error, validate_body,
     verify_signed_fetch,
 };
-use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled, unauthorized};
+use crate::gatekeeper::errors::{
+    ApiError, conflict, not_found_labeled, service_unavailable, unauthorized,
+};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -355,23 +357,42 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-/// Listing a scene's bans takes the same owner-or-admin authority as
-/// writing them; a caller without it gets the upstream 401, and a decision
-/// that could not be made keeps its own status.
+/// Listing a scene's bans takes upstream's `isSceneOwnerOrAdmin`: the
+/// owner-or-admin decision the ban writes use, or, failing that, an
+/// extended holder of the place (a world deployment or streaming grantee, a
+/// LAND operator or lease holder), the same addresses `/scene-admin` lists.
+/// Anyone else gets the upstream 401; an authority that cannot be read
+/// keeps its own status (503).
 async fn ensure_can_list_bans(
     state: &CommsState,
     place: &PlaceLookup<'_>,
     signer: &Address,
 ) -> Result<(), ApiError> {
     match scene::scene_owner_or_admin_decision(state, place, signer).await {
-        crate::PermissionDecision::Allowed => Ok(()),
+        crate::PermissionDecision::Allowed => return Ok(()),
         crate::PermissionDecision::Refused(
             crate::AuthorityNotEstablished::RefusedLacksAuthority { .. },
-        ) => Err(unauthorized(
-            "User does not have permission to list scene bans",
-        )),
-        crate::PermissionDecision::Refused(why) => Err(why.into()),
+        ) => {}
+        crate::PermissionDecision::Refused(why) => return Err(why.into()),
     }
+    let row = place.get().await.map_err(|error| {
+        tracing::error!(
+            error,
+            place_id = place.place_id(),
+            "places lookup failed while authorizing a ban listing"
+        );
+        service_unavailable(scene::PLACE_LOOKUP_UNAVAILABLE_MSG)
+    })?;
+    if let Some(row) = row
+        && scene::try_get_extended_holders(state, row)
+            .await?
+            .contains(signer.as_str())
+    {
+        return Ok(());
+    }
+    Err(unauthorized(
+        "User does not have permission to list scene bans",
+    ))
 }
 
 /// GET /scene-bans (scene signed): the banned wallets of the place with
