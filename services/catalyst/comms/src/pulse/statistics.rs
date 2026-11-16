@@ -90,18 +90,18 @@ impl Statistics {
                 {
                     return ProducerReply::Active(grant);
                 }
-                // Begin cannot grant another candidate at capacity; keep Confirm
-                // defensive before any producer state changes.
-                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS {
-                    crate::pulse::metrics::statistics_registration_capacity_refused();
-                    return rejected;
-                }
                 if self.pending.as_ref() != Some(&grant)
                     || self
                         .active
                         .as_ref()
                         .is_some_and(|(current, _)| current.generation >= grant.generation)
                 {
+                    return rejected;
+                }
+                // Begin cannot grant another candidate at capacity; keep Confirm
+                // defensive before any producer state changes.
+                if self.retiring.len() >= MAX_RETAINED_CONNECTOR_GENERATIONS {
+                    crate::pulse::metrics::statistics_registration_capacity_refused();
                     return rejected;
                 }
                 self.pending = None;
@@ -385,6 +385,15 @@ mod tests {
                 }),
                 ProducerReply::Rejected { .. }
             ));
+            let retired = stats.retiring.values().next().unwrap().0.clone();
+            let mut forged = active.clone();
+            forged.challenge = uuid::Uuid::new_v4();
+            for invalid in [retired, forged] {
+                assert!(matches!(
+                    stats.control(ProducerRequest::Confirm(invalid)),
+                    ProducerReply::Rejected { .. }
+                ));
+            }
             for _ in 0..3 {
                 assert!(matches!(
                     stats.control(ProducerRequest::Begin {
