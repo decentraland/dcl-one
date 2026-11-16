@@ -334,6 +334,11 @@ fresh external same-session bindings are read-only. Uncertain mutations retain t
 before/after row identities, assignment digest and admission work credit until a
 locked conditional read settles them. No reset, predecessor restoration, broad
 wallet release, new table, index or per-service pool is required.
+An explicit Pulse no-selected-owner proof can retire a local retry slot only after
+the same wallet-before-realm read has settled any uncertain mutation and its work
+credit. The exact desired generation, selected identity and outstanding operations
+must still match. Retirement performs no realm mutation or release; known settled
+ownership ceases renewal under the existing lease, and foreign rows remain intact.
 
 World allow-lists admit explicit access wallets and members of listed active,
 unsuspended communities who are not banned. Admission probes

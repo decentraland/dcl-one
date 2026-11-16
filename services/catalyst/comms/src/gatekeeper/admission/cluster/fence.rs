@@ -239,6 +239,20 @@ pub trait AssignmentFence: Send + Sync {
     ) {
     }
 
+    fn selected_retirement_target(
+        &self,
+        _wallet: &str,
+        _session: &str,
+    ) -> Option<SelectedRetirementTarget> {
+        None
+    }
+    async fn retire_selected(
+        &self,
+        _target: SelectedRetirementTarget,
+        _reply: crate::protocol::bus::cluster::SelectionRetirementReply,
+    ) {
+    }
+
     async fn settle_idle(&self, _wallet: &str) {}
     fn retained_work_credit(
         &self,
@@ -341,7 +355,7 @@ impl AssignmentFence for PgAssignmentFence {
     fn selected_reconciliation_targets(&self) -> Vec<(String, String)> {
         let mut targets = Vec::new();
         for (wallet, slot) in self.selected.lock().iter() {
-            let desired = slot.desired.lock().0.clone();
+            let desired = slot.desired.lock().session.clone();
             if !desired.is_empty() {
                 targets.push((wallet.clone(), desired.clone()));
             }
@@ -370,14 +384,56 @@ impl AssignmentFence for PgAssignmentFence {
         }
         if let Ok(slot) = self.selected_slot(wallet, &change.session) {
             let mut desired = slot.desired.lock();
-            if desired.1 != change.source_incarnation || change.assignment_version >= desired.2 {
-                *desired = (
-                    change.session.clone(),
-                    change.source_incarnation.clone(),
+            if desired.source != change.source_incarnation
+                || change.assignment_version >= desired.version
+            {
+                desired.observe(
+                    &change.session,
+                    &change.source_incarnation,
                     change.assignment_version,
+                    None,
                 );
             }
         }
+    }
+    fn selected_retirement_target(
+        &self,
+        wallet: &str,
+        session: &str,
+    ) -> Option<SelectedRetirementTarget> {
+        let slot = self.selected.lock().get(wallet).cloned()?;
+        let desired = slot.desired.lock();
+        if desired.session != session {
+            return None;
+        }
+        let lookup = crate::protocol::bus::cluster::SelectionRetirementLookup {
+            wallet: wallet.into(),
+            session: desired.session.clone(),
+            source_incarnation: desired.source.clone(),
+            assignment_version: desired.version,
+            selected: desired.selected.clone(),
+        };
+        if !lookup.valid() {
+            return None;
+        }
+        let generation = desired.generation;
+        drop(desired);
+        Some(SelectedRetirementTarget {
+            lookup,
+            generation,
+            slot,
+        })
+    }
+    async fn retire_selected(
+        &self,
+        target: SelectedRetirementTarget,
+        reply: crate::protocol::bus::cluster::SelectionRetirementReply,
+    ) {
+        let _ = tokio::time::timeout(
+            FENCE_CALL_TIMEOUT,
+            self.retire_selected_target(target, reply),
+        )
+        .await;
     }
     async fn settle_idle(&self, wallet: &str) {
         let _ = tokio::time::timeout(FENCE_CALL_TIMEOUT, self.settle_selected_idle(wallet)).await;
@@ -486,9 +542,67 @@ struct RealmAttempt {
     key: Option<SelectedKey>,
     _credit: std::sync::Arc<super::subscriber::wallet_queue::WorkCredit>,
 }
+#[derive(Default)]
+struct SelectedDesire {
+    session: String,
+    source: String,
+    version: u64,
+    selected: Option<crate::protocol::bus::cluster::SelectedIdentity>,
+    generation: u64,
+}
+impl SelectedDesire {
+    fn observe(
+        &mut self,
+        session: &str,
+        source: &str,
+        version: u64,
+        selected: Option<crate::protocol::bus::cluster::SelectedIdentity>,
+    ) {
+        let same = self.session == session && self.source == source && self.version == version;
+        let selected = selected.or_else(|| same.then(|| self.selected.clone()).flatten());
+        if same && self.selected == selected {
+            return;
+        }
+        let Some(generation) = self.generation.checked_add(1) else {
+            return;
+        };
+        *self = Self {
+            session: session.into(),
+            source: source.into(),
+            version,
+            selected,
+            generation,
+        };
+    }
+}
 struct SelectedWallet {
-    desired: parking_lot::Mutex<(String, String, u64)>,
+    desired: parking_lot::Mutex<SelectedDesire>,
     state: tokio::sync::Mutex<SelectedBinding>,
+}
+/// Captures the exact local obligation across the negative authority lookup.
+/// Private slot identity and generation cannot be constructed by a caller.
+pub struct SelectedRetirementTarget {
+    pub lookup: crate::protocol::bus::cluster::SelectionRetirementLookup,
+    generation: u64,
+    slot: std::sync::Arc<SelectedWallet>,
+}
+impl SelectedRetirementTarget {
+    fn matches(&self, desired: &SelectedDesire) -> bool {
+        self.generation == desired.generation
+            && self.lookup.session == desired.session
+            && self.lookup.source_incarnation == desired.source
+            && self.lookup.assignment_version == desired.version
+            && self.lookup.selected == desired.selected
+    }
+    fn permits_key(&self, key: &SelectedKey) -> bool {
+        key.source == self.lookup.source_incarnation
+            && key.version <= self.lookup.assignment_version
+            && (key.version < self.lookup.assignment_version
+                || (key.session == self.lookup.session
+                    && self.lookup.selected.as_ref().is_none_or(|selected| {
+                        selected.origin == key.origin && selected.identity == key.identity
+                    })))
+    }
 }
 #[derive(Default)]
 struct SelectedBinding {
@@ -544,7 +658,10 @@ impl PgAssignmentFence {
             return Err(FenceError::Unavailable);
         }
         let slot = std::sync::Arc::new(SelectedWallet {
-            desired: parking_lot::Mutex::new((session.into(), String::new(), 0)),
+            desired: parking_lot::Mutex::new(SelectedDesire {
+                session: session.into(),
+                ..Default::default()
+            }),
             state: tokio::sync::Mutex::new(SelectedBinding::default()),
         });
         slots.insert(wallet.into(), slot.clone());
@@ -631,8 +748,18 @@ impl PgAssignmentFence {
         let mut slot = slot_ref.state.lock().await;
         {
             let mut desired = slot_ref.desired.lock();
-            if desired.1.is_empty() || (desired.1 == key.source && desired.2 <= key.version) {
-                *desired = (snapshot.session.clone(), key.source.clone(), key.version);
+            if desired.source.is_empty()
+                || (desired.source == key.source && desired.version <= key.version)
+            {
+                desired.observe(
+                    &snapshot.session,
+                    &key.source,
+                    key.version,
+                    Some(crate::protocol::bus::cluster::SelectedIdentity {
+                        origin: key.origin,
+                        identity: key.identity,
+                    }),
+                );
             }
         }
         let lease = super::safety::SafetyStore::new(self.pool.clone())
@@ -804,6 +931,59 @@ impl PgAssignmentFence {
             slot.owned = None;
             slot.key = None;
         }
+        Ok(())
+    }
+
+    async fn retire_selected_target(
+        &self,
+        target: SelectedRetirementTarget,
+        reply: crate::protocol::bus::cluster::SelectionRetirementReply,
+    ) -> Result<(), FenceError> {
+        if reply.lookup != target.lookup || reply.encode().is_none() {
+            return Err(FenceError::Invalid);
+        }
+        let mut state = target.slot.state.lock().await;
+        if !target.matches(&target.slot.desired.lock())
+            || state
+                .key
+                .as_ref()
+                .is_some_and(|key| !target.permits_key(key))
+            || state
+                .attempt
+                .as_ref()
+                .and_then(|attempt| attempt.key.as_ref())
+                .is_some_and(|key| !target.permits_key(key))
+        {
+            return Ok(());
+        }
+        let lease = super::safety::SafetyStore::new(self.pool.clone())
+            .lock(&target.lookup.wallet)
+            .await
+            .map_err(|_| FenceError::Unavailable)?;
+        let mut tx = lease.tx;
+        let current = self.realm_row(&mut tx, &target.lookup.wallet).await?;
+        // A failed settlement read/commit retains the exact attempt and credit.
+        // No realm write, renewal, release or credential issuance occurs here.
+        tx.commit().await.map_err(|_| FenceError::Unavailable)?;
+        Self::reconcile_attempt(&mut state, current.as_ref());
+        let mut slots = self.selected.lock();
+        let desired = target.slot.desired.lock();
+        if !target.matches(&desired)
+            || !slots
+                .get(&target.lookup.wallet)
+                .is_some_and(|slot| std::sync::Arc::ptr_eq(slot, &target.slot))
+            || state.attempt.is_some()
+            || state
+                .key
+                .as_ref()
+                .is_some_and(|key| !target.permits_key(key))
+            || std::sync::Arc::strong_count(&target.slot) != 2
+        {
+            return Ok(());
+        }
+        // Only this map and this retirement operation still reference the slot.
+        // Settled owned facts cease renewal; the existing finite SQL lease stays.
+        slots.remove(&target.lookup.wallet);
         Ok(())
     }
 }

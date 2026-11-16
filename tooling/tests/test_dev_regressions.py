@@ -51,6 +51,35 @@ class InventoryTests(unittest.TestCase):
                     with self.subTest(target=target, name=name), self.assertRaises(ValueError):
                         guard.verify(required, changed, ignored, str(target))
 
+    def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
+        cases = [
+            ("tests/pulse_cluster_lookup.rs", "", [
+                "real_selection_retirement_exchange_requires_complete_absence_and_exact_source",
+            ]),
+            ("comms/src/protocol/bus/cluster.rs", "protocol::bus::cluster::tests::", [
+                "selection_retirement_codec_is_exact_bounded_and_negative_only",
+            ]),
+            ("comms/src/pulse/cluster/feed.rs", "pulse::cluster::feed::current_tests::", [
+                "retirement_requires_complete_absence_and_survives_record_and_control_gc",
+                "retirement_withholds_blocked_pending_and_successor_current_evidence",
+            ]),
+            ("tests/comms_v4_assignment_fence/recovery.rs", "recovery::", [
+                "started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
+                "started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
+                "started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement",
+                "started_selected_retirement_waits_for_a_lease_and_preserves_a_real_foreign_successor",
+            ]),
+        ]
+        for path, prefix, names in cases:
+            target = ("pulse_cluster_lookup", "test") if path == "tests/pulse_cluster_lookup.rs" else (("comms_v4_assignment_fence", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            source = (ROOT / "services/catalyst" / path).read_text(encoding="utf-8")
+            bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+            for name in names:
+                with self.subTest(target=target, name=name):
+                    self.assertIn(prefix + name, required)
+                    self.assertEqual(bodies.count(name), 1)
+
     def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
         target = "archipelago_control_extensions_websocket"
         catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))

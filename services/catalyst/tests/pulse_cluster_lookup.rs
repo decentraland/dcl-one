@@ -18,6 +18,75 @@ use std::{sync::Arc, time::Duration};
 
 const CAP: usize = 8;
 
+#[tokio::test]
+async fn real_selection_retirement_exchange_requires_complete_absence_and_exact_source() {
+    use catalyst::comms::protocol::bus::cluster::{SelectedIdentity, SelectionRetirementLookup};
+    let binary = gate::require_env("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+    let broker = Broker::start(&binary, None);
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let mut world = World::new(broker.url());
+    let wallet = address(1);
+    let session = address(2);
+    world.place(0, &wallet, &session);
+    let positive = current(&client, &mut world, &wallet, &session).await;
+    let mut request = SelectionRetirementLookup {
+        wallet: wallet.clone(),
+        session: session.clone(),
+        source_incarnation: positive.source_incarnation.clone(),
+        assignment_version: positive.assignment_version,
+        selected: Some(SelectedIdentity {
+            origin: positive.selected_origin,
+            identity: positive.selected_identity.unwrap(),
+        }),
+    };
+    async fn retirement(
+        client: &async_nats::Client,
+        request: &SelectionRetirementLookup,
+    ) -> Option<catalyst::comms::protocol::bus::cluster::SelectionRetirementReply> {
+        let reply = tokio::time::timeout(
+            Duration::from_millis(200),
+            client.request(request.subject(), request.encode()?.into()),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        request.decode_reply(&reply.payload)
+    }
+    assert!(
+        retirement(&client, &request).await.is_none(),
+        "a current owner cannot be retired"
+    );
+    world.remove(0);
+    assert!(lookup(&client, &wallet, &session).await.is_none());
+    assert!(
+        retirement(&client, &request).await.is_none(),
+        "a hidden old current record before the next pass is unknown"
+    );
+    world.pass();
+    let retired = retirement(&client, &request).await.expect("production NATS responder returns bounded explicit no-owner evidence after complete deselection");
+    assert_eq!(retired.lookup, request);
+    assert!(retired.pass > positive.pass);
+    assert!(
+        lookup(&client, &wallet, &session).await.is_none(),
+        "the existing positive lookup wire never returns negative evidence"
+    );
+    world.place(0, &wallet, &session);
+    assert!(
+        retirement(&client, &request).await.is_none(),
+        "native reservation blocks an old negative before its new pass"
+    );
+    let successor = current(&client, &mut world, &wallet, &session).await;
+    assert!(successor.assignment_version > positive.assignment_version);
+    assert!(retirement(&client, &request).await.is_none());
+    world.remove(0);
+    world.pass();
+    request.source_incarnation = "another-incarnation".into();
+    assert!(
+        retirement(&client, &request).await.is_none(),
+        "a restarted/foreign source cannot retire the old source"
+    );
+}
+
 async fn publish_control(
     client: &async_nats::Client,
     input: &catalyst::comms::protocol::bus::control_position::ControlPosition,

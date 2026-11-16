@@ -19,7 +19,7 @@ use prost::Message;
 use tokio::sync::Notify;
 
 use crate::protocol::bus::REQUEST_DEADLINE;
-use crate::protocol::bus::cluster::{ClusterLookup, MAX_REPLY_BYTES};
+use crate::protocol::bus::cluster::{ClusterLookup, MAX_REPLY_BYTES, SelectionRetirementLookup};
 use crate::protocol::bus::topology::{DISCOVERY_SUBJECT, encode_discovery};
 use crate::pulse::cluster::control::{
     ControlPositions, ControlSnapshot, DEFAULT_CONTROL_POSITION_CAPACITY,
@@ -605,11 +605,20 @@ fn private_reply(subject: &str) -> bool {
 }
 
 async fn serve_lookups(shared: &Shared, client: &async_nats::Client) {
-    let Ok(Ok(mut requests)) =
+    let Ok(Ok(requests)) =
         tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(ClusterLookup::SUBJECTS)).await
     else {
         return;
     };
+    let Ok(Ok(retirements)) = tokio::time::timeout(
+        REQUEST_DEADLINE,
+        client.subscribe(SelectionRetirementLookup::SUBJECTS),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut requests = futures::stream::select(requests, retirements);
     while let Some(request) = requests.next().await {
         let Some(reply) = request
             .reply
@@ -617,18 +626,32 @@ async fn serve_lookups(shared: &Shared, client: &async_nats::Client) {
         else {
             continue;
         };
-        let Ok(lookup) = ClusterLookup::decode(request.subject.as_str(), &request.payload) else {
-            continue;
-        };
-        crate::pulse::metrics::cluster_lookup_requested();
-        let Some(snapshot) =
-            shared
+        let payload = if let Some(lookup) =
+            SelectionRetirementLookup::decode(request.subject.as_str(), &request.payload)
+        {
+            let Some(payload) = shared
                 .current
-                .lookup_checked(&lookup.wallet, &lookup.session, Some(&shared.control))
-        else {
-            continue;
+                .lookup_retirement_checked(&lookup, Some(&shared.control))
+                .and_then(|reply| reply.encode())
+            else {
+                continue;
+            };
+            payload
+        } else {
+            let Ok(lookup) = ClusterLookup::decode(request.subject.as_str(), &request.payload)
+            else {
+                continue;
+            };
+            crate::pulse::metrics::cluster_lookup_requested();
+            let Some(snapshot) = shared.current.lookup_checked(
+                &lookup.wallet,
+                &lookup.session,
+                Some(&shared.control),
+            ) else {
+                continue;
+            };
+            snapshot.encode_to_vec()
         };
-        let payload = snapshot.encode_to_vec();
         if payload.len() > MAX_REPLY_BYTES {
             continue;
         }

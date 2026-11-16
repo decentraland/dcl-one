@@ -87,6 +87,33 @@ peer-state bound, while one retained sample per live transport, the 1,024 outbox
 and 64-frame writer bounds remain. The feed job owns at most 32 candidate allocation
 futures, one per wallet, with no per-heartbeat spawned task.
 
+Selected retry obligations survive read-only borrowing, fresh foreign conflicts
+and unknown lookups. The internal `peer.{wallet}.selection_retirement` exchange
+returns negative lifecycle evidence only. Pulse holds native, control and complete
+assignment-view locks together: a fresh same-incarnation completed view must contain
+no current selection, blocked record, pending cleanup, native reservation or new
+control candidate for that wallet. A hidden or stale current snapshot is unknown.
+Every current and unfinished record survives reclamation, so the complete view can
+still prove no selected owner after departed-record and control-tombstone cleanup.
+Neither their retention age nor SQL lapse is the proof. Requests identify the exact
+source version/session and, when previously observed, selected origin and identity;
+hint-only requests never fabricate selected identity. Both directions use the existing
+64 KiB limit and request deadline. Existing cluster lookups and public endpoints keep
+their contracts.
+
+Gatekeeper captures the exact local slot and desired generation before the lookup.
+It serializes wallet-before-realm SQL settlement with selected mutations, retains
+an uncertain attempt and its credit if settlement fails, and removes the slot only
+after rechecking the desired generation, selected identity, exact map entry and
+absence of outstanding leases or operations. A delayed reply cannot delete a newer
+hint or owner. Retirement changes no realm row and issues no credential: settled owned
+facts cease renewal while the finite lease remains; foreign rows are untouched.
+This reclaims the bounded selected capacity across departures under one continuing
+Pulse incarnation. A restarted source cannot prove an old source's departure;
+cross-incarnation retirement and reconstruction of lost unchanged native hints
+remain unresolved. Unknown evidence retains the obligation and can exhaust the
+finite bound until current-source evidence supersedes it.
+
 These paths cannot fence an unrestricted older SQL writer. Deployment still needs
 reader readiness, old writer and backend quiescence, actual allocator-domain proof
 and exact residual state reconciliation. Physical output admission and runtime

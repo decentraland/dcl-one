@@ -250,7 +250,7 @@ impl Projection {
     }
 
     async fn island(&mut self, socket: &mut WsStream) -> IslandChangedMessage {
-        let receiving = actual_island(socket);
+        let receiving = actual_island(socket, "public projection selected assignment");
         tokio::pin!(receiving);
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         loop {
