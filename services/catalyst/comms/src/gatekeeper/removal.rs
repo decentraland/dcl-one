@@ -1948,7 +1948,7 @@ mod tests {
         let state = Arc::new(state);
         let jobs = Jobs::new();
         spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let ordinary = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 assert!(
                     jobs.report()
@@ -1966,8 +1966,29 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
-        .await
-        .expect("ordinary voice despite contended compaction wallet");
+        .await;
+        if ordinary.is_err() {
+            eprintln!(
+                "removal job reports: {:?}; pool size={}, idle={}",
+                jobs.report(),
+                pool.size(),
+                pool.num_idle()
+            );
+            {
+                let observed = fixture.lock().unwrap();
+                eprintln!(
+                    "SFU reads={}, remove_calls={}, removed={:?}",
+                    observed.reads, observed.remove_calls, observed.removed
+                );
+            }
+            let intents = tokio::time::timeout(Duration::from_millis(500),
+                sqlx::query_scalar::<_, serde_json::Value>("SELECT COALESCE(jsonb_agg(to_jsonb(i)), '[]'::jsonb) FROM (SELECT root_key,target_key,cause_kind,actor,room_name,room_sid,participant_identity,attempts,next_attempt_at,claim_until,cursor_room,cursor_sid FROM social.livekit_removal_intents ORDER BY root_key,target_key) i").fetch_one(&pool)).await;
+            eprintln!("fixture intents: {intents:?}");
+            let activity = tokio::time::timeout(Duration::from_millis(500),
+                sqlx::query_scalar::<_, serde_json::Value>("SELECT COALESCE(jsonb_agg(to_jsonb(a)), '[]'::jsonb) FROM (SELECT pid,state,wait_event_type,wait_event,left(query,240) AS query,pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=$1 ORDER BY pid) a").bind(&name).fetch_one(&admin)).await;
+            eprintln!("fixture database activity: {activity:?}");
+        }
+        ordinary.expect("ordinary voice despite contended compaction wallet");
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
