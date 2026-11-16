@@ -670,6 +670,41 @@ class InventoryTests(unittest.TestCase):
                 self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
                 self.assertIn("private success detail", log)
 
+    def test_every_failing_binary_is_named_with_its_status_or_signal_and_failed_tests(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        report = script.split("report() {\n", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="failing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {
+                "failing-fixture": "printf '%s\\n' 'test a::passes ... ok' 'test a::breaks ... FAILED' "
+                                   "'test result: FAILED. 1 passed; 1 failed'\nexit 101\n",
+                "killed-fixture": "printf '%s\\n' 'test b::slow has been running for over 60 seconds'\nkill -9 $$\n",
+                "passing-fixture": "printf '%s\\n' 'test c::passes ... ok' 'test result: ok. 1 passed; 0 failed'\n",
+            }
+            for name, text in fixtures.items():
+                (directory / name).write_text("#!/bin/sh\n" + text)
+                (directory / name).chmod(0o755)
+            result = subprocess.run(
+                [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; shift; '
+                 ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
+                 'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
+                 *(str(directory / name) for name in fixtures)],
+                capture_output=True, text=True, env={**os.environ, "GITHUB_ACTIONS": "true"},
+            )
+            # GNU xargs exits 123 when a command fails, BSD xargs 1.
+            self.assertIn(result.returncode, (1, 123), result.stdout + result.stderr)
+            failing = "catalyst-test: failing-fixture exited with status 101; failed tests: a::breaks"
+            killed = "catalyst-test: killed-fixture was killed by signal 9; failed tests: none reported, see the end of its log above"
+            self.assertEqual(sorted((directory / "failures").read_text().splitlines()), [failing, killed])
+            self.assertIn("test b::slow has been running for over 60 seconds", result.stdout)
+            self.assertIn("passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertIn(f"catalyst-test: failed with status {result.returncode} while running the test binaries", result.stdout)
+            # The summary follows the dumped logs on their stream, then the annotations.
+            summary = result.stdout.split(f"catalyst-test: failed with status {result.returncode}", 1)[1].splitlines()[1:]
+            self.assertEqual(sorted(summary[:2]), [failing, killed])
+            self.assertEqual(sorted(summary[2:]), ["::error title=Rust test binary failed::" + line for line in (failing, killed)])
+
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]

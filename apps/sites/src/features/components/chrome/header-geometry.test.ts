@@ -18,21 +18,45 @@ const css = [
 let session: Awaited<ReturnType<typeof openSession>>;
 let startup: ReturnType<typeof openSession> | undefined;
 const startupController = new AbortController();
+// This suite runs beside every other Sites test file. On a loaded CI runner some launches of
+// Chrome stayed alive without writing their DevTools port for the whole 30-second limit, at times
+// after every other test file had finished. A launch that is not ready within openSession's start
+// limit is stopped and replaced, up to START_ATTEMPTS launches in all; only the browser start is
+// repeated, never an assertion.
+const START_ATTEMPTS = 3;
+const START_LIMIT_MS = 30_000;
+// Per launch: the port file, then up to 10 seconds each for the DevTools endpoint and socket.
+const START_BUDGET_MS = START_ATTEMPTS * (START_LIMIT_MS + 20_000);
+
+async function startBrowser(signal: AbortSignal) {
+  const executable = await findBrowser([
+    process.env.BROWSER_PATH,
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ]);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await openSession(executable, {
+        signal,
+        startTimeoutMs: START_LIMIT_MS,
+      });
+    } catch (error) {
+      if (signal.aborted || attempt === START_ATTEMPTS) throw error;
+      // openSession has already stopped this browser and printed its startup diagnostics.
+      console.warn(
+        `Capture browser launch ${attempt} of ${START_ATTEMPTS} failed (${(error as Error).message}); launching another`,
+      );
+    }
+  }
+}
+
 // Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  startup = (async () =>
-    openSession(
-      await findBrowser([
-        process.env.BROWSER_PATH,
-        process.env.CHROME_PATH,
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-      ]),
-      { signal: startupController.signal },
-    ))();
+  startup = startBrowser(startupController.signal);
   session = await startup;
-}, 40_000);
+}, START_BUDGET_MS + 10_000);
 afterAll(async () => {
   startupController.abort(new Error("Header geometry fixture disposed"));
   const opened = await startup?.catch(() => undefined);

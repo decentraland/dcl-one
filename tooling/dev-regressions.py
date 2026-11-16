@@ -336,7 +336,7 @@ TEST_SCRIPT = [
     'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
-    '"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }',
+    '"$1" > "$log" 2>&1 || status=$?',
     'run "$jobs" < "$logs/shard"',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',
