@@ -854,10 +854,8 @@ fn process_login_bridge(
                 current_profile.deploy_held = false;
                 current_profile.revert_to = None;
             }
-            SystemApi::ForgetLogin => {
-                if forget_login(&mut config) {
-                    platform::write_config_file(&*config);
-                }
+            SystemApi::ForgetLogin if forget_login(&mut config) => {
+                platform::write_config_file(&*config);
             }
             _ => (),
         }
