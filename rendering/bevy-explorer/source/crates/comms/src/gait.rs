@@ -1,10 +1,10 @@
 //! The gait a remote player is moving at, as Pulse carries it in `movement_blend`, and the rules
 //! that turn it into and out of a clip choice.
 //!
-//! `movement_blend` runs 0..3 over idle, walk, jog and run. The sender writes the gait index times
-//! the fraction of that gait's speed limit reached; a receiver reads the gait back as the
-//! rounded blend, with anything above [`WALK_EPSILON`] at least a walk. Pure functions, so a test
-//! drives them without an app.
+//! `movement_blend` runs 0..3 over idle, walk, jog and run. The sender picks the gait whose speed
+//! tier the player is in and writes a blend that rounds back to it; a receiver reads the gait as
+//! the rounded blend, with anything above [`WALK_EPSILON`] at least a walk. Pure functions, so a
+//! test drives them without an app.
 
 use bevy::prelude::*;
 use common::structs::LocomotionSpeeds;
@@ -39,9 +39,17 @@ pub enum FallbackGait {
     Run,
 }
 
+/// How far above a gait's speed limit a player still counts as being in that gait.
+const TIER_TOLERANCE: f32 = 1.05;
+/// How far above the rounding point a raised blend sits.
+const ROUNDING_MARGIN: f32 = 0.01;
+
 /// The `movement_blend` to send for a player moving at `planar_speed` (m/s, horizontal) under the
-/// given locomotion speeds. A gait is chosen where its own blend reaches the rounding point below
-/// it, so a receiver rounding the blend recovers the gait chosen here.
+/// given locomotion speeds. The gait is the tier the speed falls in: walk within the walk limit,
+/// jog within the jog limit, run above it (each limit with [`TIER_TOLERANCE`]). Within jog and run
+/// the blend is the gait index times the fraction of the limit, raised to just above the rounding
+/// point below it, so a receiver rounding the blend recovers the gait. A received walk therefore
+/// only ever describes a speed within the sender's walk limit.
 pub fn movement_blend(planar_speed: f32, speeds: &LocomotionSpeeds) -> f32 {
     if planar_speed.is_nan() || planar_speed <= 0.0 {
         return 0.0;
@@ -49,15 +57,13 @@ pub fn movement_blend(planar_speed: f32, speeds: &LocomotionSpeeds) -> f32 {
     let walk = speeds.walk.max(f32::EPSILON);
     let jog = speeds.jog.max(walk);
     let run = speeds.run.max(jog);
-    // A gait whose limit equals the one below it is unreachable.
-    let (index, limit) = if run > jog && planar_speed >= run * (1.0 - 0.5 / 3.0) {
-        (3.0, run)
-    } else if jog > walk && planar_speed >= jog * (1.0 - 0.5 / 2.0) {
-        (2.0, jog)
+    let blend = if planar_speed <= walk * TIER_TOLERANCE {
+        (planar_speed / walk).min(1.0)
+    } else if jog > walk && planar_speed <= jog * TIER_TOLERANCE {
+        (2.0 * planar_speed / jog).clamp(1.5 + ROUNDING_MARGIN, 2.0)
     } else {
-        (1.0, walk)
+        (3.0 * planar_speed / run).clamp(2.5 + ROUNDING_MARGIN, BLEND_MAX)
     };
-    let blend = (index * (planar_speed / limit).min(1.0)).min(BLEND_MAX);
     if blend <= WALK_EPSILON {
         0.0
     } else {

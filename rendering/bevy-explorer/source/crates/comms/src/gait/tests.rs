@@ -54,13 +54,45 @@ fn walk_speed_override_stays_a_walk() {
 }
 
 #[test]
-fn run_speed_override_moves_the_run_threshold() {
+fn jog_speed_override_moves_the_jog_tier() {
     let speeds = LocomotionSpeeds {
-        run: 20.0,
+        jog: 12.0,
         ..DEFAULT
     };
     assert_eq!(gait_of(11.0, &speeds), Some(Gait::Jog));
-    assert_eq!(gait_of(20.0, &speeds), Some(Gait::Run));
+    assert_eq!(gait_of(13.0, &speeds), Some(Gait::Run));
+}
+
+#[test]
+fn tiers_follow_the_limits_with_a_small_tolerance() {
+    assert_eq!(gait_of(2.5, &DEFAULT), Some(Gait::Walk));
+    assert_eq!(gait_of(2.6, &DEFAULT), Some(Gait::Walk));
+    assert_eq!(gait_of(2.7, &DEFAULT), Some(Gait::Jog));
+    assert_eq!(gait_of(8.18, &DEFAULT), Some(Gait::Jog));
+    assert_eq!(gait_of(8.5, &DEFAULT), Some(Gait::Jog));
+    assert_eq!(gait_of(8.7, &DEFAULT), Some(Gait::Run));
+    let walk_override = LocomotionSpeeds {
+        walk: 4.0,
+        ..DEFAULT
+    };
+    assert_eq!(gait_of(4.0, &walk_override), Some(Gait::Walk));
+    assert_eq!(gait_of(4.1, &walk_override), Some(Gait::Walk));
+    assert_eq!(gait_of(4.5, &walk_override), Some(Gait::Jog));
+}
+
+#[test]
+fn mid_speed_at_default_speeds_is_a_jog_and_shows_the_run_clip() {
+    let gait = gait_of(5.0, &DEFAULT);
+    assert_eq!(gait, Some(Gait::Jog));
+    assert_eq!(fallback_gait(gait, 5.0), FallbackGait::Run);
+}
+
+#[test]
+fn raised_blends_stay_inside_their_gait() {
+    // A jog just above the walk tier and a run just above the jog tier.
+    assert!((movement_blend(2.7, &DEFAULT) - 1.51).abs() < 1e-5);
+    assert!((movement_blend(8.7, &DEFAULT) - 2.51).abs() < 1e-5);
+    assert_eq!(movement_blend(100.0, &DEFAULT), BLEND_MAX);
 }
 
 #[test]
@@ -96,9 +128,47 @@ fn blend_rises_with_speed_and_round_trips_its_gait() {
         assert!((0.0..=BLEND_MAX).contains(&blend));
         previous = blend;
     }
-    assert_eq!(gait_of(4.0, &DEFAULT), Some(Gait::Walk));
+    assert_eq!(gait_of(4.0, &DEFAULT), Some(Gait::Jog));
     assert_eq!(gait_of(7.0, &DEFAULT), Some(Gait::Jog));
     assert_eq!(gait_of(10.0, &DEFAULT), Some(Gait::Run));
+}
+
+#[test]
+fn every_sent_gait_round_trips_for_every_speed() {
+    let sets = [
+        DEFAULT,
+        LocomotionSpeeds {
+            walk: 4.0,
+            ..DEFAULT
+        },
+        LocomotionSpeeds {
+            jog: 12.0,
+            run: 20.0,
+            ..DEFAULT
+        },
+    ];
+    for speeds in sets {
+        for step in 1..=600 {
+            let speed = step as f32 * 0.05;
+            let expected = if speed <= speeds.walk * 1.05 {
+                Gait::Walk
+            } else if speed <= speeds.jog * 1.05 {
+                Gait::Jog
+            } else {
+                Gait::Run
+            };
+            let blend = movement_blend(speed, &speeds);
+            if blend == 0.0 {
+                assert!(speed <= speeds.walk * WALK_EPSILON * 1.01);
+                continue;
+            }
+            assert_eq!(
+                gait_from_blend(blend),
+                Some(expected),
+                "{speed} m/s under {speeds:?}"
+            );
+        }
+    }
 }
 
 #[test]
