@@ -1801,30 +1801,23 @@ mod tests {
             .execute(&mut *blocker)
             .await
             .unwrap();
-        let state = Arc::new(state);
-        let jobs = Jobs::new();
-        spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(
-                    jobs.report()
-                        .iter()
-                        .all(|r| r.state != crate::jobs::JobState::Failed),
-                    "wallet contention must not fail whole job"
-                );
-                if fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&other.as_str().to_owned())
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("ordinary voice RPC despite held island wallet");
+        // Two passes of the primary job: the first discovers the voice room's
+        // participant, the second removes it. In each, the held wallet only
+        // times out its own lock and the pass still succeeds (a failed pass
+        // fails the whole job).
+        for _ in 0..2 {
+            pass(&state)
+                .await
+                .expect("wallet contention must not fail whole job");
+        }
+        assert!(
+            fixture
+                .lock()
+                .unwrap()
+                .removed
+                .contains(&other.as_str().to_owned()),
+            "ordinary voice RPC despite held island wallet"
+        );
         assert_eq!(
             sqlx::query_scalar::<_, String>(
                 "SELECT state FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
@@ -1836,17 +1829,11 @@ mod tests {
             "quarantine"
         );
         blocker.rollback().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if state.island_safety.snapshot(actor.as_str()).await.is_ok() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("next maintenance progresses");
-        jobs.shutdown(Duration::from_secs(2)).await;
+        pass(&state).await.unwrap();
+        assert!(
+            state.island_safety.snapshot(actor.as_str()).await.is_ok(),
+            "next maintenance progresses"
+        );
         server.abort();
         liveness_drop_pool(&pool, &admin, &db_name).await;
     }
@@ -1945,29 +1932,20 @@ mod tests {
             .execute(&mut *blocker)
             .await
             .unwrap();
-        let state = Arc::new(state);
-        let jobs = Jobs::new();
-        spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(
-                    jobs.report()
-                        .iter()
-                        .all(|r| r.state != crate::jobs::JobState::Failed)
-                );
-                if fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&other.as_str().to_owned())
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("ordinary voice despite contended compaction wallet");
+        // Two passes of the primary job, as in the quarantine case above.
+        for _ in 0..2 {
+            pass(&state)
+                .await
+                .expect("wallet contention must not fail whole job");
+        }
+        assert!(
+            fixture
+                .lock()
+                .unwrap()
+                .removed
+                .contains(&other.as_str().to_owned()),
+            "ordinary voice despite contended compaction wallet"
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
@@ -1979,31 +1957,32 @@ mod tests {
             1
         );
         blocker.rollback().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if sqlx::query_scalar::<_, i64>(
-                    "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
-                )
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                    == 0
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("next bounded maintenance compacts released wallet");
+        pass(&state).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0,
+            "next bounded maintenance compacts released wallet"
+        );
         assert_eq!(
             state.island_safety.snapshot(actor.as_str()).await.unwrap(),
             floor
         );
-        jobs.shutdown(Duration::from_secs(2)).await;
         server.abort();
         liveness_drop_pool(&pool, &admin, &name).await;
+    }
+
+    /// One pass of the `comms-livekit-ban-removal` job body. The bound only
+    /// ends a hang: each contended wallet gives up at its own lock timeout.
+    async fn pass(state: &CommsState) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(60), run_batch(state))
+            .await
+            .expect("a maintenance pass ends")
     }
 
     async fn liveness_isolated_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {

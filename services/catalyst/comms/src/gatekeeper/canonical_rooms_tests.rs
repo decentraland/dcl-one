@@ -1230,9 +1230,15 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
+        // Each RemoveParticipant room, signalled as the SFU receives it: the
+        // test awaits the eviction itself instead of a wall-clock window.
+        let (removal, mut removals) = tokio::sync::mpsc::unbounded_channel::<String>();
         let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |Path(method):Path<String>,Json(body):Json<serde_json::Value>| {
-            let capture=capture.clone(); async move {
+            let (capture,removal)=(capture.clone(),removal.clone()); async move {
                 capture.lock().unwrap().push((method.clone(),body.clone()));
+                if method == "RemoveParticipant" {
+                    let _ = removal.send(body["room"].as_str().unwrap_or_default().to_owned());
+                }
                 match method.as_str() {
                     "ListRooms" => Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA","sid":"RM_deployed_a","metadata":"{}"},{"name":"w1:j:mixed.dcl.eth-otherSceneA","sid":"RM_other","metadata":"{}"}]})),
                     "ListParticipants" => Json(serde_json::json!({"participants":[{"identity":address_of(KEY),"sid":"PA_connected","metadata":"{}"}]})),
@@ -1301,19 +1307,18 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
                 address: Address::parse(&address_of(KEY)).unwrap(),
             }
         });
-        let observed = tokio::time::timeout(std::time::Duration::from_millis(200), async {
-            loop {
-                if requests.lock().unwrap().iter().any(|(method, body)| {
-                    method == "RemoveParticipant" && body["room"] == "w1:d:mixed.dcl.ethSceneA"
-                }) {
-                    break;
+        // The revocation runs on a detached task; the bound only ends a hang.
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while let Some(room) = removals.recv().await {
+                if room == "w1:d:mixed.dcl.ethSceneA" {
+                    return true;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
             }
+            false
         })
         .await;
         assert!(
-            observed.is_ok(),
+            observed == Ok(true),
             "redeployment must not hide an already connected room from revocation (access_changed={access_changed})"
         );
         assert!(
