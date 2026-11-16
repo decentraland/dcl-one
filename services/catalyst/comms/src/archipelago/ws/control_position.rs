@@ -53,6 +53,142 @@ fn publish_numbered(
         .is_some_and(|announcement| state.outbox.publish_control_position(announcement))
 }
 
+#[derive(Default)]
+pub(crate) struct LegacyProducer {
+    published: std::collections::HashMap<String, PublishedCandidate>,
+    cursor: usize,
+}
+struct PublishedCandidate {
+    link: crate::archipelago::registry::PeerLink,
+    epoch: u64,
+    sequence: u64,
+    updated: Option<tokio::time::Instant>,
+}
+impl LegacyProducer {
+    pub(crate) async fn publish_current(&mut self, state: &AppState) {
+        if state.restart.is_cancelled() {
+            return;
+        }
+        let Some(audience) = state.gatekeeper.cluster.control_v4_audience.as_ref() else {
+            return;
+        };
+        let mut candidates = state.registry.legacy_candidates();
+        candidates.sort_by(|a, b| a.address.cmp(&b.address));
+        self.published.retain(|address, old| {
+            if candidates
+                .iter()
+                .any(|c| &c.address == address && c.link.id == old.link.id)
+            {
+                return true;
+            }
+            if let Some(sequence) = old.sequence.checked_add(1) {
+                let record = crate::protocol::bus::control_position::LegacyRoomIntent {
+                    audience: audience.clone(),
+                    wallet: address.clone(),
+                    session: old.link.session.clone(),
+                    candidate_epoch: old.epoch,
+                    sequence,
+                    realm: String::new(),
+                    position: None,
+                };
+                if let Some(announcement) =
+                    crate::archipelago::feed::ControlPositionAnnouncement::legacy(
+                        record,
+                        old.link.id,
+                    )
+                {
+                    state.outbox.publish_control_position(announcement);
+                }
+            }
+            false
+        });
+        // One bounded batch belongs to the feed job; no allocation spawns a task.
+        // Lost nextval responses consume ordering metadata, never room authority.
+        let missing: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| !self.published.contains_key(&candidate.address))
+            .collect();
+        if state.outbox.is_linked() && !missing.is_empty() {
+            use futures::StreamExt;
+            self.cursor %= missing.len();
+            let count = missing.len().min(
+                crate::gatekeeper::admission::cluster::subscriber::wallet_queue::MAX_RUNNING_WORK,
+            );
+            let mut allocations = futures::stream::FuturesUnordered::new();
+            for offset in 0..count {
+                let candidate = (*missing[(self.cursor + offset) % missing.len()]).clone();
+                let authority = state.control_v4.clone();
+                allocations.push(async move {
+                    let epoch = tokio::time::timeout(
+                        super::AUTHORITY_OPERATION_TIMEOUT,
+                        authority.next_connection_epoch(),
+                    )
+                    .await;
+                    (candidate, epoch)
+                });
+            }
+            self.cursor = (self.cursor + count) % missing.len();
+            while let Some((candidate, result)) = allocations.next().await {
+                if let Ok(Ok(epoch)) = result {
+                    if !state.restart.is_cancelled()
+                        && state.registry.bind_legacy_candidate(&candidate, epoch)
+                    {
+                        self.published.insert(
+                            candidate.address.clone(),
+                            PublishedCandidate {
+                                link: candidate.link.clone(),
+                                epoch,
+                                sequence: 0,
+                                updated: None,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        // Allocation may have awaited while a newer heartbeat replaced the retained sample.
+        for candidate in state.registry.legacy_candidates() {
+            let Some(current) = self.published.get_mut(&candidate.address) else {
+                continue;
+            };
+            if current.link.id != candidate.link.id
+                || current.updated == Some(candidate.updated)
+                || !state.registry.legacy_candidate_is_current(
+                    &candidate.address,
+                    &candidate.link.session,
+                    candidate.link.id,
+                    current.epoch,
+                )
+            {
+                continue;
+            }
+            let Some(sequence) = current.sequence.checked_add(1) else {
+                continue;
+            };
+            current.sequence = sequence;
+            let record = crate::protocol::bus::control_position::LegacyRoomIntent {
+                audience: audience.clone(),
+                wallet: candidate.address,
+                session: candidate.link.session,
+                candidate_epoch: current.epoch,
+                sequence,
+                realm: candidate.realm,
+                position: Some(candidate.position),
+            };
+            if let Some(announcement) =
+                crate::archipelago::feed::ControlPositionAnnouncement::legacy(
+                    record,
+                    current.link.id,
+                )
+            {
+                if state.outbox.publish_control_position(announcement) {
+                    current.updated = Some(candidate.updated);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

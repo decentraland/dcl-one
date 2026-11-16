@@ -15,8 +15,9 @@ tree.
                         tools    the environment the tool steps export for build scripts
                         sources  Cargo.lock, the workspace manifests, the Cargo configs (the
                                  workspace's and the repository root's) and the tracked sources
-                                 of the path dependencies Cargo judges by file time: the patch
-                                 series, the in-tree crates and the vendored trees
+                                 of the path dependencies Cargo judges by file time: the in-tree
+                                 crates and the vendored trees. Cargo.lock names the revision of
+                                 each patched source
   prune <target-dir>  before the save: what the next run rebuilds anyway (the workspace crates'
                       artifacts and fingerprints, incremental state, final binaries, reports)
                       goes; dependency artifacts and the bevy-mtimes manifest stay. It removes
@@ -40,8 +41,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'rendering/bevy-explorer/source'
 # The tracked sources of the path dependencies Cargo judges by file time (tooling/bevy-mtimes.py).
-# The patch series stand for the trees that tooling/patched-sources.py rebuilds.
-VENDORED = ('rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet',
+VENDORED = ('rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet',
             'rendering/bevy-explorer/source/vendor/basisu')
 SOURCE_FILES = ('Cargo.lock', 'Cargo.toml', '.cargo/config.toml')
 # What build scripts record with rerun-if-env-changed and the tool steps export (CC and CXX by

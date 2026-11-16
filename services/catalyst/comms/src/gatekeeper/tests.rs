@@ -2932,10 +2932,9 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
     assert!(!logs.contains("comms-revocation"), "{logs}");
 }
 
-/// `serve`'s one NATS link is the gatekeeper's whenever `NATS_URL` is set: the `/ws` connector
-/// publishes and subscribes over it in every process, the island subscriber in the primary.
+/// Configured credentials require an audience; building their shared NATS link does not dial it.
 #[tokio::test]
-async fn nats_url_alone_builds_the_link() {
+async fn configured_nats_requires_an_audience_and_builds_the_shared_link() {
     use super::admission::cluster::ClusterConfig;
     use super::bus::InProcessBus;
 
@@ -2943,10 +2942,23 @@ async fn nats_url_alone_builds_the_link() {
         nats_url: nats_url.map(str::to_string),
         ..ClusterConfig::default()
     };
-    let linked = comms_state(lazy_pool(), Settings::for_tests())
+    let missing_audience = comms_state(lazy_pool(), Settings::for_tests())
         .with_cluster(cluster(Some("nats://127.0.0.1:4222")))
+        .err()
+        .expect("the production constructor refuses configured credentials without an audience");
+    assert!(missing_audience.to_string().contains("deployment audience"));
+    let mut configured = cluster(Some("nats://127.0.0.1:4222"));
+    configured.control_v4_audience = Some("nats-link-test".into());
+    let linked = comms_state(lazy_pool(), Settings::for_tests())
+        .with_cluster(configured)
         .unwrap();
-    assert!(linked.bus.is_enabled(), "NATS_URL alone builds the link");
+    assert!(linked.bus.is_enabled());
+    assert!(
+        linked
+            .assignments
+            .as_ref()
+            .is_some_and(|fence| fence.generation_required())
+    );
     assert!(!linked.bus.is_connected(), "nothing dials before connect()");
 
     let unlinked = comms_state(lazy_pool(), Settings::for_tests())
