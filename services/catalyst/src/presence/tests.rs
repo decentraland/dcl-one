@@ -810,32 +810,16 @@ mod module_sources {
     };
     use async_trait::async_trait;
     use std::sync::Arc;
-    struct UpdatingContent {
-        bus: Arc<InProcessBus>,
-    }
+    struct NoContent;
     #[async_trait]
-    impl stats::content::Source for UpdatingContent {
+    impl stats::content::Source for NoContent {
         async fn fetch(
             &self,
-            pointers: &[String],
+            _: &[String],
         ) -> Result<Vec<crate::content::OrderedJson>, stats::content::Error> {
-            assert_eq!(pointers, &["0,0"]);
-            let update = Update::Change {
-                revision: 2,
-                change: Change::Remove("MixedCase".into()),
-            };
-            for frame in Frames::new(&update, uuid::Uuid::nil(), 2, 65536).unwrap() {
-                self.bus.inject(SNAPSHOTS_SUBJECT, &frame);
-            }
-            Ok(vec![
-                serde_json::from_str(
-                    r#"{"id":"scene", "metadata":{"scene":{"base":"0,0","parcels":["0,0"]}}}"#,
-                )
-                .unwrap(),
-            ])
+            panic!("empty peer population must not fetch content")
         }
     }
-
     #[tokio::test]
     async fn validated_historical_sync_order_reaches_hot_scenes_http() {
         use crate::content::sync_deployer::{LiveSyncDeployer, SyncValidation};
@@ -1153,7 +1137,7 @@ mod module_sources {
             bus.inject(SNAPSHOTS_SUBJECT, &frame);
         }
         assert!(
-            super::super::sources::statistics(&reader, &UpdatingContent { bus }, "")
+            super::super::sources::statistics(&reader, &NoContent, "")
                 .await
                 .is_err()
         );
@@ -1171,7 +1155,7 @@ mod module_sources {
             peers: [
                 ("negative", [-0.5, 0., 0.]),
                 ("large", [f64::from(2_f32.powi(35)), 0., 0.]),
-                ("zero", [-0., 0., -0.]),
+                ("zErO", [-0., 0., -0.]),
                 ("extreme", [f64::from(f32::MAX), 0., -f64::from(f32::MAX)]),
                 ("nonfinite", [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
             ]
@@ -1402,7 +1386,17 @@ mod module_sources {
         let running = state.clone();
         let pass = tokio::spawn(async move { super::collector::run_pass(&running, pass_at).await });
         content.wait_for_fetch().await;
-        publish_snapshot(&bus, &Snapshot::default(), 2);
+        let update = Update::Change {
+            revision: 2,
+            change: Change::Remove("zErO".into()),
+        };
+        for frame in Frames::new(&update, uuid::Uuid::nil(), 2, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let live = reader.snapshot();
+        assert_eq!(live.peers.len(), 4);
+        assert!(live.peers.iter().all(|peer| peer.address != "zErO"));
+        publish_snapshot(&bus, &Snapshot::default(), 3);
         assert!(reader.snapshot().peers.is_empty());
         let during: i64 = sqlx::query_scalar("SELECT count(*) FROM presence.snapshots")
             .fetch_one(&pool)
@@ -1472,7 +1466,7 @@ mod module_sources {
                     t
                 ),
                 (
-                    "zero".into(),
+                    "zErO".into(),
                     vec![Some(0), Some(0)],
                     vec![Some(0.), Some(0.), Some(0.)],
                     t
@@ -1543,7 +1537,7 @@ mod module_sources {
                 islands.data[0].max_peers = u32::MAX;
                 next.islands = islands.encode_to_vec();
             }
-            publish_snapshot(&bus, &next, 3 + index as u64);
+            publish_snapshot(&bus, &next, 4 + index as u64);
             *content.next.lock().unwrap() = Some(answer);
             let running = state.clone();
             let pass = tokio::spawn(async move {
@@ -1577,7 +1571,10 @@ mod module_sources {
             for (path, expected) in paths.into_iter().zip(&committed) {
                 let (status, _, body) = super::get(&app, path).await;
                 assert_eq!(status, axum::http::StatusCode::OK);
-                assert_eq!(&body, expected, "failed pass must preserve {path}");
+                assert_eq!(
+                    &body, expected,
+                    "failed pass leaves the cached current view and stored history unchanged: {path}"
+                );
             }
         }
         super::delete_snapshots(&pool, &[id]).await;
