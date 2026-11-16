@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000
+Subject: show an equirectangular panorama instead of the sky texture
+Date: 2026-11-16T20:30:06+00:00
+
+---
+diff --git a/src/plugin.rs b/src/plugin.rs
+index 046e1cf57951b5b3fbd99a5c46a6cb47a0327bef..5131269ad161afc33a5b26ab6aec065b3657b485 100644
+--- a/src/plugin.rs
++++ b/src/plugin.rs
+@@ -62,6 +62,7 @@ impl Plugin for AtmospherePlugin {
+             let mut material_assets = app.world_mut().resource_mut::<Assets<SkyBoxMaterial>>();
+             let material = material_assets.add(SkyBoxMaterial {
+                 sky_texture: image_handle,
++                panorama: None,
+                 #[cfg(feature = "dithering")]
+                 dithering: settings.dithering,
+             });
+diff --git a/src/shaders/skybox.wgsl b/src/shaders/skybox.wgsl
+index 46d4ded31ccff361344d242a3169b9055e0688ef..d8de081740e345f0601101ea7029ce5cb153fd85 100644
+--- a/src/shaders/skybox.wgsl
++++ b/src/shaders/skybox.wgsl
+@@ -16,12 +16,22 @@ fn dither(frag_coord: vec2<f32>) -> vec3<f32> {
+ var sky_texture: texture_cube<f32>;
+ @group(2) @binding(1)
+ var sky_sampler: sampler;
++@group(2) @binding(2)
++var panorama_texture: texture_2d<f32>;
++@group(2) @binding(3)
++var panorama_sampler: sampler;
+ 
+ @fragment
+ fn fragment(
+     in: VertexOutput
+ ) -> @location(0) vec4<f32> {
++#ifdef PANORAMA
++    let ray = normalize(in.world_normal);
++    let uv = vec2<f32>(atan2(-ray.x, -ray.z) / 6.28318530718 + 0.5, acos(clamp(ray.y, -1.0, 1.0)) / 3.14159265359);
++    let color = textureSample(panorama_texture, panorama_sampler, uv).xyz;
++#else
+     let color = textureSample(sky_texture, sky_sampler, in.world_normal).xyz;
++#endif
+ #ifdef DITHER
+     return vec4<f32>(color + dither(in.position.xy), 1f);
+ #else
+diff --git a/src/skybox.rs b/src/skybox.rs
+index df66ada658ddd986edb8dd5f1dbe7e196e13439f..4d5fb0fda488c0bde6bd57111ea5e98f8734cc0f 100644
+--- a/src/skybox.rs
++++ b/src/skybox.rs
+@@ -7,13 +7,12 @@ use bevy::{
+     reflect::TypePath,
+     render::{
+         mesh::{Indices, Mesh, MeshVertexBufferLayoutRef, PrimitiveTopology},
+-        render_resource::{AsBindGroup, CompareFunction, RenderPipelineDescriptor, ShaderRef},
++        render_resource::{
++            AsBindGroup, CompareFunction, RenderPipelineDescriptor, ShaderDefVal, ShaderRef,
++        },
+     },
+ };
+ 
+-#[cfg(feature = "dithering")]
+-use bevy::render::render_resource::ShaderDefVal;
+-
+ /// The `Handle` for the created [`SkyBoxMaterial`].
+ #[derive(Resource)]
+ pub struct AtmosphereSkyBoxMaterial(pub Handle<SkyBoxMaterial>);
+@@ -30,6 +29,11 @@ pub struct SkyBoxMaterial {
+     #[texture(0, dimension = "cube")]
+     #[sampler(1)]
+     pub sky_texture: Handle<Image>,
++    /// An equirectangular image shown instead of the sky texture. Its centre column faces -Z,
++    /// its top row is the zenith.
++    #[texture(2)]
++    #[sampler(3)]
++    pub panorama: Option<Handle<Image>>,
+     #[cfg(feature = "dithering")]
+     pub dithering: bool,
+ }
+@@ -37,6 +41,7 @@ pub struct SkyBoxMaterial {
+ /// Bind group data for [`SkyBoxMaterial`]
+ #[derive(Copy, Clone, Hash, Eq, PartialEq)]
+ pub struct SkyBoxMaterialKey {
++    panorama: bool,
+     #[cfg(feature = "dithering")]
+     dithering: bool,
+ }
+@@ -50,9 +55,7 @@ impl Material for SkyBoxMaterial {
+         _pipeline: &MaterialPipeline<Self>,
+         descriptor: &mut RenderPipelineDescriptor,
+         _layout: &MeshVertexBufferLayoutRef,
+-        #[cfg_attr(not(feature = "dithering"), allow(unused_variables))] key: MaterialPipelineKey<
+-            Self,
+-        >,
++        key: MaterialPipelineKey<Self>,
+     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+         // leave the cleared depth behind the sky: the main pass still tests against the geometry
+         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
+@@ -60,6 +63,14 @@ impl Material for SkyBoxMaterial {
+             depth_stencil.depth_compare = CompareFunction::GreaterEqual;
+         }
+ 
++        if key.bind_group_data.panorama {
++            if let Some(fragment) = &mut descriptor.fragment {
++                fragment
++                    .shader_defs
++                    .push(ShaderDefVal::Bool(String::from("PANORAMA"), true));
++            }
++        }
++
+         #[cfg(feature = "dithering")]
+         if key.bind_group_data.dithering {
+             if let Some(fragment) = &mut descriptor.fragment {
+@@ -74,10 +85,9 @@ impl Material for SkyBoxMaterial {
+ }
+ 
+ impl From<&SkyBoxMaterial> for SkyBoxMaterialKey {
+-    fn from(
+-        #[cfg_attr(not(feature = "dithering"), allow(unused_variables))] material: &SkyBoxMaterial,
+-    ) -> SkyBoxMaterialKey {
++    fn from(material: &SkyBoxMaterial) -> SkyBoxMaterialKey {
+         SkyBoxMaterialKey {
++            panorama: material.panorama.is_some(),
+             #[cfg(feature = "dithering")]
+             dithering: material.dithering,
+         }
