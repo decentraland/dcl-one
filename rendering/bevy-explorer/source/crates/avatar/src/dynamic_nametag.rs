@@ -114,10 +114,22 @@ pub(crate) fn dynamic_nametag_position(
             .get(attach_points.head)
             .unwrap_or(position_gt)
             .translation();
+        // the anchor is a child of the avatar, so what is measured in the world goes back into
+        // the avatar's own units: a scene can scale an avatar, and the anchor scales with it
+        let unscale = |world: f32, scale: f32| {
+            if scale > f32::EPSILON {
+                world / scale
+            } else {
+                world
+            }
+        };
         let height_of = |point: Entity| {
-            global_transforms
-                .get(point)
-                .map_or(0.0, |gt| gt.translation().y - position.translation.y)
+            global_transforms.get(point).map_or(0.0, |gt| {
+                unscale(
+                    gt.translation().y - position.translation.y,
+                    position.scale.y,
+                )
+            })
         };
 
         // the head attach point only reaches the head once the avatar is built; the ghost stands
@@ -154,9 +166,9 @@ pub(crate) fn dynamic_nametag_position(
         };
         nametag_transform.translation = position_rotation
             * Vec3::new(
-                head_position.x - position.translation.x,
+                unscale(head_position.x - position.translation.x, position.scale.x),
                 height,
-                head_position.z - position.translation.z,
+                unscale(head_position.z - position.translation.z, position.scale.z),
             );
     }
 }
@@ -180,6 +192,40 @@ mod tests {
                 HEAD_OFFSET_DEFAULT
             );
         }
+    }
+
+    #[test]
+    fn a_scaled_avatar_keeps_its_nametag_over_its_head() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin))
+            .add_systems(PostUpdate, dynamic_nametag_position);
+        let world = app.world_mut();
+        let attach_points = AttachPoints::new(&mut world.commands());
+        world.flush();
+        let (head, nametag) = (attach_points.head, attach_points.nametag);
+        let avatar = world
+            .spawn((
+                Transform::from_xyz(3.0, 1.0, -2.0).with_scale(Vec3::splat(1.5)),
+                NametagHeadOffset(0.3),
+            ))
+            .add_children(&attach_points.entities())
+            .insert(attach_points)
+            .id();
+        // a built avatar: the head attach point hangs off the head bone
+        let bone = world
+            .spawn((Transform::from_xyz(0.0, 1.6, 0.0), ChildOf(avatar)))
+            .id();
+        world.entity_mut(head).insert(ChildOf(bone));
+        // once to propagate the transforms, once to read them
+        app.update();
+        app.update();
+
+        // the anchor is the avatar's child: it stays in the avatar's units, scaled with it
+        let anchor = app.world().get::<Transform>(nametag).unwrap().translation;
+        assert!(
+            (anchor - Vec3::new(0.0, 1.9, 0.0)).length() < 1e-4,
+            "{anchor}"
+        );
     }
 
     #[test]

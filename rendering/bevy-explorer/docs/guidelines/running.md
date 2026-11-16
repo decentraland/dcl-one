@@ -227,10 +227,11 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
-- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
-  `pooled` (tag counts), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `pooled` (tag counts), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
-  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
+  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position`, `headOffset` (metres over the head bone;
   null until the avatar is built) and `bubble` (null, or its `kind`,

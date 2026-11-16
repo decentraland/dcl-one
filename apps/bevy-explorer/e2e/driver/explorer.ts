@@ -157,6 +157,8 @@ export interface ChatHistory {
 export interface NametagTag {
   /** An address, `local`, or null for an avatar with no wallet. */
   player: string | null
+  /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
+  sceneAvatar: boolean
   name: string
   suffix: string
   verified: boolean
@@ -176,6 +178,8 @@ export interface NametagTag {
 export interface NametagState {
   visible: boolean
   shown: number
+  /** Of those shown, the tags over a scene's avatars. */
+  sceneAvatars: number
   pooled: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
   atlas: [number, number]

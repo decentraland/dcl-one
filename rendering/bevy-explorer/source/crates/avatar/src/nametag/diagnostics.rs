@@ -13,7 +13,8 @@ use super::{
     bubble::{BubbleKind, ChatBubbleRequest, ChatBubbleRetext},
     layout::Voice,
     text::TextShaper,
-    ChatBubble, Nametag, NametagContent, NametagOf, NametagVoice, OfficialWallets, ShownNametag,
+    ChatBubble, Nametag, NametagContent, NametagOf, NametagVoice, OfficialWallets,
+    SceneAvatarNametag, ShownNametag,
 };
 use crate::dynamic_nametag::{NametagHeadOffset, NametagsVisible};
 
@@ -22,6 +23,7 @@ pub const SECTION: DebugSection = DebugSection {
     query: "/nametag_state",
     fields: &[
         ("Shown", "shown"),
+        ("Of scene avatars", "sceneAvatars"),
         ("Pooled", "pooled"),
         ("Glyph atlas (distance field / colour px)", "atlas"),
         ("Chat bubbles", "bubbles"),
@@ -38,10 +40,11 @@ pub const SECTION: DebugSection = DebugSection {
     }],
 };
 
-/// Report the nametags as JSON: `visible` (the nametags toggle), `shown` and `pooled` (tag
-/// counts), `atlas` (the glyph atlas' distance-field and colour page sizes in pixels, 0 for
+/// Report the nametags as JSON: `visible` (the nametags toggle), `shown`, `sceneAvatars` (of
+/// those shown, the ones over a scene's avatars) and `pooled` (tag counts), `atlas` (the glyph atlas' distance-field and colour page sizes in pixels, 0 for
 /// a page not made), `bubbles` (the chat bubble setting) and `tags`, one per shown tag:
-/// `player` (an address, or `local`, or null for an avatar with no wallet), `name`, `suffix`,
+/// `player` (an address, or `local`, or null for an avatar with no wallet), `sceneAvatar`
+/// (the tag is over an avatar a scene made), `name`, `suffix`,
 /// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` in
 /// metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit), `position`
 /// (world, metres), `headOffset` (how far over the head bone the tag sits, in metres; null
@@ -69,6 +72,7 @@ pub fn nametag_state(
         &NametagVoice,
         Option<&ForeignPlayer>,
         Option<&NametagHeadOffset>,
+        Has<SceneAvatarNametag>,
     )>,
     local: Res<common::structs::PrimaryPlayerRes>,
 ) {
@@ -86,7 +90,7 @@ pub fn nametag_state(
             pooled += 1;
             continue;
         };
-        let Ok((content, voice, foreign, head_offset)) = owners.get(owner.0) else {
+        let Ok((content, voice, foreign, head_offset, scene_avatar)) = owners.get(owner.0) else {
             continue;
         };
         let player = match foreign {
@@ -96,6 +100,7 @@ pub fn nametag_state(
         };
         shown.push(json!({
             "player": player,
+            "sceneAvatar": scene_avatar,
             "name": content.name,
             "suffix": content.suffix,
             "verified": content.verified,
@@ -127,6 +132,7 @@ pub fn nametag_state(
         json!({
             "visible": visible.0,
             "shown": shown.len(),
+            "sceneAvatars": shown.iter().filter(|tag| tag["sceneAvatar"] == true).count(),
             "pooled": pooled,
             "atlas": atlas,
             "bubbles": format!("{:?}", config.chat_bubble_visibility),

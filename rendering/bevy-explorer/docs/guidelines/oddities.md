@@ -28,11 +28,15 @@ than once. Check here before correcting something surprising.
   `GlobalTransform` changes that frame re-extracts anyway and carries its tag along, so it
   skips the call, which would also specialize its pipeline again; nametags rely on this.
 - **Nametags are drawn by the engine**, not by the system UI scene: `crates/avatar/src/nametag`
-  gives each player in range a pooled tag entity with one mesh, drawn by one shared material
+  gives each player and scene avatar in range a pooled tag entity with one mesh, drawn by one shared material
   in the main pass, facing the camera and scaled to keep its size on screen. A tag is a
   transparent mesh that tests depth, so it is hidden behind walls and still passes through
-  tonemapping and bloom. Tags come from player profiles, so scene `AvatarShape` NPCs never
-  get one.
+  tonemapping and bloom. A player's tag comes from their profile. A scene `AvatarShape` avatar
+  shows its `name` (`NPC` when the scene sets none, no tag for an empty one), the last four
+  characters of its `id` as the suffix (`#0000` for a shorter id) and the voice bars while
+  `talking` is set; it appears once the avatar is built. The HUD's preview avatars and a scene
+  entity that only restyles a player get none, and avatar modifier areas hide players' tags
+  only.
 - **The imposter store is multi-realm by design.** The fetch URL carries the realm's about
   URL, and each tile's CRC is derived from the scene set at bake time. A CRC mismatch after a
   publish falls back to an empty imposter on purpose; that is staleness handling, not silent

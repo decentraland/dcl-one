@@ -1,4 +1,5 @@
-//! Nametags: the name over each player, with its badges and, when they write, their message.
+//! Nametags: the name over each player and scene avatar, with its badges and, when a player
+//! writes, their message.
 //!
 //! A tag is an entity of its own with one mesh, drawn in the world by one shared material
 //! (nametag.wgsl), facing the camera and scaled to keep its size on screen. Tags are pooled:
@@ -27,16 +28,24 @@ use common::{
 use comms::{
     global_crdt::ForeignPlayer,
     nearby_mutes::NearbyMutes,
-    profile::{CurrentUserProfile, UserProfile},
+    profile::{name_color::name_color, CurrentUserProfile, UserProfile},
     speaking::Speaking,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
-use scene_runner::update_world::{
-    avatar_modifier_area::HiddenNametag,
-    text_shape::{AtlasGlyphUse, GlyphAtlases, Page, Pending},
+use dcl_component::proto_components::sdk::components::PbAvatarShape;
+use scene_runner::{
+    initialize_scene::SuperUserScene,
+    update_world::{
+        avatar_modifier_area::HiddenNametag,
+        text_shape::{AtlasGlyphUse, GlyphAtlases, Page, Pending},
+    },
+    SceneEntity,
 };
 
-use crate::{dynamic_nametag::NametagsVisible, BeyondMaxAvatars};
+use crate::{
+    dynamic_nametag::{NametagHeadOffset, NametagsVisible},
+    AvatarSelection, AvatarShape, BeyondMaxAvatars,
+};
 
 use self::{
     animation::{BubbleAnimation, BubblePhase, BubbleTarget},
@@ -53,6 +62,8 @@ use self::{
     text::{glyph_use, GlyphBudget, Shaped, Span, TextShaper},
 };
 
+/// The name of a scene's avatar that the scene gave none.
+const DEFAULT_SCENE_AVATAR_NAME: &str = "NPC";
 /// A name shows when its player is this far from the camera, in metres.
 const MIN_DISTANCE: f32 = 2.0;
 const MAX_DISTANCE: f32 = 40.0;
@@ -111,6 +122,7 @@ impl Plugin for NametagPlugin {
             Update,
             (
                 resolve_content,
+                resolve_scene_avatar_content,
                 resolve_voice,
                 acquire_and_release_tags,
                 show_chat_bubbles,
@@ -179,12 +191,13 @@ fn load_assets(
     });
 }
 
-/// On a player: what their nametag says.
+/// On a player or a scene avatar: what their nametag says.
 #[derive(Component, Clone, Debug, PartialEq)]
 #[require(NametagVoice)]
 pub struct NametagContent {
     pub name: String,
-    /// `#` and the end of the address after a name that isn't claimed; else empty.
+    /// `#` and the end of the address after a name that isn't claimed, or of a scene
+    /// avatar's id; else empty.
     pub suffix: String,
     pub color: Color,
     pub verified: bool,
@@ -216,6 +229,27 @@ impl NametagContent {
         }
     }
 
+    /// What a scene's avatar shows: its name (`NPC` when the scene gives none) and the end
+    /// of its id. `None` for an empty name, which asks for no tag.
+    fn from_shape(shape: &PbAvatarShape) -> Option<Self> {
+        let name = shape.name.as_deref().unwrap_or(DEFAULT_SCENE_AVATAR_NAME);
+        let name = capped(name.split('#').next().unwrap_or_default(), MAX_NAME_CHARS);
+        if name.trim().is_empty() {
+            return None;
+        }
+        let suffix = match shape.id.char_indices().rev().nth(3) {
+            Some((last4, _)) => format!("#{}", capped(&shape.id[last4..], 4)),
+            None => "#0000".to_owned(),
+        };
+        Some(Self {
+            color: name_color(&name, &shape.id, false),
+            name,
+            suffix,
+            verified: false,
+            official: false,
+        })
+    }
+
     fn spans(&self) -> [Span; 2] {
         [
             Span::new(&self.name, self.color),
@@ -224,7 +258,14 @@ impl NametagContent {
     }
 }
 
-/// On a player: what their nametag's voice badge shows.
+/// On a scene's avatar whose [`NametagContent`] comes from its [`AvatarShape`].
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneAvatarNametag {
+    /// The scene marks the avatar as talking: its tag shows the voice bars.
+    pub talking: bool,
+}
+
+/// On a player or a scene avatar: what their nametag's voice badge shows.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NametagVoice(pub Voice);
 
@@ -389,6 +430,68 @@ fn resolve_content(
     }
 }
 
+/// Names the avatars a scene made, once they are built: until then the tag would sit at
+/// their feet. A scene entity that only restyles a player has no [`AvatarSelection`] and gets
+/// no tag, and nor do the avatars the HUD previews, which a system scene makes.
+#[allow(clippy::type_complexity)]
+fn resolve_scene_avatar_content(
+    mut commands: Commands,
+    avatars: Query<
+        (
+            Entity,
+            &SceneEntity,
+            Ref<AvatarShape>,
+            Option<&NametagContent>,
+            Option<&SceneAvatarNametag>,
+        ),
+        (
+            With<AvatarSelection>,
+            With<NametagHeadOffset>,
+            Without<ForeignPlayer>,
+            Without<PrimaryUser>,
+        ),
+    >,
+    system_scenes: Query<(), With<SuperUserScene>>,
+    dropped: Query<
+        Entity,
+        (
+            With<SceneAvatarNametag>,
+            Or<(Without<AvatarShape>, Without<AvatarSelection>)>,
+        ),
+    >,
+) {
+    for (avatar, scene_entity, shape, current, marker) in &avatars {
+        if marker.is_some() && !shape.is_changed() {
+            continue;
+        }
+        let content = (!system_scenes.contains(scene_entity.root))
+            .then(|| NametagContent::from_shape(&shape.0))
+            .flatten();
+        let Some(content) = content else {
+            if marker.is_some() {
+                commands
+                    .entity(avatar)
+                    .try_remove::<(NametagContent, SceneAvatarNametag)>();
+            }
+            continue;
+        };
+        let talking = SceneAvatarNametag {
+            talking: shape.0.talking == Some(true),
+        };
+        if marker != Some(&talking) {
+            commands.entity(avatar).try_insert(talking);
+        }
+        if current != Some(&content) {
+            commands.entity(avatar).try_insert(content);
+        }
+    }
+    for avatar in &dropped {
+        commands
+            .entity(avatar)
+            .try_remove::<(NametagContent, SceneAvatarNametag)>();
+    }
+}
+
 fn forget_content(trigger: Trigger<OnRemove, UserProfile>, mut commands: Commands) {
     commands
         .entity(trigger.target())
@@ -415,14 +518,19 @@ fn resolve_voice(
         Option<&Speaking>,
         Option<&ForeignPlayer>,
         Has<PrimaryUser>,
+        Option<&SceneAvatarNametag>,
     )>,
 ) {
-    for (mut voice, speaking, foreign, is_local) in &mut players {
-        let badge = voice_badge(
-            speaking.copied(),
-            foreign.is_some_and(|player| mutes.is_muted(player.address)),
-            is_local && mic.enabled,
-        );
+    for (mut voice, speaking, foreign, is_local, scene_avatar) in &mut players {
+        let badge = if scene_avatar.is_some_and(|avatar| avatar.talking) {
+            Voice::Speaking
+        } else {
+            voice_badge(
+                speaking.copied(),
+                foreign.is_some_and(|player| mutes.is_muted(player.address)),
+                is_local && mic.enabled,
+            )
+        };
         voice.set_if_neq(NametagVoice(badge));
     }
 }

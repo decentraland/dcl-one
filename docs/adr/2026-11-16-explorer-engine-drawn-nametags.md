@@ -29,8 +29,9 @@ bones after IK, the active speakers, the mute list and the filtered chat stream.
 
 ## Decision
 
-The engine draws nametags and chat bubbles for players. `NametagPlugin`
-(`crates/avatar/src/nametag/`) owns them; the bridge scene draws none.
+The engine draws nametags and chat bubbles for players, and nametags for the avatars a scene
+makes with `AvatarShape`. `NametagPlugin` (`crates/avatar/src/nametag/`) owns them; the bridge
+scene draws none.
 
 - **One mesh and one draw call per tag, in the 3D transparent pass.** Every tag uses the same
   unlit material (`NametagMaterial`, `nametag.wgsl`): alpha blended, depth tested, no depth write,
@@ -55,6 +56,13 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   its own entity, related one-to-one to its player (`NametagOf` / `ShownNametag`), and carries the
   `ChatBubble` it is showing. Despawning the player removes the relationship, and an observer
   frees the tag, so a disconnect needs no polling.
+- **A scene avatar is named from its `AvatarShape`.** Once the avatar is built it carries the
+  same `NametagContent`, marked `SceneAvatarNametag`: its `name` (`NPC` when unset; an empty
+  name asks for no tag), `#` and the last four characters of its `id` as the suffix (`#0000` for
+  a shorter id), never the verified or official badge, and the voice bars while `talking` is
+  set. A scene entity that only restyles a player gets none, nor do the HUD's preview avatars,
+  which a system scene makes. Avatar modifier areas act on players, so they do not hide these
+  tags.
 - **Tags are pooled.** A tag is released when its player is out of range, behind the camera,
   hidden by an avatar modifier area, beyond the avatar cap, the local player in first person, or
   when nametags are off. Released tags keep their mesh handle and wait hidden; at most 32 wait,
@@ -137,7 +145,7 @@ them, which halves the work in the frame.
 ## Follow-ups
 
 - Fill `OfficialWallets` from feature flags once the Explorer has them.
-- Tags for scene avatars (`AvatarShape`) and the SDK's nametag plate.
+- The SDK's nametag plate (`AvatarNametag`).
 - A fallback font for CJK names.
 - Measure a crowd of twenty or more players before and after, and on a desktop build.
 - Sample the tag's fill colour against its specified value on the web build.
