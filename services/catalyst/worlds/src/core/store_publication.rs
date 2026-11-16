@@ -118,6 +118,16 @@ pub async fn deploy_scene_with(
     deployment: SceneDeployment<'_>,
     completion: Option<&PartialCompletion<'_>>,
 ) -> Result<Deployed, ApiError> {
+    let mut conn = pool.acquire().await?;
+    deploy_scene_with_on(&mut conn, storage, deployment, completion).await
+}
+
+pub async fn deploy_scene_with_on(
+    conn: &mut sqlx::PgConnection,
+    storage: &Storage,
+    deployment: SceneDeployment<'_>,
+    completion: Option<&PartialCompletion<'_>>,
+) -> Result<Deployed, ApiError> {
     let SceneDeployment {
         world,
         name_owner,
@@ -137,7 +147,7 @@ pub async fn deploy_scene_with(
     }
     let parcels = parcels.canonical();
 
-    let mut tx = pool.begin().await?;
+    let mut tx = sqlx::Connection::begin(&mut *conn).await?;
 
     // The collector unlinks under the exclusive side: every key named here exists until commit.
     catalyst_storage::gc::lock_store_shared(&mut tx).await?;
