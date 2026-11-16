@@ -245,6 +245,9 @@ url = "2"
 livekit-signaling = "0.1.7"
 http = "1.4"
 urn = "0.7.0"
+unicode-properties = { version = "0.1.4", default-features = false, features = [
+  "general-category",
+] }
 futures-lite = "2.6"
 bimap = "0.6.3"
 bitflags = "2"

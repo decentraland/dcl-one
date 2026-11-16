@@ -1,5 +1,6 @@
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ComponentType, ReactNode } from 'react'
 import styles from './Tabs.module.css'
+import { secureRel } from '../../link.helpers'
 
 /** The props a link tab hands its link component: the anchor's attributes, `href` included. */
 export type TabsLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
@@ -27,10 +28,10 @@ type TabsButtonProps = TabsBaseProps & { href?: undefined; linkComponent?: undef
     'children' | 'type' | 'role'
   >
 
-export type TabsProps = TabsLinkTabProps | TabsButtonProps
+type PanelTabsProps = TabsLinkTabProps | TabsButtonProps
 
 /** One tab of a TabsBar: a link when it has `href` (works without script), otherwise a button. */
-export function Tabs(props: TabsProps) {
+function PanelTabs(props: PanelTabsProps) {
   const {
     label,
     selected = false,
@@ -59,4 +60,40 @@ export function Tabs(props: TabsProps) {
       {label}
     </button>
   )
+}
+
+export type TabsNavigationProps = Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  'children' | 'aria-current' | 'dangerouslySetInnerHTML' | 'role'
+> & {
+  mode: 'navigation'
+  href: string
+  label: string
+  selected?: boolean
+  variant?: never
+  device?: never
+}
+/** Panel tabs remain the default; route navigation must declare its distinct intent. */
+export type TabsProps = PanelTabsProps
+export function Tabs(props: (TabsProps & { mode?: 'panel' }) | TabsNavigationProps) {
+  if (props.mode === 'navigation') {
+    const { mode, label, selected = false, className, target, rel, ...anchor } = props
+    return (
+      <a
+        {...anchor}
+        target={target}
+        rel={secureRel(target, rel)}
+        dangerouslySetInnerHTML={undefined}
+        role={undefined}
+        data-mode={mode}
+        className={[styles.routeRoot, className].filter(Boolean).join(' ')}
+        aria-current={selected ? 'page' : undefined}
+        data-label={label}
+      >
+        <span className={styles.routeLabel}>{label}</span>
+      </a>
+    )
+  }
+  const { mode, ...panel } = props
+  return <PanelTabs {...panel} data-mode={mode} />
 }
