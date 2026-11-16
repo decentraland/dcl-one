@@ -387,6 +387,10 @@
         {
           "name": "friendEvents.ts",
           "kind": "regular"
+        },
+        {
+          "name": "friendLocation.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -731,6 +735,10 @@
           "kind": "regular"
         },
         {
+          "name": "friendLocation.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "googleTag.test.ts",
           "kind": "regular"
         },
@@ -972,6 +980,10 @@
         },
         {
           "name": "events",
+          "kind": "directory"
+        },
+        {
+          "name": "friends",
           "kind": "directory"
         },
         {
@@ -1544,6 +1556,23 @@
         },
         {
           "name": "x-icn.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/friends",
+      "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
+        {
+          "name": "jump-in.png",
           "kind": "regular"
         }
       ]
@@ -3507,6 +3536,10 @@
         {
           "name": "friendToasts.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "jumpToFriend.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -4659,6 +4692,10 @@
           "kind": "regular"
         },
         {
+          "name": "jumpToFriend.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "keyBindingsApply.test.ts",
           "kind": "regular"
         },
@@ -5758,6 +5795,10 @@
       "sha256": "77751b46e4115112de6fb1d950b58f5db933f3df62ef666fbe0958a5bdae9dc6"
     },
     {
+      "path": "library/explorer-core/features/friends/friendLocation.ts",
+      "sha256": "1bf431cebd28b6657f331061ce2a1ac873c587b2d858c1b17b342357c2c836f6"
+    },
+    {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
       "sha256": "3a5e928e33876baf974fddb683090657958d36da3c3b1344ef6d651dc207d821"
     },
@@ -6034,6 +6075,10 @@
       "sha256": "aa5d527668fecc68a73201ba8babc3bc9c98eecf682798eb948cb7e4f819a4ef"
     },
     {
+      "path": "library/explorer-core/test/friendLocation.test.ts",
+      "sha256": "c44b8e81fdd8ba50b32aa5a8ac4477dd3ba67d0fa65f2e75ef41015f1ac5d9c2"
+    },
+    {
       "path": "library/explorer-core/test/googleTag.test.ts",
       "sha256": "ce251bd79c22cf7ea9344030678460e6c86b61c3c03b81acd5122208dce38bde"
     },
@@ -6099,7 +6144,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "40f14272d59fa267012aa0c51f862ea0ebc725ad8345991ea0b83dc9620ea025"
+      "sha256": "72cb6759d1b8572d1cac0cf9ac5caee234a8a76cf41fa50a4639f549b276f441"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -6580,6 +6625,10 @@
     {
       "path": "library/ui/apps/hud/assets/events/x-icn.png",
       "sha256": "3f9d844bf0e67644aec5aa9a5110f768a139e56fa53504ec693503650a095ea6"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "sha256": "327a558d74d397ebc0283eddc109b1bde3f8b720d67d1b7789327c9c363d703c"
     },
     {
       "path": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
@@ -7907,7 +7956,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "18a7d7ea049dd2d5b4caed22b524973a831f0027c938bc527196e4a563c8d10b"
+      "sha256": "5c80ca611e4d54a959ab63f57cfceac48c098a4063b37e80b4c8c44f76e44f98"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -8207,7 +8256,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
-      "sha256": "09a4fa8fd98c5639f1730b3031a31dac1748cd4c20428e390f3a9234ca49aada"
+      "sha256": "c6fed32fd35d9dcb4df31a7a286432e77e042ced42db1b24f9f52bfe37c399c9"
     },
     {
       "path": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
@@ -8216,6 +8265,10 @@
     {
       "path": "library/ui/apps/hud/features/friends/friendToasts.tsx",
       "sha256": "c07b73ba4ff6afa4c2c066813d9eeb533d7f29e089ffc4a6a62a6760c7363ef3"
+    },
+    {
+      "path": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "sha256": "a968dfa81e4adbda70c6225533cb0a3ca2add0e447698ade07242b4701bef055"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/DownloadedToast.module.css",
@@ -8587,7 +8640,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "ab503bf5f1f7b690a15a540792f86108441b0376e2c19a36a0a4ee3c0a4a5085"
+      "sha256": "6ea1a0fd75378039b95d47ed50c24ffa463b6820741d9eb1085b1a5d7ac0d7b0"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -8607,15 +8660,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.module.css",
-      "sha256": "a1f5d95fa08c2ca90a165b48143ef3331222daec6b39d0c0ac7105a1c917075c"
+      "sha256": "d5d90f0309266e9b7dd2c278d0017635ead6ed4ec2ed9252af3f991bcea5b48e"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "757cd015fef0fecdff36225478f27677c247a90ea8d51f9222cbfcf78adac08c"
+      "sha256": "22fd6ffaab1402e75a5cb90c19b0a8fcebd9522941f5e0a2dbcb454c6ddfdcfc"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "4167014eec7dcdea789dc58870e09fca405b122aff20f09d946c732b714d3317"
+      "sha256": "50e4d6e290e9562bbcf52830b330256653e1738f1f561519a8096b4bfd690f4b"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -9112,6 +9165,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
       "sha256": "d58e894fd4a9fa3e394824509b9b9dc20d3664ce51490e033a8fd9e06f8fe368"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "sha256": "aff0abf3c3c92bd6ce9fa21855d2b2bc01310132ae158c3b9d01b7ee52088dff"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/keyBindingsApply.test.ts",
@@ -10167,6 +10224,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/friends/friendLocation.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/lobby/lobbyApi.ts",
       "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "native:runtime"
@@ -11094,6 +11166,21 @@
     {
       "from": "library/explorer-core/test/engineDriver.test.ts",
       "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/friendLocation.test.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
       "kind": "test:runtime"
     },
     {
@@ -12054,6 +12141,21 @@
     {
       "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
       "kind": "test:runtime"
     },
     {
@@ -18283,6 +18385,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/ui/apps/hud/assets/voice/call.png",
       "kind": "native:runtime"
     },
@@ -21058,6 +21175,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -21264,6 +21396,21 @@
     {
       "from": "library/ui/apps/hud/features/friends/friendToasts.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
       "kind": "test:runtime"
     },
     {
@@ -26578,6 +26725,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
       "kind": "native:runtime"
     },
@@ -26833,6 +26995,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -27024,6 +27201,21 @@
     {
       "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
       "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
       "kind": "test:runtime"
     },
     {
@@ -33563,6 +33755,126 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
@@ -37613,6 +37925,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/friends/friendLocation.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/lobby/lobbyApi.ts",
       "kind": "type"
     },
@@ -37954,6 +38271,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/engineDriver.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/friendLocation.test.ts",
       "kind": "type"
     },
     {
@@ -38634,6 +38956,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/friends/friendToasts.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
       "kind": "type"
     },
     {
@@ -39474,6 +39801,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
       "kind": "type"
     },
     {
@@ -41719,6 +42051,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/friends/jump-in.png",
       "kind": "test:asset"
     },
     {
