@@ -1487,6 +1487,7 @@ dependencies = [
  "alloy-core",
  "bevy",
  "bevy_console",
+ "chrono",
  "clap",
  "common",
  "comms",

@@ -19,6 +19,7 @@ wallet = { workspace = true }
 
 bevy = { workspace = true }
 bevy_console = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 alloy-core = { workspace = true }
 reqwest = { workspace = true }

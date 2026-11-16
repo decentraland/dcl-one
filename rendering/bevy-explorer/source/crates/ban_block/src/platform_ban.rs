@@ -219,6 +219,20 @@ impl BanCheckSchedule {
     }
 }
 
+/// Whether the known ban's `expires_at` has passed at `now`.
+fn ban_expired(status: &PlatformBanStatus, now: web_time::SystemTime) -> bool {
+    let Some(expires_at) = status.ban().and_then(|ban| ban.expires_at.as_deref()) else {
+        return false;
+    };
+    let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at) else {
+        return false;
+    };
+    let Ok(now) = now.duration_since(web_time::UNIX_EPOCH) else {
+        return false;
+    };
+    expires_at.timestamp_millis() <= now.as_millis() as i64
+}
+
 /// Whether a check is due: never checked, the server's retry delay passed, or the recheck period
 /// passed.
 pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> bool {
@@ -230,8 +244,8 @@ pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> boo
 }
 
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
-/// wallet's, and starts the next one when a check is due. A trigger that lands while a request
-/// is in flight starts another as soon as it completes.
+/// wallet's, and starts the next one when a check is due or a known ban's expiry has passed. A
+/// trigger that lands while a request is in flight starts another as soon as it completes.
 #[allow(clippy::too_many_arguments)]
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
@@ -251,8 +265,13 @@ fn check_platform_ban(
         return;
     };
     let refresh_requested = refresh.read().count() > 0;
-    let triggered =
-        refresh_requested || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
+    let expired = ban_expired(&status, web_time::SystemTime::now())
+        && schedule
+            .last_checked
+            .is_none_or(|last| now - last >= MIN_RETRY_SECS);
+    let triggered = refresh_requested
+        || expired
+        || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
     if let Some(in_flight) = schedule.in_flight.as_mut() {
         let Some(result) = in_flight.task.complete() else {
@@ -413,6 +432,34 @@ mod tests {
         status.reset_platform_ban();
         assert_eq!(status.state(), &PlatformBanState::Unknown);
         assert_eq!(status.source(), None);
+    }
+
+    #[test]
+    fn a_ban_is_expired_once_its_expiry_passes() {
+        let at = |secs: u64| web_time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        // 2026-12-01T00:00:00Z
+        let expiry = 1_796_083_200;
+        let mut status = PlatformBanStatus::new();
+        assert!(!ban_expired(&status, at(expiry)), "no ban");
+        let ban = |expires_at: Option<&str>| PlatformBanInfo {
+            expires_at: expires_at.map(str::to_owned),
+            ..PlatformBanInfo::from_refusal("")
+        };
+        status.apply_platform_ban(
+            Some(ban(Some("2026-12-01T00:00:00.000Z"))),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        assert!(!ban_expired(&status, at(expiry - 1)));
+        assert!(ban_expired(&status, at(expiry)));
+        status.apply_platform_ban(Some(ban(None)), PlatformBanSource::BanStatusEndpoint, 2.0);
+        assert!(!ban_expired(&status, at(expiry)), "a permanent ban");
+        status.apply_platform_ban(
+            Some(ban(Some("soon"))),
+            PlatformBanSource::BanStatusEndpoint,
+            3.0,
+        );
+        assert!(!ban_expired(&status, at(expiry)), "an unreadable expiry");
     }
 
     #[test]

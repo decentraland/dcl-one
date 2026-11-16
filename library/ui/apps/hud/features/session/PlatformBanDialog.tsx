@@ -81,9 +81,9 @@ export function openPlatformBanDialog(ban: PlatformBanNotice, options: { signOut
 
 const NO_RECORD: PlatformBanNotice = { banned: true, reason: '', customMessage: null, expiresAt: null }
 
-/** Opens the platform-ban notices. Blocking once a ban is known before the world, and kept open
- *  until sign-out or a not-banned notice; dismissible after a refused travel otherwise. A refused
- *  travel under the blocking notice is dismissed at once. */
+/** Opens the platform-ban notices. Blocking once a ban is known before the first world entry since
+ *  sign-in, and kept open until sign-out or a not-banned notice; dismissible after a refused travel
+ *  otherwise. A refused travel under the blocking notice is dismissed at once. */
 export function usePlatformBanNotices(input: {
   phase: SessionPhase
   notice: PlatformBanNotice | null
@@ -92,7 +92,13 @@ export function usePlatformBanNotices(input: {
   signOut: () => void
 }): void {
   const { phase, notice, travelRefused } = input
-  const beforeWorld = phase !== 'login' && phase !== 'world'
+  // an in-world travel passes through `entering` too
+  const [reachedWorld, setReachedWorld] = useState(false)
+  useEffect(() => {
+    if (phase === 'login') setReachedWorld(false)
+    else if (phase === 'world') setReachedWorld(true)
+  }, [phase])
+  const beforeWorld = phase !== 'login' && phase !== 'world' && !reachedWorld
   const [held, setHeld] = useState(false)
   useEffect(() => {
     if (notice == null || phase === 'login') setHeld(false)

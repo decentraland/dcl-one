@@ -10,7 +10,7 @@
 // | not banned: the realm is entered                     | New              |
 // | banned: a realm change is refused                    | New, native only |
 // | a failed check: a realm change enters                | New, native only |
-// | banned at sign-in: a pick is refused                 | New, native only |
+// | banned at sign-in: known before any realm change     | New, native only |
 //
 // Asserts every realm change is refused while a ban is known.
 //
@@ -155,7 +155,7 @@ scenario(
 )
 
 scenario(
-  'banned at sign-in: a pick is refused',
+  'banned at sign-in: known before any realm change',
   async ({ explorer }) => {
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e'))

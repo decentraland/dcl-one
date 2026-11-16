@@ -44,11 +44,14 @@ impl Superseded {
         self.latest.borrow().refusal.to_owned()
     }
 
-    /// Resolves once superseded (or once nothing issues changes any more), with the refusal.
+    /// Resolves once superseded (or once nothing issues changes any more), with the refusal of
+    /// the id that superseded it.
     pub async fn wait(&mut self) -> String {
         let id = self.id;
-        let _ = self.latest.wait_for(|latest| latest.id != id).await;
-        self.refusal()
+        match self.latest.wait_for(|latest| latest.id != id).await {
+            Ok(latest) => latest.refusal.to_owned(),
+            Err(_) => SUPERSEDED.to_owned(),
+        }
     }
 }
 

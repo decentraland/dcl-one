@@ -172,6 +172,23 @@ describe('the ban notices', () => {
     await waitFor(() => expect(dialog()).toBeNull())
   })
 
+  it('an in-world travel through the loader opens only the dismissible notice', async () => {
+    const h = mount({ phase: 'world', notice: BAN, travelRefused: false })
+    h.rerender({ phase: 'entering', notice: BAN, travelRefused: false })
+    expect(dialog()).toBeNull()
+    h.rerender({ phase: 'world', notice: BAN, travelRefused: true })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    expect(blocking()).toBe(false)
+  })
+
+  it('a new sign-in blocks again before the world', async () => {
+    const h = mount({ phase: 'world', notice: null, travelRefused: false })
+    h.rerender({ phase: 'login', notice: null, travelRefused: false })
+    h.rerender({ phase: 'lobby', notice: BAN, travelRefused: false })
+    await waitFor(() => expect(dialog()).not.toBeNull())
+    expect(blocking()).toBe(true)
+  })
+
   it('in the world, a refused travel opens the dismissible notice', async () => {
     mount({ phase: 'world', notice: BAN, travelRefused: true })
     await waitFor(() => expect(dialog()).not.toBeNull())

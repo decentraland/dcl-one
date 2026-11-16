@@ -332,8 +332,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the
   terms and an in-world realm change all stay where they are and nothing loads or connects. A ban
-  learnt while a change is in flight (a world's password prompt) stops it with the same answer
-  before it sets the realm. The
+  learnt while a change waits on world access (a world's password prompt) stops it with the same
+  answer; one learnt after the realm's own fetch has started does not stop that change. The
   HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
   picker or loader with a blocking notice that only a sign-out leaves (B1); a refused in-world
   travel shows the same notice, dismissible, and the player stays put (B5). Differences from

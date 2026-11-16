@@ -8635,7 +8635,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
-      "sha256": "0ee82c2c70c089fed7da442196a493b75deb48270db4438a66f1945c3b8c3f0c"
+      "sha256": "ee988cd215c816a0a073f0fcafa4f483f8ffd21c3c6e0c9adf7afa165697c71b"
     },
     {
       "path": "library/ui/apps/hud/features/session/SceneLoadingOverlay.module.css",
@@ -9215,7 +9215,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
-      "sha256": "c72058845d43b52f74982174cb7a963bfbd48b24deee463dd198f06e3ad8304f"
+      "sha256": "00acff3479c9a8e37dcdbf95c6816fc17a54c612001cd711c66c7c0cfa7f08b4"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/pointer.test.tsx",
