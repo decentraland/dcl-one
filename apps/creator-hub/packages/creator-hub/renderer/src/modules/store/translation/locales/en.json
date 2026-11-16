@@ -552,7 +552,8 @@
         "consequences_title": "What stays with the old listing",
         "consequences": {
           "engagement": "Its likes, favorites and position in the Places rankings.",
-          "analytics": "Its scene analytics. The new listing starts from zero."
+          "analytics": "Its scene analytics. The new listing starts from zero.",
+          "storage": "The data in its Multiplayer Server storage, which may be erased."
         },
         "tip": "To keep the current listing, publish to the same base parcel or to the same set of parcels as before.",
         "world_tip": "To keep the current listing, place the scene so that it replaces exactly one existing scene in this World.",

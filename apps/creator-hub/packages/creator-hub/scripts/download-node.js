@@ -7,6 +7,10 @@
  * Electron's module ABI. The optimizer toolchain (sharp) ships builds for Node's ABIs only,
  * so the optimizer refuses to run without a real Node (`main/src/modules/optimizer`).
  *
+ * The preview of a scene with `authoritativeMultiplayer` can also start a multiplayer server
+ * through the scene's own sdk-commands. That server uses `isolated-vm`, which ships builds for
+ * Node's ABIs only. Node 22 (ABI 127) matches the vendored Intel Mac build below.
+ *
  * Runs as part of the electron-builder `beforePack` hook, once per target arch.
  */
 import path from 'path';
@@ -122,6 +126,40 @@ function stripLinuxBinary(binary, platform) {
   console.log(`download-node: stripped ${binary} (${before} -> ${fs.statSync(binary).size} bytes)`);
 }
 
+/**
+ * `isolated-vm` ships prebuilt binaries for every platform the Hub targets EXCEPT Intel Mac,
+ * where it would otherwise try to compile from source (needs Xcode and a C++20 compiler,
+ * which creators do not have). We vendor a cross-compiled one.
+ *
+ * node-gyp-build looks for a `prebuilds/` directory next to the running node binary once the
+ * package's own lookup comes up empty, so dropping the file beside the binary is all it takes —
+ * nothing has to patch the copy that npx installs at runtime. Note "beside the binary" means the
+ * directory holding the executable itself, not the top of the install.
+ *
+ * Built with: npx node-gyp rebuild --release --arch=x64 --target=<NODE_VERSION minus the v>
+ * from inside node_modules/isolated-vm, on any Mac. Rebuild if NODE_VERSION crosses a major.
+ */
+function copyVendoredPrebuilds(binaryDir, platform, arch) {
+  if (platform !== 'darwin' || arch !== 'x64') return;
+
+  const src = path.join(
+    import.meta.dirname,
+    'vendor',
+    'isolated-vm',
+    'darwin-x64',
+    'isolated-vm.abi127.node',
+  );
+  if (!fs.existsSync(src)) {
+    console.warn('download-node: vendored Intel Mac isolated-vm build missing, skipping:', src);
+    return;
+  }
+
+  const prebuildDir = path.join(binaryDir, 'prebuilds', 'darwin-x64');
+  fs.mkdirSync(prebuildDir, { recursive: true });
+  fs.copyFileSync(src, path.join(prebuildDir, 'isolated-vm.abi127.node'));
+  console.log('download-node: added vendored isolated-vm build for darwin-x64');
+}
+
 export default async function downloadNode(context) {
   const appDir = context.appDir ?? context.packager?.info?.appDir;
   if (!appDir) {
@@ -156,5 +194,6 @@ export default async function downloadNode(context) {
 
   const dest = extract(archive, archiveName, destDir, isWindows);
   stripLinuxBinary(dest, platform);
+  copyVendoredPrebuilds(path.dirname(dest), electronPlatform, arch);
   console.log(`download-node: installed ${NODE_VERSION} ${platform}-${arch} at ${dest}`);
 }

@@ -11,6 +11,7 @@ import { selectors as landSelectors } from '/@/modules/store/land';
 import { Lands } from '/@/lib/land';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { COLORS, type Props, type Coordinate } from '../../types';
 import { breaksLandPlaceContinuity, calculateParcels, parseCoords } from '../../utils';
 import { PublishModal } from '../../PublishModal';
@@ -27,6 +28,7 @@ const PublishToLandModal = styled(PublishModal)({
 export function PublishToLand(props: Props) {
   const { project, publishScene } = useEditor();
   const { updateProject, updateSceneJson } = useWorkspace();
+  const storage = useMultiplayerStorage(project?.path);
   const tiles = useSelector(state => state.land.tiles);
   const landTiles = useSelector(state => landSelectors.getLandTiles(state.land));
   const [hover, setHover] = useState<Coordinate>({ x: 0, y: 0 });
@@ -232,7 +234,10 @@ export function PublishToLand(props: Props) {
           borderRadius={2}
           sx={{ backgroundColor: 'var(--black)' }}
         >
-          <PlaceContinuityWarning kind="land" />
+          <PlaceContinuityWarning
+            kind="land"
+            storage={storage}
+          />
           <Box
             display="flex"
             gap={1}

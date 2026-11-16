@@ -8,14 +8,18 @@ import './styles.css';
 
 const CONSEQUENCES = ['engagement', 'analytics'] as const;
 
-type Props =
+type Props = (
   | { kind: 'land' }
   | {
       kind: 'world-merge';
       /** Number of existing world scenes the new deployment overlaps (two or more). */
       overlap: number;
     }
-  | { kind: 'world-replace' };
+  | { kind: 'world-replace' }
+) & {
+  /** The scene turns `authoritativeMultiplayer` on, so it can keep data in Multiplayer Server storage. */
+  storage?: boolean;
+};
 
 const KEY = 'modal.publish_project.place_continuity';
 
@@ -70,7 +74,7 @@ export function PlaceContinuityWarning(props: Props) {
           {t('modal.publish_project.place_continuity.consequences_title')}
         </Typography>
         <ul className="PlaceContinuityWarning-list">
-          {CONSEQUENCES.map(key => (
+          {(props.storage ? [...CONSEQUENCES, 'storage' as const] : CONSEQUENCES).map(key => (
             <li key={key}>
               <Typography variant="body2">
                 {t(`modal.publish_project.place_continuity.consequences.${key}`)}
