@@ -641,9 +641,6 @@ pub struct PlayerPositionEvent {
     /// where position arrives quantized. `foreign_dynamics` dead-reckons inside this box instead of
     /// snapping to `translation`, so a slowly-moving peer doesn't jitter on the quantization grid.
     pub precision: Vec3,
-    /// The gait named by the packet's `movement_blend`; `None` when it is not a plausible blend.
-    pub gait: Option<crate::gait::Gait>,
-    pub falling: bool,
 }
 
 /// Scene-driven animation state for a foreign player, decoded from the standalone
@@ -818,8 +815,6 @@ fn apply_foreign_movement(
         remote_move_kind,
         teleport,
         precision,
-        gait: crate::gait::gait_from_blend(m.movement_blend_value),
-        falling: m.is_falling,
     });
 }
 

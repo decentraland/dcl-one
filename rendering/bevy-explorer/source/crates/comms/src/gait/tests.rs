@@ -1,4 +1,5 @@
 use super::*;
+use dcl_component::proto_components::pulse;
 
 const DEFAULT: LocomotionSpeeds = LocomotionSpeeds {
     walk: 2.5,
@@ -81,10 +82,8 @@ fn tiers_follow_the_limits_with_a_small_tolerance() {
 }
 
 #[test]
-fn mid_speed_at_default_speeds_is_a_jog_and_shows_the_run_clip() {
-    let gait = gait_of(5.0, &DEFAULT);
-    assert_eq!(gait, Some(Gait::Jog));
-    assert_eq!(fallback_gait(gait, 5.0), FallbackGait::Run);
+fn mid_speed_at_default_speeds_is_a_jog() {
+    assert_eq!(gait_of(5.0, &DEFAULT), Some(Gait::Jog));
 }
 
 #[test]
@@ -201,29 +200,41 @@ fn implausible_blend_names_no_gait() {
     assert_eq!(gait_from_blend(6.25), None);
 }
 
-#[test]
-fn fallback_follows_the_received_walk() {
-    assert_eq!(fallback_gait(Some(Gait::Walk), 5.0), FallbackGait::Walk);
-    assert_eq!(fallback_gait(Some(Gait::Walk), 1.0), FallbackGait::Walk);
+/// The blend as a receiver sees it after the Pulse 5-bit quantizer.
+fn over_the_wire(blend: f32) -> f32 {
+    let state = pulse::PlayerState {
+        movement_blend: pulse::PlayerState::movement_blend_quantized(blend),
+        ..Default::default()
+    };
+    state.movement_blend_dequantized()
 }
 
 #[test]
-fn fallback_follows_a_received_jog_or_run_above_the_walk_clip_speed() {
-    assert_eq!(fallback_gait(Some(Gait::Jog), 3.0), FallbackGait::Run);
-    assert_eq!(fallback_gait(Some(Gait::Run), 8.0), FallbackGait::Run);
-}
-
-#[test]
-fn fallback_distrusts_a_run_at_walking_speed() {
-    // An old sender's 2.5 m/s walk arrives as blend 3.
-    assert_eq!(fallback_gait(Some(Gait::Run), 2.5), FallbackGait::Walk);
-    assert_eq!(fallback_gait(Some(Gait::Jog), 1.0), FallbackGait::Walk);
-}
-
-#[test]
-fn fallback_uses_velocity_without_a_usable_gait() {
-    assert_eq!(fallback_gait(None, 2.0), FallbackGait::Walk);
-    assert_eq!(fallback_gait(None, 3.0), FallbackGait::Run);
-    assert_eq!(fallback_gait(Some(Gait::Idle), 2.0), FallbackGait::Walk);
-    assert_eq!(fallback_gait(Some(Gait::Idle), 3.0), FallbackGait::Run);
+fn every_sent_gait_survives_the_wire_quantizer() {
+    let sets = [
+        DEFAULT,
+        LocomotionSpeeds {
+            walk: 4.0,
+            ..DEFAULT
+        },
+        LocomotionSpeeds {
+            jog: 12.0,
+            run: 20.0,
+            ..DEFAULT
+        },
+    ];
+    for speeds in sets {
+        for step in 1..=600 {
+            let speed = step as f32 * 0.05;
+            let sent = movement_blend(speed, &speeds);
+            if sent == 0.0 {
+                continue;
+            }
+            assert_eq!(
+                gait_from_blend(over_the_wire(sent)),
+                gait_from_blend(sent),
+                "{speed} m/s under {speeds:?}"
+            );
+        }
+    }
 }

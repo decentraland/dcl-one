@@ -32,11 +32,7 @@ use common::{
     util::TryPushChildrenEx,
 };
 use comms::{
-    broadcast,
-    gait::{fallback_gait, FallbackGait, RemoteGait},
-    global_crdt::ForeignPlayer,
-    profile::CurrentUserProfile,
-    BroadcastTarget, Transport,
+    broadcast, global_crdt::ForeignPlayer, profile::CurrentUserProfile, BroadcastTarget, Transport,
 };
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
@@ -563,7 +559,6 @@ fn animate(
         Option<&ForeignPlayer>,
         Option<&mut LastEmoteCommand>,
         Option<Ref<SceneDrivenAnim>>,
-        Option<&RemoteGait>,
     )>,
     time: Res<Time>,
     player: Query<(&PrimaryUser, Option<&PlayerModifiers>)>,
@@ -586,7 +581,6 @@ fn animate(
         maybe_foreign,
         last_emote,
         maybe_scene_anim,
-        remote_gait,
     ) in avatars.iter_mut()
     {
         let Some((mut active_emote, mut anim_state, mut masked)) = active_emote else {
@@ -751,8 +745,7 @@ fn animate(
         // final default when nothing else claims the avatar.
         let time_to_peak = (jump_height * -gravity * 2.0).sqrt() / -gravity;
         let just_jumped = dynamic_state.jump_time
-            > (time.elapsed_secs_f64() - time_to_peak as f64 / 2.0).max(0.0)
-            && !remote_gait.is_some_and(|g| g.falling);
+            > (time.elapsed_secs_f64() - time_to_peak as f64 / 2.0).max(0.0);
         let (velocity_emote, velocity_move_kind) =
             if dynamic_state.move_kind == MoveKind::DoubleJump {
                 // Set on foreign avatars from rfc4::Movement.jump_count >= 2 (see foreign_dynamics).
@@ -827,9 +820,7 @@ fn animate(
                 let directional_velocity_len =
                     (damped_velocity * (Vec3::X + Vec3::Z)).dot(gt.forward().as_vec3());
                 if damped_velocity_len.abs() > 0.1 {
-                    if fallback_gait(remote_gait.and_then(|g| g.gait), damped_velocity_len.abs())
-                        == FallbackGait::Walk
-                    {
+                    if damped_velocity_len.abs() <= 2.6 {
                         (
                             ActiveEmote {
                                 playback: EmotePlayback {

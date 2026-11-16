@@ -9,7 +9,6 @@ use common::{
 };
 
 use crate::animate::{ActiveEmote, ActiveEmoteSource};
-use comms::gait::RemoteGait;
 use comms::global_crdt::{ForeignPlayer, PlayerPositionEvent, PlayerSceneAnimEvent};
 use dcl_component::{transform_and_parent::DclTransformAndParent, SceneEntityId};
 use scene_runner::{update_world::mesh_collider::SceneColliderData, ContainingScene};
@@ -340,10 +339,6 @@ fn update_foreign_user_target_position(
                     };
                     // Movement trigger: the first packet after an anim arrives arms it; the next one
                     // fires it, in sync with the motion (see `PendingSceneAnim`).
-                    commands.entity(ev.player).try_insert(RemoteGait {
-                        gait: ev.gait,
-                        falling: ev.falling,
-                    });
                     if let Some(mut pending) = maybe_pending {
                         if pending.pending.is_some() {
                             if pending.fire_on_next_movement {
@@ -373,10 +368,6 @@ fn update_foreign_user_target_position(
                     },
                     AvatarDynamicState::default(),
                     PendingSceneAnim::default(),
-                    RemoteGait {
-                        gait: ev.gait,
-                        falling: ev.falling,
-                    },
                 ));
             }
         }
