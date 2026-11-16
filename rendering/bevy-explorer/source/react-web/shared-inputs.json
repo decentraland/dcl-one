@@ -731,6 +731,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapApiTransport.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "minimap.test.ts",
           "kind": "regular"
         },
@@ -748,6 +752,10 @@
         },
         {
           "name": "pointerKeys.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "serverReadErrors.test.ts",
           "kind": "regular"
         },
         {
@@ -5480,7 +5488,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "58d1cf9b40aa0073ec8b5be319f8b46e9d42bf688e69ca5af507adfc80422069"
+      "sha256": "357db9a2f57a892f4ce65d1509125d77a2a742e41231f17c43c1c727d64d05ee"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
@@ -5488,7 +5496,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/layoutStorage.ts",
-      "sha256": "d07d0e045eca65f04609fdc3c00f69b03d7b824d5a9a8c286b2922d571735247"
+      "sha256": "ddf8bdb01d4fbc678efda71d2653d051f414def30cac7068680223190f02ef60"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyAnalytics.ts",
@@ -5496,7 +5504,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "b4c4cdc58864f57b0ac85149fb11ee63908f908b8f185a6e922617f73cdd8f3b"
+      "sha256": "4e534251aa807163cc276167d4a4139db3e1c99daab6a25029c383747af9b5b3"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyEvents.ts",
@@ -5512,7 +5520,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "f7d7d0cfc9f632d61aba6117009f75d5b0fb0870f4c7853a10b27c76ce09908a"
+      "sha256": "c6c8affa0be7f8e8ac251bbf431db430f509acbb250db75109cbfb3dcb3ce554"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -5536,7 +5544,7 @@
     },
     {
       "path": "library/explorer-core/features/places/worldAccess.ts",
-      "sha256": "3cb331125684b15d65130d6db92d57e1da5b7b249d2818c3de4021dcb02cc23a"
+      "sha256": "0d63dba8e36d758a681e16cd04967339a6510892d9c7072282860177816b25ec"
     },
     {
       "path": "library/explorer-core/features/pointer/cursorStore.ts",
@@ -5760,11 +5768,15 @@
     },
     {
       "path": "library/explorer-core/test/lobbyGoto.test.ts",
-      "sha256": "7af666a99543b84fcac98163798251c0ebc6c600ea87939d836a4480a8e08950"
+      "sha256": "75b121b1b359b6a52ff9c729a889234c240727ac2bdf757fad5b10a45b035543"
     },
     {
       "path": "library/explorer-core/test/lobbyLayout.test.ts",
-      "sha256": "a6eefc1dd00f91b11b8c20e112e6ed8e666a968f253561db71a1f5206e6898aa"
+      "sha256": "894d7bc46d20bd2adc7892f1c063f4244daf7e08bbd69b4412e34733f3f99436"
+    },
+    {
+      "path": "library/explorer-core/test/mapApiTransport.test.ts",
+      "sha256": "150b8d3f6257f52847cb7d1559c53e50d3bc9065082bb09ad575cc74a64e06ba"
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
@@ -5787,6 +5799,10 @@
       "sha256": "89e9e9a003e5e05216a8b59d21756e4715a460d57765cfdef0914eb41339b2b8"
     },
     {
+      "path": "library/explorer-core/test/serverReadErrors.test.ts",
+      "sha256": "3099ab66e1d35fbd131fff68cf1f0c89f1a90b2012a6d63f5e6b90add41c29dc"
+    },
+    {
       "path": "library/explorer-core/test/shellSign.test.ts",
       "sha256": "92a933283be8cc4ca11bb6ae8776ac2deeee17f65a37822499253430ba7dcaa1"
     },
@@ -5796,7 +5812,7 @@
     },
     {
       "path": "library/explorer-core/test/worldAccess.test.ts",
-      "sha256": "c02f23bc24b60d90f409d7539293cd2926670d8636787f80ae0cd24d1228c4e8"
+      "sha256": "a23f384003d7ec941ca8ebee65b2ac2f93d1c6215a013986beaf72f894c0889c"
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
@@ -6611,10 +6627,6 @@
       "sha256": "75eed1719d84c13204a9adf1d1555401427fdf7b1fa7c9274565fae4b7261ff2"
     },
     {
-      "path": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "sha256": "6df493370c207ca93a40c4ea390fc17e58339a35ac4587ba477b04b3c0d251c9"
-    },
-    {
       "path": "library/ui/apps/hud/assets/map/panel/jump-in.png",
       "sha256": "232f2560d4d0cb473412e58f62aa177cb719772e841fe2364051a756c32f35db"
     },
@@ -6625,10 +6637,6 @@
     {
       "path": "library/ui/apps/hud/assets/map/panel/like-solid.png",
       "sha256": "4c85ee8b82f3fd079d11bfe2bfce84eb6f59d01ca469ef74ebefce7e89277816"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/map/panel/navigation.png",
-      "sha256": "4f2bb630b15996064bb331da1650eda05b76a8964653df24f530fc8e9055379a"
     },
     {
       "path": "library/ui/apps/hud/assets/map/panel/parcels.png",
@@ -7928,11 +7936,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.module.css",
-      "sha256": "7d5eaa59e938746f668f53f25c7f58ad5175a2cc5fd883822d79c74bb08b1a67"
+      "sha256": "8cf6fe2ad0465cbd1157d57d4fba376c86d7df1585bfe8767738af46618e70df"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "sha256": "c2983e7f6df7594da5a2fcf9872adcb7c9a79bba1ecad914ebfc9d0038bf91b2"
+      "sha256": "d82605e26521c3b7d0c869f71ca3a1b96965cb6b82ed7a6e178abd0b20cab972"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
@@ -7940,7 +7948,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "2972206a25000614f0758384ce7a3df7b65afbbbf29dfff01316663ebe031151"
+      "sha256": "bfa23dbb1e1cc2e602e910984f9d567b847b3314a0be0767a96571aa4979d803"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -7948,7 +7956,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "sha256": "d0e0583351c41c225f1b1c8aee80c6a703f63570603b36d4f08c58529b5b11e2"
+      "sha256": "7c6016f900e25230ecc472a4ac9f7d2a8d812c68d94903966c6e1fa0e3efb51c"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.module.css",
@@ -7956,7 +7964,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "sha256": "1465728c4b1d0867951038f4c5b51d9e5ef156693312752f58ea802039b8b068"
+      "sha256": "6f0488e1e949ddebd7169d68f23d6278145884e52edbaa08dc99f17977a8ed09"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.module.css",
@@ -7972,7 +7980,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/railModel.ts",
-      "sha256": "20f9d2cea1f519731364fbb55709faaa0ad05f48f6f06c9f554668c6a6d0b7e3"
+      "sha256": "4501a8f47bf2bbd2893448358c37396faaed1d5f539f1dbed75e499c7f100cf5"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/stageBackdrops.ts",
@@ -7980,7 +7988,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
-      "sha256": "44de5686f58ff050312726cd2d39886d8fecbdb928c4956ea9cee163dac07c6d"
+      "sha256": "e5bbb3d70c88f4cba41c421994d73a33e04ae2aa5418a55ee731c506fbf0a601"
     },
     {
       "path": "library/ui/apps/hud/features/login/GuestStartPage.module.css",
@@ -8124,7 +8132,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "63abb0e4cc4f17246e19225c805dcfa5be8ea77e1ef1da44ac2c577deb19203d"
+      "sha256": "8cbc4115f261c8b9807403427219885ad0ce9276af00670b6df8815812be098c"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -8148,7 +8156,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
-      "sha256": "fb4df15b8328066112ff5d7657886db8db3fc85b6ee6a4a0a9591b55ee537a60"
+      "sha256": "f54e2a433ae88097c5089c1475e01a812013e60f03c5ba8636ab1bc54d60786d"
     },
     {
       "path": "library/ui/apps/hud/features/places/useCreatorName.ts",
@@ -8256,7 +8264,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "0cc528fd8d19461efc6e3952756eb2dc736cecdf4bade5cbef51a57ad69ecbb8"
+      "sha256": "623d9593270864b87799b1fd5af34ab504b1fb740a11662b6b349e1406082330"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8392,7 +8400,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "52509add9ffee3aeec352b758b9d4361283069d5ee6b64d7ba6d8146ca58fbb7"
+      "sha256": "643df67fa926dc49fb4d429f9639bf792b560ecd30a53ed705c3e95e3b34c24c"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -8444,7 +8452,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "b51ee0971ddb9b30b541c60531c5a29a5ccdf4bad315c9ff6ed61bbe1db09d66"
+      "sha256": "421b34cf655f1bb415a4de84e6f496cfb24d2abf50f1c4dbf6fab7ff82d5927b"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -8640,7 +8648,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "2cb874bb312a587de7081923158bd7f9020123f6d836c0e432ce8e68abb1b3d6"
+      "sha256": "074bc920e7e3b98a1df2acc7f80e8b2e291313a1780ef6e771f83b20197ebe4b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyStageTab.test.tsx",
@@ -8712,7 +8720,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "25bde3beabf7e85bc1ceab1888507a236b9a8f2749dd1f07c80b73478615e0c8"
+      "sha256": "86b768fbbae1b7fad96480fa7d458eea0de839a4a3dff6dc87a63c120688dbb4"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -8812,7 +8820,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/lobbyRail.test.ts",
-      "sha256": "95676bb2cbbcdce0f87731044639254c9602aa13fe44a733fe238d9b7dbd5577"
+      "sha256": "8b6eb110c2e2d056545ba29135e02d5e5c11de1221fe6be9ff09127554c9bc88"
     },
     {
       "path": "library/ui/apps/hud/test/menu.clicks.test.tsx",
@@ -9673,21 +9681,6 @@
     },
     {
       "from": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
       "to": "library/explorer-core/lib/prefs.ts",
       "kind": "native:runtime"
     },
@@ -10437,6 +10430,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/mapApiTransport.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapApiTransport.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapApiTransport.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/minimap.test.ts",
       "to": "library/explorer-core/features/map/atlas.ts",
       "kind": "native:runtime"
@@ -10569,6 +10577,36 @@
     {
       "from": "library/explorer-core/test/pointerKeys.test.ts",
       "to": "library/explorer-core/engine/pointerKeys.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/places/worldAccess.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/places/worldAccess.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/features/places/worldAccess.ts",
       "kind": "test:runtime"
     },
     {
@@ -21658,6 +21696,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/explorer-core/lib/holeClip.ts",
       "kind": "native:runtime"
     },
@@ -22209,6 +22262,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -22794,6 +22862,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
       "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
+      "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "test:runtime"
     },
     {
@@ -24613,6 +24696,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "native:runtime"
     },
@@ -24763,21 +24861,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
       "kind": "native:runtime"
     },
@@ -24819,21 +24902,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
       "kind": "test:runtime"
     },
     {
@@ -31734,6 +31802,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
       "to": "library/explorer-core/lib/analytics.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -35903,6 +35986,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/mapApiTransport.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/minimap.test.ts",
       "kind": "type"
     },
@@ -35924,6 +36012,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/pointerKeys.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/serverReadErrors.test.ts",
       "kind": "type"
     },
     {
@@ -40743,21 +40836,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
       "kind": "native:asset"
     },
@@ -40799,21 +40877,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
       "kind": "test:asset"
     },
     {
