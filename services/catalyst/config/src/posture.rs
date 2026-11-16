@@ -10,17 +10,13 @@
 //! - `island` sends no request to Decentraland or any third party: no sync,
 //!   mirror, index, poll, relay or fallback, and the map URLs are its own.
 //! - `journey` is the scratch-database test stack: an island with every
-//!   write domain open, no restore stamp and no chain access checks.
+//!   write domain open and no chain access checks.
 
 use std::fmt::Write as _;
 
 use crate::config::Config;
 
 pub const ENV: &str = "NODE_POSTURE";
-
-/// `WRITES_RESTORE_STAMP_DIR`: where the backup and restore-drill stamps the
-/// write gate reads live (the write gate's own key).
-pub const RESTORE_STAMP_DIR: &str = "WRITES_RESTORE_STAMP_DIR";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
@@ -51,22 +47,16 @@ impl Posture {
         match self {
             Posture::Mirror => {
                 "follows Decentraland: peer sync, mirrors, chain indexes and polls, the RPC relay and \
-                 the CDN fallbacks; local writes open behind the restore stamp"
+                 the CDN fallbacks; local writes open when switched on"
             }
             Posture::Island => {
                 "no request to Decentraland or any third party; this node is its own authority and \
-                 its map URLs are its own; local writes open behind the restore stamp"
+                 its map URLs are its own; local writes open when switched on"
             }
             Posture::Journey => {
-                "the scratch-database test stack: no upstream traffic, every write domain open, no \
-                 restore stamp"
+                "the scratch-database test stack: no upstream traffic, every write domain open"
             }
         }
-    }
-
-    /// Mirror and island hold real data: a write switch needs the restore stamp.
-    pub fn writes_need_restore_stamp(self) -> bool {
-        self != Posture::Journey
     }
 }
 
@@ -125,8 +115,8 @@ const fn upstream(family: &'static str, key: &'static str, url: &'static str) ->
     row(family, key, Is(url), Is(""), Is(""))
 }
 
-/// Shut under mirror and island until the operator opens it (behind the
-/// restore stamp); open on the journey stack's scratch database.
+/// Shut under mirror and island until the operator opens it; open on the
+/// journey stack's scratch database.
 const fn write(key: &'static str) -> Row {
     row("writes", key, Is("false"), Is("false"), Is("true"))
 }
@@ -704,7 +694,7 @@ pub fn startup_line(config: &Config) -> String {
 }
 
 /// The combinations serve and the indexer refuse to start with. `env` is the
-/// process environment (`NODE_POSTURE` and the write gate's stamp directory).
+/// process environment.
 pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     let from_env = env(ENV).filter(|v| !v.trim().is_empty());
     let posture = match (&config.node.node_posture, &from_env) {
@@ -757,32 +747,6 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_followers(posture, env)?;
         refuse_remote_hosts(posture, config, env)?;
         refuse_third_party_secrets(posture, env)?;
-    }
-    if posture.writes_need_restore_stamp() {
-        let open: Vec<&str> = [
-            (
-                "CONTENT_WRITES_ENABLED",
-                config.writes.content_writes_enabled,
-            ),
-            ("CREATE_WRITES_ENABLED", config.create.create_writes_enabled),
-            ("DATA_WRITES_ENABLED", config.writes.data_writes_enabled),
-            ("SOCIAL_WRITES_ENABLED", config.writes.social_writes_enabled),
-            ("WORLDS_WRITES_ENABLED", config.worlds.worlds_writes_enabled),
-            ("OPS_WRITES_ENABLED", config.ops.ops_writes_enabled),
-        ]
-        .into_iter()
-        .filter_map(|(key, on)| on.then_some(key))
-        .collect();
-        if !open.is_empty() && env(RESTORE_STAMP_DIR).is_none_or(|d| d.trim().is_empty()) {
-            anyhow::bail!(
-                "{ENV}={} holds real data, so local writes sit behind the restore stamp, but {} \
-                 {} on with no {RESTORE_STAMP_DIR}: set it (the backup and drill stamps) or turn \
-                 the writes off",
-                posture.name(),
-                open.join(", "),
-                if open.len() == 1 { "is" } else { "are" },
-            );
-        }
     }
     if posture == Posture::Mirror {
         refuse_chain_read_third_party(config, env)?;

@@ -134,7 +134,7 @@ mod tests {
     /// A hang guard only: every exchange here ends in milliseconds.
     const HANG_GUARD: Duration = Duration::from_secs(60);
 
-    fn refuse(_: &crate::writes::Refusal) -> Response {
+    fn refuse() -> Response {
         (StatusCode::SERVICE_UNAVAILABLE, "writes are off").into_response()
     }
 
@@ -142,7 +142,6 @@ mod tests {
         enabled: false,
         open_while_disabled: &[],
         refuse,
-        blobs: false,
     };
 
     fn uploads() -> Router {

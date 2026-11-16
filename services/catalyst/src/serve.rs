@@ -25,7 +25,7 @@ mod states;
 #[cfg(test)]
 use lifecycle::register_metrics;
 pub(crate) use lifecycle::shutdown_signal;
-use lifecycle::{install_metrics, install_restore_stamps, run_http};
+use lifecycle::{install_metrics, run_http};
 #[cfg(test)]
 pub(crate) use routes::live_presence_routes;
 #[cfg(test)]
@@ -147,7 +147,6 @@ pub async fn serve(
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
-    install_restore_stamps(&config)?;
     let sync_settings = SyncSettings::from_config(&config)?;
     let pool = db::connect_pool(
         &config.node.database_url,

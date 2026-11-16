@@ -80,9 +80,9 @@ pub struct WorldsConfig {
     // surface, catalyrst-world-storage, catalyrst-scene-state, archipelago's
     // ws-connector and the worlds federation mirror). A world publish, a
     // permission or settings edit and a storage value are local authority
-    // peer sync does not back up, so every worlds write answers 503 until a
-    // backup restore has been demonstrated (DATABASE.md, "Bootstrap, schema versions and
-    // local writes"); the reads, the admission mints and the sockets serve.
+    // peer sync does not back up, so every worlds write answers 503 until it
+    // is turned on; back up first (DATABASE.md, "Bootstrap, schema versions
+    // and local writes"); the reads, the admission mints and the sockets serve.
     #[arg(long, env = "WORLDS_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub worlds_writes_enabled: bool,
 
