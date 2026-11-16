@@ -103,7 +103,7 @@ export function PlacesBrowser({
     setSection(next.section)
     setSortOpen(false)
     if (next.id === 'recent') setSort('created_at')
-    else if (next.id === 'explore' && pill === 'recent') setSort('most_active')
+    else if (next.id === 'explore' && sort === 'created_at') setSort('most_active')
   }
 
   // A search or a personal section shows everything it returns: hiding is for the unfiltered browse only.

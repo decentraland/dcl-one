@@ -365,7 +365,8 @@ const level = (name: string, category: string, value: number, max = 100, min = 0
 const ON_OFF = ['Off', 'On']
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
-// Chat); 'Voice Volume' keeps the engine's name, which the nearby-voice panel reads.
+// Chat); 'Master Volume' and 'Voice Volume' keep the engine's names, which the rail's Volume
+// popover and the nearby-voice panel read.
 const mockSettings: Setting[] = [
   choice('Experimental Lobby (requires restart)', 'graphics', ON_OFF, 1),
   choice('Graphics Preset', 'graphics', ['Low', 'Medium', 'High', 'Custom'], 3),
@@ -388,7 +389,7 @@ const mockSettings: Setting[] = [
   level('Shadows Distance', 'graphics', 100, 100, 10),
   choice('Play current scene streams only', 'graphics', ON_OFF, 0),
   choice('Jiggle Bones', 'graphics', ON_OFF, 1),
-  level('Master', 'audio', 100),
+  level('Master Volume', 'audio', 100),
   level('In-World Music & SFX', 'audio', 100),
   level('UI SFX', 'audio', 100),
   level('Avatar & Emotes SFX', 'audio', 100),

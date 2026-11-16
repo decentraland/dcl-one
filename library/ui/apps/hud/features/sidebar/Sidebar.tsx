@@ -77,8 +77,8 @@ const OVER_MAP: ReadonlySet<PanelId> = new Set<PanelId>(['me', 'discover', 'shop
  *  without the in-world Shop too, so the panel can be seen beside the bar. */
 const mockHud = (): boolean => new URLSearchParams(location.search).get('mock') === '1'
 
-/** The engine's name for the setting the Volume popover moves. */
-const MASTER_VOLUME = 'Master'
+/** The engine's name for the setting the Volume popover moves (`volume_settings.rs`: "<name> Volume"). */
+const MASTER_VOLUME = 'Master Volume'
 
 // A raster glyph's strokes are antialiased thin: a second copy laid over the first brings them up
 // to solid white. The design's own glyphs are vectors and need none.

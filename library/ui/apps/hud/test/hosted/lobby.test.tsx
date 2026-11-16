@@ -388,6 +388,28 @@ describe('lobby controls', () => {
     vi.mocked(fetchHighlighted).mockResolvedValue([])
   })
 
+  it('closes a page card by a press on the lobby around it, for each of the four pages', async () => {
+    const base = fakeSession()
+    for (const page of ['settings', 'map', 'places', 'events'] as const) {
+      const session = { ...base, [page]: { ...base[page], open: true } }
+      const { unmount } = render(
+        <SessionProvider value={session}>
+          <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
+        </SessionProvider>
+      )
+      fireEvent.click(screen.getByTestId('lobby-page-guard'))
+      expect(session.closeAllPanels, page).toHaveBeenCalledOnce()
+      vi.mocked(session.closeAllPanels).mockClear()
+      unmount()
+    }
+    render(
+      <SessionProvider value={base}>
+        <LobbyHome onPick={base.pickDestination} setEngineViewport={base.setEngineViewport} />
+      </SessionProvider>
+    )
+    expect(screen.queryByTestId('lobby-page-guard')).toBeNull()
+  })
+
   it('leaves the avatar cutout outside both overlay hit regions and keeps Close clickable', async () => {
     const sheet = document.createElement('style')
     const css = readFileSync(join(__dirname, '../../features/backpack/BackpackModal.module.css'), 'utf8')

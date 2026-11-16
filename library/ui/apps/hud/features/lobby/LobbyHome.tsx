@@ -567,8 +567,8 @@ export function LobbyHome({
       )}
 
       {/* a page card is open over the startup lobby: nothing under it takes a click but closing it */}
-      {!onClose && (session.settings.open || session.places.open || session.events.open) && (
-        <div className={styles.pageGuard} onClick={session.closeAllPanels} />
+      {!onClose && (session.settings.open || session.map.open || session.places.open || session.events.open) && (
+        <div className={styles.pageGuard} data-testid="lobby-page-guard" onClick={session.closeAllPanels} />
       )}
     </div>
   )

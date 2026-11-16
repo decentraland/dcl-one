@@ -267,7 +267,7 @@ describe('sidebar panels', () => {
 
 describe('sidebar volume', () => {
   const master = (): EngineSession['settings']['list'][number] => ({
-    name: 'Master',
+    name: 'Master Volume',
     category: 'Audio',
     description: '',
     minValue: 0,
@@ -302,7 +302,7 @@ describe('sidebar volume', () => {
     const slider = within(screen.getByRole('dialog', { name: 'Volume' })).getByRole('slider', { name: 'Master' })
     expect(slider).toHaveValue('70')
     fireEvent.change(slider, { target: { value: '40' } })
-    expect(vi.mocked(s.settings.set)).toHaveBeenCalledWith('Master', 40)
+    expect(vi.mocked(s.settings.set)).toHaveBeenCalledWith('Master Volume', 40)
   })
 })
 

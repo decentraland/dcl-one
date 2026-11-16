@@ -92,6 +92,17 @@ describe('places browser', () => {
     await userEvent.click(screen.getByRole('tab', { name: /Explore/ }))
     expect(screen.getByRole('button', { name: /Filter & Sort/ })).toBeEnabled()
   })
+  it('returns to the busiest order when Explore follows Recent through a personal section', async () => {
+    servePlaces()
+    vi.spyOn(auth, 'getLogin').mockResolvedValue(null)
+    render(<PlacesBrowser onPick={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('tab', { name: /Favorites/ }))
+    await userEvent.click(screen.getByRole('tab', { name: /Explore/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Filter & Sort/ }))
+    expect(screen.getByRole('option', { name: 'Most active' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('option', { name: 'Newest' })).toHaveAttribute('aria-selected', 'false')
+  })
   // There are no Live Now or Featured rows: one grid holds every destination once.
   it('shows every destination once in one grid, without unfinished deploys', async () => {
     servePlaces()
