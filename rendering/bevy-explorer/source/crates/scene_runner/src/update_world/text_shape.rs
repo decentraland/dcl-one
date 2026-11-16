@@ -52,7 +52,7 @@ bevy: not implemented
 
     lineCount?: number | undefined;
 foundation: when textWrapping is true, works. causes some strange re-interpretation of paddingTop/paddingBottom.
-bevy: acts like height
+bevy: limits visible layout lines; unset or zero is unlimited, negative values display one line
 
     textWrapping?: boolean | undefined;
 foundation + bevy: works
@@ -1272,6 +1272,7 @@ fn layout_text(
     justify: JustifyText,
     linebreak: LineBreak,
     width: Option<f32>,
+    line_count: Option<i32>,
     effective_pt: f32,
     opaque: bool,
     text_pipeline: &mut TextPipeline,
@@ -1321,7 +1322,13 @@ fn layout_text(
         opaque,
     };
 
-    for run in computed.buffer().layout_runs() {
+    // Limit visual lines after wrapping, including empty lines. Keep the complete
+    // block's alignment and sizing; only glyphs and decorations beyond the cap hide.
+    let visible_lines = match line_count {
+        None | Some(0) => usize::MAX,
+        Some(count) => count.max(1) as usize,
+    };
+    for run in computed.buffer().layout_runs().take(visible_lines) {
         // extras cover the run's glyphs of each span, as one segment per span
         let mut segment: Option<(usize, f32, f32)> = None;
         let flush = |segment: Option<(usize, f32, f32)>, quads: &mut Vec<TextQuad>| {
@@ -1762,6 +1769,7 @@ fn update_text_shapes(
                         LineBreak::NoWrap
                     },
                     wrap_width,
+                    text_shape.0.line_count,
                     effective_pt,
                     opaque,
                     &mut text_pipeline,
@@ -1919,6 +1927,10 @@ fn update_text_shapes(
 
     debug!("built: {built}, deferred: {deferred}");
 }
+
+#[cfg(test)]
+#[path = "text_shape_line_tests.rs"]
+mod line_tests;
 
 /// After the frame's builds have been applied: rebuild the atlases that ran out of room from
 /// the glyphs every shape (including this frame's) draws, and tidy up.
