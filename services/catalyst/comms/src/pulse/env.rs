@@ -19,7 +19,8 @@ use super::handshake::MAX_TIMESTAMP_SKEW_MS;
 use super::hardening::{
     DEFAULT_DISCRETE_BURST, DEFAULT_DISCRETE_RATE_PER_SEC, DEFAULT_INPUT_BURST,
     DEFAULT_INPUT_MAX_HZ, DEFAULT_REPLAY_ENTRIES_PER_SOURCE, DEFAULT_REPLAY_ENTRIES_PER_WALLET,
-    DisconnectReason, GameplayRateLimiter, HandshakeReplayPolicy, IpWhitelist,
+    DEFAULT_REPLAY_ENTRIES_WHITELISTED, DisconnectReason, GameplayRateLimiter,
+    HandshakeReplayPolicy, IpWhitelist,
 };
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
 use super::server::{ENET_CAPACITY, WT_CAPACITY};
@@ -111,7 +112,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_IP_LIMITER_WHITELIST",
-        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps, PULSE_REPLAY_ENTRIES_PER_SOURCE and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
+        "comma-separated exact source IPs of trusted infrastructure, IPv4 or IPv6 (a dotted entry also matches the v4-mapped peer), no CIDR; exempts connection caps, PULSE_REPLAY_ENTRIES_PER_SOURCE (they share PULSE_REPLAY_ENTRIES_WHITELISTED instead) and PULSE_SCENE_LISTENER_MAX_PARCELS on handshake or update; still counted, auth/bans/pre-auth/global transport bounds and other AoI rules apply; an entry that is not an IP fails startup (default unset)",
     ),
     (
         "PULSE_AOI_TIER0_RADIUS",
@@ -207,8 +208,12 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48, so every subscriber of an IPv6 provider that shares one /48 shares one quota, as clients behind one IPv4 NAT address do; raise it before binding IPv6 for such networks; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
     ),
     (
+        "PULSE_REPLAY_ENTRIES_WHITELISTED",
+        "consumed-handshake entries all PULSE_IP_LIMITER_WHITELIST sources may hold together while they are fresh, in one shared bucket in place of PULSE_REPLAY_ENTRIES_PER_SOURCE; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; the default is about half the table; 0 means unlimited (default 4096)",
+    ),
+    (
         "PULSE_REPLAY_ENTRIES_PER_WALLET",
-        "consumed-handshake entries one wallet may hold while they are fresh, including clock-ahead handshakes the server answered; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
+        "consumed-handshake entries one wallet may hold while they are fresh, including clock-ahead handshakes the server answered; a client signs one per connection attempt, so the default sits above the reconnect cadence of one client; defense in depth beside the per-source and whitelisted quotas, which bound the table; a handshake over it is refused with the pre-auth budget code and may be retried once older entries leave the freshness window; applies to every source; 0 means unlimited (default 32)",
     ),
     (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
@@ -332,6 +337,10 @@ pub async fn run_from_env() -> anyhow::Result<()> {
     server.replay_policy.set_max_entries_per_wallet(env_or(
         "PULSE_REPLAY_ENTRIES_PER_WALLET",
         DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+    )?);
+    server.replay_policy.set_max_entries_whitelisted(env_or(
+        "PULSE_REPLAY_ENTRIES_WHITELISTED",
+        DEFAULT_REPLAY_ENTRIES_WHITELISTED,
     )?);
     tracing::info!("durable Pulse handshake replay protection enabled");
     server.gameplay_limiter = GameplayRateLimiter::new(
@@ -965,6 +974,10 @@ mod tests {
             (
                 "PULSE_REPLAY_ENTRIES_PER_WALLET",
                 DEFAULT_REPLAY_ENTRIES_PER_WALLET.to_string(),
+            ),
+            (
+                "PULSE_REPLAY_ENTRIES_WHITELISTED",
+                DEFAULT_REPLAY_ENTRIES_WHITELISTED.to_string(),
             ),
             (
                 "PULSE_SCENE_LISTENER_MAX_PARCELS",

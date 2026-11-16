@@ -1218,6 +1218,33 @@ async fn whitelisted_source_is_not_held_to_the_replay_quota() {
     }
 }
 
+#[tokio::test]
+async fn whitelisted_sources_over_their_shared_replay_quota_are_refused_with_a_retryable_code() {
+    let (bytes, _wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_whitelisted(1);
+    server.ip_limiter_options.whitelist =
+        crate::pulse::hardening::IpWhitelist::parse("192.0.2.1,192.0.2.2").unwrap();
+    // Another whitelisted address already holds the shared bucket.
+    assert_eq!(
+        server
+            .replay_policy
+            .try_admit(timestamp, None, "0x1", &timestamp.to_string()),
+        Ok(())
+    );
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.2".into());
+    server.peers.insert(1, state);
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Reject { reply, reason } => {
+            assert_eq!(reason, DisconnectReason::PreAuthBudgetExhausted);
+            assert!(reply.is_none());
+        }
+        other => panic!("expected the whitelisted bucket to refuse, got {other:?}"),
+    }
+}
+
 #[test]
 fn excessive_emote_duration_is_rejected() {
     let mut srv = PulseServer::new();

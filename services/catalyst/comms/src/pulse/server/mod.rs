@@ -520,7 +520,8 @@ impl PulseServer {
             }));
         }
 
-        // Trusted infrastructure is not held to the per-source share of the replay table.
+        // Trusted infrastructure is not held to the per-source share of the replay table; its
+        // handshakes share the one whitelisted bucket instead.
         let ip = self
             .peers
             .get(&peer)
@@ -568,6 +569,13 @@ impl PulseServer {
                                 "Pulse handshake refused: source holds its replay-table quota"
                             );
                             DisconnectReason::PreAuthIpLimitExhausted
+                        }
+                        ReplayRejection::WhitelistedQuota => {
+                            crate::pulse::metrics::handshake("legacy", "replay_whitelisted_quota");
+                            tracing::debug!(
+                                "Pulse handshake refused: whitelisted sources hold their replay-table quota"
+                            );
+                            DisconnectReason::PreAuthBudgetExhausted
                         }
                         // A retryable pre-auth refusal: the wallet's entries leave the table
                         // within two freshness windows, and its client is then admitted again.
