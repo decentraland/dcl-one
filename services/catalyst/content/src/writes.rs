@@ -12,7 +12,6 @@
 //! the body is read, so a body that is not a form at all gets its 400 only
 //! on a node that takes deploys (the fixture `create-entity-400-not-multipart`).
 //!
-//! On, the switch still waits for the restore stamps (`shared::writes`).
 //! The console's read-only toggle (`ContentState::read_only`, upstream's
 //! `READ_ONLY`) is checked first: upstream does not register the write route
 //! in that mode, so both routes answer this router's not-found, the answer a
@@ -21,11 +20,10 @@
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 
-use crate::shared::writes::{Refusal, refusal};
-
 pub const CONTENT_WRITES_ENABLED: &str = "CONTENT_WRITES_ENABLED";
 
-pub const DISABLED_MESSAGE: &str = "content writes are disabled on this node (CONTENT_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts local deployments";
+pub const DISABLED_MESSAGE: &str =
+    "content writes are disabled on this node (CONTENT_WRITES_ENABLED=false)";
 
 pub const BOOTSTRAPPING_MESSAGE: &str =
     "Deployments are not allowed while the Catalyst is bootstrapping";
@@ -41,14 +39,7 @@ pub const RETRY_AFTER_SECS: &str = "3600";
 pub const UNAVAILABLE_RETRY_AFTER_SECS: &str = "30";
 
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("content", DISABLED_MESSAGE);
-    let mut response = super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, &message);
+    let mut response = super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, DISABLED_MESSAGE);
     response.headers_mut().insert(
         header::RETRY_AFTER,
         header::HeaderValue::from_static(RETRY_AFTER_SECS),
@@ -73,10 +64,10 @@ pub fn bootstrapping_response() -> Response {
     response
 }
 
-/// The switch and the restore stamps alone, for a content write that is
-/// not a deploy (the forwarding lane's requeue): `None` lets it through.
+/// The switch alone, for a content write that is not a deploy (the
+/// forwarding lane's requeue): `None` lets it through.
 pub fn refuse_switch(state: &super::ContentState) -> Option<Response> {
-    refusal(state.writes_enabled()).map(|refusal| refused_response(&refusal))
+    (!state.writes_enabled()).then(disabled_response)
 }
 
 /// Both gates, read-only first: `None` lets the write through.

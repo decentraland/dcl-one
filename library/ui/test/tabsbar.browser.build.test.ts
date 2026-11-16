@@ -2,7 +2,13 @@
 import { describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
-async function navigate(page: string, width: number, activeId?: string, external = false) {
+async function navigate(
+  page: string,
+  width: number,
+  activeId?: string,
+  external = false,
+  rtl = false
+) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
@@ -14,7 +20,8 @@ async function navigate(page: string, width: number, activeId?: string, external
       '?page=' +
       page +
       (activeId ? '&active=' + activeId : '') +
-      (external ? '&external-selection' : '')
+      (external ? '&external-selection' : '') +
+      (rtl ? '&dir=rtl' : '')
   )
   await browser.evaluate(
     '(async()=>{for(let n=0;n<100&&!document.querySelector("nav");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
@@ -329,5 +336,111 @@ describe('when a user scrolls away from the selected section', () => {
     expect(await browser.evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
       'Fixture cart, 1'
     )
+  })
+})
+
+const FADE = 48
+type RouteTray = {
+  width: number
+  full: number
+  scroll: number
+  hidden: number
+  fadeStart: boolean
+  fadeEnd: boolean
+  mask: string
+  overflow: boolean
+  current: [number, number]
+  partial: [number, number][]
+}
+async function routeTray() {
+  return browser.evaluate<RouteTray>(
+    `(()=>{const ul=document.querySelector('nav ul'),f=ul.getBoundingClientRect(),s=getComputedStyle(ul);const boxes=[...ul.querySelectorAll('li')].map(li=>li.getBoundingClientRect()).filter(b=>b.width>0);const seg=b=>[Math.max(b.left,f.left)-f.left,Math.min(b.right,f.right)-f.left];const c=ul.querySelector('[aria-current=page]').getBoundingClientRect();return{width:f.width,full:boxes.filter(b=>b.left>=f.left-1&&b.right<=f.right+1).length,scroll:Math.abs(ul.scrollLeft),hidden:ul.scrollWidth-ul.clientWidth,fadeStart:ul.hasAttribute('data-fade-start'),fadeEnd:ul.hasAttribute('data-fade-end'),mask:s.maskImage||s.webkitMaskImage,overflow:document.documentElement.scrollWidth>innerWidth,current:seg(c),partial:boxes.filter(b=>b.right>f.left+1&&b.left<f.right-1&&(b.left<f.left-1||b.right>f.right+1)).map(seg)}})()`
+  )
+}
+function expectFadedOverflow(tray: RouteTray) {
+  expect(tray.fadeStart).toBe(tray.scroll > 1)
+  expect(tray.fadeEnd).toBe(tray.hidden - tray.scroll > 1)
+  expect(tray.mask === 'none').toBe(!tray.fadeStart && !tray.fadeEnd)
+}
+describe('when tablet widths give routes less room than their labels', () => {
+  for (const width of [768, 1024])
+    for (const page of ['shop', 'learn'])
+      it(
+        'should keep a usable route row and fade the overflowing edge for ' + page + ' at ' + width,
+        async () => {
+          await navigate(page, width)
+          await paint()
+          const tray = await routeTray()
+          expect(tray.width >= 267 || tray.full >= 2).toBe(true)
+          expect(tray.overflow).toBe(false)
+          expectFadedOverflow(tray)
+          if (tray.hidden > 1) expect(tray.mask).not.toBe('none')
+        }
+      )
+  it('should stack controls under the routes below the desktop breakpoint only', async () => {
+    for (const [width, stacked] of [
+      [1023, true],
+      [1024, false]
+    ] as const) {
+      await navigate('shop', width)
+      const y = await browser.evaluate<[number, number]>(
+        `[document.querySelector('[data-region=navigation]').getBoundingClientRect().y,document.querySelector('[data-region=controls]').getBoundingClientRect().y]`
+      )
+      expect(y[1] > y[0]).toBe(stacked)
+    }
+  })
+  it('should fade both edges while scrolled between the first and last routes', async () => {
+    await navigate('shop', 1024)
+    await browser.evaluate('void(document.querySelector("nav ul").scrollLeft=100)')
+    await paint()
+    const tray = await routeTray()
+    expect([tray.fadeStart, tray.fadeEnd]).toEqual([true, true])
+    expectFadedOverflow(tray)
+  })
+  it('should leave no fade when every route fits', async () => {
+    await navigate('shop', 1440)
+    await paint()
+    const tray = await routeTray()
+    expect(tray.hidden).toBeLessThanOrEqual(1)
+    expect(tray.mask).toBe('none')
+  })
+  for (const width of [768, 1024])
+    for (const page of ['shop', 'learn'])
+      it(
+        'should leave partly visible neighbours only under the fade after external selection for ' +
+          page +
+          ' at ' +
+          width,
+        async () => {
+          await navigate(page, width, '0', true)
+          await clickControl('#outside')
+          await paint()
+          const tray = await routeTray()
+          expectFadedOverflow(tray)
+          const start = tray.fadeStart ? FADE : 0
+          const end = tray.width - (tray.fadeEnd ? FADE : 0)
+          expect(tray.current[0]).toBeGreaterThanOrEqual(start - 1)
+          expect(tray.current[1]).toBeLessThanOrEqual(end + 1)
+          for (const [from, to] of tray.partial)
+            expect(
+              (tray.fadeStart && from <= 1 && to <= FADE + 1) ||
+                (tray.fadeEnd && to >= tray.width - 1 && from >= tray.width - FADE - 1)
+            ).toBe(true)
+        }
+      )
+  it('should fade the inline edges and keep the selected route clear of them in right-to-left layouts', async () => {
+    await navigate('shop', 1024, '0', true, true)
+    await paint()
+    let tray = await routeTray()
+    expect(tray.hidden).toBeGreaterThan(1)
+    expect([tray.fadeStart, tray.fadeEnd]).toEqual([false, true])
+    expect(tray.mask).toContain('to left')
+    await clickControl('#outside')
+    await paint()
+    tray = await routeTray()
+    expect([tray.fadeStart, tray.fadeEnd]).toEqual([true, false])
+    expectFadedOverflow(tray)
+    expect(tray.current[0]).toBeGreaterThanOrEqual(-1)
+    expect(tray.current[1]).toBeLessThanOrEqual(tray.width - FADE + 1)
   })
 })

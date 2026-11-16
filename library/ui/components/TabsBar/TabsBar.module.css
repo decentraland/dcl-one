@@ -34,10 +34,14 @@
     color: var(--dcl-text-primary);
   }
   .routeNavigation {
-    flex: 1 0 var(--dcl-space-96);
+    flex: 1 1 0;
     min-width: 0;
   }
+  /* Figma: overflowing routes fade out over 48px at each edge that has more routes beyond it. */
   .routeList {
+    --route-fade: var(--dcl-space-48);
+    --route-fade-start: var(--dcl-space-0);
+    --route-fade-end: var(--dcl-space-0);
     display: flex;
     gap: var(--dcl-space-32);
     margin: 0;
@@ -45,7 +49,32 @@
     overflow-x: auto;
     list-style: none;
     scrollbar-width: none;
-    scroll-padding-inline: var(--dcl-space-16);
+    scroll-padding-inline: var(--route-fade);
+  }
+  .routeList[data-fade-start] {
+    --route-fade-start: var(--route-fade);
+  }
+  .routeList[data-fade-end] {
+    --route-fade-end: var(--route-fade);
+  }
+  .routeList:is([data-fade-start], [data-fade-end]) {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      var(--dcl-neutrals-black) var(--route-fade-start),
+      var(--dcl-neutrals-black) calc(100% - var(--route-fade-end)),
+      transparent
+    );
+  }
+  /* Direction comes from the component: bundlers lower :dir() to a :lang() list that misses dir="rtl". */
+  .routeList:is([data-fade-start], [data-fade-end])[data-rtl] {
+    mask-image: linear-gradient(
+      to left,
+      transparent,
+      var(--dcl-neutrals-black) var(--route-fade-start),
+      var(--dcl-neutrals-black) calc(100% - var(--route-fade-end)),
+      transparent
+    );
   }
   .routeList::-webkit-scrollbar {
     display: none;
@@ -93,6 +122,22 @@
     .routeSearch {
       flex-basis: 364px;
       width: 364px;
+    }
+  }
+  /* Below the desktop breakpoint routes take a full row and the controls move under them. */
+  @media (width < 1024px) {
+    .routeRoot {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--dcl-space-0);
+    }
+    .routeNavigation {
+      flex: none;
+      width: 100%;
+    }
+    .routeControls {
+      width: 100%;
+      max-width: none;
     }
   }
   @media (width < 768px) {

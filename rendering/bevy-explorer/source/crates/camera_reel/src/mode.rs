@@ -7,7 +7,7 @@ use common::{
     inputs::{CommonInputAction, SystemAction, CAMERA_SET, CAMERA_ZOOM, MOVE_SET, POINTER_SET},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
+        AppConfig, CameraView, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
         PLAYER_CAMERA_FOV,
     },
 };
@@ -155,7 +155,7 @@ pub(crate) fn apply_photo_mode_requests(
         if primary.scene_override.is_some() || out_of_world {
             return;
         }
-        let first_person = primary.distance < 0.05;
+        let first_person = primary.view() == CameraView::FirstPerson;
         let start = PhotoCamera::start_transform(&transform, first_person, &settings);
         let fov = match &*projection {
             Projection::Perspective(p) => p.fov,

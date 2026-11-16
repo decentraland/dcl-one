@@ -81,6 +81,11 @@ pub async fn pack(opts: &PackOptions) -> Result<()> {
         .await?;
     }
 
+    // the project's texture setting, as `deploy` applies it: the archive holds
+    // what a deploy would upload
+    let textures =
+        crate::textures::stage_for_deploy(&root, crate::textures::Overrides::default(), false)
+            .await?;
     let rel_paths = deploy::with_release_files(&root, deploy::collect_publishable_files(&root)?);
     let mut seen_lower = HashSet::new();
     for rel in &rel_paths {
@@ -100,6 +105,7 @@ pub async fn pack(opts: &PackOptions) -> Result<()> {
     })
     .into_iter()
     .collect::<Result<_>>()?;
+    drop(textures);
     let total: u64 = files.iter().map(|(_, b)| b.len() as u64).sum();
     if files.is_empty() {
         return Err(UserError::new(
