@@ -1351,3 +1351,152 @@ async fn a_reload_at_the_cap_keeps_its_slot() {
     drop(reload);
     assert!(h.state.reserve_slot(&second_key).is_ok());
 }
+
+/// A Genesis deployment on `parcels`, its pointers active.
+async fn seed_parked_genesis(h: &Host, id: &str, parcels: &[String]) {
+    let code_hash = store(&h.state, b"").await;
+    let dep_id: i32 = sqlx::query_scalar(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
+    )
+    .bind(id)
+    .bind(serde_json::json!({ "main": "bin/game.js", "scene": { "base": parcels[0] } }))
+    .bind(parcels.to_vec())
+    .fetch_one(&h.state.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'bin/game.js')")
+        .bind(dep_id)
+        .bind(&code_hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    for p in parcels {
+        sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id) VALUES ($1, $2) ON CONFLICT (pointer) DO UPDATE SET entity_id = EXCLUDED.entity_id")
+            .bind(p)
+            .bind(id)
+            .execute(&h.state.pool)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_scene_parked_by_an_oom_is_retired_and_stays_refused() {
+    let Some(h) = host(false).await else { return };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    let world_id = format!("bafyParkedW{}", Uuid::new_v4().simple());
+    seed_scene(
+        &h.state,
+        &world,
+        &world_id,
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let world_key = SceneKey::World(world.clone());
+    h.state.load(&world_key).await.unwrap();
+
+    let x = 50_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let (first, second) = (
+        format!("bafyParkedG{}", Uuid::new_v4().simple()),
+        format!("bafyParkedH{}", Uuid::new_v4().simple()),
+    );
+    seed_parked_genesis(&h, &first, &[format!("{x},1"), format!("{x},2")]).await;
+    let genesis_key = SceneKey::Genesis(SceneId::parse(&first).unwrap());
+    h.state.load(&genesis_key).await.unwrap();
+
+    for scene in [h.state.scenes.get(world.key()), h.state.scenes.get(&first)] {
+        scene.unwrap().runtime.mark_parked_for_tests();
+    }
+    assert_eq!(h.state.retire_parked(), 2);
+    assert!(h.state.scenes.get(world.key()).is_none());
+    assert!(h.state.scenes.get(&first).is_none());
+    assert_eq!(
+        h.state.parked_count(),
+        2,
+        "parked isolates keep their slots"
+    );
+
+    let err = h.state.load(&world_key).await.unwrap_err();
+    assert!(err.to_string().contains("ran out of memory"), "{err}");
+    // A redeploy under a new id on one of the parked scene's parcels.
+    seed_parked_genesis(&h, &second, &[format!("{x},2"), format!("{x},3")]).await;
+    let err = h
+        .state
+        .load(&SceneKey::Genesis(SceneId::parse(&second).unwrap()))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("ran out of memory"), "{err}");
+    assert!(h.state.scenes.get(&second).is_none());
+}
+
+/// A runtime that stops closes its clients, and the next join loads the
+/// scene again instead of joining the stopped one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stopped_runtime_closes_its_clients_and_is_reloaded_on_join() {
+    let Some(h) = host_tuned(true, None, |raw| raw.js_update_failure_cap = 1).await else {
+        return;
+    };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    let code = "var open = false;\n\
+         registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } },\n\
+           function (ev) { if (ev.type === 'open') open = true; });\n\
+         module.exports.onUpdate = function (dt) { if (open) throw new Error('stop'); };";
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyStops",
+        code,
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+
+    let (mut first, _) = join(addr, &world, VISITOR_KEY, "{}")
+        .await
+        .expect("admitted");
+    let stopped = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), first.next()).await,
+            Ok(Some(Ok(WsMessage::Close(_))))
+        ),
+        "a stopped runtime has the host close its clients"
+    );
+    assert!(!stopped.runtime.is_running());
+    assert!(
+        crate::shared::test_wait::until(async || stopped.client_count() == 0).await,
+        "the closed client is removed"
+    );
+
+    let (_ws, _) = join(addr, &world, STRANGER_KEY, "{}")
+        .await
+        .expect("the next client gets a fresh runtime");
+    let reloaded = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(
+        !Arc::ptr_eq(&reloaded, &stopped),
+        "the stopped scene is replaced"
+    );
+
+    // The reloaded runtime stops too; within the cooldown it is not
+    // reloaded again.
+    assert!(crate::shared::test_wait::until(async || !reloaded.runtime.is_running()).await);
+    let err = h
+        .state
+        .join(&reloaded.identity, |_| ())
+        .await
+        .err()
+        .expect("a second reload within the cooldown is refused");
+    assert!(err.to_string().contains("not reloaded again yet"), "{err}");
+    let hosted = h.state.scenes.get(world.key()).expect("hosted");
+    assert!(Arc::ptr_eq(&hosted, &reloaded), "nothing was reloaded");
+}
