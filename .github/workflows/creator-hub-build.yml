@@ -55,6 +55,8 @@ jobs:
               'apps/creator-hub/packages/asset-packs/tsconfig*.json',
               'apps/creator-hub/packages/asset-packs/package.json',
               'apps/creator-hub/packages/inspector/src/**',
+              'apps/ui3/package.json',
+              'apps/ui3/tsconfig.json',
               'apps/ui3/src/atoms/**',
               'apps/ui3/src/shop/land/**',
               'apps/ui3/src/shop/checkout/chain/**',

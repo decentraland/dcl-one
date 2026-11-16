@@ -64,7 +64,7 @@ jobs:
             apps/creator-hub/packages/inspector/public/bundle.js
             apps/creator-hub/packages/inspector/public/bundle.css
           # Single line on purpose: newlines inside a ${{ }} expression are brittle.
-          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/ui3/src/atoms/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/pnpm-lock.yaml') }}
+          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/ui3/package.json', 'apps/ui3/tsconfig.json', 'apps/ui3/src/atoms/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/pnpm-lock.yaml') }}
 
       - name: build inspector
         if: steps.inspector-dev-bundle.outputs.cache-hit != 'true'

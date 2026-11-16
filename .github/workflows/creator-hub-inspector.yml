@@ -64,8 +64,9 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          # The bundle also holds apps/ui3/src/atoms (the `@ui` alias in build.js).
-          change_path: "apps/creator-hub/packages/inspector apps/ui3/src/atoms"
+          # The bundle also holds apps/ui3/src/atoms (the `@ui` alias in build.js), built with the ui3
+          # package (sideEffects) and compiler settings (jsx, paths).
+          change_path: "apps/creator-hub/packages/inspector apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms"
 
       # With no `@dcl/inspector@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 as the npm `latest`. Tag the last released version first (cut-over runbook).
