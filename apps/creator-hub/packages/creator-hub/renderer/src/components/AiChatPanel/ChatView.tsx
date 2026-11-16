@@ -54,7 +54,7 @@ import { useCliSignIn } from '/@/hooks/useCliSignIn';
 import type { AiMessage, AiPromptData, AiSessionMeta } from '/@/modules/store/ai/types';
 import { WarningCircleIcon } from '../Icons';
 import { SignInCodeField } from '../SignInCodeField';
-import { RecordButton } from '../SessionRecorder';
+import { RecordButton, RecordingCard, TranscribingStrip } from '../SessionRecorder';
 import { toolChipLabel } from './labels';
 import {
   AssistantBubble,
@@ -70,6 +70,9 @@ import {
   BillingTitle,
   CommandLine,
   Composer,
+  ComposerChips,
+  ComposerToolbar,
+  ComposerToolbarSpacer,
   DropHint,
   ErrorRow,
   GuideLink,
@@ -354,6 +357,8 @@ export interface ChatViewProps {
   // above the composer (the recording goes to this chat).
   recorder?: AiRecorderState;
   onToggleRecording?: () => void;
+  // Discard the running recording (the card asks for confirmation first).
+  onCancelRecording?: () => void;
   // The user dismissed the billing hint for this scene (#1505) — hide it.
   billingDismissed: boolean;
   // The scene's saved conversations (newest first) and which one is active, for the history menu.
@@ -433,6 +438,7 @@ export function ChatView(props: ChatViewProps) {
     recording,
     recorder,
     onToggleRecording,
+    onCancelRecording,
     billingDismissed,
     sessions,
     currentSessionId,
@@ -1154,37 +1160,15 @@ export function ChatView(props: ChatViewProps) {
             </SelectionBar>
           ))}
 
-        {available && recording !== null && (
-          <SelectionBar data-testid="ai-recording-chip">
-            <MicNoneOutlinedIcon fontSize="small" />
-            <SelectionNames title={recording.dir}>
-              {recording.transcriptionError
-                ? t('editor.ai.recording.chip_no_speech', {
-                    duration: formatRecordingDuration(recording.durationMs),
-                    actions: recording.actionCount,
-                  })
-                : t('editor.ai.recording.chip', {
-                    duration: formatRecordingDuration(recording.durationMs),
-                    actions: recording.actionCount,
-                  })}
-            </SelectionNames>
-            <ClearMentionButton
-              label={t('editor.ai.recording.remove')}
-              onClick={onRemoveRecording}
-            />
-          </SelectionBar>
-        )}
-
-        {recorder !== undefined && onToggleRecording !== undefined && (
+        {/* A running recording takes this row; idle, its button sits in the composer's toolbar. */}
+        {recorder?.status === 'recording' && onToggleRecording !== undefined && (
           <div className={recordRowStyles.recordRow}>
-            <RecordButton
-              fullWidth
-              status={recorder.status}
+            <RecordingCard
               startedAt={recorder.startedAt}
               micLabel={recorder.micLabel}
-              tools={recorder.tools}
-              disabled={!available}
-              onClick={onToggleRecording}
+              actionCount={recorder.actionCount}
+              onStop={onToggleRecording}
+              onDiscard={onCancelRecording}
             />
           </div>
         )}
@@ -1226,76 +1210,137 @@ export function ChatView(props: ChatViewProps) {
             hidden
             onChange={handleFilePick}
           />
-          <TextField
-            fullWidth
-            multiline
-            maxRows={6}
-            size="small"
-            autoFocus
-            inputRef={composerRef}
-            placeholder={t('editor.ai.placeholder')}
-            value={input}
-            disabled={!available}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            sx={{
-              // Rounded field with the send control living inside it; a white focus/hover
-              // outline instead of the default primary (ruby) ring (#1576).
-              '& .MuiOutlinedInput-root': {
-                borderRadius: '10px',
-                alignItems: 'center',
-                paddingRight: theme => theme.spacing(0.75),
-                backgroundColor: 'var(--ai-input-bg)',
-              },
-              '& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'text.secondary',
-              },
-              '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                borderColor: 'secondary.main',
-              },
-            }}
-            InputProps={{
-              startAdornment: (
-                <Tooltip title={t('editor.ai.attach.button')}>
-                  <span>
-                    <AttachButton
-                      aria-label={t('editor.ai.attach.button')}
-                      disabled={!available || attachments.length >= MAX_ATTACHMENTS}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <AttachFileIcon fontSize="small" />
-                    </AttachButton>
-                  </span>
-                </Tooltip>
-              ),
-              endAdornment: busy ? (
-                <Tooltip title={t('editor.ai.stop')}>
-                  <StopButton
-                    aria-label={t('editor.ai.stop')}
-                    onClick={onStop}
-                  >
-                    <StopIcon fontSize="small" />
-                  </StopButton>
-                </Tooltip>
-              ) : (
-                <Tooltip title={t('editor.ai.send')}>
-                  <span>
-                    <SendButton
-                      aria-label={t('editor.ai.send')}
-                      disabled={
-                        !available ||
-                        (input.trim() === '' && attachments.length === 0 && recording === null)
-                      }
-                      onClick={handleSend}
-                    >
-                      <ArrowUpwardIcon fontSize="small" />
-                    </SendButton>
-                  </span>
-                </Tooltip>
-              ),
-            }}
-          />
+          {recorder?.status === 'stopping' ? (
+            <TranscribingStrip
+              status={recorder.status}
+              startedAt={recorder.startedAt}
+              tools={recorder.tools}
+            />
+          ) : (
+            <TextField
+              fullWidth
+              multiline
+              maxRows={6}
+              size="small"
+              autoFocus
+              inputRef={composerRef}
+              placeholder={t('editor.ai.placeholder')}
+              value={input}
+              disabled={!available}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              sx={{
+                // Rounded field with the text on top and its controls in a row underneath; a
+                // white focus/hover outline instead of the default primary (ruby) ring (#1576).
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '10px',
+                  flexDirection: 'column',
+                  alignItems: 'stretch',
+                  gap: theme => theme.spacing(1),
+                  padding: theme => theme.spacing(1.25, 0.75, 0.75),
+                  backgroundColor: 'var(--ai-input-bg)',
+                },
+                '& .MuiOutlinedInput-input': {
+                  padding: theme => theme.spacing(0, 0.75),
+                },
+                '& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: 'text.secondary',
+                },
+                '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                  borderColor: 'secondary.main',
+                },
+              }}
+              InputProps={{
+                // The pending recording rides inside the field, like something already typed.
+                startAdornment:
+                  available && recording !== null ? (
+                    <ComposerChips>
+                      <AttachmentChip
+                        data-testid="ai-recording-chip"
+                        sx={{ maxWidth: '100%' }}
+                      >
+                        <MicNoneOutlinedIcon />
+                        <AttachmentName title={recording.dir}>
+                          {recording.transcriptionError
+                            ? t('editor.ai.recording.chip_no_speech', {
+                                duration: formatRecordingDuration(recording.durationMs),
+                                actions: recording.actionCount,
+                              })
+                            : t('editor.ai.recording.chip', {
+                                duration: formatRecordingDuration(recording.durationMs),
+                                actions: recording.actionCount,
+                              })}
+                        </AttachmentName>
+                        <Tooltip title={t('editor.ai.recording.remove')}>
+                          <AttachmentRemove
+                            aria-label={t('editor.ai.recording.remove')}
+                            onClick={onRemoveRecording}
+                          >
+                            <CloseIcon />
+                          </AttachmentRemove>
+                        </Tooltip>
+                      </AttachmentChip>
+                    </ComposerChips>
+                  ) : undefined,
+                endAdornment: (
+                  <ComposerToolbar>
+                    <Tooltip title={t('editor.ai.attach.button')}>
+                      <span>
+                        <AttachButton
+                          aria-label={t('editor.ai.attach.button')}
+                          disabled={!available || attachments.length >= MAX_ATTACHMENTS}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <AttachFileIcon fontSize="small" />
+                        </AttachButton>
+                      </span>
+                    </Tooltip>
+                    {recorder !== undefined &&
+                      onToggleRecording !== undefined &&
+                      recorder.status !== 'recording' && (
+                        <RecordButton
+                          status={recorder.status}
+                          startedAt={recorder.startedAt}
+                          micLabel={recorder.micLabel}
+                          tools={recorder.tools}
+                          disabled={!available}
+                          onClick={onToggleRecording}
+                        />
+                      )}
+                    <ComposerToolbarSpacer />
+                    {busy ? (
+                      <Tooltip title={t('editor.ai.stop')}>
+                        <StopButton
+                          aria-label={t('editor.ai.stop')}
+                          onClick={onStop}
+                        >
+                          <StopIcon fontSize="small" />
+                        </StopButton>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip title={t('editor.ai.send')}>
+                        <span>
+                          <SendButton
+                            aria-label={t('editor.ai.send')}
+                            disabled={
+                              !available ||
+                              (input.trim() === '' &&
+                                attachments.length === 0 &&
+                                recording === null)
+                            }
+                            onClick={handleSend}
+                          >
+                            <ArrowUpwardIcon fontSize="small" />
+                          </SendButton>
+                        </span>
+                      </Tooltip>
+                    )}
+                  </ComposerToolbar>
+                ),
+              }}
+            />
+          )}
         </Composer>
       </>
     </Panel>

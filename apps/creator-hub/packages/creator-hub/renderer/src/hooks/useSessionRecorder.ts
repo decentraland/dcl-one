@@ -13,7 +13,12 @@ import { t } from '/@/modules/store/translation/utils';
 import type { initRpc } from '/@/modules/rpc';
 import { playRecordingLimitChime } from '/@/modules/recording/chime';
 import { startMicrophone, type Microphone } from '/@/modules/recording/microphone';
-import { setActiveRecordingSession, startHubDomRecorder } from '/@/modules/recording/session';
+import { publishMicLevel } from '/@/modules/recording/level';
+import {
+  onRecordedActionCount,
+  setActiveRecordingSession,
+  startHubDomRecorder,
+} from '/@/modules/recording/session';
 
 export type { RecorderStatus };
 
@@ -56,6 +61,8 @@ export function useSessionRecorder({
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [micLabel, setMicLabel] = useState('');
   const [tools, setTools] = useState<RecordingToolsStatus | null>(null);
+  const [actionCount, setActionCount] = useState(0);
+  useEffect(() => onRecordedActionCount(setActionCount), []);
   const active = useRef<Active | null>(null);
   // Bumped by every start and every abort: a start that finds the counter moved on after one of
   // its awaits was aborted meanwhile and must undo what it did, not carry on.
@@ -73,12 +80,18 @@ export function useSessionRecorder({
   // The button lives in the assistant panel and the detached window, which render it from the
   // store; publish every change there, and reset it when the editor goes away.
   useEffect(() => {
-    dispatch(aiActions.setRecorderState({ status, startedAt, micLabel, tools }));
-  }, [dispatch, status, startedAt, micLabel, tools]);
+    dispatch(aiActions.setRecorderState({ status, startedAt, micLabel, tools, actionCount }));
+  }, [dispatch, status, startedAt, micLabel, tools, actionCount]);
   useEffect(
     () => () => {
       dispatch(
-        aiActions.setRecorderState({ status: 'idle', startedAt: null, micLabel: '', tools: null }),
+        aiActions.setRecorderState({
+          status: 'idle',
+          startedAt: null,
+          micLabel: '',
+          tools: null,
+          actionCount: 0,
+        }),
       );
     },
     [dispatch],
@@ -120,6 +133,19 @@ export function useSessionRecorder({
     setStartedAt(null);
   }, []);
 
+  // The user threw the running recording away: like an abort, and main deletes what it captured.
+  const discard = useCallback(() => {
+    const current = active.current;
+    if (!current || status !== 'recording') return;
+    attempt.current += 1;
+    active.current = null;
+    release(current);
+    void rpcRef.current?.scene.setRecording(false).catch(() => undefined);
+    void recordingPreload.cancel(current.sessionId).catch(fail);
+    setStatus('idle');
+    setStartedAt(null);
+  }, [status, rpcRef, fail]);
+
   const start = useCallback(async () => {
     if (!project || active.current || status !== 'idle') return;
     const token = (attempt.current += 1);
@@ -145,9 +171,10 @@ export function useSessionRecorder({
       setActiveRecordingSession(id);
       const stopHubDom = startHubDomRecorder();
       active.current = { sessionId: id, microphone: null, stopHubDom, limitTimer: null };
-      microphone = await startMicrophone((pcm, firstSampleAt) =>
-        recordingPreload.sendAudio(id, pcm, firstSampleAt),
-      );
+      microphone = await startMicrophone((pcm, firstSampleAt) => {
+        recordingPreload.sendAudio(id, pcm, firstSampleAt);
+        publishMicLevel(pcm);
+      });
       if (!live()) {
         // The abort released everything it knew of; the microphone opened after that.
         microphone.stop();
@@ -270,5 +297,5 @@ export function useSessionRecorder({
     [project?.path, abort, dispatch],
   );
 
-  return { status, startedAt, micLabel, tools, start, stop };
+  return { status, startedAt, micLabel, tools, actionCount, start, stop, discard };
 }

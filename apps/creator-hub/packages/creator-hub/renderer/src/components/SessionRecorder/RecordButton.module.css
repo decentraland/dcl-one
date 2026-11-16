@@ -8,31 +8,35 @@
   width: auto;
   height: 32px;
   padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid var(--error);
-  background-color: transparent;
+  border-radius: 16px;
+  border: 0;
+  background-color: var(--white-10);
   color: var(--palette-neutral-softWhite);
   font-family: var(--font-family);
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .control[data-full="true"] {
   width: 100%;
   height: 36px;
+  border-radius: 8px;
 }
 
+/* The darker red: white text on --error falls short of 4.5:1. */
 .control[data-live="true"] {
-  background-color: var(--error);
+  background-color: var(--palette-error-dark2);
+  font-weight: 600;
 }
 
 .control:hover:not(:disabled) {
-  background-color: var(--white-10);
+  background-color: rgba(255, 255, 255, 0.16);
 }
 
 .control[data-live="true"]:hover:not(:disabled) {
   background-color: var(--palette-error-dark2);
+  filter: brightness(1.1);
 }
 
 .control:disabled {
@@ -50,16 +54,17 @@
   height: 10px;
   flex-shrink: 0;
   border-radius: 50%;
-  background-color: var(--error);
-}
-
-.dot[data-live="true"] {
   background-color: var(--palette-neutral-softWhite);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+.mic {
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dot[data-live="true"] {
+  .dot {
     animation: none;
   }
 }

@@ -165,6 +165,7 @@ export function EditorPage() {
   // The detached window's Record button lands here; the handler is defined further down,
   // with the recorder it drives.
   const recordClickRef = useRef<() => void>(() => undefined);
+  const recordDiscardRef = useRef<() => void>(() => undefined);
   const {
     detachedOpen: aiDetached,
     openDetached: openAiWindow,
@@ -175,6 +176,7 @@ export function EditorPage() {
     handleClearAiSelection,
     () => setAiOpen(false),
     () => recordClickRef.current(),
+    () => recordDiscardRef.current(),
   );
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). Open the inline
   // panel on it; ChatView copies the text into the composer and clears the draft.
@@ -279,6 +281,7 @@ export function EditorPage() {
     void misc.focusWindow().catch(() => undefined);
   }, [recorder, settings.recordingConsentAcknowledged, locale]);
   recordClickRef.current = () => void handleRecordClick();
+  recordDiscardRef.current = recorder.discard;
   const handleRecordingConsentAccept = useCallback(() => {
     setRecordingConsent(null);
     updateAppSettings({ ...settings, recordingConsentAcknowledged: true });
@@ -980,6 +983,7 @@ export function EditorPage() {
                     onDock={closeAiWindow}
                     width={aiPanelWidth}
                     onToggleRecording={handleRecordClick}
+                    onCancelRecording={recorder.discard}
                   />
                 ) : (
                   <AiChatPanel
@@ -988,6 +992,7 @@ export function EditorPage() {
                     onClearSelection={handleClearAiSelection}
                     width={aiPanelWidth}
                     onToggleRecording={handleRecordClick}
+                    onCancelRecording={recorder.discard}
                   />
                 )}
               </>

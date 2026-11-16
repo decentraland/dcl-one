@@ -192,6 +192,17 @@
       "record_panel": "Record voice and actions",
       "stop": "Stop recording",
       "stop_with_time": "Stop · {time} / {limit}",
+      "stop_short": "Stop",
+      "live": "Recording",
+      "actions_captured": "{count} {count, plural, one {action} other {actions}} captured",
+      "discard": "Discard",
+      "recorded": "{time} recorded",
+      "discard_confirm": {
+        "title": "Discard this recording?",
+        "body": "The recording stops and what it captured so far is deleted. This can't be undone.",
+        "cancel": "Keep recording",
+        "confirm": "Discard"
+      },
       "starting": "Starting…",
       "transcribing": "Transcribing…",
       "downloading": "Speech model {percent}%",

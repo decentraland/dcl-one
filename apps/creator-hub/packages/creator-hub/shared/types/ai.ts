@@ -255,6 +255,8 @@ export interface AiRecorderState {
   startedAt: number | null;
   // The input device's name, for the tooltip.
   micLabel: string;
+  // Actions captured so far in the running recording.
+  actionCount: number;
   // Speech-to-text download progress while it installs on first use.
   tools: RecordingToolsStatus | null;
 }
@@ -294,6 +296,7 @@ export type AiRemoteCommand =
   | { type: 'removeAssetMention'; mention: AiAssetMention }
   | { type: 'removeRecording' }
   | { type: 'toggleRecording' }
+  | { type: 'cancelRecording' }
   // The detached window's close button: shut the assistant entirely (close the window AND the
   // inline panel), instead of just docking back — so close is consistent whether detached or not.
   | { type: 'closeAssistant' }

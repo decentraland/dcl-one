@@ -25,6 +25,8 @@ export function useAiSession(
   // Press the Record button. The recorder runs here, in the editor window; the detached
   // window's button triggers it via a remote command.
   onToggleRecording?: () => void,
+  // Discard the running recording, pressed in the detached window.
+  onCancelRecording?: () => void,
 ) {
   const dispatch = useDispatch();
   const aiState = useSelector(state => state.ai);
@@ -39,8 +41,16 @@ export function useAiSession(
     onClearSelection,
     onCloseAssistant,
     onToggleRecording,
+    onCancelRecording,
   });
-  latest.current = { aiState, projectTitle, onClearSelection, onCloseAssistant, onToggleRecording };
+  latest.current = {
+    aiState,
+    projectTitle,
+    onClearSelection,
+    onCloseAssistant,
+    onToggleRecording,
+    onCancelRecording,
+  };
 
   // Provider detection + the turn event stream (fold events into the store, persist on done).
   useEffect(() => {
@@ -158,6 +168,9 @@ export function useAiSession(
           break;
         case 'toggleRecording':
           latest.current.onToggleRecording?.();
+          break;
+        case 'cancelRecording':
+          latest.current.onCancelRecording?.();
           break;
         case 'closeAssistant':
           void aiPreload.closeAiWindow();

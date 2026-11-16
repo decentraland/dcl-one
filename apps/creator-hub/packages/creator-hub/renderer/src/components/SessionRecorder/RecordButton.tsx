@@ -1,30 +1,12 @@
-import { useEffect, useState } from 'react';
+import MicNoneOutlinedIcon from '@mui/icons-material/MicNoneOutlined';
 import { CircularProgress, Tooltip } from 'decentraland-ui2';
 
 import type { RecorderStatus } from '/shared/types/ai';
 import { MAX_RECORDING_MS, type RecordingToolsStatus } from '/shared/types/recording';
 
 import { t } from '/@/modules/store/translation/utils';
+import { LIMIT, busyLabel, elapsed, useNow } from './time';
 import styles from './RecordButton.module.css';
-
-function clock(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
-function elapsed(startedAt: number | null, now: number): string {
-  return clock(startedAt === null ? 0 : Math.min(MAX_RECORDING_MS, now - startedAt));
-}
-
-const LIMIT = clock(MAX_RECORDING_MS);
-
-function busyLabel(status: RecorderStatus, tools: RecordingToolsStatus | null): string {
-  if (status === 'starting') return t('editor.recording.starting');
-  if (tools?.state === 'installing' && tools.percent !== undefined) {
-    return t('editor.recording.downloading', { percent: tools.percent });
-  }
-  return t('editor.recording.transcribing');
-}
 
 type Props = {
   status: RecorderStatus;
@@ -32,7 +14,7 @@ type Props = {
   micLabel: string;
   tools: RecordingToolsStatus | null;
   onClick: () => void;
-  // The assistant panel's version: a full-width bar with a longer idle label.
+  // The popped-out chat's placeholder: a full-width bar with a longer idle label.
   fullWidth?: boolean;
   disabled?: boolean;
 };
@@ -46,14 +28,8 @@ export function RecordButton({
   fullWidth = false,
   disabled = false,
 }: Props) {
-  const [now, setNow] = useState(() => Date.now());
   const live = status === 'recording';
-
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(timer);
-  }, [live]);
+  const now = useNow(live);
 
   const busy = status === 'starting' || status === 'stopping';
   const tooltip = live
@@ -83,11 +59,10 @@ export function RecordButton({
               size={14}
               color="inherit"
             />
+          ) : live ? (
+            <span className={styles.dot} />
           ) : (
-            <span
-              className={styles.dot}
-              data-live={live}
-            />
+            <MicNoneOutlinedIcon className={styles.mic} />
           )}
           <span className={styles.label}>
             {busy

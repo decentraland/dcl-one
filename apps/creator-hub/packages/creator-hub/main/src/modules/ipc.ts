@@ -234,6 +234,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('recording.abort', async (event, sessionId) =>
     recording.abortIfOwner(event.sender.id, sessionId),
   );
+  handle('recording.cancel', (event, sessionId) => recording.cancel(event.sender.id, sessionId));
   handle('recording.toolsStatus', (_event, language) =>
     recordingTools.getStatus(recordingTools.modelFor(language)),
   );

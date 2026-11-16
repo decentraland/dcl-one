@@ -192,6 +192,17 @@
       "record_panel": "Grabar voz y acciones",
       "stop": "Detener grabación",
       "stop_with_time": "Detener · {time} / {limit}",
+      "stop_short": "Detener",
+      "live": "Grabando",
+      "actions_captured": "{count} {count, plural, one {acción capturada} other {acciones capturadas}}",
+      "discard": "Descartar",
+      "recorded": "{time} grabados",
+      "discard_confirm": {
+        "title": "¿Descartar esta grabación?",
+        "body": "La grabación se detiene y se elimina lo capturado hasta ahora. Esta acción no se puede deshacer.",
+        "cancel": "Seguir grabando",
+        "confirm": "Descartar"
+      },
       "starting": "Iniciando…",
       "transcribing": "Transcribiendo…",
       "downloading": "Modelo de voz {percent}%",

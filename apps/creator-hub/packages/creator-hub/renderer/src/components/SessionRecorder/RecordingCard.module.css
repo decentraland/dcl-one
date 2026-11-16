@@ -1,0 +1,136 @@
+/* Values from the decentraland-ui2 dark theme the app renders with (8px spacing unit). */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--error);
+  border-radius: 10px;
+  background-color: var(--panel-2);
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--font-family);
+  font-size: 0.8125rem;
+}
+
+.header,
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--error);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.title {
+  flex: 1;
+  font-weight: 600;
+}
+
+.time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit,
+.meta {
+  color: var(--gray);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.wave {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  height: 28px;
+  overflow: hidden;
+}
+
+.bar {
+  width: 3px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background-color: var(--gray);
+}
+
+.discard,
+.stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--palette-neutral-softWhite);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.discard {
+  padding: 0 10px;
+  background-color: transparent;
+  color: var(--gray);
+  font-weight: 500;
+}
+
+.discard:hover {
+  background-color: var(--white-10);
+  color: var(--palette-neutral-softWhite);
+}
+
+.stop {
+  padding: 0 12px 0 10px;
+  background-color: var(--palette-error-dark2);
+  font-weight: 600;
+}
+
+.stop:hover {
+  filter: brightness(1.1);
+}
+
+.discard:focus-visible,
+.stop:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.square {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background-color: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}

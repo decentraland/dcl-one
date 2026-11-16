@@ -1,4 +1,10 @@
-import type { RecordedEvent, TranscriptWord } from '/shared/types/recording';
+import {
+  HOVER_EVENT_KINDS as HOVER_KINDS,
+  SCENE_EVENT_KINDS as SCENE_KINDS,
+  isRecordedAction,
+  type RecordedEvent,
+  type TranscriptWord,
+} from '/shared/types/recording';
 
 // Builds the session timeline: what the user said (word-timestamped transcript) interleaved with
 // what they did (recorded events), plus a per-utterance note of what they were pointing at and
@@ -81,9 +87,6 @@ const DEICTIC = new Set([
 const DEICTIC_ZH = ['这个', '那个', '这些', '那些', '这里', '那里', '这', '那'];
 
 const POINTER_KINDS = new Set(['viewport-hover', 'hover', 'scene-click']);
-const HOVER_KINDS = new Set(['viewport-hover', 'hover', 'player']);
-// What the running scene's code made appear or disappear: context, not something the user did.
-const SCENE_KINDS = new Set(['scene-appear', 'scene-remove']);
 // "Kill this one" said as a monster pops up refers to the monster even when the pointer is
 // elsewhere: things that appeared shortly before the pointing word, and were still there when
 // it was said, are candidates too.
@@ -258,8 +261,7 @@ export function buildTimeline(input: TimelineInput): Timeline {
     utterances,
     lines,
     durationMs: Math.max(0, input.endedAt - input.startedAt),
-    actionCount: input.events.filter(e => !HOVER_KINDS.has(e.kind) && !SCENE_KINDS.has(e.kind))
-      .length,
+    actionCount: input.events.filter(e => isRecordedAction(e.kind)).length,
   };
 }
 

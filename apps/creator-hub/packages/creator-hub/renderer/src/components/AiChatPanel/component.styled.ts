@@ -333,7 +333,23 @@ const AttachmentRemove = styled(IconButton)(({ theme }) => ({
   '&:hover': { color: theme.palette.text.primary },
 }));
 
-// The paperclip that opens the file picker, sitting inside the input at its left edge.
+// The row of controls under the composer's text: attach and record on the left, send on the right.
+const ComposerToolbar = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  alignItems: 'center',
+  gap: theme.spacing(0.5),
+}));
+
+const ComposerToolbarSpacer = styled('span')({ flex: 1 });
+
+// Chips shown inside the field, above the text (the pending recording).
+const ComposerChips = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  minWidth: 0,
+  padding: theme.spacing(0, 0.25),
+}));
+
+// The paperclip that opens the file picker, first in the composer's toolbar.
 const AttachButton = styled(IconButton)(({ theme }) => ({
   flexShrink: 0,
   width: theme.spacing(3.5),
@@ -628,6 +644,9 @@ export {
   BillingTitle,
   CommandLine,
   Composer,
+  ComposerChips,
+  ComposerToolbar,
+  ComposerToolbarSpacer,
   DropHint,
   EmptyState,
   ErrorRow,

@@ -4,7 +4,7 @@ import { Button } from 'decentraland-ui2';
 import { useSelector } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 
-import { RecordButton } from '../SessionRecorder';
+import { RecordButton, RecordingCard } from '../SessionRecorder';
 import { EmptyState, HeaderTitle, Panel, PanelHeader } from './component.styled';
 import recordRowStyles from './RecordRow.module.css';
 
@@ -14,10 +14,12 @@ export function DetachedPlaceholder({
   onDock,
   width,
   onToggleRecording,
+  onCancelRecording,
 }: {
   onDock: () => void;
   width: number;
   onToggleRecording: () => void;
+  onCancelRecording: () => void;
 }) {
   const recorder = useSelector(state => state.ai.recorder);
   // Same gate as the chat's own button: a recording goes to the assistant, so there must be one.
@@ -35,15 +37,25 @@ export function DetachedPlaceholder({
       {/* The recording is of this window, so its button stays here too, not only in the
           popped-out chat. */}
       <div className={recordRowStyles.recordRow}>
-        <RecordButton
-          fullWidth
-          status={recorder.status}
-          startedAt={recorder.startedAt}
-          micLabel={recorder.micLabel}
-          tools={recorder.tools}
-          onClick={onToggleRecording}
-          disabled={!available}
-        />
+        {recorder.status === 'recording' ? (
+          <RecordingCard
+            startedAt={recorder.startedAt}
+            micLabel={recorder.micLabel}
+            actionCount={recorder.actionCount}
+            onStop={onToggleRecording}
+            onDiscard={onCancelRecording}
+          />
+        ) : (
+          <RecordButton
+            fullWidth
+            status={recorder.status}
+            startedAt={recorder.startedAt}
+            micLabel={recorder.micLabel}
+            tools={recorder.tools}
+            onClick={onToggleRecording}
+            disabled={!available}
+          />
+        )}
       </div>
       <EmptyState>
         <div>{t('editor.ai.detached_message')}</div>

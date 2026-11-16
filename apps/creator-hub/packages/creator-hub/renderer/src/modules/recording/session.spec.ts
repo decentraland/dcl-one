@@ -5,7 +5,9 @@ vi.mock('#preload', () => ({ recording: preload }));
 
 import {
   describeHubElement,
+  forwardRecordedEvents,
   hubArea,
+  onRecordedActionCount,
   setActiveRecordingSession,
   startHubDomRecorder,
 } from './session';
@@ -75,5 +77,37 @@ describe('when the Creator Hub window is clicked', () => {
     stop();
     document.getElementById('b')!.click();
     expect(preload.sendEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe('when events are forwarded for the running recording', () => {
+  let counts: number[];
+  let unsubscribe: () => void;
+
+  beforeEach(() => {
+    counts = [];
+    setActiveRecordingSession('s1');
+    unsubscribe = onRecordedActionCount(count => counts.push(count));
+  });
+
+  afterEach(() => {
+    unsubscribe();
+    setActiveRecordingSession(null);
+  });
+
+  it('should count what the user did, not hovers or what the scene made appear', () => {
+    forwardRecordedEvents([
+      { t: 1, kind: 'click', text: 'Clicked "Play"' },
+      { t: 2, kind: 'viewport-hover', text: 'Pointing at Barrel' },
+      { t: 3, kind: 'scene-appear', text: 'Monster appeared' },
+      { t: 4, kind: 'select', text: 'Selected Barrel' },
+    ]);
+    expect(counts).toEqual([2]);
+  });
+
+  it('should start again from zero with the next recording', () => {
+    forwardRecordedEvents([{ t: 1, kind: 'click', text: 'Clicked "Play"' }]);
+    setActiveRecordingSession('s2');
+    expect(counts).toEqual([1, 0]);
   });
 });

@@ -14,6 +14,7 @@ const mic = vi.hoisted(() => ({ startMicrophone: vi.fn() }));
 vi.mock('/@/modules/recording/microphone', () => mic);
 const session = vi.hoisted(() => ({
   setActiveRecordingSession: vi.fn(),
+  onRecordedActionCount: vi.fn(() => () => {}),
   startHubDomRecorder: vi.fn(() => vi.fn()),
 }));
 vi.mock('/@/modules/recording/session', () => session);
@@ -73,6 +74,7 @@ describe('useSessionRecorder', () => {
     vi.mocked(recording.toolsStatus).mockResolvedValue({ state: 'ready' });
     vi.mocked(recording.start).mockResolvedValue({ sessionId: 's1' });
     vi.mocked(recording.abort).mockResolvedValue(undefined);
+    vi.mocked(recording.cancel).mockReset().mockResolvedValue(undefined);
     vi.mocked(recording.onToolsProgress).mockReturnValue({ cleanup: vi.fn() });
     vi.mocked(recording.stop).mockResolvedValue({
       sessionId: 's1',
@@ -141,6 +143,26 @@ describe('useSessionRecorder', () => {
       expect(mic.startMicrophone).not.toHaveBeenCalled();
       expect(recording.abort).toHaveBeenCalledWith('s1');
       expect(result.current.status).toBe('idle');
+    });
+  });
+
+  describe('when the user discards the running recording', () => {
+    it('should release the microphone and have main delete what was captured', async () => {
+      const { result } = render();
+      await act(() => result.current.start());
+      act(() => result.current.discard());
+      expect(microphone.stop).toHaveBeenCalled();
+      expect(setRecording).toHaveBeenCalledWith(false);
+      expect(recording.cancel).toHaveBeenCalledWith('s1');
+      expect(recording.stop).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
+      expect(onFinished).not.toHaveBeenCalled();
+    });
+
+    it('should do nothing while no recording runs', () => {
+      const { result } = render();
+      act(() => result.current.discard());
+      expect(recording.cancel).not.toHaveBeenCalled();
     });
   });
 

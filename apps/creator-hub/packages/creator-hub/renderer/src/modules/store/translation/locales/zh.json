@@ -192,6 +192,17 @@
       "record_panel": "录制语音和操作",
       "stop": "停止录制",
       "stop_with_time": "停止 · {time} / {limit}",
+      "stop_short": "停止",
+      "live": "正在录制",
+      "actions_captured": "已记录 {count} 个操作",
+      "discard": "放弃",
+      "recorded": "已录制 {time}",
+      "discard_confirm": {
+        "title": "放弃这段录制？",
+        "body": "录制将停止，已记录的内容会被删除。此操作无法撤销。",
+        "cancel": "继续录制",
+        "confirm": "放弃"
+      },
       "starting": "正在开始…",
       "transcribing": "正在转写…",
       "downloading": "语音模型 {percent}%",

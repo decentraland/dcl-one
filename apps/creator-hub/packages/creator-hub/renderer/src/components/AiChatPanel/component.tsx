@@ -18,6 +18,8 @@ interface Props {
   width: number;
   // Press the Record button (EditorPage owns the recorder and its consent dialog).
   onToggleRecording: () => void;
+  // Discard the running recording.
+  onCancelRecording: () => void;
 }
 
 // The inline chat panel: a thin container that wires the redux store + thunks to the shared
@@ -29,6 +31,7 @@ export function AiChatPanel({
   onClearSelection,
   width,
   onToggleRecording,
+  onCancelRecording,
 }: Props) {
   const dispatch = useDispatch();
   const {
@@ -99,6 +102,7 @@ export function AiChatPanel({
       recording={recording}
       recorder={recorder}
       onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
       billingDismissed={billingDismissed}
       sessions={sessions}
       currentSessionId={currentSessionId}

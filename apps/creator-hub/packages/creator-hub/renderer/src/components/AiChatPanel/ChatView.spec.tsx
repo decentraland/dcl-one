@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { flatten } from 'flat';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
@@ -207,23 +207,20 @@ describe('ChatView asset mentions', () => {
   });
 
   describe('when the panel offers the Record button', () => {
-    const idle = { status: 'idle' as const, startedAt: null, micLabel: '', tools: null };
+    const idle = {
+      status: 'idle' as const,
+      startedAt: null,
+      micLabel: '',
+      tools: null,
+      actionCount: 0,
+    };
 
-    it('should show it above the composer and pass presses on', () => {
+    it('should show it in the composer toolbar and pass presses on', () => {
       const onToggleRecording = vi.fn();
       renderChat({ recorder: idle, onToggleRecording });
       fireEvent.click(screen.getByRole('button', { name: 'Record' }));
-      expect(screen.getByText('Record voice and actions')).toBeTruthy();
       expect(onToggleRecording).toHaveBeenCalled();
-    });
-
-    it('should turn into a timed Stop button while recording', () => {
-      renderChat({
-        recorder: { ...idle, status: 'recording', startedAt: Date.now() - 42_000 },
-        onToggleRecording: vi.fn(),
-      });
-      expect(screen.getByRole('button', { name: 'Stop recording' })).toBeTruthy();
-      expect(screen.getByText('Stop · 0:42 / 10:00')).toBeTruthy();
+      expect(screen.queryByTestId('recording-card')).toBeNull();
     });
 
     it('should not start a recording while no assistant is available', () => {
@@ -235,6 +232,64 @@ describe('ChatView asset mentions', () => {
       expect((screen.getByRole('button', { name: 'Record' }) as HTMLButtonElement).disabled).toBe(
         true,
       );
+    });
+
+    describe('and a recording is running', () => {
+      // Built at render time: the card's timer counts from now.
+      const recording = () => ({
+        ...idle,
+        status: 'recording' as const,
+        startedAt: Date.now() - 42_000,
+        actionCount: 7,
+      });
+
+      it('should show a card with the time, the limit and the actions captured', () => {
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
+        const card = screen.getByRole('group', { name: 'Recording' });
+        expect(within(card).getByRole('timer').textContent).toBe('0:42');
+        expect(within(card).getByText('/ 10:00')).toBeTruthy();
+        expect(within(card).getByText('7 actions captured')).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Record' })).toBeNull();
+      });
+
+      it('should stop from the card', () => {
+        const onToggleRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording });
+        fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+        expect(onToggleRecording).toHaveBeenCalled();
+      });
+
+      it('should discard only after the user confirms', () => {
+        const onCancelRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
+        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+        const dialog = screen.getByRole('dialog', { name: 'Discard this recording?' });
+        expect(onCancelRecording).not.toHaveBeenCalled();
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+        expect(onCancelRecording).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep recording when the user backs out of the confirmation', () => {
+        const onCancelRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
+        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Keep recording' }));
+        expect(onCancelRecording).not.toHaveBeenCalled();
+        expect(screen.getByTestId('recording-card')).toBeTruthy();
+      });
+    });
+
+    describe('and the recording is being transcribed', () => {
+      it('should show the progress in place of the text field', () => {
+        renderChat({
+          recorder: { ...idle, status: 'stopping', startedAt: Date.now() - 42_000 },
+          onToggleRecording: vi.fn(),
+        });
+        const strip = screen.getByRole('status');
+        expect(within(strip).getByText('Transcribing…')).toBeTruthy();
+        expect(within(strip).getByText('0:42 recorded')).toBeTruthy();
+        expect(screen.queryByRole('textbox')).toBeNull();
+      });
     });
   });
 

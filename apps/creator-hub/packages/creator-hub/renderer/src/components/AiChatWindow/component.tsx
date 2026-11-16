@@ -92,6 +92,10 @@ export function AiChatWindow() {
     () => aiPreload.sendAiRemoteCommand({ type: 'toggleRecording' }),
     [],
   );
+  const onCancelRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'cancelRecording' }),
+    [],
+  );
 
   if (mirror === null) {
     return (
@@ -116,6 +120,7 @@ export function AiChatWindow() {
       recording={mirror.recording ?? null}
       recorder={mirror.recorder}
       onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
       billingDismissed={mirror.billingDismissed}
       sessions={mirror.sessions}
       currentSessionId={mirror.currentSessionId}

@@ -36,7 +36,7 @@ const initialState: AiState = {
   selection: [],
   assetMentions: [],
   recording: null,
-  recorder: { status: 'idle', startedAt: null, micLabel: '', tools: null },
+  recorder: { status: 'idle', startedAt: null, micLabel: '', tools: null, actionCount: 0 },
   chatVisible: false,
   billingDismissed: false,
   sessions: [],

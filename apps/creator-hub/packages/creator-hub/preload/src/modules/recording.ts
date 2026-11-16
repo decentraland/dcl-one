@@ -22,6 +22,11 @@ export async function abort(sessionId: string) {
   return invoke('recording.abort', sessionId);
 }
 
+// Discard the running recording: end it and delete what was captured.
+export async function cancel(sessionId: string) {
+  return invoke('recording.cancel', sessionId);
+}
+
 // Delete a finished session's folder: the user discarded it before sending.
 export async function discard(dir: string) {
   return invoke('recording.discard', dir);

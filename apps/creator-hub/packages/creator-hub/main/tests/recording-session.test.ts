@@ -31,6 +31,7 @@ vi.mock('../src/modules/recording/transcribe', () => transcriber);
 import { MAX_RECORDING_MS, RECORDING_SAMPLE_RATE } from '../../shared/types/recording';
 import {
   abort,
+  cancel,
   appendAudio,
   appendEvents,
   cleanText,
@@ -286,6 +287,35 @@ describe('when the session files cannot be written', () => {
     expect(isRecording()).toBe(false);
     const md = fs.readFileSync(path.join(currentSessionDir('Full-disk'), 'SESSION.md'), 'utf8');
     expect(md).toContain('the recording could not be written to disk');
+  });
+});
+
+describe('when the user discards a running recording', () => {
+  let owner: Electron.WebContents;
+  let sessionId: string;
+  let dir: string;
+
+  beforeEach(async () => {
+    owner = fakeWindow();
+    ({ sessionId } = await start(owner, '/scenes/Cancel', 'Cancel', 'en'));
+    appendAudio(owner.id, sessionId, pcm([0, 9000, -9000, 0]), Date.now());
+    dir = currentSessionDir('Cancel');
+  });
+
+  afterEach(() => abort('test cleanup'));
+
+  it('should end it without transcribing and delete what was captured', async () => {
+    expect(fs.existsSync(dir)).toBe(true);
+    await cancel(owner.id, sessionId);
+    expect(isRecording()).toBe(false);
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(transcriber.transcribe).not.toHaveBeenCalled();
+  });
+
+  it('should leave it running when another window asks', async () => {
+    await cancel(owner.id + 1, sessionId);
+    expect(isRecording()).toBe(true);
+    expect(fs.existsSync(dir)).toBe(true);
   });
 });
 

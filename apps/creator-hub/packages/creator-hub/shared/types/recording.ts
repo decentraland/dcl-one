@@ -19,6 +19,20 @@ export type RecordedEvent = {
   y?: number;
 };
 
+// Pointer movement and where the player stands: context for what was said, not actions.
+export const HOVER_EVENT_KINDS: ReadonlySet<string> = new Set([
+  'viewport-hover',
+  'hover',
+  'player',
+]);
+// What the running scene's code made appear or disappear: context, not something the user did.
+export const SCENE_EVENT_KINDS: ReadonlySet<string> = new Set(['scene-appear', 'scene-remove']);
+
+// Whether an event counts toward the "N actions" shown for a recording.
+export function isRecordedAction(kind: string): boolean {
+  return !HOVER_EVENT_KINDS.has(kind) && !SCENE_EVENT_KINDS.has(kind);
+}
+
 // A word from the transcript, in ms from the start of the audio. `segment` is the stretch of
 // speech it was transcribed in; a new stretch always starts a new utterance.
 export type TranscriptWord = { start: number; end: number; text: string; segment?: number };

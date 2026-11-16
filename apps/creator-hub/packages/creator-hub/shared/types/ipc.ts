@@ -219,6 +219,7 @@ export interface Ipc {
   ) => Promise<RecordingStartResult>;
   'recording.stop': (sessionId: string) => Promise<RecordingResult>;
   'recording.abort': (sessionId: string) => Promise<void>;
+  'recording.cancel': (sessionId: string) => Promise<void>;
   'recording.toolsStatus': (language: string) => Promise<RecordingToolsStatus>;
   'recording.installTools': (language: string) => Promise<void>;
   // Delete a finished session's folder (the user discarded it before sending).

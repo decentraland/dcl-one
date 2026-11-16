@@ -350,6 +350,15 @@ export function abortIfOwner(senderId: number, sessionId: string): void {
   }
 }
 
+// The user discarded the running recording: end it without transcribing and delete what was
+// captured.
+export async function cancel(senderId: number, sessionId: string): Promise<void> {
+  const s = session;
+  if (!s || s.id !== sessionId || s.ownerId !== senderId) return;
+  abort('the user discarded it');
+  await discard(s.dir);
+}
+
 export async function stop(senderId: number, sessionId: string): Promise<RecordingResult> {
   const s = session;
   if (!s || s.id !== sessionId || s.ownerId !== senderId) {

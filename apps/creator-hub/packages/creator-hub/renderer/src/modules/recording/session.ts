@@ -1,5 +1,5 @@
 import { recording } from '#preload';
-import type { RecordedEvent } from '/shared/types/recording';
+import { isRecordedAction, type RecordedEvent } from '/shared/types/recording';
 
 // The renderer's handle on the running recording: which session events belong to, and the relay
 // both event sources go through — the inspector iframe (scene RPC `record_events`) and the
@@ -7,8 +7,24 @@ import type { RecordedEvent } from '/shared/types/recording';
 
 let activeSessionId: string | null = null;
 
+// Actions forwarded for the running session, for the live count on the recording card.
+let actionCount = 0;
+const actionCountListeners = new Set<(count: number) => void>();
+
+function setActionCount(count: number): void {
+  if (count === actionCount) return;
+  actionCount = count;
+  actionCountListeners.forEach(listener => listener(count));
+}
+
+export function onRecordedActionCount(listener: (count: number) => void): () => void {
+  actionCountListeners.add(listener);
+  return () => void actionCountListeners.delete(listener);
+}
+
 export function setActiveRecordingSession(sessionId: string | null): void {
   activeSessionId = sessionId;
+  setActionCount(0);
 }
 
 export function getActiveRecordingSession(): string | null {
@@ -18,6 +34,7 @@ export function getActiveRecordingSession(): string | null {
 export function forwardRecordedEvents(events: RecordedEvent[]): void {
   if (activeSessionId === null || events.length === 0) return;
   recording.sendEvents(activeSessionId, events);
+  setActionCount(actionCount + events.filter(e => isRecordedAction(e.kind)).length);
 }
 
 const MAX_LABEL = 60;
