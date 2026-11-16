@@ -1,11 +1,25 @@
-//! What `serve` hands Shop from Social, and Shop's answer Comms asks for: Shop
-//! builds without either crate, so these wrappers connect them here.
+//! What `serve` hands Shop from Social, Shop's answer Comms asks for, and the
+//! live participants Comms gives Explore: those crates build without each
+//! other, so these wrappers connect them here.
 
 use std::sync::Arc;
 
 use crate::shared::identity::Address;
 use crate::shared::notifications::SendFailure;
-use crate::{comms, shop, social};
+use crate::{comms, explore, shop, social};
+
+/// The gatekeeper's live room members, counted by Explore's destinations feed.
+pub(super) struct CommsParticipants(pub(super) comms::gatekeeper::SharedState);
+
+impl explore::places::live::Participants for CommsParticipants {
+    fn participants<'a>(
+        &'a self,
+        world: bool,
+        key: &'a str,
+    ) -> futures::future::BoxFuture<'a, Option<Vec<String>>> {
+        Box::pin(self.0.live_participants(world, key))
+    }
+}
 
 /// Social's SendGrid sender as the Shop deliveries worker's mailer.
 pub(super) struct ShopMailer(pub(super) social::notifications::email::EmailSender);

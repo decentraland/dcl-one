@@ -1,5 +1,7 @@
-//! Durable removal feed offered to the gatekeeper. Queue acknowledgements follow
-//! external revocation and notification; retry keys never change after a crash.
+//! The gatekeeper's reader of Explore's durable removal feed
+//! (`explore.place_removal_*`, filled by Explore's schema trigger). Queue
+//! acknowledgements follow external revocation and notification; retry keys
+//! never change after a crash.
 use chrono::NaiveDateTime;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;

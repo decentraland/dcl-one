@@ -1073,7 +1073,9 @@ pub async fn serve(
     shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live
-        .set_participants(comms_stage.gatekeeper.clone());
+        .set_participants(Arc::new(adapters::CommsParticipants(
+            comms_stage.gatekeeper.clone(),
+        )));
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());

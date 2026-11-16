@@ -1728,7 +1728,6 @@ dependencies = [
  "catalyst-config",
  "catalyst-content",
  "catalyst-db",
- "catalyst-explore",
  "catalyst-jobs",
  "catalyst-shared",
  "catalyst-storage",

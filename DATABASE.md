@@ -1897,6 +1897,24 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Place removal feed
+
+`explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox
+of catalogue removals. Explore's trigger on `explore.place` and
+`explore.place_world_local` inserts one row per transition to removed (opt-out
+is not a removal), snapshotting the place context, and keeps one lifecycle
+bit per place in `explore.place_removal_state`; it is the only writer of new
+rows. The comms gatekeeper (`services/catalyst/comms/src/gatekeeper/removed_places.rs`)
+consumes it by shared SQL: at most 100 due rows a pass on
+`place_removal_due_idx`, `owner_address` filled once when it was empty,
+`cleaned_at` set in the same transaction as its destructive cleanup so a retry
+cannot replay it, `attempts` and `retry_at` advanced with capped backoff, and
+a cleaned row deleted together with the place's `place_removal_state` row once
+neither catalogue holds the place. Its context lookups read
+`explore.place_indexed`, joined to `content.active_pointers` and
+`content.deployments` for shared-scene rooms, by primary key or world name.
+Neither table has an FK: queue rows outlive catalogue deletion.
+
 ## Player report intake workload
 
 The player report intake (the node area `/report-user`,

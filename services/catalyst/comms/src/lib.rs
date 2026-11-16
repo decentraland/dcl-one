@@ -13,7 +13,6 @@
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_content as content;
 pub(crate) use catalyst_db as db;
-pub(crate) use catalyst_explore as explore;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_shared as shared;
 pub(crate) use dcl_auth as auth;
