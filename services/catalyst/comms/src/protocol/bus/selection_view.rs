@@ -247,6 +247,7 @@ impl ViewAssembly {
     }
     pub fn push(&mut self, page: ViewPage) -> Option<()> {
         if page.entries.len() > VIEW_PAGE_ENTRIES
+            || (page.entries.is_empty() && self.header.total != 0)
             || !page.entries.iter().all(SelectionTarget::valid)
             || page.generation != self.header.generation
             || page.view_id != self.header.view_id
@@ -268,6 +269,11 @@ impl ViewAssembly {
             return None;
         }
         self.entries.extend(page.entries);
+        if self.entries.len() == self.header.total
+            && digest(&self.entries).as_deref() != Some(&self.header.digest)
+        {
+            return None;
+        }
         Some(())
     }
     pub fn next_request(&self) -> ViewRequest {
@@ -389,6 +395,63 @@ mod tests {
             }
         }
         assert_eq!(left.into_targets(), right.into_targets());
+    }
+    #[test]
+    fn complete_bad_digest_fails_at_the_last_page_and_valid_empty_views_complete() {
+        let generation = binding();
+        let view = SelectionView::new(generation.clone(), 1, entries(700)).unwrap();
+        let request = ViewRequest {
+            generation,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            view_id: None,
+            offset: 0,
+        };
+        let mut first = view.page(&request).unwrap();
+        let bad_digest = "0".repeat(64);
+        assert_ne!(first.digest, bad_digest);
+        first.digest = bad_digest.clone();
+        let mut assembly = ViewAssembly::begin(first).unwrap();
+        loop {
+            let request = assembly.next_request();
+            let mut page = view.page(&request).unwrap();
+            page.digest = bad_digest.clone();
+            if page.offset + page.entries.len() == page.total {
+                assert!(
+                    assembly.push(page).is_none(),
+                    "the final mismatch must stop the transfer instead of requesting empty continuation pages"
+                );
+                break;
+            }
+            assembly.push(page).unwrap();
+        }
+        let empty = SelectionView::new(binding(), 1, vec![]).unwrap();
+        let request = ViewRequest {
+            generation: empty.generation.clone(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            view_id: None,
+            offset: 0,
+        };
+        let page = empty.page(&request).unwrap();
+        assert_eq!(
+            ViewAssembly::begin(page.clone()).unwrap().into_targets(),
+            Some(vec![])
+        );
+        let mut corrupt = page;
+        corrupt.digest = bad_digest;
+        assert!(ViewAssembly::begin(corrupt).is_none());
+        let mut stalled = view
+            .page(&ViewRequest {
+                generation: view.generation.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                view_id: None,
+                offset: 0,
+            })
+            .unwrap();
+        stalled.entries.clear();
+        assert!(
+            ViewAssembly::begin(stalled).is_none(),
+            "a nonempty transfer cannot accept a page with no progress"
+        );
     }
     #[test]
     fn worst_case_selection_entry_and_page_encoding_fit_the_declared_bounds() {

@@ -32,7 +32,9 @@ existing job, retaining one bounded vector and rotating through all its targets.
 Obsolete selected slots require a known lower epoch, complete newer view, elapsed
 pre-cutover permission window, exact uncertain-SQL settlement and no outstanding slot
 handles. Foreign realm rows and independent cleanup/takeover obligations are retained.
-UUID inequality alone cannot retire unidentified historical state.
+UUID inequality alone cannot retire unidentified historical state. Current-view
+wallets retain their exact old slots until reseeding, preserving a changed-session
+takeover predecessor; absent old wallets can still free bounded capacity.
 
 The schema is applied before Pulse startup. Incompatible Pulse and Gatekeeper writers
 must be upgraded together with admissions stopped. Database restoration requires the

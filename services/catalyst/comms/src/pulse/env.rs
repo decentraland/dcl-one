@@ -248,7 +248,7 @@ fn refuse_outside_hosts(env: &catalyst_config::posture::Lookup) -> anyhow::Resul
 
 /// Reject historical requests for an authentication mode this process cannot serve.
 /// These values validate the shipped posture; they never configure server capabilities.
-fn validate_auth_requests(
+pub fn validate_auth_requests(
     legacy: Result<String, VarError>,
     v4: Result<String, VarError>,
 ) -> anyhow::Result<()> {

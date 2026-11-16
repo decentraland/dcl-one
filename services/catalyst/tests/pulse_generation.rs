@@ -181,15 +181,15 @@ async fn unregistered_sources_allocate_no_slots_and_complete_new_generation_recl
             .await
     );
     // A generation comparison alone and the first incomplete transfer are insufficient.
-    fence.retire_obsolete_generation(&current, 128).await;
+    fence.retire_obsolete_generation(&current, 128, &[]).await;
     assert_eq!(fence.selected_reconciliation_targets().len(), 1);
     assert!(fence.complete_generation_view(&current).await);
-    fence.retire_obsolete_generation(&current, 128).await;
+    fence.retire_obsolete_generation(&current, 128, &[]).await;
     assert_eq!(fence.selected_reconciliation_targets().len(), 1);
     tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
     // The cursor wrapped on the previous pass; ordinary bounded passes settle the target.
-    fence.retire_obsolete_generation(&current, 128).await;
-    fence.retire_obsolete_generation(&current, 128).await;
+    fence.retire_obsolete_generation(&current, 128, &[]).await;
+    fence.retire_obsolete_generation(&current, 128, &[]).await;
     assert!(fence.selected_reconciliation_targets().is_empty());
     let target = catalyst::comms::protocol::bus::selection_view::SelectionTarget {
         wallet: wallet.clone(),
@@ -574,5 +574,131 @@ async fn mint_and_delivery_use_fresh_exact_source_permissions_after_cutover() {
     assert!(grant.consume(&current));
     successor.close().await;
     drop((first, successor));
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn current_view_retains_exact_predecessor_until_reseed_and_reclaims_absent_slots_at_capacity()
+{
+    use catalyst::comms::{
+        gatekeeper::admission::cluster::fence::{AssignmentFence, PgAssignmentFence},
+        protocol::{
+            bus::selection_view::SelectionTarget, pulse::decentraland::pulse::PeerClusterSnapshot,
+        },
+    };
+    gate::required_database_in_ci();
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let audience = "current-view-predecessors";
+    let first =
+        catalyst::pulse_generation::HeldPulseGeneration::acquire(db.pool.clone(), audience.into())
+            .await
+            .unwrap();
+    let fence =
+        PgAssignmentFence::with_selected_limit_for_test(db.pool.clone(), audience.into(), 2)
+            .unwrap();
+    let address = |number| format!("0x{number:040x}");
+    let snapshot =
+        |wallet: String, session: String, source: String, identity| PeerClusterSnapshot {
+            wallet,
+            session,
+            cluster_id: "current".into(),
+            realm: "realm".into(),
+            source_incarnation: source,
+            assignment_version: identity,
+            pass: 1,
+            selected_origin: 1,
+            selected_identity: Some(identity),
+            assignment_state: 1,
+            token_not_before: Some(0),
+            pending_takeovers: vec![],
+        };
+    let previous = snapshot(
+        address(1),
+        address(11),
+        first.binding().source_incarnation.clone(),
+        1,
+    );
+    let absent = snapshot(
+        address(2),
+        address(12),
+        first.binding().source_incarnation.clone(),
+        1,
+    );
+    let previous_lease = fence.lock_selected(&previous).await.unwrap();
+    let predecessor = previous_lease.token_fence();
+    drop(previous_lease);
+    let absent_lease = fence.lock_selected(&absent).await.unwrap();
+    let absent_fence = absent_lease.token_fence();
+    drop(absent_lease);
+    first.close().await;
+    let current =
+        catalyst::pulse_generation::HeldPulseGeneration::acquire(db.pool.clone(), audience.into())
+            .await
+            .unwrap();
+    let binding = current.binding().clone();
+    let targets = vec![
+        SelectionTarget {
+            wallet: address(1),
+            session: address(21),
+            assignment_version: 2,
+        },
+        SelectionTarget {
+            wallet: address(3),
+            session: address(23),
+            assignment_version: 1,
+        },
+    ];
+    assert!(fence.complete_generation_view(&binding).await);
+    assert!(
+        !fence.recover_selected_target(&binding, &targets[1]).await,
+        "the old two-slot map starts at capacity"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            fence
+                .retire_obsolete_generation(&binding, 128, &targets)
+                .await;
+            if !fence
+                .selected_reconciliation_targets()
+                .iter()
+                .any(|(wallet, _)| wallet == &absent.wallet)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("absent old wallets free capacity after the original grant barrier");
+    assert_eq!(
+        fence.selected_reconciliation_targets(),
+        vec![(previous.wallet.clone(), previous.session.clone())],
+        "a current-view wallet keeps its exact old predecessor until its later seeding batch"
+    );
+    assert!(
+        fence.recover_selected_target(&binding, &targets[1]).await,
+        "absent retirement frees capacity for a new current wallet"
+    );
+    assert!(fence.recover_selected_target(&binding, &targets[0]).await);
+    let successor = snapshot(
+        previous.wallet.clone(),
+        targets[0].session.clone(),
+        binding.source_incarnation.clone(),
+        2,
+    );
+    let lease = fence.lock_selected(&successor).await.expect("the still-fresh exact owned predecessor allows changed-session takeover without a 90-second lapse");
+    assert_eq!(lease.token_fence().owner_session, successor.session);
+    assert!(lease.token_fence().owner_epoch > predecessor.owner_epoch);
+    drop(lease);
+    let absent_row: (String, i64) = sqlx::query_as("SELECT owner_session,owner_epoch FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(audience).bind(&absent.wallet).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(
+        absent_row,
+        (absent.session, absent_fence.owner_epoch as i64),
+        "retiring its slot does not mutate the existing SQL row"
+    );
+    current.close().await;
+    drop((first, current, fence));
     db.teardown().await;
 }

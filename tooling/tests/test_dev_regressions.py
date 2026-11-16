@@ -134,7 +134,12 @@ class InventoryTests(unittest.TestCase):
                 "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
                 "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
                 "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
-                "pulse::statistics::tests::producer_capacity_never_forgets_cursors_and_backlog_recovers_completely",
+                "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
+                "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
+                "pulse::statistics::tests::capacity_metrics_report_retention_and_only_refused_registration_attempts",
+                "pulse::statistics::tests::candidate_confirmation_and_restart_preserve_exact_fences",
+                "pulse::statistics::tests::repeated_handovers_keep_every_outgoing_connectors_events_and_cursors",
+                "pulse::statistics::tests::backlog_recovery_retains_complete_state_across_handovers",
             ],
             ("catalyst_content", "lib"): [
                 "write_path_tests::a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile",
@@ -158,6 +163,29 @@ class InventoryTests(unittest.TestCase):
                     (others + f"{name}: benchmark\n", ""),
                 ]:
                     with self.subTest(target=target, name=name, changed=changed, ignored=ignored), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_statistics_boundary_bodies_remain_required_and_unignored(self):
+        targets = {
+            ("catalyst_comms", "lib"): [
+                "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
+                "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
+                "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
+            ],
+            ("catalyst", "lib"): [
+                "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
+                "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
+            ],
+        }
+        for target, names in targets.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                without = normal.replace(f"{name}: test\n", "")
+                for changed, ignored in [(without, ""), (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
                         guard.verify(required, changed, ignored, str(target))
 
     def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
@@ -575,6 +603,41 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
 
+
+    def test_engine_receipt_is_emitted_once_without_unrelated_success_output(self):
+        import json
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="matcher-receipt-") as temporary:
+            directory = Path(temporary)
+            count = directory / "executions"
+            executables = [directory / name for name in ["stats_metrics_engine-fixture", "ordinary-fixture"]]
+            for executable in executables:
+                executable.write_text(
+                    '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
+                    + "printf '%s' 'test configured_stats_engine_and_http_contract ... '\n"
+                    + "printf '\\n%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
+                    + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
+                )
+                executable.chmod(0o755)
+            result = subprocess.run(
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                 + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
+                 *(executable.as_posix() for executable in executables)],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(count.read_text().splitlines(), [path.name for path in executables])
+            receipts = [line for line in result.stdout.splitlines() if line.startswith("STATS_ENGINE_RECEIPT ")]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(json.loads(receipts[0].removeprefix("STATS_ENGINE_RECEIPT ")), {"completed": 32})
+            self.assertNotIn("private success detail", result.stdout)
+            self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
+            self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
+            for executable in executables:
+                log = (directory / (executable.name + ".log")).read_text()
+                self.assertEqual(log.splitlines()[0], "test configured_stats_engine_and_http_contract ... ")
+                self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
+                self.assertIn("private success detail", log)
 
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
