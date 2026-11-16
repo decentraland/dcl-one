@@ -9,7 +9,8 @@
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
 //! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
-//! `first_wear_cursor`, `land_transfer_cursor`.
+//! `land_transfer_cursor`; the first-wear cursor is the `friend_first_wear`
+//! row of `badge_cursors`.
 //!
 //! Mounted by `serve` as `.nest("/notifications", router(state))` (the old
 //! gateway stripped that prefix in front of the bundle); a per-vhost proxy

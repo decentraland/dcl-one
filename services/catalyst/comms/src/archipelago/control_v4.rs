@@ -701,12 +701,13 @@ mod tests {
             return;
         }
         let pool = crate::db::scratch::pool(4).await.unwrap();
-        let authority = AssignmentAuthority::pg_with_namespace(
-            pool.clone(),
-            format!("publish-{}", Uuid::new_v4()),
-        )
-        .await
-        .unwrap();
+        let namespace = format!("publish-{}", Uuid::new_v4());
+        let source = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO social.pulse_authority_generation(deployment_audience,epoch,source_incarnation) VALUES($1,nextval('social.archipelago_v4_connection_epoch'),$2::uuid)")
+            .bind(&namespace).bind(&source).execute(&pool).await.unwrap();
+        let authority = AssignmentAuthority::pg_with_namespace(pool.clone(), namespace)
+            .await
+            .unwrap();
         let lane = LaneKey::parse("realm").unwrap();
         for change in [
             "unchanged",
@@ -724,7 +725,7 @@ mod tests {
                 .claim_lanes(&owner, std::slice::from_ref(&lane))
                 .await
                 .unwrap();
-            let store = SafetyStore::unfenced_test(pool.clone());
+            let store = SafetyStore::new(pool.clone());
             let safety = store.snapshot(&owner.address).await.unwrap();
             let plan = PeerClusterSnapshot {
                 selected_origin: 1,
@@ -734,7 +735,7 @@ mod tests {
                 session: owner.session.clone(),
                 cluster_id: "current".into(),
                 realm: "realm".into(),
-                source_incarnation: "publication-test".into(),
+                source_incarnation: source.clone(),
                 assignment_version: 1,
                 token_not_before: Some(0),
                 ..Default::default()
