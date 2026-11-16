@@ -631,7 +631,10 @@ CREATE INDEX player_reports_created_idx ON social.player_reports (created_at DES
 CREATE INDEX player_reports_reporter_idx ON social.player_reports (reporter_address, created_at);
 
 -- One slot per declared evidence file; `content_hash` is the CID of the
--- bytes in the ONE blob store, set with `uploaded_at` by the upload.
+-- bytes in the ONE blob store, set with `uploaded_at` by the one upload the
+-- slot takes. `source_key` is the client address bucket of the presign (an
+-- IPv4 address or an IPv6 /64), for the address's share of the node's bound;
+-- a presign clears it on slots older than the bound's 24 hours.
 CREATE TABLE social.player_report_evidence (
     report_id uuid NOT NULL,
     evidence_key text NOT NULL,
@@ -642,14 +645,20 @@ CREATE TABLE social.player_report_evidence (
     content_hash text,
     uploaded_at timestamp without time zone,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    source_key text,
     CONSTRAINT player_report_evidence_pkey PRIMARY KEY (report_id, evidence_key),
     CONSTRAINT player_report_evidence_upload_check CHECK ((uploaded_at IS NULL) = (content_hash IS NULL))
 );
 
 -- The per-reporter pending-slot quota.
 CREATE INDEX player_report_evidence_reporter_idx ON social.player_report_evidence (reporter_address, created_at);
--- The orphan sweep (oldest unsubmitted slots first, in batches).
+-- The orphan sweep (oldest unsubmitted slots first, in batches) and the
+-- node bound's slots still in their upload time.
 CREATE INDEX player_report_evidence_created_idx ON social.player_report_evidence (created_at);
+-- The node bound's slots that hold a file, over the last 24 hours.
+CREATE INDEX player_report_evidence_uploaded_idx ON social.player_report_evidence (created_at) WHERE content_hash IS NOT NULL;
+-- The slots whose address bucket is still to clear (oldest first, in batches).
+CREATE INDEX player_report_evidence_source_idx ON social.player_report_evidence (created_at) WHERE content_hash IS NOT NULL AND source_key IS NOT NULL;
 
 -- ── notifications ──────────────────────────────────────────────────────────
 
@@ -899,7 +908,8 @@ CREATE TABLE social.badge_admin_audit (
 -- The badge processor's durable read positions, one row per source, advanced
 -- in the transaction that writes the progress the rows it passed produced:
 -- `client_events` (social.client_events.seq), `deployments`
--- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- (content.deployments.id), `friend_first_wear` (content.deployments.id, for
+-- the notification producer), `sales:<table>:<network>` (block_number,
 -- log_index of a shop log) and the recount passes (`position` counts the
 -- passes, the first of which writes no notification; `resume_after` is the
 -- last wallet the pass in progress recounted, NULL between passes).
@@ -912,8 +922,8 @@ CREATE TABLE social.badge_cursors (
     CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
 );
 
--- Ids an id cursor (`client_events`, `deployments`) passed without seeing
--- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- Ids an id cursor (`client_events`, `deployments`, `friend_first_wear`)
+-- passed without seeing their rows, `lo..=hi`: a value drawn by a transaction still open when the
 -- cursor read past it (sequence order is not commit order), or one that
 -- never commits (a rollback, an ON CONFLICT that burned it). Every batch
 -- re-reads them and processes a row that appeared; a gap is dropped once
@@ -1219,7 +1229,9 @@ CREATE TABLE social.profile_images (
 -- role), the post digest (post_delete, post_like, post_unlike), the place
 -- (place) or the request (request_status); `role` the old role-log text;
 -- `action` a place's add|remove or a request's settled status;
--- `content_hash` a post body's sha256 (community_contents).
+-- `content_hash` a post body's sha256 (community_contents);
+-- `public_at_entry` whether the community was public when the entry was
+-- written: the public feeds and bodies publish only those entries.
 CREATE TABLE social.community_signed_actions (
     signature_hash text NOT NULL,
     seq bigint GENERATED ALWAYS AS IDENTITY,
@@ -1234,6 +1246,7 @@ CREATE TABLE social.community_signed_actions (
     signed_at bigint NOT NULL,
     payload jsonb NOT NULL,
     received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    public_at_entry boolean NOT NULL DEFAULT true,
     CONSTRAINT community_signed_actions_pkey PRIMARY KEY (signature_hash),
     CONSTRAINT community_signed_actions_seq_key UNIQUE (seq),
     CONSTRAINT community_signed_actions_kind_check CHECK (kind IN ('create', 'update', 'delete', 'role', 'post', 'post_delete', 'post_like', 'post_unlike', 'place', 'request_status')),
@@ -1280,6 +1293,24 @@ CREATE TABLE social.community_contents (
     CONSTRAINT community_contents_hash_shape CHECK (content_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT community_contents_size_check CHECK (size >= 0 AND size <= 262144)
 );
+
+-- Who uploaded a federation post body: a post takes only a body its own
+-- signer uploaded, and the public read serves a body only for a public
+-- post whose signer uploaded it. `posted_at` is set when that post lands;
+-- unposted rows count toward the upload budgets (the partial index) and
+-- `community-content-gc` drops them after the blob age floor.
+CREATE TABLE social.community_content_uploads (
+    content_hash text NOT NULL,
+    uploader text NOT NULL,
+    size integer NOT NULL,
+    uploaded_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    posted_at timestamp without time zone,
+    CONSTRAINT community_content_uploads_pkey PRIMARY KEY (content_hash, uploader),
+    CONSTRAINT community_content_uploads_uploader_lowercase CHECK (uploader = lower(uploader)),
+    CONSTRAINT community_content_uploads_size_check CHECK (size >= 0 AND size <= 262144)
+);
+CREATE INDEX community_content_uploads_unposted_idx
+    ON social.community_content_uploads (uploader) INCLUDE (content_hash, size) WHERE posted_at IS NULL;
 
 -- The upstream communities mirror (src/social/communities/mirror.rs), the
 -- explore mirrors' pattern: an operator job pages an upstream social API's
@@ -1476,8 +1507,8 @@ CREATE TABLE social.first_wear_baseline (
     CONSTRAINT first_wear_baseline_pkey PRIMARY KEY (address)
 );
 
--- The entity_timestamp high-water mark over content.deployments profiles;
--- initialised to now on the first pass so history is never replayed.
+-- The producer's former entity_timestamp high-water mark; no longer read
+-- (the producer's cursor is social.badge_cursors source friend_first_wear).
 CREATE TABLE social.first_wear_cursor (
     id integer NOT NULL DEFAULT 1,
     last_seen timestamp without time zone NOT NULL,
