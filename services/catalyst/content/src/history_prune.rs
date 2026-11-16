@@ -719,6 +719,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Only local scenes carry provenance: a local profile superseded by a
+    /// newer local profile is pruned like a peer row, and the active one stays.
+    #[tokio::test]
+    async fn a_superseded_local_profile_is_pruned_and_the_active_one_stays() {
+        use crate::write_deployer::WriteDeployer;
+        use alloy::signers::{Signer, local::PrivateKeySigner};
+
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+        let key: PrivateKeySigner =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let signer = format!("{:#x}", key.address());
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        let mut ids = Vec::new();
+        for (timestamp, version) in [(now_ms - 1_000, 1), (now_ms, 2)] {
+            let entity = serde_json::json!({
+                "version": "v3",
+                "type": "profile",
+                "pointers": [signer],
+                "timestamp": timestamp,
+                "content": [],
+                "metadata": {"avatars": [], "version": version}
+            });
+            let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+            let id = crate::auth::hash::hash_bytes_v1(&bytes);
+            let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
+            let chain = serde_json::json!([
+                {"type": "SIGNER", "payload": signer},
+                {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
+            ]);
+            // A fresh deployer per deploy: the profile rate limit is per instance.
+            WriteDeployer::with_partial_validation_for_tests(pool.clone(), storage.clone(), None)
+                .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let (old, new) = (&ids[0], &ids[1]);
+        let provenance: i64 = sqlx::query_scalar("SELECT count(*) FROM content.local_entities")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(provenance, 0, "a local profile records no provenance");
+
+        let report = run_once(&pool, &storage, &options(Duration::ZERO, 10))
+            .await
+            .unwrap();
+        assert_eq!(report.deployments, 1, "{report:?}");
+        assert!(
+            !entity_exists(&pool, old).await,
+            "the superseded version goes"
+        );
+        assert!(!storage.exist(old).await.unwrap(), "with its entity file");
+        assert!(entity_exists(&pool, new).await, "the active version stays");
+        assert!(storage.exist(new).await.unwrap());
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A pass keeps the scene a local scene superseded, however old; the
     /// local scene's unpublish leaves it superseded.
     #[tokio::test]
