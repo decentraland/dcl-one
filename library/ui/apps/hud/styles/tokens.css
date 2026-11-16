@@ -81,6 +81,21 @@
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
   --modal-scrim: rgba(18, 7, 33, 0.6);
+  /* a soft round glow, as an alpha mask (an ellipse in a non-square box) */
+  --glow-mask: radial-gradient(
+    closest-side,
+    rgba(0, 0, 0, 0.886) 0%,
+    rgba(0, 0, 0, 0.86) 10%,
+    rgba(0, 0, 0, 0.76) 20%,
+    rgba(0, 0, 0, 0.64) 30%,
+    rgba(0, 0, 0, 0.5) 40%,
+    rgba(0, 0, 0, 0.34) 50%,
+    rgba(0, 0, 0, 0.2) 60%,
+    rgba(0, 0, 0, 0.11) 70%,
+    rgba(0, 0, 0, 0.05) 80%,
+    rgba(0, 0, 0, 0.01) 90%,
+    transparent 100%
+  );
   /* Connection Lost modal colors, shared by both HUD builds. */
   --connection-modal-bg: #4c147c;
   --connection-modal-scrim: rgba(0, 0, 0, 0.8);
@@ -340,6 +355,57 @@
   --font-title-l: var(--fs-title);
   --font-body: var(--fs-md);
   --font-button: var(--fs-md);
+
+  /* ---- events ---- the Events page: its calendar, cards and detail.
+     Alphas are the sRGB equivalents of overlays designed for linear-space blending, each worked
+     out over the surface it sits on. */
+  --events-dot: rgba(255, 255, 255, 0.32); /* a carousel dot that is not the current one */
+  --scroll-thumb-dark: rgba(0, 0, 0, 0.68); /* a column's scroll handle, under its white rim */
+  --modal-scrim-deep: rgba(0, 0, 0, 0.68);
+  --tint-shade: rgba(0, 0, 0, 0.54);
+  --tint-veil: rgba(255, 255, 255, 0.15); /* the detail's buttons, over its picture's shade */
+  --tint-veil-hover: rgba(255, 255, 255, 0.25);
+  --events-detail-handle: rgba(0, 0, 0, 0.13);
+  --tint-dark-hover: rgba(255, 255, 255, 0.128); /* a dark button under the pointer */
+  --tint-dark-press: rgba(255, 255, 255, 0.067);
+  --tint-glass: rgba(255, 255, 255, 0.095); /* the header's Today */
+  --tint-faint: rgba(255, 255, 255, 0.128); /* a card's round-cornered icon buttons, the time pill */
+  --tint-faint-hover: rgba(255, 255, 255, 0.176);
+  --events-day-bar-top: #ffa15a; /* the day bar, top to bottom */
+  --events-day-bar-bottom: #ff6257;
+  --events-day-today-top: rgba(255, 234, 128, 0.99); /* the "Today" pill, top to bottom */
+  --events-day-today-bottom: rgba(255, 228, 128, 0.7);
+  --events-day-today-ink: #9a524b; /* "Today" on its yellow pill */
+  --events-day-today-hover: #ffeddf;
+  --events-day-today-press: #ffdec9;
+  --tint-clear-hover: rgba(255, 241, 164, 0.275); /* a day pill, the range arrows */
+  --tint-clear-press: rgba(255, 241, 164, 0.147);
+  --events-column: rgba(179, 47, 255, 0.072);
+  --events-column-outline: rgba(207, 124, 255, 0.19);
+  --events-more: rgba(153, 34, 226, 0.95); /* a column's scroll arrows */
+  --events-more-hover: #a751fa;
+  --events-skeleton-card: rgba(0, 0, 0, 0.14);
+  --skeleton-band: #8f42db;
+  --events-card-reminded: #9824e2;
+  --events-card-reminded-glow: rgba(242, 73, 255, 0.37);
+  --events-card-live: #680d4a;
+  --events-card-live-glow: rgba(224, 0, 97, 0.7);
+  --events-card-host: rgba(255, 255, 255, 0.69);
+  --events-community: #48226b; /* a community thumbnail's base */
+  --events-watermark-reminded: rgba(200, 124, 255, 0.17);
+  --events-watermark-live: rgba(224, 0, 97, 0.16);
+  --events-empty-slot-outline: rgba(255, 146, 253, 0.12);
+  --events-banner: #281e39;
+  --events-banner-shade: rgba(14, 3, 21, 0.99);
+  --events-banner-pill-outline: rgba(255, 255, 255, 0.46);
+  --events-banner-host: rgba(252, 252, 252, 0.76);
+  --events-detail-shade: rgba(0, 0, 0, 0.89); /* under the detail's picture */
+  --events-detail-glow: rgba(255, 75, 237, 0.64);
+  --events-detail-time: rgba(255, 255, 255, 0.85);
+  --events-detail-label: rgba(255, 255, 255, 0.68);
+  --events-detail-line: rgba(255, 255, 255, 0.155);
+  --events-detail-icon: #d28dff;
+  --events-schedule-hover: #ff7439;
 }
 
 /* ---- item rarity ----

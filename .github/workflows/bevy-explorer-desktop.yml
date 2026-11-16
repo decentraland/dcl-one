@@ -46,12 +46,14 @@ jobs:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - name: Rebuild the patched sources
+        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-desktop-${{ matrix.build_name }}
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-      - name: Restore the vendored Bevy's cached file times
+      - name: Restore the rebuilt Bevy tree's cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: add darwin target
         if: runner.os == 'macos'
@@ -71,7 +73,8 @@ jobs:
       - name: Bundle react HUD (page + bridge scene -> assets/)
         run: |-
           cd react-web && npm ci
-          cd bridge-scene && npm ci && cd ..
+          cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@11.27.0 --filter @dcl/hashing build && cd ..
           npm run bundle:native
         shell: bash
       - name: Install ninja (macos)
@@ -82,8 +85,7 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends ninja-build
       - name: Export CEF distribution
         run: |-
-          cargo install export-cef-dir --version "139.8.0+139.0.40"
-          export-cef-dir --force "$HOME/.local/share/cef"
+          python "$GITHUB_WORKSPACE/apps/bevy-explorer/install-cef.py" "$HOME/.local/share/cef"
           # GITHUB_ENV reaches native processes verbatim: on windows the git-bash $HOME
           # (/c/Users/...) would resolve as C:\c\Users\... — write a windows path there.
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -122,6 +124,10 @@ jobs:
             try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
             catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
           }
+          # The release tag can get a different file. Accept only the archive with this digest.
+          $ffSha256 = "a852648944cdf4ce3aeebf16d750a036fe67ab657b82eb43f9f7fdcc7bef3af7"
+          $ffActual = (Get-FileHash ffmpeg-6.0-full_build-shared.7z -Algorithm SHA256).Hash.ToLower()
+          if ($ffActual -ne $ffSha256) { throw "ffmpeg archive has SHA-256 $ffActual, expected $ffSha256" }
           7z x ffmpeg-6.0-full_build-shared.7z
           mkdir ffmpeg
           mv ffmpeg-*/* ffmpeg/
@@ -142,7 +148,7 @@ jobs:
       - name: Cargo build (linux)
         if: runner.os == 'linux'
         run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
-      - name: Record the vendored Bevy's file times for the cache
+      - name: Record the rebuilt Bevy tree's file times for the cache
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Package common
         run: |-
@@ -176,7 +182,7 @@ jobs:
           cp ${{ env.CARGO_BUILD_DIR }}/dcl_deno_ipc.exe package/dcl_deno_ipc.exe
           cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy-cef.exe package/decentra-bevy-cef.exe
           cp -r assets package/assets
-          # CEF runtime next to the exe (standard layout). export-cef-dir FLATTENS the
+          # CEF runtime next to the exe (standard layout). install-cef.py FLATTENS the
           # distribution: dlls, snapshots, paks and locales all live at the root of the
           # export dir — there is no Release/ or Resources/ subdir.
           $cef = "$env:USERPROFILE\.local\share\cef"
@@ -196,7 +202,7 @@ jobs:
           cp ${{ env.CARGO_BUILD_DIR }}/dcl_deno_ipc package/dcl_deno_ipc
           cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy-cef package/decentra-bevy-cef
           cp -r assets package/assets
-          # CEF runtime next to the exe (standard layout). export-cef-dir FLATTENS the
+          # CEF runtime next to the exe (standard layout). install-cef.py FLATTENS the
           # distribution: .so, snapshots, paks and locales all live at the root of the
           # export dir — there is no Release/ or Resources/ subdir.
           # NOTE (best-effort): unless cef-dll-sys sets an $ORIGIN rpath, linux users may
@@ -220,7 +226,7 @@ jobs:
           # rpaths. The runtime resources (paks, icudtl, snapshots, locales) are not
           # library dependencies, so copy them next to where libcef.so will land, and
           # the subprocess helper is found as a sibling of the main binary (usr/bin).
-          # export-cef-dir FLATTENS the distribution: everything is at the export root.
+          # install-cef.py FLATTENS the distribution: everything is at the export root.
           cef="$HOME/.local/share/cef"
           cp ../../target/release/decentra-bevy-cef BevyExplorer.AppDir/usr/bin
           # HUD page + bridge-scene resolve assets/ against the exe dir (native_hud_roots)
@@ -279,7 +285,7 @@ jobs:
   release:
     needs: build
     if: inputs.publish && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:

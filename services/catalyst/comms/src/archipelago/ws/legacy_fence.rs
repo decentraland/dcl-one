@@ -63,11 +63,11 @@ impl LegacyFence {
             self.last_fence = None;
             return true;
         };
-        let Some(stamp) = assignment.pulse_admission.as_ref() else {
+        let Some(stamp) = assignment.pulse_admission.clone() else {
             state.registry.detach_selected_realm(link);
             return true;
         };
-        if !state.gatekeeper.verify_island_stamp(stamp).await
+        if !state.gatekeeper.verify_island_stamp(&stamp).await
             || stamp.wallet != address
             || stamp.session != session
             || crate::rooms::island_room_name(&stamp.cluster_id) != assignment.island_id
@@ -86,14 +86,17 @@ impl LegacyFence {
         if self.last_fence.as_ref() == Some(&token_fence) && !link.needs_assignment() {
             return true;
         }
-        socket.bind_selected_permit(permit);
-        socket.bind_pulse(Some(stamp.clone()));
-        socket.bind_island_token_fence(token_fence.clone());
-        if !send_packet(
+        if !super::io::send_outgoing(
             socket,
-            server_packet::Message::IslandChanged(project(assignment)),
+            super::io::Outgoing::ConfiguredAssignment {
+                message: axum::extract::ws::Message::Binary(
+                    super::craft(server_packet::Message::IslandChanged(project(assignment))).into(),
+                ),
+                stamp,
+                token_fence: token_fence.clone(),
+                permit,
+            },
             Some(link),
-            &state.feed,
         )
         .await
         {

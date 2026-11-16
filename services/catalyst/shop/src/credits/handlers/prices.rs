@@ -175,7 +175,7 @@ async fn quote_misses(
     let mode = state.settings.checkout_fulfillment_mode.as_str();
     let bases = match state
         .pricing
-        .fetch_charge_bases_batch(&pairs, mode, QUOTE_ORDER_SCAN_MAX_PAGES)
+        .fetch_charge_bases_batch(&pairs, mode, QUOTE_ORDER_SCAN_MAX_PAGES, None)
         .await
     {
         Ok(bases) => bases,

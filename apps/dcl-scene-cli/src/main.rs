@@ -1,17 +1,14 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use dcl_scene_cli::{
-    build, build_script, context_files, deploy, export_static, init, joinblock, pack, scene, start,
-    ux, watch, workspace, world, world_access,
+    build, build_script, code_to_composite, context_files, deploy, export_static, init, joinblock,
+    pack, scene, start, ux, watch, workspace, world, world_access,
 };
 use std::path::PathBuf;
 
 /// Below this the Explorer ignores the deep link's `mcp-port` and serves on its
 /// own default, leaving the scene-log poller waiting on a port nobody opened.
 const MIN_MCP_PORT: u16 = 1024;
-
-const NO_INSTALL_NOTE: &str =
-    "--skip-install has no effect (dcl-scene-cli never installs packages)";
 
 const CI_HELP: &str = "Non-interactive (also when CI is set in the environment): no colours, spinners, prompts, QR codes or browser windows";
 
@@ -52,7 +49,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Print the command's result as JSON on stdout and nothing else there (export-static: scenesUrn, destination, entities; deploy: entityId, message); the other commands have no result document"
+        help = "Print the command's result as JSON on stdout and nothing else there (export-static: scenesUrn, destination, entities, entityFiles, contentFiles, aboutFile; deploy: entityId, message; init --template/--github-repo: dir, missingDependencies, missingPackages; init --node-modules-only: dir, dryRun, installed, kept, stoppedExtraction). start prints one JSON event per line instead (ready, client-failed, rebuild, build-error, error) and sends its text to stderr; a deploy that fails prints the error event too; the other commands have no result document"
     )]
     json: bool,
     #[command(subcommand)]
@@ -83,6 +80,19 @@ enum Command {
             help = "Only install the vendored node_modules into an existing project; scaffold nothing"
         )]
         node_modules_only: bool,
+        #[arg(
+            long,
+            requires = "node_modules_only",
+            conflicts_with_all = ["template", "github_repo"],
+            help = "With --node-modules-only: install only the packages that node_modules does not have; a package that is there stays as it is, whatever its version"
+        )]
+        missing_only: bool,
+        #[arg(
+            long,
+            requires = "missing_only",
+            help = "With --missing-only: write nothing; report the packages that node_modules does not have and the versions of the packages that it has"
+        )]
+        dry_run: bool,
         #[arg(
             long,
             value_name = "ZIP",
@@ -257,7 +267,10 @@ enum Command {
             help = "Do not run the built-in livekit-server: comms stay on the built-in ws-room (positions, chat, scene messages; no voice). Voice is on by default \u{2014} every dcl-scene-cli binary embeds livekit-server and runs it for the preview (LIVEKIT_SERVER_BIN runs a different one)"
         )]
         no_livekit: bool,
-        #[arg(long = "multi-instance", hide = true)]
+        #[arg(
+            long = "multi-instance",
+            help = "Add multi-instance=true to the desktop deep link. With this flag or --skip-auth-screen, the link has only the parameters of the given flags; with neither, it has both"
+        )]
         multi_instance: bool,
         #[arg(long = "no-client", hide = true)]
         no_client: bool,
@@ -312,7 +325,10 @@ enum Command {
             help = "Add landscape-terrain-enabled=true to the desktop deep link"
         )]
         landscape_terrain_enabled: bool,
-        #[arg(long, hide = true)]
+        #[arg(
+            long,
+            help = "Add skip-auth-screen=true to the desktop deep link. With this flag or --multi-instance, the link has only the parameters of the given flags; with neither, it has both"
+        )]
         skip_auth_screen: bool,
         #[arg(long = "local-scene", hide = true)]
         local_scene: bool,
@@ -381,6 +397,13 @@ enum Command {
             help = "Everything after a standalone -- is forwarded verbatim into the desktop Explorer deep link as query params: --key=value, --key value, and bare --key (becomes key=true)"
         )]
         explorer_params: Vec<String>,
+        #[arg(
+            long,
+            value_name = "URL",
+            env = "DCL_SCENE_CLI_PUBLIC_URL",
+            help = "The address people open when a reverse proxy or a custom domain serves this preview (https://preview.example.com, a path prefix allowed): its join links are printed, and a request for that host is answered as that origin even when the proxy forwards no scheme"
+        )]
+        public_url: Option<String>,
         #[arg(
             long,
             value_name = "WSS_URL|help",
@@ -525,6 +548,18 @@ enum Command {
         port: Option<u16>,
         #[arg(
             long,
+            value_name = "ADDRESS",
+            help = "Address the local signing server listens on (default: 127.0.0.1, or DCL_SCENE_CLI_LINKER_HOST when it is set); 0.0.0.0 opens the port to the network; one other address that is not loopback needs remote signing (DCL_SCENE_CLI_LINKER_HOST)"
+        )]
+        host: Option<std::net::IpAddr>,
+        #[arg(
+            long,
+            value_name = "CODE",
+            help = "Accepted for upstream parity: the text of this CLI and of its signing page is English only"
+        )]
+        language: Option<String>,
+        #[arg(
+            long,
             help = "Machine-driven run: no browser, no narration; stdout carries one JSON line when the signing server is up (its URL, the /api/deploy resource, the deploy token, the entity id to sign) and one with the final deployment state"
         )]
         programmatic: bool,
@@ -569,6 +604,19 @@ enum Command {
         dir: PathBuf,
         #[arg(long, help = "Zip the existing bin/ as-is instead of rebuilding")]
         skip_build: bool,
+    },
+    #[command(
+        about = "Run the scene code once and keep what it creates as assets/scene/main.composite + main.crdt, commenting the code out"
+    )]
+    CodeToComposite {
+        #[arg(
+            long,
+            default_value = ".",
+            help = "Project or workspace folder to convert"
+        )]
+        dir: PathBuf,
+        #[arg(short = 'y', long, help = "Convert without the confirmation prompt")]
+        yes: bool,
     },
     #[command(
         about = "Export the scene as a content server stores it: hash-named files, the entity file and, with --realmName, a realm about"
@@ -887,6 +935,8 @@ fn init_tracing(verbose: bool) {
                 tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| "info".into()),
             )
+            // stdout is the document or the event stream of `--json`.
+            .with_writer(std::io::stderr)
             .init();
     } else {
         tracing_subscriber::fmt()
@@ -897,20 +947,50 @@ fn init_tracing(verbose: bool) {
     }
 }
 
-#[tokio::main]
-async fn main() {
+/// Arguments are parsed before the runtime exists, so `--version`, `--help`
+/// and a usage error exit without starting a worker thread per core.
+fn main() {
     let cli = Cli::parse();
     let verbose = cli.verbose || std::env::var_os("RUST_LOG").is_some();
     ux::set_verbose(verbose);
     ux::set_json(cli.json);
     ux::set_ci(ux::ci_env());
     init_tracing(verbose);
-    dcl_scene_cli::shutdown::install();
-    if let Err(e) = run(cli.command).await {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the tokio runtime starts");
+    // deploy --json and deploy --programmatic have no event stream, but a
+    // failure of the run is the same `error` event that start --json prints.
+    let deploy_events = matches!(
+        &cli.command,
+        Command::Deploy { programmatic, .. } if cli.json || *programmatic
+    );
+    let result = runtime.block_on(async {
+        dcl_scene_cli::shutdown::install();
+        run(cli.command).await
+    });
+    if let Err(e) = result {
+        if ux::usage_error(&e) {
+            ux::report(&e, verbose);
+            std::process::exit(2);
+        }
+        if deploy_events && !stopped_on_request(&e) {
+            ux::set_events(true);
+        }
+        ux::error_event(&e);
         ux::report(&e, verbose);
         std::process::exit(1);
     }
     std::process::exit(0);
+}
+
+/// A deploy that the caller stopped is not a failure of the run: a cancel
+/// through `DELETE /api/deploy`, or a signal.
+fn stopped_on_request(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<dcl_scene_cli::linker::Cancelled>()
+        .is_some()
+        || dcl_scene_cli::shutdown::signalled()
 }
 
 /// `--json`: the result, as upstream writes it.
@@ -928,6 +1008,8 @@ async fn run(command: Command) -> Result<()> {
             project,
             yes,
             node_modules_only,
+            missing_only,
+            dry_run,
             template,
             github_repo,
             skip_install,
@@ -938,14 +1020,35 @@ async fn run(command: Command) -> Result<()> {
                 (None, None) => None,
             };
             match source {
-                Some(source) => {
-                    init::init_remote(&init::RemoteInitOptions {
-                        dir,
-                        yes,
-                        skip_install,
-                        source,
-                    })
-                    .await
+                Some(source) => init::init_remote(&init::RemoteInitOptions {
+                    dir,
+                    yes,
+                    skip_install,
+                    source,
+                })
+                .await
+                .map(|made| {
+                    if ux::json() {
+                        let names = made
+                            .missing
+                            .as_ref()
+                            .map(|missing| Vec::from_iter(missing.iter().map(|m| m.name.as_str())));
+                        print_json(serde_json::json!({
+                            "dir": made.root.display().to_string(),
+                            "missingDependencies": names,
+                            "missingPackages": made.missing,
+                        }));
+                    }
+                }),
+                None if node_modules_only => {
+                    let made = match missing_only {
+                        true => init::install_missing_node_modules(&dir, dry_run)?,
+                        false => init::install_node_modules(&dir)?,
+                    };
+                    if ux::json() {
+                        print_json(serde_json::to_value(&made)?);
+                    }
+                    Ok(())
                 }
                 None => init::init_with(
                     &init::InitOptions {
@@ -992,9 +1095,7 @@ async fn run(command: Command) -> Result<()> {
             single,
             emit_declaration,
         } => {
-            if skip_install {
-                ux::note(NO_INSTALL_NOTE);
-            }
+            dcl_scene_cli::init::set_restore_node_modules(!skip_install);
             let opts = build::BuildOptions {
                 built_in,
                 dir,
@@ -1085,6 +1186,7 @@ async fn run(command: Command) -> Result<()> {
             error_source_lines_after,
             explorer_params,
             tunnel,
+            public_url,
             tunnel_token,
             tunnel_token_file,
             no_host,
@@ -1095,7 +1197,13 @@ async fn run(command: Command) -> Result<()> {
                 println!("{}", dcl_scene_cli::tunnel::tunnel_help());
                 return Ok(());
             }
+            // start has no result document: under --json its stdout is a
+            // stream of events and its text goes to stderr.
+            if ux::json() {
+                ux::set_events(true);
+            }
             ux::set_custom_build_note(!no_build_note);
+            dcl_scene_cli::init::set_restore_node_modules(!skip_install);
             let ci = ci_mode(ci);
             let tunnel_token = if tunnel.is_some() {
                 dcl_scene_cli::tunnel::resolve_token(tunnel_token, tunnel_token_file.as_deref())?
@@ -1113,14 +1221,9 @@ async fn run(command: Command) -> Result<()> {
             let launch_desktop = explorer_alpha && !ci && !no_client;
             let launch_web = web && !no_browser && !ci && !no_client;
             for (given, note) in [
-                (skip_install, NO_INSTALL_NOTE),
                 (
                     no_browser && !talk && !web && !ci,
                     "--no-browser has no effect without --talk or --web (dcl-scene-cli opens a browser only for those)",
-                ),
-                (
-                    multi_instance,
-                    "--multi-instance has no effect (the join block always prints a 2nd-instance deep link)",
                 ),
                 (
                     no_client && !explorer_alpha && !web,
@@ -1135,8 +1238,8 @@ async fn run(command: Command) -> Result<()> {
                     "--web: not opening a browser (--no-browser, --ci or --no-client); the web link still prints",
                 ),
                 (
-                    skip_auth_screen || local_scene,
-                    "--skip-auth-screen and --local-scene are already the default: both ride on every desktop deep link",
+                    local_scene,
+                    "--local-scene is already the default: it rides on every desktop deep link",
                 ),
                 (
                     debug || no_debug || web3,
@@ -1180,8 +1283,11 @@ async fn run(command: Command) -> Result<()> {
                     error_source_lines_after,
                 ),
                 explorer_params,
+                multi_instance,
+                skip_auth_screen,
                 data_layer,
                 tunnel,
+                public_url,
                 tunnel_token,
                 no_host,
                 talk: talk.then_some(start::Talk {
@@ -1197,7 +1303,8 @@ async fn run(command: Command) -> Result<()> {
             .await
         }
         Command::Host { dir, preview, room } => {
-            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room }).await
+            dcl_scene_cli::host::host(&dcl_scene_cli::host::HostOptions { dir, preview, room })
+                .await
         }
         Command::Deploy {
             dir,
@@ -1219,9 +1326,12 @@ async fn run(command: Command) -> Result<()> {
             no_browser,
             ci,
             port,
+            host,
+            language,
             programmatic,
             deploy_token,
         } => {
+            let signing = dcl_scene_cli::linker::signing_bind(host)?;
             if programmatic {
                 ux::set_quiet(true);
             }
@@ -1233,6 +1343,10 @@ async fn run(command: Command) -> Result<()> {
                 (
                     skip_version_checks,
                     "--skip-version-checks is accepted for upstream parity: this CLI runs no SDK version check",
+                ),
+                (
+                    language.is_some(),
+                    "--language is accepted for upstream parity: the text of this CLI and of its signing page is English only",
                 ),
             ] {
                 if given {
@@ -1256,6 +1370,7 @@ async fn run(command: Command) -> Result<()> {
                 no_browser,
                 ci: ci_mode(ci),
                 port,
+                signing,
                 quiet: ux::quiet(),
                 host_signer: None,
                 identity: None,
@@ -1289,6 +1404,13 @@ async fn run(command: Command) -> Result<()> {
         Command::Pack { dir, skip_build } => {
             pack::pack(&pack::PackOptions { dir, skip_build }).await
         }
+        Command::CodeToComposite { dir, yes } => {
+            code_to_composite::code_to_composite(&code_to_composite::CodeToCompositeOptions {
+                dir,
+                yes,
+            })
+            .await
+        }
         Command::ExportStatic {
             dir,
             destination,
@@ -1309,10 +1431,21 @@ async fn run(command: Command) -> Result<()> {
         .await
         .map(|exported| {
             if ux::json() {
+                // A path is written as it is shown: one that is not UTF-8
+                // has no JSON form of its own.
+                let shown = |path: &std::path::Path| path.display().to_string();
+                let entity_files: Vec<_> = exported
+                    .entities
+                    .iter()
+                    .map(|id| shown(&exported.destination.join(id)))
+                    .collect();
                 print_json(serde_json::json!({
                     "scenesUrn": exported.scenes_urn,
-                    "destination": exported.destination,
+                    "destination": shown(&exported.destination),
                     "entities": exported.entities,
+                    "entityFiles": entity_files,
+                    "contentFiles": exported.content_files,
+                    "aboutFile": exported.about.as_deref().map(shown),
                 }));
             }
         }),
@@ -1680,6 +1813,8 @@ mod tests {
                 "https://x",
                 "--skip-build",
             ],
+            &["code-to-composite", "--dir", "d", "--yes"],
+            &["code-to-composite", "-y"],
         ];
         for case in accepted {
             let mut argv = vec!["dcl-scene-cli"];
@@ -1701,6 +1836,7 @@ mod tests {
             &["start", "--dclenv", "staging"],
             &["export-static", "--realmName", "r"],
             &["export-static", "--timestamp", "soon"],
+            &["code-to-composite", "--destination", "o"],
         ];
         for case in rejected {
             let mut argv = vec!["dcl-scene-cli"];

@@ -41,8 +41,9 @@ fn panel(ui: ExplorerUi) -> Option<HudPanel> {
         ExplorerUi::EuCameraReel => Some(HudPanel::Gallery),
         ExplorerUi::EuCommunities => Some(HudPanel::Communities),
         ExplorerUi::EuPlaces => Some(HudPanel::Places),
-        // No events page, and no item-purchase modal (the explorer-shop flow) in this client.
-        ExplorerUi::EuEvents | ExplorerUi::EuItemPurchase => None,
+        ExplorerUi::EuEvents => Some(HudPanel::Events),
+        // No item-purchase modal (the explorer-shop flow) in this client.
+        ExplorerUi::EuItemPurchase => None,
     }
 }
 
@@ -214,4 +215,18 @@ fn write_event(scenes: &mut Query<&mut RendererSceneContext>, open: &SceneOpen, 
             event: Some(event),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::inputs::SystemAction;
+
+    #[test]
+    fn events_opens_the_events_page() {
+        let events = panel(ExplorerUi::EuEvents);
+        assert_eq!(events, Some(HudPanel::Events));
+        assert_eq!(events.map(HudPanel::action), Some(SystemAction::Events));
+        assert_eq!(panel(ExplorerUi::EuItemPurchase), None);
+    }
 }

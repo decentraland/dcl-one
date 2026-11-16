@@ -44,6 +44,8 @@ pub fn apply(app: &mut App, launch: &LaunchOptions, config: &AppConfig, boot_ser
         realm: _,
         position: _,
         content_server: _,
+        // the startup scenes are the binary's
+        portables: _,
         // latch
         base_domain: _,
         services: _,
@@ -76,7 +78,6 @@ pub fn apply_client(
     let ClientOptions {
         // the scene set is the binary's: the ui scene and the startup scenes
         system_scene: _,
-        portables: _,
         // mapped onto the launch options before they are latched (main.rs)
         deep_link: _,
         editor,

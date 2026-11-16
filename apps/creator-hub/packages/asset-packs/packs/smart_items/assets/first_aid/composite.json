@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/first_aid.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/FirstAid.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"healingPoints\":{\"type\":\"number\",\"value\":100,\"optional\":true,\"tooltip\":\"How much health to restore when used.\"},\"hoverText\":{\"type\":\"string\",\"value\":\"Heal\",\"optional\":true,\"tooltip\":\"Text shown when the player points at the kit.\"},\"removeOnUse\":{\"type\":\"boolean\",\"value\":true,\"optional\":true,\"tooltip\":\"Remove the kit after it's used.\"}},\"actions\":[{\"methodName\":\"heal\",\"description\":\"Heals the player and, if enabled, removes the kit.\",\"params\":{}}],\"events\":[\"healed\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Heal",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/FirstAid.ts\",\"methodName\":\"heal\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

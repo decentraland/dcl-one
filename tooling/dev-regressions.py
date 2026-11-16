@@ -17,6 +17,7 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
     ("catalyst_comms", "lib", "pulse::cluster::nats::statistics_tests::statistics_live_broker_late_join_and_reconnect_recover_complete_state"),
     ("archipelago_socket_bounds", "test", "orderly_shutdown_drains_authenticated_disconnect_to_live_pulse"),
@@ -91,8 +92,9 @@ MANDATORY_ARCHIPELAGO = {
         "stats::tests::http_tests::selected_sql_metadata_order_reaches_hot_scenes_http",
         "stats::tests::content_tests::selected_sql_content_applies_shared_denylist_before_top_100",
         "archipelago::tests::mounted_hot_scenes_share_local_content_policy_for_get_and_head",
-        "archipelago::ws::io::bounds_tests::peer_close_cancels_production_readiness_slot_and_partial_frame_without_drain",
+        "archipelago::ws::io::bounds_tests::peer_close_drains_only_clean_readiness_and_never_partial_frames",
         "archipelago::ws::io::bounds_tests::clean_peer_close_discards_queue_and_preempts_kick_restart_without_start_send",
+        "archipelago::ws::io::bounds_tests::owner_kick_sends_terminal_only_from_a_clean_frame_boundary",
         "archipelago::ws::io::bounds_tests::stalled_clean_control_flush_releases_permit_once_at_existing_deadline",
         "archipelago::ws::io::bounds_tests::peer_close_wakes_idle_production_writer_without_a_lost_notification",
         "archipelago::ws::io::bounds_tests::peer_close_during_production_authority_wait_never_begins_the_held_credential",
@@ -106,15 +108,15 @@ MANDATORY_ARCHIPELAGO = {
         "protocol::bus::control_position::tests::selected_intent_vectors_use_exact_closed_bytes_and_preserve_signed_zero",
         "protocol::bus::cluster::tests::complete_selected_reply_boundaries_match_canonical_bytes_without_truncating_pending",
         "protocol::bus::cluster::tests::selection_retirement_codec_is_exact_bounded_and_negative_only",
-        "pulse::cluster::feed::current_tests::retirement_requires_complete_absence_and_survives_record_and_control_gc",
-        "pulse::cluster::feed::current_tests::retirement_withholds_blocked_pending_and_successor_current_evidence",
+        "pulse::cluster::assignments::current_tests::retirement_requires_complete_absence_and_survives_record_and_control_gc",
+        "pulse::cluster::assignments::current_tests::retirement_withholds_blocked_pending_and_successor_current_evidence",
         "pulse::cluster::control::tests::versions_share_wallet_capacity_and_unproved_mixed_heads_never_select",
         "pulse::cluster::control::tests::duplicate_does_not_refresh_live_expiry_for_either_version",
         "pulse::cluster::control::tests::explicit_withdrawal_is_terminal_but_live_expiry_can_resume",
         "pulse::cluster::control::tests::same_epoch_session_is_fixed",
         "pulse::cluster::control::tests::native_aba_preserves_cleanup_across_terminal_and_expired_control_heads",
-        "pulse::cluster::feed::current_tests::native_arrival_departure_without_pass_or_lookup_invalidates_all_legacy_variants",
-        "pulse::cluster::feed::current_tests::native_current_peer_and_exhausted_legacy_revalidation_never_reauthorize_old_stamps",
+        "pulse::cluster::assignments::current_tests::native_arrival_departure_without_pass_or_lookup_invalidates_all_legacy_variants",
+        "pulse::cluster::assignments::current_tests::native_current_peer_and_exhausted_legacy_revalidation_never_reauthorize_old_stamps",
         "pulse::cluster::tests::native_reservation_survives_unusable_position_and_different_legacy_session",
         "pulse::cluster::tests::native_reservation_outweighs_legacy_owner_and_terminal_tombstone",
         "gatekeeper::admission::cluster::fence::tests::selected_wire_vectors_preserve_exact_u64_json_and_refuse_unknown_authority",
@@ -275,14 +277,20 @@ MANDATORY_ARCHIPELAGO = {
 TEST_SCRIPT = [
     'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
-    'print(artifact["executable"])',
+    'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
     '\' > "$logs/binaries"',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
-    'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/sockets" || [ $? -eq 1 ]',
-    'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/others" || [ $? -eq 1 ]',
+    'shard="${CATALYST_TEST_SHARD:-1/1}"',
+    'index="${shard%/*}" total="${shard#*/}"',
+    '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
+    'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
+    '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
+    'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
+    'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
+    'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
     '"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }',
-    'run "$jobs" < "$logs/binaries"',
+    'run "$jobs" < "$logs/shard"',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',
     'cargo test --locked "$@" --doc',
@@ -367,8 +375,8 @@ def validate_runtime_script(script):
 
 def validate_test_script(script):
     # Pins the lines that keep the run complete: bash under set -e, the selection compiled
-    # unfiltered, every listed binary run without arguments in both phases, the doc-tests,
-    # and no exit before the end. Comment lines are inert.
+    # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
+    # without arguments in both phases, the doc-tests, and no exit before the end. Comment lines are inert.
     require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
     lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
@@ -431,11 +439,15 @@ def verify_external_result(name, output):
         f"provisioned test must execute exactly once with zero ignored/failed: {name}")
 
 
-def run_external(executable, name):
+def external_inventory(executable, name):
     normal = inventory(run([executable, "--list", "--format", "terse"]))
     ignored = inventory(run([executable, "--list", "--ignored", "--format", "terse"]))
     require(normal[name] == 1 and ignored[name] == 1,
             f"provisioned ignored test absent/renamed or annotation changed: {name}")
+
+
+def run_external(executable, name):
+    external_inventory(executable, name)
     command = [executable, name, "--exact", "--ignored", "--test-threads=1", "--color", "never"]
     print("provisioned Archipelago test: " + " ".join(command), flush=True)
     result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
@@ -454,8 +466,26 @@ def external_prerequisites(environ):
     return binary
 
 
+def external_shard(environ):
+    # The provisioned tests take a fixed time and do not depend on the cut of the binaries, so one
+    # shard of a run executes them. An empty value reads as unset, as in tooling/catalyst-test.sh.
+    shard = environ.get("CATALYST_TEST_SHARD") or "1/1"
+    chosen = environ.get(EXTERNAL_SHARD) or "1"
+    # The same pattern and limit as the CATALYST_TEST_SHARD line of tooling/catalyst-test.sh, which
+    # this guard pins as text: change both together.
+    require(re.fullmatch(r"[1-9][0-9]*/[1-9][0-9]*", shard) is not None,
+            "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    index, total = map(int, shard.split("/"))
+    require(index <= total, "CATALYST_TEST_SHARD must be i/n with i from 1 to n")
+    # A value outside 1 to n fails every shard, so no setting makes all shards skip the tests.
+    require(re.fullmatch(r"[1-9][0-9]*", chosen) is not None and int(chosen) <= total,
+            f"{EXTERNAL_SHARD} must name one shard from 1 to {total}")
+    return index == int(chosen), f"{int(chosen)}/{total}"
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
+    execute, owner = external_shard(os.environ)
     version = subprocess.run([binary, "--version"], text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
@@ -473,7 +503,12 @@ def check_external():
         check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions", **options)
     for target, kind, name in EXTERNAL:
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
-        run_external(targets[kind][target], name)
+        if execute:
+            run_external(targets[kind][target], name)
+        else:
+            # Every shard checks that the test is present and ignored by default.
+            external_inventory(targets[kind][target], name)
+            print(f"provisioned Archipelago test runs in shard {owner}: {name}", flush=True)
 
 
 def verify_resolution(root=ROOT):

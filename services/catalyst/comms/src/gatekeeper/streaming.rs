@@ -1,7 +1,11 @@
 //! `/scene-stream-access` (GET/POST/PUT/DELETE, scene signed): the RTMP
 //! ingress credential of a place's stream. The signer must own or
-//! administer the place the signed metadata stands on (a world by its realm
-//! name, a Genesis place by its parcel); list, add and reset are refused to
+//! administer the place the signed metadata stands on. List, add and reset
+//! require the signed scene to be the current deployment on its parcel and
+//! authorize against that deployment's footprint and the place based on its
+//! base parcel; remove needs only the place (a world by its realm name, a
+//! Genesis place by its parcel), so a key can still be revoked after a
+//! redeploy. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -17,7 +21,6 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::NaiveDateTime;
 use serde::Serialize;
-use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -25,11 +28,15 @@ use super::admission::scene::{self, PlaceLookup, meta_str, realm_name_from_metad
 use super::auth::{SCENE_SIGNER, device_identifier, verify_signed_fetch};
 use super::errors::{ApiError, forbidden, service_unavailable};
 use super::livekit::IngressClient;
+use super::moderation::context::Context;
 use super::moderation::store::PLATFORM_BANNED_MSG;
 use super::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
-use crate::world_identity::is_world_realm_name;
+use crate::world_identity::{WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
+
+#[path = "streaming_notifications.rs"]
+pub(super) mod notifications;
 
 #[path = "streaming_jobs.rs"]
 mod jobs;
@@ -120,18 +127,51 @@ pub async fn scene_stream_access(
     .await?;
     let realm_name = realm_name_from_metadata(&sf.metadata)
         .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no realmName"))?;
-    let parcel = meta_str(&sf.metadata, "parcel");
     let device_id = device_identifier(&sf.metadata);
-    if matches!(method, Method::GET | Method::POST | Method::PUT) {
+    if method != Method::DELETE {
         refuse_if_platform_banned(&state, &sf.signer, device_id.as_deref()).await?;
+        if state.deny_list.is_denied(sf.signer.as_str()).await {
+            return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
+        }
     }
-    let raw_scene_id = meta_str(&sf.metadata, "sceneId")
-        .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no sceneId"))?;
-    let resolved = scene::resolve_adapter_room(&state, &realm_name, &raw_scene_id).await?;
-    let place_id = resolve_place_id(&state.pool, &realm_name, parcel.as_deref())
+    let (place_id, place, room) = if method == Method::DELETE {
+        // Revocation needs no current deployment: the place row's own footprint authorizes it.
+        let world = if is_world_realm_name(&realm_name) {
+            Some(
+                WorldName::parse(&realm_name)
+                    .map_err(|_| ApiError::bad_request("Invalid realm name"))?,
+            )
+        } else {
+            None
+        };
+        let parcel = meta_str(&sf.metadata, "parcel");
+        if world.is_none() && parcel.is_none() {
+            return Err(ApiError::bad_request(
+                "invalid signed-fetch request, no parcel",
+            ));
+        }
+        let place_id = resolve_place_id(
+            &state.pool,
+            world.as_ref(),
+            parcel.as_deref().unwrap_or_default(),
+            false,
+        )
         .await?
         .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-    let place = PlaceLookup::new(&state, &place_id);
+        let place = PlaceLookup::new(&state, &place_id);
+        (place_id, place, None)
+    } else {
+        // One resolution binds the signed scene to its parcel; the room and the
+        // authorizing footprint both come from it.
+        let bound = Context::resolve(&state, &sf.metadata).await?;
+        let world = bound.world_scene.as_ref().map(|(world, _)| world);
+        let base = bound.footprint.base_position.clone().unwrap_or_default();
+        let place_id = resolve_place_id(&state.pool, world, &base, true)
+            .await?
+            .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
+        let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
+        (place_id, place, Some(bound.room))
+    };
     match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
@@ -139,7 +179,7 @@ pub async fn scene_stream_access(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let room = resolved.room;
+    let room = room.unwrap_or_default();
     let ingress = state.ingress();
     match method {
         Method::GET => match active_access(&state.pool, &place_id).await? {
@@ -156,7 +196,13 @@ pub async fn scene_stream_access(
                     Renewal::Reuse => return Ok(Json(existing.response()).into_response()),
                     Renewal::Conflict => return Err(renewal_conflict()),
                     Renewal::Replace => {
-                        if !jobs::enqueue(&state, existing.id, None, false).await? {
+                        if !jobs::enqueue(
+                            &state,
+                            existing.id,
+                            jobs::CleanupCommand::IdleReplacement,
+                        )
+                        .await?
+                        {
                             return Err(renewal_conflict());
                         }
                         jobs::cleanup_access(&state, existing.id).await?;
@@ -200,30 +246,38 @@ async fn refuse_if_platform_banned(
     }
 }
 
-/// The place the signed metadata stands on: the world (published here or
-/// mirrored) by its name, else the Genesis place holding `parcel`.
+/// The place the bound scene stands on: its world (published here or
+/// mirrored) by name, else the Genesis place holding `parcel`. With
+/// `based_there` only a place based on `parcel` counts, so a catalogue that
+/// has not caught up with a redeploy never lends another scene's admins.
 async fn resolve_place_id(
     pool: &PgPool,
-    realm_name: &str,
-    parcel: Option<&str>,
+    world: Option<&WorldName>,
+    parcel: &str,
+    based_there: bool,
 ) -> Result<Option<String>, ApiError> {
-    if is_world_realm_name(realm_name) {
+    if let Some(world) = world {
         return Ok(sqlx::query_scalar(
             "SELECT id FROM explore.place WHERE world AND lower(world_name) = lower($1) \
              UNION ALL \
              SELECT id FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
              LIMIT 1",
         )
-        .bind(realm_name)
+        .bind(world.display())
         .fetch_optional(pool)
         .await?);
     }
-    let parcel =
-        parcel.ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no parcel"))?;
-    Ok(sqlx::query_scalar("SELECT id FROM explore.place WHERE raw->'positions' @> jsonb_build_array($1::text) LIMIT 1")
-        .bind(parcel)
-        .fetch_optional(pool)
-        .await?)
+    // A live Genesis place on the parcel, preferring the one based there.
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM explore.place WHERE NOT world AND NOT disabled \
+         AND raw->'positions' @> jsonb_build_array($1::text) \
+         AND (NOT $2 OR base_position = $1) \
+         ORDER BY base_position = $1 DESC, deployed_at DESC NULLS LAST, id LIMIT 1",
+    )
+    .bind(parcel)
+    .bind(based_there)
+    .fetch_optional(pool)
+    .await?)
 }
 
 async fn active_access(pool: &PgPool, place_id: &str) -> Result<Option<AccessRow>, sqlx::Error> {
@@ -327,7 +381,7 @@ async fn reset_access(
         let row = active_access(&state.pool, place_id)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
-        if !jobs::enqueue(state, row.id, Some("streaming_key_reset"), true).await? {
+        if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Reset).await? {
             return Err(renewal_conflict());
         }
         // The durable intent owns the old ingress's deletion and the reset notification,
@@ -351,30 +405,30 @@ async fn remove_access(
     let row = active_access(&state.pool, place_id)
         .await?
         .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
-    if !jobs::enqueue(state, row.id, Some("streaming_key_revoke"), true).await? {
+    if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
         return Err(renewal_conflict());
     }
     jobs::cleanup_access(state, row.id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+pub(super) enum IngressEvent {
+    Started,
+    Ended,
+}
+
 /// The LiveKit webhook's ingress events: the active row of that ingress
 /// starts streaming (keeping the first start time) or stops.
 pub(super) async fn ingress_event(
     state: &CommsState,
-    event_kind: &str,
-    event: &Value,
+    event: IngressEvent,
+    ingress_id: Option<&str>,
 ) -> Result<(), ApiError> {
-    let Some(ingress_id) = event
-        .get("ingressInfo")
-        .and_then(|i| i.get("ingressId"))
-        .and_then(|v| v.as_str())
-        .filter(|id| !id.is_empty())
-    else {
+    let Some(ingress_id) = ingress_id.filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    match event_kind {
-        "ingress_started" => {
+    match event {
+        IngressEvent::Started => {
             sqlx::query(
                 "UPDATE social.scene_stream_access SET streaming = true, streaming_start_time = CASE WHEN streaming THEN COALESCE(streaming_start_time,$2) ELSE $2 END, streaming_state_version=streaming_state_version+1 \
                  WHERE ingress_id = $1 AND active",
@@ -384,10 +438,9 @@ pub(super) async fn ingress_event(
             .execute(&state.pool)
             .await?;
         }
-        "ingress_ended" => {
+        IngressEvent::Ended => {
             sqlx::query("UPDATE social.scene_stream_access SET streaming = false, streaming_state_version=streaming_state_version+1 WHERE ingress_id = $1 AND active").bind(ingress_id).execute(&state.pool).await?;
         }
-        _ => {}
     }
     Ok(())
 }
