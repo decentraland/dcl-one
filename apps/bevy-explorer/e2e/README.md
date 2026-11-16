@@ -24,15 +24,20 @@ and a visible window: Chrome runs headed, with the benchmark runner's flags
 
 ```sh
 cd apps/bevy-explorer/e2e
-npm ci
-npm run typecheck                      # tsc
-npm test                               # the driver's tests (a stub page in headless Chrome)
-DCL_E2E_ACCOUNT_KEYS=0x... npm run e2e -- --inworld     # the InWorld scenarios against zone
-npm run e2e -- --visual                # the Visual suite (build the scenes first, see below)
-npm run e2e -- --filter 'opens the Backpack'            # a scenario-name pattern, not a file name
-npm run gpu-probe                      # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
-npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the browser runs on another (Windows)
+corepack enable                        # once: puts the pnpm that package.json pins on the PATH
+pnpm install --frozen-lockfile
+pnpm run typecheck                     # tsc
+pnpm test                              # the driver's tests (a stub page in headless Chrome)
+DCL_E2E_ACCOUNT_KEYS=0x... pnpm run e2e --inworld       # the InWorld scenarios against zone
+pnpm run e2e --visual                  # the Visual suite (build the scenes first, see below)
+pnpm run e2e --filter 'opens the Backpack'              # a scenario-name pattern, not a file name
+pnpm run gpu-probe                     # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
+pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
+
+The app uses the browser origin `http://localhost:<port>` over an IPv4 loopback listener.
+The services accept `localhost` for development CORS requests; its numeric loopback spelling
+is a distinct origin and may be refused.
 
 The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
@@ -142,7 +147,8 @@ What the driver does for every scenario, so a spec need not:
   typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
   closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
   Escape twice only when a field holds the keys, and falls back to the page's Close button when a
-  field keeps them. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
+  field keeps them. If the page is already closed, `closePage` sends no key, so a restore does
+  not send an extra Escape into the world before reopening it. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
   and is refused, not raced: run the suite against a web build of its own commit.
 - **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
   slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
@@ -151,11 +157,14 @@ What the driver does for every scenario, so a spec need not:
   (the emotes, the communities) are read once they show.
 - **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
   3 s (`Entity rate limited`), a rule of the server's clock that the client cannot observe;
-  closing the Backpack on a changed look and saving the passport are deployments, so they first
-  wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
-  change and its restore would otherwise fail silently and leave the shared account changed.
+  closing the Backpack on a changed look and saving the passport are deployments. Before either,
+  `profileDeployWindow()` waits for `/profile_requests` to report no pending deployment and the
+  own version equal to the version peers may see, then counts the window from that confirmation.
+  A local version bump alone does not confirm the HTTP request completed. A confirmed version
+  spends the window once; a rollback of an observed edit fails instead of issuing another write.
+  This also keeps a change and its restore from overlapping the server's deployment window.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, compares the Legacy avatar events queue counts with `/legacy_social`, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
@@ -216,8 +225,8 @@ Specs with no explorer-automation counterpart, outside the counts above:
 
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
-| `debug-panel` | every debug reading resolves; the panel shows live data and plays an emote | |
-| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`npm run build-scenes -- smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
+| `debug-panel` | every debug reading resolves; the panel shows live data and legacy avatar queue counts, stays open while the player walks and uses the world and HUD, and plays an emote | |
+| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
 
 The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
 (`driver/realm.ts` with `previewWearables`, on an ephemeral port) that lists `scenes/smart-wearable`
@@ -236,17 +245,21 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
+960x540 outer browser window (the screenshot uses the actual canvas dimensions; see
+[references/README.md](references/README.md)), turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+and teleports to each scene. After its entities and settle time, it pins the cloud field with
+`/cloud_motion false`, retaining scene sky times and authored cloud settings. It waits 128 CPU
+sky updates as a conservative refresh window for the sky and reflections, not a GPU fence,
+then compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
 ```sh
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes
 ```
 
 References are recorded only in CI ([references/README.md](references/README.md)): a manual run
@@ -280,7 +293,7 @@ A reference counts as approved once a reviewer has checked it against the scene'
   Testing build it downloads and checks against the sum the workflow records (the image's Edge gave
   WebGPU no adapter), with `--enable-unsafe-webgpu --ignore-gpu-blocklist`, the first of which the
   app's own GPU page asks for. A GPU probe step says first what GPU that browser gives, bare and
-  with those flags (`npm run gpu-probe`), and when the browser runs on an adapter other than the
+  with those flags (`pnpm run gpu-probe`), and when the browser runs on an adapter other than the
   NVIDIA one (the VM's paravirtual display adapter comes first, the GPU second), the scenarios get
   `--use-adapter-luid=<its LUID>` as well, so the browser's GPU process starts on the GPU. The
   scenes' CLI is built on a
@@ -344,21 +357,21 @@ change on the left updates what is on the right in the same change, then runs th
 
 | Changed | Update | Check |
 | --- | --- | --- |
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `npm run typecheck`; the scenarios in CI |
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
-| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
+| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
-| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
-| `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `npm test`; the two scenarios, e.g. `npm run e2e -- --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
-| `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
-| The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `npm test`; the scenario in CI |
+| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
+| `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
+| `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
+| The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |
 
 ```sh
-cd apps/bevy-explorer/e2e && npm run typecheck && npm test
+cd apps/bevy-explorer/e2e && pnpm run typecheck && pnpm test
 python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
 ```
 

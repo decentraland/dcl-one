@@ -6,6 +6,15 @@
 //! it). Finishing a pass clears the cursor and, only when every page fetched
 //! and every row upserted, advances `last_complete_pass_at`: that timestamp
 //! and its lag are what `/api/status` reports as the catalogue's freshness.
+//!
+//! The cursor does not record whether the interrupted run skipped a page or a
+//! row, so the fail-open legs (events, worlds) finish a resumed pass
+//! incomplete: it neither advances `last_complete_pass_at` nor sweeps, and the
+//! next fresh pass restores the marker. A mirror whose first pass is
+//! interrupted therefore stays without a complete pass, and the copies gate
+//! keeps its catalogue unavailable, for one more interval. The strict places
+//! leg never skips a page or row before advancing the cursor, so its resumed
+//! pass can complete.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;

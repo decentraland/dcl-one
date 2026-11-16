@@ -330,6 +330,9 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
 
 /// Reuses Pulse's connection. Subscription is installed before the first full
 /// snapshot so readers can use that first snapshot as the producer-ready fence.
+/// `OBSERVATIONS_SUBJECT` is subscribed before `PRODUCER_SUBJECT` on the same
+/// client, so a producer reply also proves observations are subscribed; the
+/// live-Pulse test in `tests/archipelago_socket_bounds.rs` relies on that order.
 async fn serve_statistics(shared: &Shared, client: &async_nats::Client) {
     use crate::protocol::bus::statistics::{
         OBSERVATIONS_SUBJECT, Observation, PRODUCER_SUBJECT, ProducerRequest,
@@ -451,7 +454,7 @@ async fn publish_statistics_with<F: Future<Output = bool>>(
         let Ok(previous) =
             shared
                 .statistics_sequence
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
         else {
             return;
         };

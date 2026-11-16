@@ -7,6 +7,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::*;
 use crate::gatekeeper::bus::{DisabledBus, InProcessBus, PublishOutcome, RequestError};
+use crate::test_logs::LogBuffer;
 
 const WALLET: &str = "0x1111111111111111111111111111111111111111";
 const SESSION_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1060,59 +1061,6 @@ fn delivered_to(delivery: &Delivered) -> (&str, &str) {
     (delivery.wallet.as_str(), delivery.session.as_str())
 }
 
-/// This thread's `warn` and `error` lines, captured until the guard drops.
-#[derive(Clone, Default)]
-struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for LogBuffer {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// A capture in force: this thread's subscriber, and a second live dispatcher beside it.
-///
-/// `tracing` caches a callsite's interest when the callsite is first hit. While one dispatcher
-/// alone is live, a first hit on another test's thread asks only that thread's subscriber (none)
-/// and caches "never", hiding the event from this capture. With two live, every first hit asks
-/// all of them.
-struct Capture {
-    _default: tracing::subscriber::DefaultGuard,
-    _second: tracing::Dispatch,
-}
-
-impl LogBuffer {
-    fn capture() -> (Self, Capture) {
-        let second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
-        let buffer = Self::default();
-        let writer = buffer.clone();
-        let guard = tracing::subscriber::set_default(
-            tracing_subscriber::fmt()
-                .with_max_level(tracing::Level::WARN)
-                .without_time()
-                .with_ansi(false)
-                .with_writer(move || writer.clone())
-                .finish(),
-        );
-        (
-            buffer,
-            Capture {
-                _default: guard,
-                _second: second,
-            },
-        )
-    }
-
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
-}
-
 /// The island subscriber hands the connector's socket the assignment it minted by call: the
 /// legacy `IslandChangedMessage` addressed to the session, and nothing crosses the broker.
 #[tokio::test]
@@ -1279,7 +1227,7 @@ async fn an_empty_cluster_id_is_dropped_before_anything_is_minted() {
 /// of its subject. The capture is this test's thread, on a current-thread runtime.
 #[tokio::test(flavor = "current_thread")]
 async fn a_malformed_change_is_logged_once() {
-    let (logs, _guard) = LogBuffer::capture();
+    let (logs, _guard) = LogBuffer::capture(tracing::Level::WARN);
     let h = harness();
     h.bus.inject(
         &format!("peer.{WALLET}.cluster_change"),
@@ -1541,7 +1489,7 @@ async fn an_accepted_but_stale_successor_cannot_cancel_the_current_quarantine() 
 /// received never becomes the next `from_island_id`.
 #[tokio::test(flavor = "current_thread")]
 async fn an_assignment_with_no_sockets_attached_reaches_nobody_and_records_nothing() {
-    let (logs, _guard) = LogBuffer::capture();
+    let (logs, _guard) = LogBuffer::capture(tracing::Level::WARN);
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
     let _recording = metrics::set_default_local_recorder(&recorder);

@@ -191,6 +191,15 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   SDK toolchain's
   `apps/dcl-scene-cli/scripts/`, `src/templates/` and `testdata/`. It is a
   best-effort check: a pass does not prove the change follows this standard.
+- `make check` and CI also run `tooling/ui_standards.py --token-floor`. For
+  each stylesheet of the surfaces that use the shared foundations (the
+  `FLOOR_PATHS` of the script) it fails when the `var(--dcl-` uses drop
+  below, or the uses of an `apps/ui3` `atoms/primitives.css` property rise
+  above, the counts in `tooling/ui-token-floor.json`, and when that file
+  records a stylesheet that is not there. After a deliberate change (a moved
+  or removed stylesheet, a count that must change), run
+  `python3 tooling/ui_standards.py --write-token-floor` and commit the file
+  with the change.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -216,6 +225,7 @@ consumer, and verify a change to it in every app that imports it.
 - Use shared tokens rather than hardcoded values or values copied from another
   app.
 - Each app keeps its own global entry point for its resets and base rules.
+- A page that moves to `apps/<app>` before its Figma components exist may port its current UI as provisional components in `library/ui/apps/<app>/provisional/`, styled with the shared tokens. Each provisional file carries a `TODO(figma-ds)` mark, and the folder's `README.md` lists each component with its source and the Figma component that replaces it. When that component lands in `library/ui/components`, its consumers switch to it and the provisional one is deleted.
 - When a second app or the Bevy HUD needs the same component or foundation,
   move it from `library/ui/apps/<app>/` (or from the app) to the shared `components/` or `foundations/`, update its
   consumers and remove the old copy.
@@ -378,7 +388,7 @@ import { theme } from "@dcl/one-ui/foundations";
 import "@dcl/one-ui/foundations.css";
 ```
 
-`@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles ([ADR](adr/2026-11-09-shared-ui-import-name.md)). Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.
