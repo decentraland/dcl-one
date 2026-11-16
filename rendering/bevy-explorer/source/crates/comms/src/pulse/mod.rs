@@ -228,11 +228,45 @@ struct Subject {
     realm: Arc<str>,
     /// Latest version the server has told us of, from `PlayerJoined` then each announcement.
     profile_version: i32,
+    /// Unwrapped snapshot time of this subject's join. Subject ids can be reused while an old
+    /// unreliable delta is still in flight; its sequence can look ahead of the new subject's.
+    joined_at: f64,
     last_seq: u32,
     /// Raw server tick of the state in `baseline`, so a replay can stamp it honestly.
     last_tick: u32,
     baseline: SubjectState,
     emote: EmoteTrack,
+    /// One missing link per live subject. Prefer the closest future baseline, then the newest
+    /// update for that baseline, so later gaps cannot displace the first one we can bridge.
+    pending_delta: Option<pulse::PlayerStateDeltaTier0>,
+    /// A displaced update can still be newer than the state we recover. Remember its destination
+    /// so recovery requests it after the nearest missing link has been supplied.
+    latest_pending_seq: u32,
+}
+
+impl Subject {
+    fn apply_delta(&mut self, delta: &pulse::PlayerStateDeltaTier0) {
+        self.baseline.apply_delta(delta);
+        self.last_seq = delta.new_seq;
+        self.last_tick = delta.server_tick;
+    }
+
+    /// A full state or delta may supply the missing baseline. Take in the held update before
+    /// emitting movement so a teleport keeps its discontinuity at the final position.
+    fn replay_pending_delta(&mut self) -> bool {
+        let Some(delta) = self.pending_delta.take() else {
+            return false;
+        };
+        if delta.baseline_seq > self.last_seq {
+            self.pending_delta = Some(delta);
+            return false;
+        }
+        if delta.baseline_seq != self.last_seq {
+            return false;
+        }
+        self.apply_delta(&delta);
+        true
+    }
 }
 
 /// What a subject's emote events have left of its emote. It keeps a sequence of its own because an
@@ -410,11 +444,11 @@ pub struct PulseDecoder {
     /// newer one authenticates, though the older one's `PlayerLeft` can arrive after the newer
     /// one's join, so a join replaces the subject held for its wallet under another id.
     wallets: HashMap<Address, u32>,
-    /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
-    /// shows in every one after it, so without this each would ask again. A full state, a delta
-    /// that applies, a join (its own, or a newer one of its wallet's, which replaces it), a leave
-    /// and `reset` each end the wait, as does `resync_not_sent`. Only a held subject is asked for
-    /// (a delta for any other is dropped, see `on_delta`), so no entry outlives its subject.
+    /// Subjects with an outstanding `Resync`. Only sequence progress releases the request gate;
+    /// if a newer observed destination is still missing, recovery starts another request from
+    /// the advanced baseline. Stale states and equal-sequence emotes preserve the gate. A join,
+    /// leave, `reset` or `resync_not_sent` also releases it. Only held subjects are asked for, so
+    /// no entry outlives its subject.
     pending_resync: HashSet<u32>,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
@@ -521,6 +555,7 @@ impl PulseDecoder {
 
         let baseline = SubjectState::from_player_state(&state);
         let movement = self.to_movement(&baseline);
+        let joined_at = self.tick_secs(full.server_tick);
         let realm: Arc<str> = Arc::from(joined.realm.as_str());
         // A newcomer in another realm: the wallet leaves the replaced subject's, and its emote
         // goes with it.
@@ -536,10 +571,13 @@ impl PulseDecoder {
                 wallet: address,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
+                joined_at,
                 last_seq: full.sequence,
                 last_tick: full.server_tick,
                 baseline,
                 emote: EmoteTrack::default(),
+                pending_delta: None,
+                latest_pending_seq: full.sequence,
             },
         );
         self.pending_resync.remove(&full.subject_id);
@@ -562,7 +600,7 @@ impl PulseDecoder {
                 realm: realm.clone(),
                 // the avatar jumps from wherever the subject it replaces left it
                 teleport: replaced.is_some(),
-                timestamp: self.tick_secs(full.server_tick),
+                timestamp: joined_at,
             },
         ]);
         // The avatar may be playing the replaced subject's emote, and this one has none yet.
@@ -597,12 +635,11 @@ impl PulseDecoder {
     }
 
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
-    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
-    /// state leaves the baseline as it is, an older teleport's realm included, and announces
-    /// nothing. Any state for a known subject ends the wait for its resync, an older one too; a
-    /// message without a state does not, and an unknown subject has no wait to end. Unknown
-    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
-    /// can't address it.
+    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). Older
+    /// states preserve the baseline, realm and outstanding resync without emitting events.
+    /// Sequence progress, including a buffered replay, releases the request gate and requests
+    /// any still-missing destination from the advanced baseline. Unknown subjects are dropped:
+    /// full state carries no wallet, so without a prior `PlayerJoined` we can't address it.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -618,7 +655,7 @@ impl PulseDecoder {
             return Vec::new();
         };
 
-        self.pending_resync.remove(&subject_id);
+        let previous_seq = subject.last_seq;
         let newer = match kind {
             FullKind::Refresh | FullKind::Teleport(_) => sequence > subject.last_seq,
             FullKind::Emote => sequence >= subject.last_seq,
@@ -641,7 +678,12 @@ impl PulseDecoder {
         };
         let address = subject.wallet;
         let realm = subject.realm.clone();
-        let movement = self.to_movement_for(subject_id);
+        let replayed = subject.replay_pending_delta();
+        let tick = subject.last_tick;
+        if subject.last_seq > previous_seq {
+            self.pending_resync.remove(&subject_id);
+        }
+        let movement = self.to_movement_for(subject_id, replayed);
         // Entering a realm is announced like a first sighting: an observer there filtered out
         // whatever it was sent while the subject was elsewhere, and the server won't re-announce a
         // subject it already has in view.
@@ -654,8 +696,9 @@ impl PulseDecoder {
             movement: Box::new(movement),
             realm,
             teleport,
-            timestamp: self.tick_secs(server_tick),
+            timestamp: self.tick_secs(tick),
         });
+        events.extend(self.resync_buffered_delta(subject_id));
         events
     }
 
@@ -705,7 +748,7 @@ impl PulseDecoder {
     }
 
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
-        let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
+        let Some(subject) = self.subjects.get(&delta.subject_id) else {
             // Not held. Either its `PlayerJoined`, reliable and carrying the full state, is still
             // on its way, or it has left, or a newer join of its wallet replaced it, and this delta
             // arrived after that (the two channels keep no order between them), and the server
@@ -715,23 +758,28 @@ impl PulseDecoder {
         };
 
         // Already have this (e.g. a reliable resync retransmit of a seq we applied unreliably).
-        if delta.new_seq <= subject.last_seq {
+        if delta.new_seq <= subject.last_seq || delta.new_seq <= delta.baseline_seq {
             return Vec::new();
         }
+        let joined_at = subject.joined_at;
+        if self.tick_secs(delta.server_tick) < joined_at {
+            return Vec::new();
+        }
+        let subject = self.subjects.get_mut(&delta.subject_id).unwrap();
 
-        // The delta is diffed from `baseline_seq`; we can only apply it if our state is exactly
-        // that sequence. Ahead of us, we missed an intermediate delta — resync from what we have.
-        //
-        // Known gap: a delta whose baseline is AHEAD of us is dropped here even though the missing
-        // link may be a reliable full state still in flight (unreliable deltas can overtake it):
-        // full 0, delta 0→1, delta 2→3, full 2 leaves us at 2 with 3 discarded, and the resync
-        // reply (from 1) then mismatches too, so the subject stalls for two round-trips. If that
-        // shows up in practice, hold the single ahead-of-us delta per subject and chain it after
-        // the next successful apply (delta or full) instead of dropping it — still send the resync,
-        // since the gap may be genuine loss.
+        // A reliable baseline may still be in flight. Keep one future update to chain when it
+        // arrives; request a resync too, since the gap may be genuine packet loss.
         if delta.baseline_seq > subject.last_seq {
+            let subject_id = delta.subject_id;
+            subject.latest_pending_seq = subject.latest_pending_seq.max(delta.new_seq);
+            if subject.pending_delta.as_ref().is_none_or(|held| {
+                delta.baseline_seq < held.baseline_seq
+                    || (delta.baseline_seq == held.baseline_seq && delta.new_seq > held.new_seq)
+            }) {
+                subject.pending_delta = Some(delta);
+            }
             let known_seq = subject.last_seq;
-            return self.request_resync(delta.subject_id, known_seq);
+            return self.request_resync(subject_id, known_seq);
         }
         // Behind us, it leads on from a state we are already past — the reply to a resync that a
         // later state has since answered. There is nothing to ask for.
@@ -741,28 +789,35 @@ impl PulseDecoder {
 
         // Back on track, whether this is the next in line or the reply to the resync.
         self.pending_resync.remove(&delta.subject_id);
-        subject.baseline.apply_delta(&delta);
-        subject.last_seq = delta.new_seq;
-        subject.last_tick = delta.server_tick;
+        subject.apply_delta(&delta);
+        subject.replay_pending_delta();
+        let tick = subject.last_tick;
         let address = subject.wallet;
         let realm = subject.realm.clone();
-        let mut movement = self.to_movement_for(delta.subject_id);
-        // A delta carries position quantized to the parcel grid, so the true position is only known
-        // to within ±half a step. Hand that box to the interpolator (via the rfc4 carrier) so it
-        // dead-reckons inside the box instead of snapping to the quantized centre every packet.
-        // Full-state / join movements leave this unset (exact position).
-        movement.position_precision = Some(rfc4::PositionPrecision {
-            x: pulse::PlayerStateDeltaTier0::position_x_step() * 0.5,
-            y: pulse::PlayerStateDeltaTier0::position_y_step() * 0.5,
-            z: pulse::PlayerStateDeltaTier0::position_z_step() * 0.5,
-        });
-        vec![PulseEvent::Movement {
+        let movement = self.to_movement_for(delta.subject_id, true);
+        let mut events = vec![PulseEvent::Movement {
             address,
             movement: Box::new(movement),
             realm,
             teleport: false,
-            timestamp: self.tick_secs(delta.server_tick),
-        }]
+            timestamp: self.tick_secs(tick),
+        }];
+        events.extend(self.resync_buffered_delta(delta.subject_id));
+        events
+    }
+
+    /// A response can advance the baseline without reaching the latest observed destination.
+    /// Request that remaining gap from the new baseline. A failed send releases the request
+    /// gate and relies on a later update to retry; there is no timed retry here.
+    fn resync_buffered_delta(&mut self, subject_id: u32) -> Vec<PulseEvent> {
+        let Some(subject) = self.subjects.get(&subject_id) else {
+            return Vec::new();
+        };
+        if subject.last_seq < subject.latest_pending_seq {
+            self.request_resync(subject_id, subject.last_seq)
+        } else {
+            Vec::new()
+        }
     }
 
     /// The `Resync` for `subject_id` never left (no link, or a full queue), so nothing will answer
@@ -865,8 +920,17 @@ impl PulseDecoder {
     }
 
     /// Convenience: convert an already-stored subject baseline.
-    fn to_movement_for(&self, subject_id: u32) -> rfc4::Movement {
-        self.to_movement(&self.subjects[&subject_id].baseline)
+    fn to_movement_for(&self, subject_id: u32, delta: bool) -> rfc4::Movement {
+        let mut movement = self.to_movement(&self.subjects[&subject_id].baseline);
+        // Deltas describe a quantization box; full states without a replay remain precise.
+        if delta {
+            movement.position_precision = Some(rfc4::PositionPrecision {
+                x: pulse::PlayerStateDeltaTier0::position_x_step() * 0.5,
+                y: pulse::PlayerStateDeltaTier0::position_y_step() * 0.5,
+                z: pulse::PlayerStateDeltaTier0::position_z_step() * 0.5,
+            });
+        }
+        movement
     }
 
     /// A server tick (absolute milliseconds) as seconds, unwrapped across the `u32` rollover. `f64`
@@ -945,8 +1009,8 @@ impl PulseDecoder {
             head_yaw: state.head_yaw.map(signed_angle).unwrap_or(0.0),
             head_pitch: state.head_pitch.map(signed_angle).unwrap_or(0.0),
             scene_driven_animation: None,
-            // Stamped only on delta-derived movements (see `on_delta`); a full state carries an
-            // exact position, so the shared builder leaves the box unset (precise).
+            // `to_movement_for` sets this for delta-derived positions, including a full state or
+            // teleport that replays a buffered delta. Other full-state positions remain precise.
             position_precision: None,
         }
     }

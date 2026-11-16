@@ -1,0 +1,1398 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { VscTrash as RemoveIcon } from 'react-icons/vsc';
+import { AvatarAnchorPointType } from '@dcl/ecs';
+import type { Action, ActionPayload } from '@dcl/asset-packs';
+import {
+  ActionType,
+  getActionTypes,
+  getJson,
+  getPayload,
+  getActionSchema,
+  ComponentName,
+} from '@dcl/asset-packs';
+import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer';
+
+import { withSdk } from '../../../hoc/withSdk';
+import { getComponentValue, useComponentValue } from '../../../hooks/sdk/useComponentValue';
+import { useHasComponent } from '../../../hooks/sdk/useHasComponent';
+import { useChange } from '../../../hooks/sdk/useChange';
+import { useArrayState } from '../../../hooks/useArrayState';
+import { analytics, Event } from '../../../lib/logic/analytics';
+import type { EditorComponentsTypes } from '../../../lib/sdk/components';
+import { getAssetByModel } from '../../../lib/logic/catalog';
+
+import { Block } from '../../Block';
+import { Container } from '../../Container';
+import { Dropdown, TextField } from '../../ui';
+import MoreOptionsMenu from '../MoreOptionsMenu';
+import { AddButton } from '../AddButton';
+import { Button } from '../../Button';
+import { InfoTooltip } from '../../ui/InfoTooltip';
+
+import type { ScriptAction } from '../ScriptInspector/types';
+import { parseLayout } from '../../../lib/sdk/script-params';
+import { ScriptParamField } from '../ScriptInspector/ScriptParamField/ScriptParamField';
+import { resolveParamUpdate, type ParamUpdate } from '../ScriptInspector/ScriptParamField/update';
+import { truncateMiddle } from '../../ImportAsset/utils';
+import { PlaySoundAction } from './PlaySoundAction';
+import { TweenAction } from './TweenAction';
+import { isValidTween } from './TweenAction/utils';
+import { PlayAnimationAction } from './PlayAnimationAction';
+import { SetVisibilityAction } from './SetVisibilityAction';
+import { PlayVideoStreamAction } from './PlayVideoStreamAction';
+import { PlayAudioStreamAction } from './PlayAudioStreamAction';
+import { TeleportPlayerAction } from './TeleportPlayerAction';
+import { MovePlayerAction } from './MovePlayerAction';
+import { PlayDefaultEmoteAction } from './PlayDefaultEmoteAction';
+import { PlayCustomEmoteAction } from './PlayCustomEmoteAction';
+import { OpenLinkAction } from './OpenLinkAction';
+import { ShowTextAction } from './ShowTextAction';
+import { DelayAction } from './DelayAction';
+import { LoopAction } from './LoopAction';
+import { CloneEntityAction } from './CloneEntityAction';
+import { SpawnEntityAction } from './SpawnEntityAction';
+import { ShowImageAction } from './ShowImageAction';
+import { FollowPlayerAction } from './FollowPlayerAction';
+import TriggerProximityAction from './TriggerProximityAction/TriggerProximityAction';
+import SetPositionAction from './SetPositionAction/SetPositionAction';
+import { SetRotationAction } from './SetRotationAction';
+import { SetScaleAction } from './SetScaleAction';
+import { RandomAction } from './RandomAction';
+import { BatchAction } from './BatchAction';
+import { getDefaultPayload, getPartialPayload, isStates } from './utils';
+import { LightsModifyAction } from './LightsModifyAction';
+import { ChangeCameraAction } from './ChangeCameraAction';
+import { ChangeTextAction } from './ChangeTextAction';
+import { ChangeCollisionsAction } from './ChangeCollisionsAction';
+import { ChangeSkyboxAction } from './ChangeSkyboxAction';
+import { SlideTextureAction } from './SlideTextureAction';
+import type { Props } from './types';
+
+import './ActionInspector.css';
+
+const ActionMapOption: Record<string, string> = {
+  [ActionType.PLAY_ANIMATION]: 'Play Animation',
+  [ActionType.STOP_ANIMATION]: 'Stop Animation',
+  [ActionType.SET_STATE]: 'Set State',
+  [ActionType.START_TWEEN]: 'Start Tween',
+  [ActionType.SET_COUNTER]: 'Set Counter',
+  [ActionType.INCREMENT_COUNTER]: 'Increment Counter',
+  [ActionType.DECREASE_COUNTER]: 'Decrease Counter',
+  [ActionType.PLAY_SOUND]: 'Play Sound',
+  [ActionType.STOP_SOUND]: 'Stop Sound',
+  [ActionType.SET_VISIBILITY]: 'Set Visibility',
+  [ActionType.ATTACH_TO_PLAYER]: 'Attach to Player',
+  [ActionType.DETACH_FROM_PLAYER]: 'Detach from Player',
+  [ActionType.TELEPORT_PLAYER]: 'Teleport Player',
+  [ActionType.MOVE_PLAYER]: 'Move Player',
+  [ActionType.PLAY_DEFAULT_EMOTE]: 'Play Emote',
+  [ActionType.PLAY_CUSTOM_EMOTE]: 'Play Custom Emote',
+  [ActionType.OPEN_LINK]: 'Open Link',
+  [ActionType.PLAY_AUDIO_STREAM]: 'Play Audio Stream',
+  [ActionType.STOP_AUDIO_STREAM]: 'Stop Audio Stream',
+  [ActionType.PLAY_VIDEO_STREAM]: 'Play Video',
+  [ActionType.STOP_VIDEO_STREAM]: 'Stop Video',
+  [ActionType.SHOW_TEXT]: 'Show Text',
+  [ActionType.HIDE_TEXT]: 'Hide Text',
+  [ActionType.START_DELAY]: 'Start Delay',
+  [ActionType.STOP_DELAY]: 'Stop Delay',
+  [ActionType.START_LOOP]: 'Start Loop',
+  [ActionType.STOP_LOOP]: 'Stop Loop',
+  [ActionType.CLONE_ENTITY]: 'Clone',
+  [ActionType.SPAWN_ENTITY]: 'Spawn Entity',
+  [ActionType.REMOVE_ENTITY]: 'Remove',
+  [ActionType.SHOW_IMAGE]: 'Show Image',
+  [ActionType.HIDE_IMAGE]: 'Hide Image',
+  [ActionType.FOLLOW_PLAYER]: 'Follow Player',
+  [ActionType.STOP_FOLLOWING_PLAYER]: 'Stop Following Player',
+  [ActionType.MOVE_PLAYER_HERE]: 'Move Player Here',
+  [ActionType.PLAYER_FACE_ITEM]: 'Player Face Item',
+  [ActionType.DAMAGE]: 'Damage',
+  [ActionType.PLACE_ON_PLAYER]: 'Place On Player',
+  [ActionType.ROTATE_AS_PLAYER]: 'Rotate As Player',
+  [ActionType.PLACE_ON_CAMERA]: 'Place On Camera',
+  [ActionType.ROTATE_AS_CAMERA]: 'Rotate As Camera',
+  [ActionType.SET_POSITION]: 'Set Position',
+  [ActionType.SET_ROTATION]: 'Set Rotation',
+  [ActionType.SET_SCALE]: 'Set Scale',
+  [ActionType.RANDOM]: 'Random Action',
+  [ActionType.BATCH]: 'Batch Actions',
+  [ActionType.HEAL_PLAYER]: 'Heal Player',
+  [ActionType.CLAIM_AIRDROP]: 'Claim Airdrop',
+  [ActionType.LIGHTS_ON]: 'Lights On',
+  [ActionType.LIGHTS_OFF]: 'Lights Off',
+  [ActionType.LIGHTS_MODIFY]: 'Lights Modify',
+  [ActionType.CHANGE_CAMERA]: 'Select Camera',
+  [ActionType.CHANGE_TEXT]: 'Change Text',
+  [ActionType.STOP_TWEEN]: 'Stop Tween',
+  [ActionType.SLIDE_TEXTURE]: 'Slide Texture',
+  [ActionType.FREEZE_PLAYER]: 'Freeze Player',
+  [ActionType.UNFREEZE_PLAYER]: 'Unfreeze Player',
+  [ActionType.CHANGE_COLLISIONS]: 'Change Collisions',
+  [ActionType.CHANGE_SKYBOX]: 'Change Skybox',
+  [ActionType.RESET_SKYBOX]: 'Reset Skybox',
+  [ActionType.LOG_TO_CONSOLE]: 'Log to Console',
+  [ActionType.DELETE]: 'Delete',
+};
+
+export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) => {
+  const { Actions, States, Counter, GltfContainer, Rewards, Script } = sdk.components;
+  const [componentValue, setComponentValue, isComponentEqual] = useComponentValue<
+    EditorComponentsTypes['Actions']
+  >(entityId, Actions);
+  const [actions, addAction, modifyAction, removeAction] = useArrayState<Action>(
+    componentValue === null ? [] : componentValue.value,
+  );
+  const [animations, setAnimations] = useState<string[]>([]);
+  const [states, setStates] = useState<string[]>([...(States.getOrNull(entityId)?.value ?? [])]);
+
+  const hasActions = useHasComponent(entityId, Actions);
+  const hasStates = useHasComponent(entityId, States);
+  const hasCounter = useHasComponent(entityId, Counter);
+  const hasRewards = useHasComponent(entityId, Rewards);
+  const hasGltf = useHasComponent(entityId, GltfContainer);
+  const [gltfValue] = useComponentValue(entityId, GltfContainer);
+
+  // gather all script actions from all entities with Script components
+  const scriptActions = useMemo(() => {
+    const result: Array<{
+      actionType: string;
+      label: string;
+      secondaryText: string;
+      scriptPath: string;
+      action: ScriptAction;
+    }> = [];
+
+    try {
+      const entitiesWithScripts = Array.from(sdk.engine.getEntitiesWith(Script));
+
+      for (const [_, scriptComponent] of entitiesWithScripts) {
+        const scripts = scriptComponent.value || [];
+
+        for (const script of scripts) {
+          const layout = parseLayout(script.layout);
+          if (!layout || !layout.actions || layout.actions.length === 0) continue;
+
+          for (const action of layout.actions) {
+            const actionType = `script:${script.path}:${action.methodName}`;
+
+            result.push({
+              actionType,
+              label: action.methodName,
+              secondaryText: truncateMiddle(script.path),
+              scriptPath: script.path,
+              action,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to gather script actions:', error);
+    }
+
+    return result;
+  }, [sdk, Script]);
+
+  const dynamicActionMapOption = useMemo(() => {
+    const map: Record<string, string> = { ...ActionMapOption };
+
+    for (const scriptAction of scriptActions) {
+      map[scriptAction.actionType] = scriptAction.label;
+    }
+
+    return map;
+  }, [scriptActions]);
+
+  useChange(
+    (event, sdk) => {
+      if (
+        event.entity === entityId &&
+        event.component?.componentId === sdk.components.States.componentId &&
+        isStates(event.value)
+      ) {
+        const states = event.value;
+        setStates(states.value);
+      }
+    },
+    [entityId],
+  );
+
+  useEffect(() => {
+    if (hasGltf && hasActions) {
+      // The renderer owns GLTF loading; re-request clip names whenever the
+      // entity's GLTF source changes.
+      sdk.renderer
+        .getEntityAnimations(entityId)
+        .then(clips => setAnimations(clips.map(c => c.name)))
+        .catch(() => setAnimations([]));
+    } else {
+      setAnimations([]);
+    }
+  }, [sdk, entityId, gltfValue?.src, hasActions, hasGltf]);
+
+  const isValidAction = useCallback(
+    (action: Action) => {
+      if (!action.type || !action.name) {
+        return false;
+      }
+      switch (action.type) {
+        case ActionType.PLAY_ANIMATION: {
+          const payload = getPartialPayload<ActionType.PLAY_ANIMATION>(action);
+          return !!payload.animation;
+        }
+        case ActionType.SET_STATE: {
+          const payload = getPartialPayload<ActionType.SET_STATE>(action);
+          return !!payload.state;
+        }
+        case ActionType.START_TWEEN: {
+          const payload = getPartialPayload<ActionType.START_TWEEN>(action);
+          return !!payload && isValidTween(payload);
+        }
+        case ActionType.SET_COUNTER: {
+          const payload = getPartialPayload<ActionType.SET_COUNTER>(action);
+          return !!payload.counter && !isNaN(payload.counter);
+        }
+        case ActionType.INCREMENT_COUNTER: {
+          const payload = getPartialPayload<ActionType.INCREMENT_COUNTER>(action);
+          return !!payload;
+        }
+        case ActionType.DECREASE_COUNTER: {
+          const payload = getPartialPayload<ActionType.DECREASE_COUNTER>(action);
+          return !!payload;
+        }
+        case ActionType.TELEPORT_PLAYER: {
+          const payload = getPartialPayload<ActionType.TELEPORT_PLAYER>(action);
+          if (!payload) return false;
+          if (payload.mode === 'to_world') {
+            return !!payload.realm && payload.realm.trim().length > 0;
+          } else {
+            // to_coordinates mode
+            return (
+              typeof payload.x === 'number' &&
+              typeof payload.y === 'number' &&
+              !isNaN(payload.x) &&
+              !isNaN(payload.y)
+            );
+          }
+        }
+        case ActionType.MOVE_PLAYER: {
+          const payload = getPartialPayload<ActionType.MOVE_PLAYER>(action);
+          return (
+            !!payload &&
+            typeof payload.position?.x === 'number' &&
+            !isNaN(payload.position?.x) &&
+            typeof payload.position?.y === 'number' &&
+            !isNaN(payload.position?.y) &&
+            typeof payload.position?.z === 'number' &&
+            !isNaN(payload.position?.z)
+          );
+        }
+        case ActionType.PLAY_DEFAULT_EMOTE: {
+          const payload = getPartialPayload<ActionType.PLAY_DEFAULT_EMOTE>(action);
+          return !!payload && typeof payload.emote === 'string' && payload.emote.length > 0;
+        }
+        case ActionType.PLAY_CUSTOM_EMOTE: {
+          const payload = getPartialPayload<ActionType.PLAY_CUSTOM_EMOTE>(action);
+          return !!payload && typeof payload.src === 'string' && payload.src.length > 0;
+        }
+        case ActionType.OPEN_LINK: {
+          const payload = getPartialPayload<ActionType.OPEN_LINK>(action);
+          return !!payload && typeof payload.url === 'string' && payload.url.length > 0;
+        }
+        case ActionType.CLONE_ENTITY: {
+          const payload = getPartialPayload<ActionType.CLONE_ENTITY>(action);
+          return (
+            !!payload &&
+            typeof payload.position?.x === 'number' &&
+            !isNaN(payload.position?.x) &&
+            typeof payload.position?.y === 'number' &&
+            !isNaN(payload.position?.y) &&
+            typeof payload.position?.z === 'number' &&
+            !isNaN(payload.position?.z)
+          );
+        }
+        case ActionType.SPAWN_ENTITY: {
+          const payload = getPartialPayload<ActionType.SPAWN_ENTITY>(action);
+          return (
+            !!payload &&
+            typeof payload.src === 'string' &&
+            payload.src.length > 0 &&
+            typeof payload.position?.x === 'number' &&
+            !isNaN(payload.position?.x) &&
+            typeof payload.position?.y === 'number' &&
+            !isNaN(payload.position?.y) &&
+            typeof payload.position?.z === 'number' &&
+            !isNaN(payload.position?.z)
+          );
+        }
+        case ActionType.LOG_TO_CONSOLE: {
+          const payload = getPartialPayload<ActionType.LOG_TO_CONSOLE>(action);
+          return !!payload && typeof payload.message === 'string';
+        }
+        case ActionType.LIGHTS_ON:
+        case ActionType.LIGHTS_OFF:
+        case ActionType.STOP_TWEEN:
+        case ActionType.FREEZE_PLAYER:
+        case ActionType.UNFREEZE_PLAYER:
+        case ActionType.MOVE_PLAYER_HERE:
+        case ActionType.PLAYER_FACE_ITEM:
+        case ActionType.DELETE:
+          return true;
+        case ActionType.LIGHTS_MODIFY: {
+          const payload = getPartialPayload<ActionType.LIGHTS_MODIFY>(action);
+          return !!payload;
+        }
+        case ActionType.CHANGE_CAMERA: {
+          // CHANGE_CAMERA is always valid - it will use the entity's camera if no payload
+          return true;
+        }
+        case ActionType.CHANGE_TEXT: {
+          const payload = getPartialPayload<ActionType.CHANGE_TEXT>(action);
+          return !!payload && typeof payload.text === 'string';
+        }
+        case ActionType.SLIDE_TEXTURE: {
+          const payload = getPartialPayload<ActionType.SLIDE_TEXTURE>(action);
+          return !!payload && typeof payload.speed === 'number';
+        }
+        case ActionType.CHANGE_COLLISIONS: {
+          const payload = getPartialPayload<ActionType.CHANGE_COLLISIONS>(action);
+          return !!payload;
+        }
+        default: {
+          try {
+            const payload = getPartialPayload(action);
+            const schema = getActionSchema(sdk.engine as any, action.type);
+            const buffer = new ReadWriteByteBuffer();
+            schema.serialize(payload, buffer);
+            schema.deserialize(buffer);
+            return true;
+          } catch (error) {
+            return false;
+          }
+        }
+      }
+    },
+    [sdk],
+  );
+
+  const areValidActions = useCallback(
+    (updatedActions: Action[]) => updatedActions.every(isValidAction),
+    [],
+  );
+
+  const handleUpdateActions = useCallback(
+    (updatedActions: Action[]) => {
+      if (hasActions && areValidActions(updatedActions)) {
+        const current = sdk.components.Actions.get(entityId);
+        if (isComponentEqual({ ...current, value: updatedActions })) {
+          return;
+        }
+
+        setComponentValue({ ...current, value: [...updatedActions] });
+      }
+    },
+    [isComponentEqual, hasActions, entityId, sdk],
+  );
+
+  const handleModifyAction = useCallback(
+    (idx: number, action: Action) => {
+      modifyAction(idx, action, updatedActions => {
+        handleUpdateActions(updatedActions);
+      });
+    },
+    [modifyAction, handleUpdateActions],
+  );
+
+  const hasAnimations = useMemo(() => {
+    return animations.length > 0;
+  }, [animations]);
+
+  // actions that may only be available under certain circumstances
+  const conditionalActions: Partial<Record<string, () => boolean>> = useMemo(
+    () => ({
+      [ActionType.PLAY_ANIMATION]: () => hasAnimations,
+      [ActionType.STOP_ANIMATION]: () => hasAnimations,
+      [ActionType.SET_STATE]: () => hasStates,
+      [ActionType.INCREMENT_COUNTER]: () => hasCounter,
+      [ActionType.DECREASE_COUNTER]: () => hasCounter,
+      [ActionType.SET_COUNTER]: () => hasCounter,
+      [ActionType.CLAIM_AIRDROP]: () => hasRewards,
+    }),
+    [hasAnimations, hasStates],
+  );
+
+  const allActions = useMemo(() => {
+    const actions = getActionTypes(sdk.engine as any);
+    const scriptActionTypes = scriptActions.map(sa => sa.actionType);
+    return [...actions.filter(a => a !== ActionType.CALL_SCRIPT_METHOD), ...scriptActionTypes];
+  }, [sdk, scriptActions]);
+
+  const availableActions = useMemo(() => {
+    return allActions.filter(action => {
+      if (action in conditionalActions) {
+        const isAvailable = conditionalActions[action]!;
+        return isAvailable();
+      }
+      return true;
+    });
+  }, [conditionalActions, allActions]);
+
+  const handleRemove = useCallback(async () => {
+    sdk.operations.removeComponent(entityId, Actions);
+    await sdk.operations.dispatch();
+    const gltfContainer = getComponentValue(entityId, sdk.components.GltfContainer);
+    const asset = getAssetByModel(gltfContainer.src);
+    analytics.track(Event.REMOVE_COMPONENT, {
+      componentName: ComponentName.ACTIONS,
+      itemId: asset?.id,
+      itemPath: gltfContainer.src,
+    });
+  }, []);
+
+  const handleAddNewAction = useCallback(() => {
+    addAction({ type: '', name: '', jsonPayload: '{}' });
+  }, [addAction]);
+
+  const handleChangeAnimation = useCallback(
+    (value: ActionPayload<ActionType.PLAY_ANIMATION>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_ANIMATION>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeState = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLSelectElement>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_STATE>({
+          state: value,
+        }),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeTween = useCallback(
+    (tween: ActionPayload<ActionType.START_TWEEN>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.START_TWEEN>(tween),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeSound = useCallback(
+    (value: ActionPayload<ActionType.PLAY_SOUND>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_SOUND>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeCounter = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_COUNTER>({
+          counter: parseInt(value),
+        }),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeAmount = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.INCREMENT_COUNTER | ActionType.DECREASE_COUNTER>({
+          amount: parseInt(value),
+        }),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeAnchorPoint = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLSelectElement>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.ATTACH_TO_PLAYER>({
+          anchorPointId: parseInt(value),
+        }),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeTeleportPlayer = useCallback(
+    (value: ActionPayload<ActionType.TELEPORT_PLAYER>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.TELEPORT_PLAYER>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeMovePlayer = useCallback(
+    (value: ActionPayload<ActionType.MOVE_PLAYER>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.MOVE_PLAYER>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangePlayDefaultEmote = useCallback(
+    (value: ActionPayload<ActionType.PLAY_DEFAULT_EMOTE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_DEFAULT_EMOTE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangePlayCustomEmote = useCallback(
+    (value: ActionPayload<ActionType.PLAY_CUSTOM_EMOTE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_CUSTOM_EMOTE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeOpenLink = useCallback(
+    (value: ActionPayload<ActionType.OPEN_LINK>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.OPEN_LINK>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeText = useCallback(
+    (value: ActionPayload<ActionType.SHOW_TEXT>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SHOW_TEXT>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeDelayAction = useCallback(
+    (value: ActionPayload<ActionType.START_DELAY | ActionType.STOP_DELAY>, idx: number) => {
+      const payload =
+        'actions' in value
+          ? getJson<ActionType.START_DELAY>(value)
+          : getJson<ActionType.STOP_DELAY>(value);
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: payload,
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeLoopAction = useCallback(
+    (value: ActionPayload<ActionType.START_LOOP | ActionType.STOP_LOOP>, idx: number) => {
+      const payload =
+        'actions' in value
+          ? getJson<ActionType.START_LOOP>(value)
+          : getJson<ActionType.STOP_LOOP>(value);
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: payload,
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeCloneEntity = useCallback(
+    (value: ActionPayload<ActionType.CLONE_ENTITY>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.CLONE_ENTITY>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeSpawnEntity = useCallback(
+    (value: ActionPayload<ActionType.SPAWN_ENTITY>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SPAWN_ENTITY>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const getActionTypeForDropdown = useCallback((action: Action) => {
+    if (action.type === ActionType.CALL_SCRIPT_METHOD) {
+      const payload = getPartialPayload<ActionType.CALL_SCRIPT_METHOD>(action);
+      return `script:${payload.scriptPath}:${payload.methodName}`;
+    }
+    return action.type;
+  }, []);
+
+  const handleChangeType = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLSelectElement>, idx: number) => {
+      const scriptAction = scriptActions.find(sa => sa.actionType === value);
+      if (scriptAction) {
+        const defaultParams: Record<string, any> = {};
+        for (const [name, param] of Object.entries(scriptAction.action.params)) {
+          defaultParams[name] = param.value;
+        }
+        handleModifyAction(idx, {
+          ...actions[idx],
+          type: ActionType.CALL_SCRIPT_METHOD,
+          jsonPayload: JSON.stringify({
+            scriptPath: scriptAction.scriptPath,
+            methodName: scriptAction.action.methodName,
+            params: defaultParams,
+          }),
+        });
+        return;
+      }
+
+      handleModifyAction(idx, {
+        ...actions[idx],
+        type: value,
+        jsonPayload: getDefaultPayload(value),
+      });
+    },
+    [actions, handleModifyAction, scriptActions],
+  );
+
+  const handleChangeName = useCallback(
+    (e: React.ChangeEvent<HTMLElement>, idx: number) => {
+      const { value } = e.target as HTMLInputElement;
+      handleModifyAction(idx, {
+        ...actions[idx],
+        name: value,
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeVisibility = useCallback(
+    (value: ActionPayload<ActionType.SET_VISIBILITY>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_VISIBILITY>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeImage = useCallback(
+    (value: ActionPayload<ActionType.SHOW_IMAGE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SHOW_IMAGE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeFollowPlayer = useCallback(
+    (value: ActionPayload<ActionType.FOLLOW_PLAYER>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.FOLLOW_PLAYER>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeTriggerProximity = useCallback(
+    (value: ActionPayload<ActionType.DAMAGE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.DAMAGE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleSetPosition = useCallback(
+    (value: ActionPayload<ActionType.SET_POSITION>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_POSITION>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleSetRotation = useCallback(
+    (value: ActionPayload<ActionType.SET_ROTATION>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_ROTATION>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleSetScale = useCallback(
+    (value: ActionPayload<ActionType.SET_SCALE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SET_SCALE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeActions = useCallback(
+    (value: ActionPayload<ActionType.RANDOM | ActionType.BATCH>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.RANDOM | ActionType.BATCH>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleLightsModify = useCallback(
+    (value: ActionPayload<ActionType.LIGHTS_MODIFY>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.LIGHTS_MODIFY>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeCamera = useCallback(
+    (value: ActionPayload<ActionType.CHANGE_CAMERA>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.CHANGE_CAMERA>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeTextAction = useCallback(
+    (value: ActionPayload<ActionType.CHANGE_TEXT>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.CHANGE_TEXT>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleSlideTexture = useCallback(
+    (value: ActionPayload<ActionType.SLIDE_TEXTURE>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.SLIDE_TEXTURE>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeVideo = useCallback(
+    (value: ActionPayload<ActionType.PLAY_VIDEO_STREAM>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_VIDEO_STREAM>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeAudio = useCallback(
+    (value: ActionPayload<ActionType.PLAY_AUDIO_STREAM>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.PLAY_AUDIO_STREAM>(value),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  const handleChangeLogToConsole = useCallback(
+    ({ target: { value } }: React.ChangeEvent<HTMLInputElement>, idx: number) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<ActionType.LOG_TO_CONSOLE>({
+          message: value,
+        }),
+      });
+    },
+    [actions, handleModifyAction],
+  );
+
+  // Builds the new action from the queued previous one, not the render closure, so two param edits
+  // that land before a re-render (e.g. sibling fields of an object param) both survive.
+  const handleChangeScriptParam = useCallback(
+    (idx: number, name: string, update: ParamUpdate, defaultValue: unknown) => {
+      modifyAction(
+        idx,
+        prev => {
+          const payload = JSON.parse(prev.jsonPayload || '{}');
+          const params = (payload.params ?? {}) as Record<string, unknown>;
+          const value = resolveParamUpdate(update, params[name] ?? defaultValue);
+          return {
+            ...prev,
+            jsonPayload: JSON.stringify({ ...payload, params: { ...params, [name]: value } }),
+          };
+        },
+        handleUpdateActions,
+      );
+    },
+    [modifyAction, handleUpdateActions],
+  );
+
+  const createHandler = <T extends ActionType>(
+    getPayload: (value: string) => ActionPayload<T>,
+    idx: number,
+  ) => {
+    const handler = ({ target: { value } }: React.ChangeEvent<HTMLInputElement>) => {
+      handleModifyAction(idx, {
+        ...actions[idx],
+        jsonPayload: getJson<T>(getPayload(value)),
+      });
+    };
+    return handler;
+  };
+
+  const handleRemoveAction = useCallback(
+    (_e: React.MouseEvent, idx: number) => {
+      removeAction(idx, updatedActions => {
+        handleUpdateActions(updatedActions);
+      });
+    },
+    [removeAction, handleUpdateActions],
+  );
+
+  if (!hasActions) {
+    return null;
+  }
+
+  const renderAction = (action: Action, idx: number) => {
+    switch (action.type) {
+      case ActionType.PLAY_ANIMATION: {
+        return hasAnimations ? (
+          <PlayAnimationAction
+            value={getPartialPayload<ActionType.PLAY_ANIMATION>(action)}
+            animations={animations}
+            onUpdate={(value: ActionPayload<ActionType.PLAY_ANIMATION>) =>
+              handleChangeAnimation(value, idx)
+            }
+          />
+        ) : null;
+      }
+      case ActionType.SET_STATE: {
+        return hasStates ? (
+          <div className="row">
+            <div className="field">
+              <Dropdown
+                label="Select State"
+                placeholder="Select a State"
+                options={[...states.map(state => ({ label: state, value: state }))]}
+                value={getPartialPayload<ActionType.SET_STATE>(action)?.state}
+                onChange={e => handleChangeState(e, idx)}
+              />
+            </div>
+          </div>
+        ) : null;
+      }
+      case ActionType.START_TWEEN: {
+        return (
+          <TweenAction
+            tween={getPartialPayload<ActionType.START_TWEEN>(action)}
+            onUpdateTween={(tween: ActionPayload<ActionType.START_TWEEN>) =>
+              handleChangeTween(tween, idx)
+            }
+          />
+        );
+      }
+      case ActionType.SET_COUNTER: {
+        return hasCounter ? (
+          <div className="row">
+            <div className="field">
+              <TextField
+                label="Counter Value"
+                type="number"
+                value={getPartialPayload<ActionType.SET_COUNTER>(action)?.counter}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeCounter(e, idx)}
+                autoSelect
+              />
+            </div>
+          </div>
+        ) : null;
+      }
+      case ActionType.INCREMENT_COUNTER: {
+        return hasCounter ? (
+          <div className="row">
+            <div className="field">
+              <TextField
+                label="Amount"
+                type="number"
+                value={getPartialPayload<ActionType.INCREMENT_COUNTER>(action)?.amount}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeAmount(e, idx)}
+                autoSelect
+              />
+            </div>
+          </div>
+        ) : null;
+      }
+      case ActionType.DECREASE_COUNTER: {
+        return hasCounter ? (
+          <div className="row">
+            <div className="field">
+              <TextField
+                label="Amount"
+                type="number"
+                value={getPartialPayload<ActionType.DECREASE_COUNTER>(action)?.amount}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleChangeAmount(e, idx)}
+                autoSelect
+              />
+            </div>
+          </div>
+        ) : null;
+      }
+      case ActionType.PLAY_SOUND: {
+        return (
+          <PlaySoundAction
+            value={getPartialPayload<ActionType.PLAY_SOUND>(action)}
+            onUpdate={(value: ActionPayload<ActionType.PLAY_SOUND>) =>
+              handleChangeSound(value, idx)
+            }
+          />
+        );
+      }
+      case ActionType.SET_VISIBILITY: {
+        return (
+          <SetVisibilityAction
+            value={getPartialPayload<ActionType.SET_VISIBILITY>(action)}
+            onUpdate={e => handleChangeVisibility(e, idx)}
+          />
+        );
+      }
+      case ActionType.ATTACH_TO_PLAYER: {
+        return (
+          <div className="row">
+            <div className="field">
+              <Dropdown
+                label="Select an Anchor Point"
+                placeholder="Select an Anchor Point"
+                options={[
+                  { value: AvatarAnchorPointType.AAPT_POSITION, label: 'Avatar Position' },
+                  { value: AvatarAnchorPointType.AAPT_NAME_TAG, label: 'Name Tag' },
+                  { value: AvatarAnchorPointType.AAPT_NECK, label: 'Neck' },
+                  { value: AvatarAnchorPointType.AAPT_SPINE, label: 'Spine' },
+                  { value: AvatarAnchorPointType.AAPT_SPINE1, label: 'Spine 1' },
+                  { value: AvatarAnchorPointType.AAPT_SPINE2, label: 'Spine 2' },
+                  { value: AvatarAnchorPointType.AAPT_HIP, label: 'Hip' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_SHOULDER, label: 'Left Shoulder' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_ARM, label: 'Left Arm' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_FOREARM, label: 'Left Forearm' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_HAND, label: 'Left Hand' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_HAND_INDEX, label: 'Left Hand Index' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_SHOULDER, label: 'Right Shoulder' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_ARM, label: 'Right Arm' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_FOREARM, label: 'Right Forearm' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_HAND, label: 'Right Hand' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_UP_LEG, label: 'Left Up Leg' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_LEG, label: 'Left Leg' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_FOOT, label: 'Left Foot' },
+                  { value: AvatarAnchorPointType.AAPT_LEFT_TOE_BASE, label: 'Left Toe Base' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_UP_LEG, label: 'Right Up Leg' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_LEG, label: 'Right Leg' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_FOOT, label: 'Right Foot' },
+                  { value: AvatarAnchorPointType.AAPT_RIGHT_TOE_BASE, label: 'Right Toe Base' },
+                ]}
+                value={getPartialPayload<ActionType.ATTACH_TO_PLAYER>(action)?.anchorPointId}
+                onChange={e => handleChangeAnchorPoint(e, idx)}
+              />
+            </div>
+          </div>
+        );
+      }
+      case ActionType.TELEPORT_PLAYER: {
+        return (
+          <TeleportPlayerAction
+            value={getPartialPayload<ActionType.TELEPORT_PLAYER>(action)}
+            onUpdate={e => handleChangeTeleportPlayer(e, idx)}
+          />
+        );
+      }
+      case ActionType.MOVE_PLAYER: {
+        return (
+          <MovePlayerAction
+            value={getPartialPayload<ActionType.MOVE_PLAYER>(action)}
+            onUpdate={e => handleChangeMovePlayer(e, idx)}
+          />
+        );
+      }
+      case ActionType.PLAY_DEFAULT_EMOTE: {
+        return (
+          <PlayDefaultEmoteAction
+            value={getPartialPayload<ActionType.PLAY_DEFAULT_EMOTE>(action)}
+            onUpdate={e => handleChangePlayDefaultEmote(e, idx)}
+          />
+        );
+      }
+      case ActionType.PLAY_CUSTOM_EMOTE: {
+        return (
+          <PlayCustomEmoteAction
+            value={getPartialPayload<ActionType.PLAY_CUSTOM_EMOTE>(action)}
+            onUpdate={e => handleChangePlayCustomEmote(e, idx)}
+          />
+        );
+      }
+      case ActionType.OPEN_LINK: {
+        return (
+          <OpenLinkAction
+            value={getPartialPayload<ActionType.OPEN_LINK>(action)}
+            onUpdate={e => handleChangeOpenLink(e, idx)}
+          />
+        );
+      }
+      case ActionType.PLAY_VIDEO_STREAM: {
+        return (
+          <PlayVideoStreamAction
+            value={getPartialPayload<ActionType.PLAY_VIDEO_STREAM>(action)}
+            onUpdate={(value: ActionPayload<ActionType.PLAY_VIDEO_STREAM>) =>
+              handleChangeVideo(value, idx)
+            }
+          />
+        );
+      }
+      case ActionType.PLAY_AUDIO_STREAM: {
+        return (
+          <PlayAudioStreamAction
+            value={getPartialPayload<ActionType.PLAY_AUDIO_STREAM>(action)}
+            onUpdate={(value: ActionPayload<ActionType.PLAY_AUDIO_STREAM>) =>
+              handleChangeAudio(value, idx)
+            }
+          />
+        );
+      }
+      case ActionType.SHOW_TEXT: {
+        return (
+          <ShowTextAction
+            value={getPartialPayload<ActionType.SHOW_TEXT>(action)}
+            onUpdate={e => handleChangeText(e, idx)}
+          />
+        );
+      }
+      case ActionType.START_DELAY:
+      case ActionType.STOP_DELAY: {
+        return (
+          <DelayAction<ActionPayload<typeof action.type>>
+            availableActions={actions}
+            value={getPayload<typeof action.type>(action)}
+            onUpdate={e => handleChangeDelayAction(e, idx)}
+          />
+        );
+      }
+      case ActionType.START_LOOP:
+      case ActionType.STOP_LOOP: {
+        return (
+          <LoopAction<ActionPayload<typeof action.type>>
+            availableActions={actions}
+            value={getPayload<typeof action.type>(action)}
+            onUpdate={e => handleChangeLoopAction(e, idx)}
+          />
+        );
+      }
+      case ActionType.CLONE_ENTITY: {
+        return (
+          <CloneEntityAction
+            value={getPartialPayload<ActionType.CLONE_ENTITY>(action)}
+            onUpdate={e => handleChangeCloneEntity(e, idx)}
+          />
+        );
+      }
+      case ActionType.SPAWN_ENTITY: {
+        return (
+          <SpawnEntityAction
+            value={getPartialPayload<ActionType.SPAWN_ENTITY>(action)}
+            onUpdate={e => handleChangeSpawnEntity(e, idx)}
+          />
+        );
+      }
+      case ActionType.SHOW_IMAGE: {
+        return (
+          <ShowImageAction
+            value={getPartialPayload<ActionType.SHOW_IMAGE>(action)}
+            onUpdate={e => handleChangeImage(e, idx)}
+          />
+        );
+      }
+      case ActionType.FOLLOW_PLAYER:
+        return (
+          <FollowPlayerAction
+            value={getPartialPayload<ActionType.FOLLOW_PLAYER>(action)}
+            onUpdate={e => handleChangeFollowPlayer(e, idx)}
+          />
+        );
+      case ActionType.DAMAGE:
+        return (
+          <TriggerProximityAction
+            value={getPartialPayload<ActionType.DAMAGE>(action)}
+            onUpdate={e => handleChangeTriggerProximity(e, idx)}
+          />
+        );
+      case ActionType.SET_POSITION:
+        return (
+          <SetPositionAction
+            value={getPartialPayload<ActionType.SET_POSITION>(action)}
+            onUpdate={e => handleSetPosition(e, idx)}
+          />
+        );
+      case ActionType.SET_ROTATION:
+        return (
+          <SetRotationAction
+            value={getPartialPayload<ActionType.SET_ROTATION>(action)}
+            onUpdate={e => handleSetRotation(e, idx)}
+          />
+        );
+      case ActionType.SET_SCALE:
+        return (
+          <SetScaleAction
+            value={getPartialPayload<ActionType.SET_SCALE>(action)}
+            onUpdate={e => handleSetScale(e, idx)}
+          />
+        );
+      case ActionType.RANDOM:
+        return (
+          <RandomAction
+            value={getPartialPayload<ActionType.RANDOM>(action)}
+            availableActions={actions}
+            onUpdate={e => handleChangeActions(e, idx)}
+          />
+        );
+      case ActionType.BATCH:
+        return (
+          <BatchAction
+            value={getPartialPayload<ActionType.BATCH>(action)}
+            availableActions={actions}
+            onUpdate={e => handleChangeActions(e, idx)}
+          />
+        );
+      case ActionType.HEAL_PLAYER: {
+        return (
+          <div className="row">
+            <div className="field">
+              <TextField
+                label={
+                  <>
+                    Multiplier{' '}
+                    <InfoTooltip
+                      text="Multiplier for healing amount. A value of 1 heals the player by the base amount, higher values heal more, lower values heal less."
+                      position="top center"
+                    />
+                  </>
+                }
+                type="number"
+                value={getPartialPayload<ActionType.HEAL_PLAYER>(action)?.multiplier || 1}
+                onChange={createHandler<ActionType.HEAL_PLAYER>(
+                  value => ({ multiplier: parseInt(value) }),
+                  idx,
+                )}
+              />
+            </div>
+          </div>
+        );
+      }
+      case ActionType.LIGHTS_ON:
+      case ActionType.LIGHTS_OFF:
+      case ActionType.STOP_TWEEN:
+      case ActionType.FREEZE_PLAYER:
+      case ActionType.UNFREEZE_PLAYER:
+      case ActionType.MOVE_PLAYER_HERE:
+      case ActionType.PLAYER_FACE_ITEM:
+      case ActionType.RESET_SKYBOX:
+        return null;
+      case ActionType.LIGHTS_MODIFY: {
+        return (
+          <LightsModifyAction
+            value={getPartialPayload<ActionType.LIGHTS_MODIFY>(action)}
+            onUpdate={value => handleLightsModify(value, idx)}
+          />
+        );
+      }
+      case ActionType.CHANGE_CAMERA: {
+        return (
+          <ChangeCameraAction
+            entity={entityId}
+            value={getPartialPayload<ActionType.CHANGE_CAMERA>(action)}
+            onUpdate={value => handleChangeCamera(value, idx)}
+          />
+        );
+      }
+      case ActionType.CHANGE_TEXT: {
+        return (
+          <ChangeTextAction
+            value={getPartialPayload<ActionType.CHANGE_TEXT>(action)}
+            onUpdate={value => handleChangeTextAction(value, idx)}
+          />
+        );
+      }
+      case ActionType.SLIDE_TEXTURE: {
+        return (
+          <SlideTextureAction
+            value={getPartialPayload<ActionType.SLIDE_TEXTURE>(action)}
+            onUpdate={value => handleSlideTexture(value, idx)}
+          />
+        );
+      }
+      case ActionType.CHANGE_COLLISIONS: {
+        return (
+          <ChangeCollisionsAction
+            value={getPartialPayload<ActionType.CHANGE_COLLISIONS>(action)}
+            onUpdate={value =>
+              handleModifyAction(idx, {
+                ...actions[idx],
+                jsonPayload: getJson<ActionType.CHANGE_COLLISIONS>(value),
+              })
+            }
+          />
+        );
+      }
+      case ActionType.CHANGE_SKYBOX: {
+        return (
+          <ChangeSkyboxAction
+            value={getPartialPayload<ActionType.CHANGE_SKYBOX>(action)}
+            onUpdate={value =>
+              handleModifyAction(idx, {
+                ...actions[idx],
+                jsonPayload: getJson<ActionType.CHANGE_SKYBOX>(value),
+              })
+            }
+          />
+        );
+      }
+      case ActionType.LOG_TO_CONSOLE: {
+        return (
+          <div className="row">
+            <div className="field">
+              <TextField
+                label="Message"
+                type="text"
+                value={getPartialPayload<ActionType.LOG_TO_CONSOLE>(action)?.message}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  handleChangeLogToConsole(e, idx)
+                }
+                autoSelect
+              />
+            </div>
+          </div>
+        );
+      }
+      case ActionType.DELETE:
+        return null;
+      case ActionType.CALL_SCRIPT_METHOD: {
+        const payload = getPartialPayload<ActionType.CALL_SCRIPT_METHOD>(action);
+        const { scriptPath, methodName, params } = payload;
+        const paramValues = params as Record<string, any> | undefined;
+        const scriptActionType = `script:${scriptPath}:${methodName}`;
+        const scriptAction = scriptActions.find(sa => sa.actionType === scriptActionType);
+        if (!scriptAction) return null;
+
+        const paramTypes = scriptAction.action.params;
+
+        return (
+          <div className="row params">
+            {Object.entries(paramTypes).map(([name, param]) => (
+              <ScriptParamField
+                key={name}
+                name={name}
+                param={{ ...param, value: paramValues?.[name] ?? param.value }}
+                onUpdate={update => handleChangeScriptParam(idx, name, update, param.value)}
+              />
+            ))}
+          </div>
+        );
+      }
+      default: {
+        // TODO: handle generic schemas with something like <JsonSchemaField/>
+        return null;
+      }
+    }
+  };
+
+  return (
+    <Container
+      label="Actions"
+      className="ActionInspector"
+      initialOpen={initialOpen}
+      rightContent={
+        <InfoTooltip
+          text="Actions list the capabilities of entities, from playing animations to changing visibility. Customize or add new actions, which are activated by triggers."
+          link="https://docs.decentraland.org/creator/scene-editor/interactivity/smart-items-advanced"
+          type="help"
+        />
+      }
+      component={Actions}
+      entity={entityId}
+      onRemoveContainer={handleRemove}
+    >
+      {actions.map((action: Action, idx: number) => {
+        return (
+          <Block key={`action-${idx}`}>
+            <div className="row">
+              <TextField
+                type="text"
+                label="Name"
+                value={action.name}
+                onChange={e => handleChangeName(e, idx)}
+                autoSelect
+              />
+              <Dropdown
+                label="Select an Action"
+                placeholder="Select an Action"
+                disabled={availableActions.length === 0}
+                options={availableActions
+                  .map(availableAction => {
+                    const scriptAction = scriptActions.find(
+                      sa => sa.actionType === availableAction,
+                    );
+                    return {
+                      label: dynamicActionMapOption[availableAction] || availableAction,
+                      value: availableAction,
+                      secondaryText: scriptAction?.secondaryText,
+                    };
+                  })
+                  .sort((a, b) => a.label.localeCompare(b.label))}
+                value={getActionTypeForDropdown(action)}
+                searchable
+                onChange={e => handleChangeType(e, idx)}
+              />
+            </div>
+            {renderAction(action, idx)}
+            <MoreOptionsMenu className="ActionMenu">
+              <Button
+                className="RemoveButton"
+                onClick={e => handleRemoveAction(e, idx)}
+              >
+                <RemoveIcon /> Remove Action
+              </Button>
+            </MoreOptionsMenu>
+          </Block>
+        );
+      })}
+      <AddButton onClick={handleAddNewAction}>Add New Action</AddButton>
+    </Container>
+  );
+});

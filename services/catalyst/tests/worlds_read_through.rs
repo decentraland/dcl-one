@@ -3,7 +3,8 @@
 //! NAMEs each address holds) on a scratch database and a temp blob store: a world held with no
 //! scene is mirrored on its first read through the mirror's single-world path, with the chain
 //! and signer it was published with and only the files the scene host reads (the rest are left to
-//! the content read-through), then served locally; a world the upstream lacks is asked
+//! the content read-through), then served locally; a world of many scenes is filled whole, each
+//! scene by the chain its listing row carries; a world the upstream lacks is asked
 //! once; a file that does not hash to its name, a chain that does not sign its scene and a
 //! signer who may not publish the world each store nothing; a malformed name or an ENS world is
 //! never asked about; a local or blocked world is left alone, even one that turns so mid-fill;
@@ -304,6 +305,47 @@ async fn add_world(fake: &Shared, world: &str) -> (String, String) {
             .push(label.to_string());
     }
     (id, file_hash)
+}
+
+/// `count` scenes of `world` on parcels `0,0`, `1,0`, ..., deployed oldest first, each with its
+/// own main file and signed by the holder of the world's NAME; returns their entity ids, oldest
+/// first.
+async fn add_scenes(fake: &Shared, world: &str, count: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(count);
+    for i in 0..count {
+        let file = format!("main.js of {world} #{i}").into_bytes();
+        let file_hash = hash_bytes_v1(&file);
+        let parcel = format!("{i},0");
+        let entity = json!({
+            "version": "v3",
+            "type": "scene",
+            "pointers": [parcel],
+            "timestamp": 1_700_000_000_000i64 + i as i64,
+            "content": [{"file": "main.js", "hash": file_hash}],
+            "metadata": {
+                "main": "main.js",
+                "display": {"title": format!("{world} #{i}")},
+                "scene": {"base": parcel, "parcels": [parcel]},
+                "worldConfiguration": {"name": world}
+            }
+        });
+        let bytes = serde_json::to_vec(&entity).unwrap();
+        let id = hash_bytes_v1(&bytes);
+        let signed = chain(OWNER_KEY, &id, &id).await;
+        let mut st = fake.lock();
+        st.blobs.insert(file_hash, file);
+        st.blobs.insert(id.clone(), bytes);
+        st.chains.insert(id.clone(), signed);
+        ids.push(id);
+    }
+    let mut st = fake.lock();
+    st.worlds.insert(world.to_string(), ids.clone());
+    let label = world.strip_suffix(".dcl.eth").unwrap();
+    st.names
+        .entry(address(OWNER_KEY))
+        .or_default()
+        .push(label.to_string());
+    ids
 }
 
 struct Node {
@@ -990,17 +1032,212 @@ async fn an_oversized_scene_chain_is_refused_before_anything_of_the_scene_is_fet
 
     let (status, _) = node.get("/world/heavy.dcl.eth/about").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    // The world's listing, then its one scene asked for by its id, and the entity never fetched.
-    assert_eq!(
-        fake.lock().scenes_queries,
-        vec![
-            "limit=20&offset=0".to_string(),
-            format!("entity_id={id}&limit=1")
-        ]
-    );
+    // The chain is read from the world's listing, and the entity never fetched.
+    assert_eq!(fake.lock().scenes_queries, vec!["limit=20&offset=0"]);
     assert_eq!(content_calls(&fake, &id), 0);
     assert_eq!(content_calls(&fake, &file_hash), 0);
     assert!(node.scene_rows("heavy.dcl.eth").await.is_empty());
+    assert_eq!(world_rows(&scratch.pool).await, (0, 0));
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_world_of_many_scenes_is_filled_whole_on_a_miss_from_its_listing_chains() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "many", true).await;
+    // Past one page of the listing.
+    let ids = add_scenes(&fake, "many.dcl.eth", 23).await;
+
+    let (status, about) = node.get("/world/many.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    // Every scene, not only the newest that `/about` lists, each with the chain it was published
+    // with and its signer.
+    let mut sorted = ids.clone();
+    sorted.sort();
+    let rows: Vec<String> = node
+        .scene_rows("many.dcl.eth")
+        .await
+        .into_iter()
+        .map(|(id, source)| {
+            assert_eq!(source.as_deref(), Some(base.as_str()));
+            id
+        })
+        .collect();
+    assert_eq!(rows, sorted);
+    let published: Vec<(Value, String)> = {
+        let st = fake.lock();
+        sorted
+            .iter()
+            .map(|id| (st.chains[id].clone(), address(OWNER_KEY)))
+            .collect()
+    };
+    assert_eq!(node.signatures("many.dcl.eth").await, published);
+    for id in &ids {
+        assert!(node.storage.exist(id).await.unwrap(), "{id}");
+    }
+    // The chains come with the listing's two pages: no scene is asked for again by its id.
+    assert_eq!(
+        fake.lock().scenes_queries,
+        vec!["limit=20&offset=0", "limit=20&offset=20"]
+    );
+
+    let (status, scenes) = node.get("/world/many.dcl.eth/scenes?limit=100").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(scenes["total"], 23);
+    assert_eq!(about_calls(&fake, "many.dcl.eth"), 1);
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_scene_signed_by_one_who_may_not_publish_is_left_out_of_the_fill() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "older", true).await;
+    let ids = add_scenes(&fake, "older.dcl.eth", 3).await;
+    // The source pages oldest first, so `ids[0]` is the oldest scene. It carries a valid
+    // signature by an address that holds no NAME, as a former owner's or a collaborator's would.
+    let (newest, older) = (&ids[2], &ids[0]);
+    let intruder = chain(INTRUDER_KEY, older, older).await;
+    fake.lock().chains.insert(older.clone(), intruder);
+
+    let (status, about) = node.get("/world/older.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let mut kept = vec![ids[1].clone(), ids[2].clone()];
+    kept.sort();
+    let rows: Vec<String> = node
+        .scene_rows("older.dcl.eth")
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(rows, kept);
+    // Nothing of the scene left out is fetched or stored.
+    assert_eq!(content_calls(&fake, older), 0);
+    assert!(!node.storage.exist(older).await.unwrap());
+    assert!(node.storage.exist(newest).await.unwrap());
+
+    // The newest scene still decides: signed by the same address, the world is not filled.
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "newest", true).await;
+    let ids = add_scenes(&fake, "newest.dcl.eth", 3).await;
+    let intruder = chain(INTRUDER_KEY, &ids[2], &ids[2]).await;
+    fake.lock().chains.insert(ids[2].clone(), intruder);
+    let (status, _) = node.get("/world/newest.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(node.scene_rows("newest.dcl.eth").await.is_empty());
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn older_scenes_with_an_over_size_malformed_or_empty_chain_are_left_out_of_the_fill() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "badchains", true).await;
+    // Oldest first: three older scenes with chains this node refuses, then the newest, signed.
+    let ids = add_scenes(&fake, "badchains.dcl.eth", 4).await;
+    let mut padded = chain(OWNER_KEY, &ids[0], &ids[0]).await;
+    padded.as_array_mut().unwrap().push(json!({
+        "type": "ECDSA_SIGNED_ENTITY", "payload": "x".repeat(64 * 1024), "signature": "0x00"
+    }));
+    {
+        let mut st = fake.lock();
+        st.chains.insert(ids[0].clone(), padded);
+        st.chains.insert(
+            ids[1].clone(),
+            json!({"type": "SIGNER", "payload": "not a chain"}),
+        );
+        st.chains.insert(ids[2].clone(), json!([]));
+    }
+
+    let (status, about) = node.get("/world/badchains.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let rows: Vec<String> = node
+        .scene_rows("badchains.dcl.eth")
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(rows, vec![ids[3].clone()]);
+    for left_out in &ids[..3] {
+        assert_eq!(content_calls(&fake, left_out), 0, "{left_out}");
+        assert!(!node.storage.exist(left_out).await.unwrap(), "{left_out}");
+    }
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_scene_whose_grant_cannot_be_read_fails_the_whole_fill() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::trusting_grants(scratch.pool.clone(), &base, "grantfault").await;
+    // The newest scene is the NAME holder's. The oldest is signed by an address that holds no
+    // NAME, so only an upstream grant could take it, and the world's `/permissions` answers 500:
+    // a fault, not a refusal, so no scene of the world is stored.
+    let ids = add_scenes(&fake, "grantfault.dcl.eth", 3).await;
+    let intruder = chain(INTRUDER_KEY, &ids[0], &ids[0]).await;
+    {
+        let mut st = fake.lock();
+        st.chains.insert(ids[0].clone(), intruder);
+        st.permissions
+            .insert("grantfault.dcl.eth".to_string(), Value::Null);
+    }
+
+    let (status, _) = node.get("/world/grantfault.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Only the grant was asked: the fill stops there, before the access setting it asks for once
+    // its scenes check (a skipped older scene would reach that second `/permissions` call).
+    assert_eq!(fake.lock().permissions_calls, 1);
+    assert!(node.scene_rows("grantfault.dcl.eth").await.is_empty());
+    for id in &ids {
+        assert!(!node.storage.exist(id).await.unwrap(), "{id}");
+    }
+    assert_eq!(world_rows(&scratch.pool).await, (0, 0));
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_scene_whose_chain_does_not_sign_it_fails_the_whole_fill() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "forgedolder", true).await;
+    // The oldest scene's chain names the NAME holder as signer but signs another entity: the
+    // signer may publish, the signature is wrong, and that fails the fill instead of a skip.
+    let ids = add_scenes(&fake, "forgedolder.dcl.eth", 3).await;
+    let forged = chain(OWNER_KEY, &ids[0], &ids[1]).await;
+    fake.lock().chains.insert(ids[0].clone(), forged);
+
+    let (status, _) = node.get("/world/forgedolder.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(node.scene_rows("forgedolder.dcl.eth").await.is_empty());
+    for id in &ids {
+        assert!(!node.storage.exist(id).await.unwrap(), "{id}");
+    }
     assert_eq!(world_rows(&scratch.pool).await, (0, 0));
 
     drop(node);

@@ -289,11 +289,27 @@ fn g6_missing_node_modules() {
     f.write("scene.json", SCENE_OK);
     f.write("tsconfig.json", TSCONFIG);
     let dir = f.dir_arg();
-    let args = ["build", "--dir", &dir];
+    let args = ["build", "--dir", &dir, "--skip-install"];
     let out = run(&args, &[]);
     assert_contract(&out, f.path(), "@dcl/sdk is not installed");
+    assert!(stderr_of(&out).contains("build again without --skip-install"));
     assert!(stderr_of(&out).contains("dcl-scene-cli init --node-modules-only"));
     assert_verbose_chain(&args, &[]);
+    assert!(
+        !f.path().join("node_modules").exists(),
+        "--skip-install writes no node_modules"
+    );
+
+    let out = run(&["build", "--dir", &dir], &[]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("restored it from the vendored SDK"),
+        "a build that restores node_modules says so"
+    );
+    assert!(
+        f.path()
+            .join("node_modules/@dcl/sdk/package.json")
+            .is_file()
+    );
 }
 
 #[test]
