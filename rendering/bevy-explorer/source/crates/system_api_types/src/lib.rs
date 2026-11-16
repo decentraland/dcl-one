@@ -772,7 +772,7 @@ pub struct FriendConnectivityEvent {
 #[ts(export)]
 pub struct PlatformBanNotice {
     pub banned: bool,
-    /// Empty when the record was withheld
+    /// Empty when the record was withheld or the ban is known only from a refusal
     pub reason: String,
     pub custom_message: Option<String>,
     pub expires_at: Option<String>,
