@@ -1446,7 +1446,6 @@ dependencies = [
  "texture_camera",
  "tokio",
  "ui_core",
- "world_ui",
 ]
 
 [[package]]

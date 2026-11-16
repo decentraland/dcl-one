@@ -53,8 +53,8 @@ for (const scene of SCENES) {
     `${scene.id} matches its reference`,
     async ({ explorer, t, report, restore }) => {
       const [x, y] = scene.base
-      // The frame is to agree with the next. The scene hides avatars, not the HUD's nametag over
-      // the hidden player, whose name is the session's fresh guest's: off for the frame. The
+      // The frame is to agree with the next. The scene hides avatars, not the nametag over the
+      // hidden player, whose name is the session's fresh guest's: off for the frame. The
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
       // agree: held still for the frame.
       restore(async () => {

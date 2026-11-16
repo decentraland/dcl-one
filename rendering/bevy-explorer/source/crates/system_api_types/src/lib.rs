@@ -187,6 +187,16 @@ pub struct SatelliteView {
     pub top_left_offset: Vector2,
 }
 
+/// A community whose chat channel the local user listens to.
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ListenedCommunity {
+    pub id: String,
+    /// The community's name, shown with its messages over their authors' nametags; `None`
+    /// when the HUD doesn't know it.
+    pub name: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct ChatMessage {

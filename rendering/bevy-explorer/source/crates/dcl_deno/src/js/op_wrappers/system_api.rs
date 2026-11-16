@@ -12,10 +12,10 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -941,8 +941,11 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[op2]
-pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state, ids)
+pub fn op_set_community_channels(
+    state: Rc<RefCell<OpState>>,
+    #[serde] communities: Vec<ListenedCommunity>,
+) {
+    dcl_js::system_api::op_set_community_channels(state, communities)
 }
 
 #[op2(async)]

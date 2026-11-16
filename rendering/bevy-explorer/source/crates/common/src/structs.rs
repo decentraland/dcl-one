@@ -595,6 +595,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -662,6 +663,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1974,6 +1976,15 @@ pub enum PointAtMarkerVisibility {
     #[default]
     All,
     Friends,
+    None,
+}
+
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
     None,
 }
 

@@ -6,6 +6,7 @@
     pbr_bindings::{material, base_color_texture, base_color_sampler},
     mesh_view_bindings::view,
 }
+#import "embedded://shaders/sdf_coverage.wgsl"::sdf_layer_alpha
 
 struct TextSdfParams {
     outline_color: vec4<f32>,
@@ -30,31 +31,8 @@ const TEXT_SDF_BITMAP: u32 = 8u;
 @group(2) @binding(200)
 var<uniform> text_sdf: TextSdfParams;
 
-// signed distance in atlas pixels, positive inside the ink. explicit gradients: samples are
-// taken inside non-uniform branches
-fn sdf_distance(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
-    let sample = textureSampleGrad(base_color_texture, base_color_sampler, uv, dx, dy).r;
-    return (sample - 0.5) * 2.0 * text_sdf.spread;
-}
-
-// coverage of a distance, anti-aliased with a linear ramp `width` atlas pixels wide
-fn coverage(distance: f32, width: f32) -> f32 {
-    return saturate(distance / width + 0.5);
-}
-
-// anti-aliased coverage of the ink dilated by `dilate` atlas pixels, with the edge softened
-// by a further `soft`. `px` is atlas pixels per screen pixel: the ramp is one screen pixel,
-// and minified glyphs take four rotated-grid taps so thin strokes don't sparkle or vanish.
 fn layer_alpha(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, px: f32, dilate: f32, soft: f32) -> f32 {
-    let width = max(px, 1e-4) + soft;
-    if px > 1.0 {
-        let a = coverage(sdf_distance(uv + 0.125 * dx + 0.375 * dy, dx, dy) + dilate, width)
-            + coverage(sdf_distance(uv - 0.375 * dx + 0.125 * dy, dx, dy) + dilate, width)
-            + coverage(sdf_distance(uv + 0.375 * dx - 0.125 * dy, dx, dy) + dilate, width)
-            + coverage(sdf_distance(uv - 0.125 * dx - 0.375 * dy, dx, dy) + dilate, width);
-        return a * 0.25;
-    }
-    return coverage(sdf_distance(uv, dx, dy) + dilate, width);
+    return sdf_layer_alpha(base_color_texture, base_color_sampler, text_sdf.spread, uv, dx, dy, px, dilate, soft);
 }
 
 // `over` composite of straight-alpha colours

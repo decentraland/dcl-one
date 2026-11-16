@@ -828,8 +828,15 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[wasm_bindgen]
-pub fn op_set_community_channels(state: &WorkerContext, ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state.rc(), ids)
+pub fn op_set_community_channels(
+    state: &WorkerContext,
+    communities: JsValue,
+) -> Result<(), WasmError> {
+    // an error the caller can catch, not a worker panic
+    let communities = serde_wasm_bindgen::from_value(communities)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setCommunityChannels: {e}")))?;
+    dcl_js::system_api::op_set_community_channels(state.rc(), communities);
+    Ok(())
 }
 
 #[wasm_bindgen]

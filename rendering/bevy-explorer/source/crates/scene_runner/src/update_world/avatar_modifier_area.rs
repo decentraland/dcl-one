@@ -75,8 +75,9 @@ impl Plugin for AvatarModifierAreaPlugin {
     }
 }
 
+/// On a player whose nametag a scene's modifier area hides.
 #[derive(Component)]
-struct HiddenNametag;
+pub struct HiddenNametag;
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_avatar_modifier_area(

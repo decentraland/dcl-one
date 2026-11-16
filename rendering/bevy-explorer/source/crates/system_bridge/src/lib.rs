@@ -221,9 +221,9 @@ pub enum SystemApi {
     // Social / Communities
     /// A community member came online or went offline, until dropped.
     GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
-    /// The community channels the local user listens to (member of, chat not closed), as
-    /// community ids; replaces the previous set.
-    SetCommunityChannels(Vec<String>),
+    /// The communities whose chat channels the local user listens to (member of, chat not
+    /// closed); replaces the previous set.
+    SetCommunityChannels(Vec<ListenedCommunity>),
     // Voice chat (private calls and community streams)
     /// Emits the voice chat state now and whenever it changes, until dropped.
     GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),

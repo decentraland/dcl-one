@@ -805,9 +805,10 @@ module.exports.social = {
     return streamGenerator();
   },
 
-  // the community channels the local user listens to (community ids); replaces the previous set
-  setCommunityChannels: function(ids) {
-    Deno.core.ops.op_set_community_channels(ids);
+  // the communities whose chat channels the local user listens to ({ id, name });
+  // replaces the previous set
+  setCommunityChannels: function(communities) {
+    Deno.core.ops.op_set_community_channels(communities);
   }
 }
 

@@ -16,6 +16,7 @@ import type {
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  ListenedCommunity,
   VoiceChatAction,
   VoiceChatState,
   VoiceMessage,
@@ -76,8 +77,8 @@ export type SocialApi = {
   /** Community members coming online or going offline (never away); the local user's own
    *  updates say which communities they are in. */
   getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
-  /** The community channels the local user listens to, as community ids; replaces the set. */
-  setCommunityChannels: (ids: string[]) => void
+  /** The communities whose chat channels the local user listens to; replaces the set. */
+  setCommunityChannels: (communities: ListenedCommunity[]) => void
 }
 
 /** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */

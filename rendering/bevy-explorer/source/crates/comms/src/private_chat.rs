@@ -7,7 +7,7 @@
 //! The room is deliberately not a [`Transport`](crate::Transport): nothing broadcast to the
 //! realm's transports can reach it, and its participants never touch the avatar store.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::relationship::Relationship, prelude::*};
@@ -22,7 +22,7 @@ use dcl_component::proto_components::kernel::comms::rfc4;
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use system_bridge::SystemApi;
+use system_bridge::{ListenedCommunity, SystemApi};
 use wallet::Wallet;
 
 use crate::{
@@ -59,6 +59,7 @@ impl Plugin for PrivateChatPlugin {
         app.add_event::<PrivateChatRouterChanged>();
         app.add_event::<CommunityChatReceived>();
         app.init_resource::<CommunityChannels>();
+        app.init_resource::<CommunityNames>();
         app.add_systems(
             Update,
             (
@@ -142,6 +143,11 @@ impl CommunityChannels {
         self.0.contains(&community_id.to_ascii_lowercase())
     }
 }
+
+/// The names of the communities listened to, by lowercased id, as far as the HUD knew them
+/// when it pushed the channels. Shown with a community message over its author's nametag.
+#[derive(Resource, Default)]
+pub struct CommunityNames(pub HashMap<String, String>);
 
 /// On a private chat room participant: the DM privacy the server stamped into their participant
 /// metadata, `None` until it arrives.
@@ -243,16 +249,21 @@ fn connect_private_chat_room(
 fn apply_community_channels(
     mut requests: EventReader<SystemApi>,
     mut channels: ResMut<CommunityChannels>,
+    mut names: ResMut<CommunityNames>,
 ) {
     for request in requests.read() {
-        let SystemApi::SetCommunityChannels(ids) = request else {
+        let SystemApi::SetCommunityChannels(communities) = request else {
             continue;
         };
         let mut next = HashSet::new();
-        for id in ids {
+        names.0.clear();
+        for ListenedCommunity { id, name } in communities {
             match community_id(&channel_for(id)) {
                 Some(id) => {
                     next.insert(id.to_owned());
+                    if let Some(name) = name {
+                        names.0.insert(id.to_owned(), name.clone());
+                    }
                 }
                 None => warn!(target: "comms::private_chat", "ignoring community channel `{id}`"),
             }
@@ -926,6 +937,7 @@ mod tests {
                 .init_resource::<crate::SceneRoomAdapterOverride>()
                 .init_resource::<DisableSceneRoomGatekeeper>()
                 .init_resource::<CommunityChannels>()
+                .init_resource::<CommunityNames>()
                 .add_event::<crate::SetCurrentScene>()
                 .add_event::<crate::websocket_room::StartWsRoom>()
                 .add_event::<crate::signed_login::StartSignedLogin>()

@@ -200,12 +200,9 @@ async function rawOne(id: string): Promise<CommunityRaw | undefined> {
   return raw?.id != null ? raw : undefined
 }
 
-// The names of the communities seen, for the chat bubbles' community line: a message names its
-// community by id only.
+// The names of the communities seen: the engine shows a community's name with its messages over
+// their authors' nametags, and a message names its community by id only.
 const names = new Map<string, string>()
-export function communityName(id: string): string | undefined {
-  return names.get(id.toLowerCase())
-}
 
 function remember(c: { id: string; name: string }): void {
   names.set(c.id.toLowerCase(), c.name)
@@ -615,7 +612,7 @@ export function registerCommunities(ctx: Ctx): void {
     if (community != null) ctx.send({ kind: 'community', community })
   }
   ctx.on('setCommunityChannels', (msg) => {
-    BevyApi.social.setCommunityChannels(msg.ids)
+    BevyApi.social.setCommunityChannels(msg.ids.map((id) => ({ id, name: names.get(id.toLowerCase()) ?? null })))
   })
   // The community whose members the page last asked for: the one shown, whose list its presence
   // updates keep current.
