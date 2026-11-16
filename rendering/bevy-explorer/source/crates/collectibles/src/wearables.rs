@@ -1,7 +1,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use crate::{
-    spring_bones::{spring_bone_models, SpringBoneModel},
+    spring_bones::{model_spring_bones, spring_bone_models, SpringBoneModel},
     urn::{CollectibleInstance, CollectibleUrn},
     Collectible, CollectibleData, CollectibleType, Collectibles, CollectiblesTypePlugin,
 };
@@ -386,11 +386,8 @@ impl AssetLoader for WearableLoader {
 
         for representation in meta.data.representations.into_iter() {
             // declared for each model file, under that file's content hash
-            let spring_bones = entity
-                .content
-                .hash(&representation.main_file)
-                .and_then(|hash| spring_bones.get(hash.as_ref()))
-                .cloned();
+            let spring_bones =
+                model_spring_bones(&spring_bones, &entity.content, &representation.main_file);
 
             let (model, texture, mask) = if category.is_texture {
                 // don't validate the main file, as some base wearables have no extension on the main_file member (Eyebrows_09 e.g)
