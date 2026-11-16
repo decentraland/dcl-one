@@ -282,6 +282,8 @@ impl crate::comms::gatekeeper::events::RoomEventSink for CoreState {
 
 pub struct CoreState {
     pub pool: PgPool,
+    /// Partial batches retain sessions across external work; bound their share of the pool.
+    pub(super) partial_sessions: Arc<tokio::sync::Semaphore>,
     pub storage: Arc<Storage>,
     /// The permission core, ONE instance shared with the storage routes, the
     /// scene host and comms.
@@ -325,8 +327,16 @@ impl CoreState {
     ) -> Self {
         let (access_log_tx, access_log_rx) = mpsc::unbounded_channel();
         let names = policy.names().clone();
+        let partial_session_capacity = settings
+            .upload_limits
+            .max_concurrent_uploads
+            .min(u64::from((pool.options().get_max_connections() / 4).max(1)));
+        let partial_sessions = Arc::new(tokio::sync::Semaphore::new(
+            partial_session_capacity as usize,
+        ));
         Self {
             pool,
+            partial_sessions,
             storage,
             policy,
             settings,
