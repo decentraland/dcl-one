@@ -15,14 +15,20 @@ use bevy::math::{Mat4, Quat, Vec3};
 pub const FIXED_STEP: f32 = 1.0 / 60.0;
 /// Most steps one frame runs. A frame longer than this many steps is not simulated at all.
 pub const MAX_SUBSTEPS: usize = 4;
-/// Most joints one chain simulates.
+/// Most joints one chain simulates. Whoever builds a chain keeps it within this; the solver
+/// checks it in debug builds and does not shorten a chain itself.
 pub const MAX_CHAIN_JOINTS: usize = 12;
 /// Length given to a chain's last joint, which has no next joint to measure to.
 pub const TIP_LENGTH: f32 = 0.1;
 /// Below this a length or a scale is treated as zero.
 const EPSILON: f32 = 1e-4;
+/// Below this a squared length has no direction. The value is compared with squared lengths on
+/// purpose, so the cut-off is a length of 0.01: a bone shorter than 1 cm, after scaling, keeps
+/// its rest rotation and never swings.
+const DIRECTION_EPSILON_SQ: f32 = 1e-4;
 
-/// What stays fixed for a joint while its chain lives.
+/// What a joint is measured as when its chain is snapped. The solver reads it on every step and
+/// never changes it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JointConfig {
     pub stiffness: f32,
@@ -35,7 +41,9 @@ pub struct JointConfig {
     pub bone_axis: Vec3,
     /// distance to the next joint, in world units at the rest scale
     pub length: f32,
-    /// the joint's position and scale under the joint before it (the anchor, for the first)
+    /// the joint's position and scale under the joint before it (the anchor, for the first).
+    /// Each step places the joint from these, so a joint whose own position or scale is
+    /// animated is followed only as often as the caller measures them again.
     pub local_translation: Vec3,
     pub local_scale: Vec3,
 }
@@ -86,9 +94,10 @@ pub fn scale_factor(scale: Vec3, rest_scale: Vec3) -> f32 {
         / 3.0
 }
 
-/// The shortest rotation turning `from` onto `to`. Identity when either has no direction.
+/// The shortest rotation turning `from` onto `to`. Identity when either has no direction, which
+/// is any vector shorter than 0.01 (see [`DIRECTION_EPSILON_SQ`]).
 pub fn from_to(from: Vec3, to: Vec3) -> Quat {
-    if from.length_squared() < EPSILON || to.length_squared() < EPSILON {
+    if from.length_squared() < DIRECTION_EPSILON_SQ || to.length_squared() < DIRECTION_EPSILON_SQ {
         return Quat::IDENTITY;
     }
     let from = from.normalize();
@@ -98,7 +107,7 @@ pub fn from_to(from: Vec3, to: Vec3) -> Quat {
     // opposite directions have no shortest turn: take a half turn about any perpendicular
     if dot <= -0.999999 {
         let mut axis = from.cross(Vec3::X);
-        if axis.length_squared() < EPSILON {
+        if axis.length_squared() < DIRECTION_EPSILON_SQ {
             axis = from.cross(Vec3::Y);
         }
         return Quat::from_axis_angle(axis.normalize(), std::f32::consts::PI);
@@ -136,8 +145,18 @@ impl JointState {
 }
 
 /// Runs one step of a chain, from the anchor to the tip. `configs` and `states` are the chain's
-/// joints in order; each joint is solved under the one before it.
+/// joints in order, one state for each config; each joint is solved under the one before it.
 pub fn step_chain(configs: &[JointConfig], states: &mut [JointState], anchor: &AnchorPose, h: f32) {
+    debug_assert_eq!(
+        configs.len(),
+        states.len(),
+        "a chain has one state for each joint"
+    );
+    debug_assert!(
+        configs.len() <= MAX_CHAIN_JOINTS,
+        "a chain has at most {MAX_CHAIN_JOINTS} joints"
+    );
+
     let mut parent_rotation = anchor.rotation;
     let mut parent_matrix = anchor.matrix();
 
@@ -182,8 +201,9 @@ pub fn step_chain(configs: &[JointConfig], states: &mut [JointState], anchor: &A
 /// What one frame does, the same for every chain.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FramePlan {
-    /// Too much time passed to simulate. Chains hold their pose and start again from rest in
-    /// place on the next frame.
+    /// Too much time passed to simulate. No chain steps, and each chain's state is stale from
+    /// here on: [`ChainState::simulate`] answers [`Shown::Skipped`], and the caller replaces the
+    /// chain with a new [`ChainState::snapped`] before it steps again.
     Skip,
     Run {
         /// For each step, how far the anchor is from last frame's pose to this frame's.
@@ -234,6 +254,21 @@ impl Stepper {
     }
 }
 
+/// What a chain has to show after one frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use = "a skipped chain must be snapped again before its next step"]
+pub enum Shown {
+    /// The frame was skipped and the chain left as it was. Its tails, rotations and anchor are
+    /// from before the gap, so stepping them again would swing the chain towards where it stood
+    /// then. Snap the chain again where it stands before its next step.
+    Skipped,
+    /// No step has run since the chain was last snapped: keep the pose already on the bones.
+    Hold,
+    /// Show each joint this far from the step before last to the last
+    /// ([`JointState::blended`]).
+    Blend(f32),
+}
+
 /// One chain's moving state across frames.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChainState {
@@ -262,9 +297,10 @@ impl ChainState {
         self.anchor = anchor;
     }
 
-    /// Runs the frame's steps. Returns the blend to show the joints at, or `None` when the frame
-    /// shows nothing new.
-    pub fn simulate(&mut self, configs: &[JointConfig], plan: &FramePlan) -> Option<f32> {
+    /// Runs the frame's steps and says what to show. `configs` are the joints the chain was
+    /// snapped with, in the same order. A skipped frame changes nothing here: the caller snaps
+    /// the chain again, as [`Shown::Skipped`] says.
+    pub fn simulate(&mut self, configs: &[JointConfig], plan: &FramePlan) -> Shown {
         let FramePlan::Run {
             anchor_alphas,
             substeps,
@@ -272,7 +308,7 @@ impl ChainState {
             write,
         } = plan
         else {
-            return None;
+            return Shown::Skipped;
         };
 
         for alpha in anchor_alphas.iter().take(*substeps) {
@@ -280,7 +316,11 @@ impl ChainState {
             step_chain(configs, &mut self.joints, &anchor, FIXED_STEP);
         }
 
-        write.then_some(*blend)
+        if *write {
+            Shown::Blend(*blend)
+        } else {
+            Shown::Hold
+        }
     }
 }
 
@@ -347,7 +387,7 @@ mod tests {
             time += dt;
             let travelled = (time / (10.0 / 60.0)).min(1.0);
             state.set_anchor(anchor_at(Vec3::X * travelled));
-            state.simulate(&configs, &stepper.advance(dt));
+            let _ = state.simulate(&configs, &stepper.advance(dt));
         }
         state
             .joints
@@ -366,6 +406,10 @@ mod tests {
     fn from_to_is_identity_without_a_direction() {
         assert_eq!(from_to(Vec3::ZERO, Vec3::X), Quat::IDENTITY);
         assert_eq!(from_to(Vec3::X, Vec3::splat(1e-3)), Quat::IDENTITY);
+
+        // the cut-off is a length of 0.01, not of 1e-4
+        assert_eq!(from_to(Vec3::X, Vec3::Y * 0.009), Quat::IDENTITY);
+        assert_close(from_to(Vec3::X, Vec3::Y * 0.011) * Vec3::X, Vec3::Y, 1e-6);
     }
 
     #[test]
@@ -432,7 +476,7 @@ mod tests {
         let mut stepper = Stepper::default();
         for frame in 1..=40 {
             state.set_anchor(anchor_at(Vec3::X * (frame as f32 * 0.05).sin()));
-            state.simulate(&configs, &stepper.advance(FIXED_STEP));
+            let _ = state.simulate(&configs, &stepper.advance(FIXED_STEP));
 
             let mut parent = state.anchor.matrix();
             let mut parent_rotation = Quat::IDENTITY;
@@ -456,7 +500,7 @@ mod tests {
         let mut widest: f32 = 0.0;
         for frame in 1..=10 {
             state.set_anchor(anchor_at(Vec3::X * frame as f32 / 10.0));
-            state.simulate(&configs, &stepper.advance(FIXED_STEP));
+            let _ = state.simulate(&configs, &stepper.advance(FIXED_STEP));
             widest = widest.max((state.joints[0].rotation * Vec3::Y).angle_between(Vec3::Y));
         }
         // the tails lag behind an anchor moving +X
@@ -469,13 +513,63 @@ mod tests {
     }
 
     #[test]
-    fn the_chain_settles_to_one_pose_at_any_frame_rate() {
+    fn the_chain_swings_the_same_way_at_any_frame_rate() {
+        // the anchor moves 1 m along +X over the first 10/60 s, then holds
+        let anchor_at_time = |time: f32| anchor_at(Vec3::X * (time / (10.0 / 60.0)).min(1.0));
+        let direction = |rotation: Quat| rotation * Vec3::Y;
+
         for gravity in [Vec3::ZERO, Vec3::new(0.4, -1.0, 0.0)] {
-            let at_60 = settle(1.0 / 60.0, gravity);
-            for dt in [1.0 / 30.0, 1.0 / 144.0] {
-                for (a, b) in settle(dt, gravity).into_iter().zip(&at_60) {
-                    assert_close(a, *b, 1e-3);
+            let configs = chain(3, gravity);
+
+            // the swing itself: each joint's rotation after every step, one step a frame
+            let rotations = |state: &ChainState| {
+                state
+                    .joints
+                    .iter()
+                    .map(|joint| joint.rotation)
+                    .collect::<Vec<_>>()
+            };
+            let mut state = snapped(&configs, anchor_at(Vec3::ZERO));
+            let mut after_step = vec![rotations(&state)];
+            for step in 1..=180 {
+                let anchor = anchor_at_time(step as f32 * FIXED_STEP);
+                step_chain(&configs, &mut state.joints, &anchor, FIXED_STEP);
+                after_step.push(rotations(&state));
+            }
+            let widest = after_step
+                .iter()
+                .map(|joints| direction(joints[0]).angle_between(Vec3::Y))
+                .fold(0.0, f32::max);
+            assert!(widest > 0.3, "{widest}");
+
+            // every frame of every rate shows a point of that swing: one step behind the time
+            // that passed, part way between the two steps around it
+            for fps in [30.0, 60.0, 144.0] {
+                let dt = 1.0 / fps;
+                let mut state = snapped(&configs, anchor_at(Vec3::ZERO));
+                let mut stepper = Stepper::default();
+                let mut compared = 0;
+                for frame in 1..(2.9 * fps) as usize {
+                    let time = frame as f32 * dt;
+                    state.set_anchor(anchor_at_time(time));
+                    let Shown::Blend(blend) = state.simulate(&configs, &stepper.advance(dt)) else {
+                        continue;
+                    };
+
+                    let steps = time / FIXED_STEP - 1.0;
+                    let before = steps.floor().max(0.0) as usize;
+                    let part = (steps - before as f32).clamp(0.0, 1.0);
+                    for (ix, joint) in state.joints.iter().enumerate() {
+                        let expected =
+                            after_step[before][ix].slerp(after_step[before + 1][ix], part);
+                        assert_close(direction(joint.blended(blend)), direction(expected), 1e-4);
+                    }
+                    compared += 1;
                 }
+                assert!(
+                    compared as f32 > 2.5 * fps,
+                    "{compared} frames at {fps} fps"
+                );
             }
         }
     }
@@ -598,7 +692,7 @@ mod tests {
         assert_eq!(plan, FramePlan::Skip);
         let before = state.joints.clone();
         state.set_anchor(anchor_at(Vec3::X * 50.0));
-        assert_eq!(state.simulate(&configs, &plan), None);
+        assert_eq!(state.simulate(&configs, &plan), Shown::Skipped);
         assert_eq!(state.joints, before);
 
         // and the stepper starts over: nothing to show until a step runs again
@@ -606,16 +700,46 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_snapped_after_a_jump_does_not_stretch_back() {
+    fn a_chain_snapped_again_after_a_skipped_jump_does_not_swing_back() {
         let configs = chain(3, Vec3::ZERO);
         let far = anchor_at(Vec3::new(500.0, 0.0, -300.0));
+
+        // a chain in mid swing when the avatar jumps away in one frame too long to simulate
+        let swinging = || {
+            let mut state = snapped(&configs, anchor_at(Vec3::ZERO));
+            let mut stepper = Stepper::default();
+            for frame in 1..=5 {
+                state.set_anchor(anchor_at(Vec3::X * frame as f32 / 10.0));
+                let _ = state.simulate(&configs, &stepper.advance(FIXED_STEP));
+            }
+            state.set_anchor(far);
+            let shown = state.simulate(&configs, &stepper.advance(5.0 * FIXED_STEP));
+            assert_eq!(shown, Shown::Skipped);
+            (state, stepper)
+        };
+        let off_rest = |state: &ChainState| {
+            state
+                .joints
+                .iter()
+                .map(|joint| (joint.rotation * Vec3::Y).angle_between(Vec3::Y))
+                .fold(0.0, f32::max)
+        };
+
+        // snapped again where it now stands, it steps from rest
+        let (_, mut stepper) = swinging();
         let mut state = snapped(&configs, far);
-        let mut stepper = Stepper::default();
-        state.set_anchor(far);
-        state.simulate(&configs, &stepper.advance(FIXED_STEP));
-        for joint in &state.joints {
-            assert_close(joint.rotation * Vec3::Y, Vec3::Y, 1e-4);
+        for _ in 0..3 {
+            state.set_anchor(far);
+            let shown = state.simulate(&configs, &stepper.advance(FIXED_STEP));
+            assert!(matches!(shown, Shown::Blend(_)));
+            assert!(off_rest(&state) < 1e-4);
         }
+
+        // left as it was, it steps from the old tails and swings towards where it stood
+        let (mut state, mut stepper) = swinging();
+        state.set_anchor(far);
+        let _ = state.simulate(&configs, &stepper.advance(FIXED_STEP));
+        assert!(off_rest(&state) > 1.0, "{}", off_rest(&state));
     }
 
     #[test]
