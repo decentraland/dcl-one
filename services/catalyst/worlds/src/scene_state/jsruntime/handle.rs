@@ -480,8 +480,14 @@ impl Watchdog {
     }
 
     /// One watchdog check: terminates the armed phase once its deadline has
-    /// passed. `decided` runs between that decision and the termination.
-    fn fire_if_due(&self, decided: impl FnOnce()) -> bool {
+    /// passed.
+    fn fire_if_due(&self) -> bool {
+        self.fire_if_due_with(|| {})
+    }
+
+    /// [`Self::fire_if_due`], running `decided` between the decision and the
+    /// termination, both under the isolate lock.
+    fn fire_if_due_with(&self, decided: impl FnOnce()) -> bool {
         let isolate = self.isolate.lock();
         if !self.tick_active.load(Ordering::SeqCst)
             || self.now_ms() < self.deadline_ms.load(Ordering::SeqCst)
@@ -499,7 +505,7 @@ impl Watchdog {
 
 pub(super) fn watchdog_loop(watchdog: Arc<Watchdog>) {
     while !watchdog.stopped.load(Ordering::SeqCst) {
-        if watchdog.fire_if_due(|| {}) {
+        if watchdog.fire_if_due() {
             while watchdog.tick_active.load(Ordering::SeqCst)
                 && !watchdog.stopped.load(Ordering::SeqCst)
             {
@@ -1439,7 +1445,7 @@ mod tests {
         let fire = std::thread::spawn({
             let wd = Arc::clone(&wd);
             move || {
-                wd.fire_if_due(|| {
+                wd.fire_if_due_with(|| {
                     decided_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
                 })
