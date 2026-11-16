@@ -69,13 +69,21 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
 
+  const navigation = {
+    tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
+    active: activeTab,
+    onTab,
+  };
+
+  // Overview has the profile site's layout: its own tab bar (scrollable on narrow screens) and no
+  // section side panel, so it stays outside the context the Sites chrome turns into that panel.
   if (activeTab === "overview") {
     return (
       <ProfileOverviewScreen
         profile={profile}
         hasProfile={Boolean(query.data)}
         own={own}
-        tabs={tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) }))}
+        tabs={navigation.tabs}
         onTab={onTab}
       />
     );
@@ -83,13 +91,7 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
 
   return (
     <div className="landings-profile">
-      <ProfileNavigationContext
-        value={{
-          tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
-          active: activeTab,
-          onTab,
-        }}
-      >
+      <ProfileNavigationContext value={navigation}>
         <ActiveTab tab={activeTab} address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
       </ProfileNavigationContext>
     </div>

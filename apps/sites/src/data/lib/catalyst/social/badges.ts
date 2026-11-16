@@ -7,8 +7,8 @@ const RawBadgeSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullish(),
-  /** Epoch milliseconds as a string, as the badges service ships it. */
-  completedAt: z.string().nullish(),
+  /** Epoch milliseconds, a string as the badges service ships it today, or a number. */
+  completedAt: z.union([z.string(), z.number()]).nullish(),
   assets: z.object({ "2d": z.object({ normal: z.string().nullish() }).partial().nullish() }).partial().nullish(),
   progress: z
     .object({

@@ -34,7 +34,13 @@ import { markPublicResponse, requestSessionContext } from "@/core/lib/telemetry/
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { profileKeys } from "@/data/lib/profile/queries";
 
-import { legacyAccountsRedirect, ownProfileRedirect, profileLoader, type ProfileLoaderData } from "./profile-loader.server";
+import {
+  legacyAccountsRedirect,
+  OPTIONAL_READS_BUDGET_MS,
+  ownProfileRedirect,
+  profileLoader,
+  type ProfileLoaderData,
+} from "./profile-loader.server";
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const B = "0x1111111111111111111111111111111111111111";
@@ -129,6 +135,53 @@ describe("profile loader, dehydrated state", () => {
     expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.creations(A)]);
     expect(net.fetchProfilePlaces).not.toHaveBeenCalled();
     expect(net.fetchUserPhotos).not.toHaveBeenCalled();
+  });
+
+  it("does not hand a wallet with no profile its badges", async () => {
+    net.fetchProfile.mockResolvedValue(null);
+    net.fetchUserBadges.mockResolvedValue([{ id: "x", name: "X" }]);
+
+    const out = await run(`/profile/${A}`, { address: A });
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
+  });
+
+  describe("when an optional read outlasts the budget", () => {
+    let settled: boolean;
+    let result: ReturnType<typeof run>;
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      settled = false;
+      net.fetchCreations.mockReturnValue(new Promise(() => {}));
+      result = run(`/profile/${A}/creations`, { address: A, tab: "creations" });
+      void result.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(OPTIONAL_READS_BUDGET_MS - 1);
+    });
+    afterEach(() => vi.useRealTimers());
+    it("should still wait before the deadline", () => {
+      expect(settled).toBe(false);
+    });
+    it("should render only the profile at the deadline", async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      const out = await result;
+      expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
+    });
+  });
+
+  describe("when a wallet has no profile and badges never finish", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      net.fetchProfile.mockResolvedValue(null);
+      net.fetchUserBadges.mockReturnValue(new Promise(() => {}));
+    });
+    afterEach(() => vi.useRealTimers());
+    it("should return without consuming the optional budget", async () => {
+      let settled = false;
+      const result = run(`/profile/${A}`, { address: A }).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      await result;
+    });
   });
 
   it("dehydrates the badges with the profile on Overview", async () => {

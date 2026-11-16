@@ -4,10 +4,11 @@ import { data, redirect, type RouterContextProvider } from "react-router";
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
-import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
+import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import {
   badgesQuery,
   canReadProfile,
+  profileKeys,
   creationsQuery,
   ownedNamesQuery,
   ownedWearablesQuery,
@@ -36,6 +37,21 @@ function keepQuery(path: string, url: URL): string {
   query.delete("own");
   const rest = query.toString();
   return rest ? `${path}?${rest}` : path;
+}
+
+/**
+ * How long a document waits for the active tab's optional reads, counted once the profile has
+ * loaded (the worst case is the profile read plus this), before rendering without them.
+ */
+export const OPTIONAL_READS_BUDGET_MS = 1500;
+
+function withinBudget(work: Promise<unknown> | undefined, ms: number): Promise<void> {
+  if (!work) return Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return Promise.race([work.then(() => undefined), budget]).finally(() => clearTimeout(timer));
 }
 
 /** Public reads the active tab shows; a failure leaves them to the browser. */
@@ -96,15 +112,25 @@ export async function profileLoader(
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
   const cancel = () => void client.cancelQueries();
   request.signal.addEventListener("abort", cancel, { once: true });
+  const profileRead = client.fetchQuery(profileQuery(address));
+  const optional = prefetchTab(client, address, tab);
+  let profile: ProfileVM | null;
   try {
-    await Promise.all([client.fetchQuery(profileQuery(address)), prefetchTab(client, address, tab)]);
+    profile = await profileRead;
+    // The tab's own reads are optional: past the budget the page renders and the browser reads them.
+    if (profile !== null || tab !== "overview") await withinBudget(optional, OPTIONAL_READS_BUDGET_MS);
   } catch (error) {
+    // Nothing is dehydrated on a failure, so any read still running is cancelled here.
+    client.clear();
     // A profile read's failure is 503; anything else is a bug and stays a 500.
     if (!isRouteFatal(error)) throw error;
     throw data({ address, reason: "unavailable" } satisfies ProfileErrorData, { status: 503 });
   } finally {
     request.signal.removeEventListener("abort", cancel);
   }
+  // A wallet with no profile shows no badges; the browser does not read them either.
+  if (profile === null) client.removeQueries({ queryKey: profileKeys.badges(address) });
+  // Only settled successful queries are dehydrated, so a read still running past the budget is not.
   const dehydratedState = dehydrate(client);
   client.clear();
 
