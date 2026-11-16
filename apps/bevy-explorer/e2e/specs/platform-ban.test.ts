@@ -43,7 +43,10 @@ scenario('the platform ban is checked after sign-in', async ({ explorer }) => {
   })
   assert.equal(state.platformBan.isBanned, false)
   assert.equal(state.platformBan.source, null)
-  assert.ok(state.platformBan.checkedAgoSecs !== null && state.platformBan.checkedAgoSecs < CHECK_TIMEOUT_MS / 1000)
+  // The session is shared with earlier specs, so its sign-in check may be minutes old.
+  // Freshness after an explicit refresh is checked by the next scenario.
+  const age = state.platformBan.checkedAgoSecs
+  assert.ok(age !== null && Number.isFinite(age) && age >= 0, 'a completed check reports its elapsed age')
 })
 
 scenario('a refresh re-checks', async ({ explorer }) => {

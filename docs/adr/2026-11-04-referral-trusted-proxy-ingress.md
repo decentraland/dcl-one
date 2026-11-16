@@ -33,6 +33,12 @@ setting through to the stored client IP over a real socket.
   networks (not its upstream CDN's) and make it overwrite `X-Real-IP` before
   gateway cutover. Otherwise every client behind it shares the proxy's quota.
 - Direct clients cannot pick a bucket with forwarding headers.
+- The other per-client limits and IP bindings read `client_ip()`, which the
+  server pins (`shared::client_ip::pin_client_headers`): unless the peer is a
+  listed proxy or loopback, `X-Real-IP` becomes the peer and
+  `X-Forwarded-For` is dropped. Loopback is trusted there so a same-host
+  gateway needs no setting; a same-host forwarder must therefore overwrite
+  `X-Real-IP` like any listed proxy, never pass a client's value through.
 - The answers for clients behind an unlisted proxy differ from the source,
   which would have read their forwarding headers.
 

@@ -7,9 +7,11 @@ import {
   canReadProfile,
   creationsQuery,
   myCommunitiesQuery,
+  myFavoritePlacesQuery,
   ownedNamesQuery,
   ownedWearablesQuery,
   photosQuery,
+  placeOwnersQuery,
   placesQuery,
   profileKeys,
   profileQuery,
@@ -48,6 +50,16 @@ describe("profileKeys", () => {
   it("puts the member's own communities under the private account prefix", () => {
     expect(profileKeys.myCommunities(ADDRESS)).toEqual(["private", LOWER, "profile", "communities"]);
   });
+
+  it("puts the member's saved places under the private account prefix", () => {
+    expect(profileKeys.myFavoritePlaces(ADDRESS)).toEqual(["private", LOWER, "profile", "favorite-places"]);
+  });
+
+  it("names one owners entry per set of wallets, whatever their order, case or repeats", () => {
+    const other = "0x1111111111111111111111111111111111111111";
+    expect(profileKeys.placeOwners([ADDRESS, other, LOWER])).toEqual(["profile", "place-owners", [other, LOWER]]);
+    expect(profileKeys.placeOwners([other, ADDRESS])).toEqual(profileKeys.placeOwners([LOWER, other]));
+  });
 });
 
 describe("options factories", () => {
@@ -61,6 +73,8 @@ describe("options factories", () => {
       ownedWearablesQuery(ADDRESS),
       ownedNamesQuery(ADDRESS),
       myCommunitiesQuery(identity),
+      myFavoritePlacesQuery(identity),
+      placeOwnersQuery([ADDRESS]),
     ];
 
     for (const options of all) expect(options.staleTime).toBe(PROFILE_STALE_MS);
@@ -119,6 +133,27 @@ describe("profileQuery", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     await expect(client.fetchQuery(profileQuery(ADDRESS))).rejects.toThrow();
+  });
+});
+
+describe("placeOwnersQuery", () => {
+  it("reads every owner in one batch and indexes them by lowercased wallet", async () => {
+    respond = () =>
+      json([{ avatars: [{ ethAddress: ADDRESS, name: "Alice", hasClaimedName: true, avatar: { snapshots: {} } }] }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const owners = await client.fetchQuery(placeOwnersQuery([ADDRESS]));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url.pathname).toBe("/lambdas/profiles");
+    expect(owners[LOWER]).toMatchObject({ name: "Alice" });
+  });
+
+  it("fails when the batch read errors, so no owner is invented", async () => {
+    respond = () => json({ error: "down" }, 503);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await expect(client.fetchQuery(placeOwnersQuery([ADDRESS]))).rejects.toThrow();
   });
 });
 

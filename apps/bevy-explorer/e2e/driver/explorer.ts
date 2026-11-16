@@ -48,6 +48,13 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+export interface LegacySocialState {
+  subscribedScenes: number
+  queuedEvents: number
+  resyncScenes: number
+  trackedPeers: number
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -214,7 +221,7 @@ export type RoomState = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
   | 'paused' | 'denied' | 'invalid' | 'identity_conflict' | 'credentials_required'
 
 export interface VoiceState {
-  mic: { available: boolean; enabled: boolean }
+  mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
   livekit: boolean
   connected: boolean | null
   rooms: { scene: boolean; state: RoomState }[] | null
@@ -427,8 +434,8 @@ export interface ExplorerOptions {
 
 /** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
  *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
- *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
- *  after the engine reports the new version. */
+ *  limited`, and the HUD shows "failed to deploy"), with a margin after the engine confirms
+ *  completion. The local profile version changes before the network request completes. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
 
 /** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
@@ -464,9 +471,10 @@ export class Explorer {
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
-  /** The own profile's version as last read, and when it was last seen to change. */
+  /** The own profile's last observed version, and an edit not yet confirmed as deployed. */
   #ownVersion: number | undefined
-  #ownVersionChangedAt = 0
+  #unconfirmedOwnVersion: number | undefined
+  #profileDeployedAt = 0
   /** The credentials the lines run so far carried (`secretsOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
@@ -526,6 +534,10 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
+  }
+
+  legacySocial(): Promise<LegacySocialState> {
+    return this.json<LegacySocialState>('/legacy_social')
   }
 
   // --- photo mode ---------------------------------------------------------------------------
@@ -663,7 +675,9 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) {
+        this.#unconfirmedOwnVersion = Math.max(this.#unconfirmedOwnVersion ?? 0, this.#ownVersion, data.version)
+      }
       this.#ownVersion = data.version
     }
     return data
@@ -672,15 +686,35 @@ export class Explorer {
   /** Count a deployment of the own profile from now that no version change showed: the sign-in,
    *  whose first login deploys a new profile before any version was read. */
   profileDeployed(): void {
-    this.#ownVersionChangedAt = Date.now()
+    this.#profileDeployedAt = Date.now()
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
-   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
-   *  deployment of its own. A change since the last read counts from now. */
+   *  the passport): wait for the previous deployment to finish, then wait out the catalyst's
+   *  window. Local version changes are drafts until the engine exposes them as peerVersion. */
   async profileDeployWindow(): Promise<void> {
-    await this.userData()
-    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
+    const observed = await this.userData()
+    const expected = this.#unconfirmedOwnVersion ?? observed.version
+    let pending = false
+    const settled = await until(
+      () => this.json<{ ownVersion: number | null; peerVersion: number | null; deployPending: boolean }>('/profile_requests'),
+      (state) => {
+        pending ||= state.deployPending === true
+        return state.deployPending === false && state.ownVersion !== null &&
+          Number.isSafeInteger(state.ownVersion) && state.ownVersion >= 0 && state.ownVersion === state.peerVersion
+      },
+      { timeoutMs: 60_000, intervalMs: 250, what: 'the previous profile deployment to finish' }
+    )
+    const version = settled.ownVersion!
+    if (version < expected) {
+      throw new Error(`the previous profile deployment rolled back from v${expected} to v${version}; refusing another profile write`)
+    }
+    if (pending || this.#unconfirmedOwnVersion !== undefined || version !== observed.version) {
+      this.#profileDeployedAt = Date.now()
+    }
+    this.#ownVersion = version
+    this.#unconfirmedOwnVersion = undefined
+    const left = this.#profileDeployedAt + this.#deployWindowMs - Date.now()
     if (left > 0) await sleep(left)
   }
 

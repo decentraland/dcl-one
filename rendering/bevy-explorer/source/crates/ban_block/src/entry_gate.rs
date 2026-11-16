@@ -4,7 +4,7 @@
 //! it. An unknown or failed check leaves the gate open.
 
 use bevy::{
-    app::{App, PostUpdate, Update},
+    app::{App, Plugin, PostUpdate, Update},
     ecs::{
         change_detection::DetectChangesMut,
         event::EventReader,
@@ -66,14 +66,18 @@ fn publish_platform_ban(
     }
 }
 
-pub(crate) fn register(app: &mut App) {
-    app.init_resource::<PlatformBanEntryGate>()
-        .init_resource::<PlatformBanStreams>()
-        .add_systems(Update, publish_platform_ban)
-        .add_systems(
-            PostUpdate,
-            sync_entry_gate.run_if(resource_changed::<PlatformBanStatus>),
-        );
+pub(crate) struct EntryGatePlugin;
+
+impl Plugin for EntryGatePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PlatformBanEntryGate>()
+            .init_resource::<PlatformBanStreams>()
+            .add_systems(Update, publish_platform_ban)
+            .add_systems(
+                PostUpdate,
+                sync_entry_gate.run_if(resource_changed::<PlatformBanStatus>),
+            );
+    }
 }
 
 #[cfg(test)]
@@ -85,7 +89,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<SystemApi>()
             .insert_resource(PlatformBanStatus::new());
-        register(&mut app);
+        app.add_plugins(EntryGatePlugin);
         app
     }
 

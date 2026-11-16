@@ -2175,6 +2175,29 @@
               }
             }
           },
+          "404": {
+            "description": "The named entity_id / place_id is not a known place",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body is over 16 KiB"
+          },
+          "429": {
+            "description": "The reporter or its network filed too many reports this hour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -2257,6 +2280,9 @@
                 }
               }
             }
+          },
+          "413": {
+            "description": "The report document is over 64 KiB"
           },
           "500": {
             "description": "",

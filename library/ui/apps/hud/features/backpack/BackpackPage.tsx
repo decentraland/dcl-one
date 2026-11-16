@@ -5,7 +5,7 @@
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
+import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -48,7 +48,7 @@ import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
-import type { AvatarColorTarget, Emote, Outfit, Wearable } from '@explorer-core/engine/protocol'
+import type { AvatarColorTarget, EngineViewportRegion, Emote, Outfit, Wearable } from '@explorer-core/engine/protocol'
 import type { BackpackState, EmotesState, OutfitHistory, ProfileState } from '../session/useEngineSession'
 import styles from './BackpackPage.module.css'
 import { withUtm } from '@explorer-core/lib/utm'
@@ -389,7 +389,7 @@ export function BackpackPage({
   onNavigate: (page: string) => void
   /** Over the lobby: a modal with its own close and no menu bar. */
   modal?: boolean
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
   /** Which tab to open on (e.g. the emote wheel's "Customise [E]" opens 'emotes'). */
   initialTab?: 'wearables' | 'emotes'
 }): React.JSX.Element | null {
@@ -727,7 +727,7 @@ export function BackpackPage({
                   </div>}
                   {backpack.loading ? (
                     <div className={styles.grid} aria-busy="true">
-                      {Array.from({ length: PAGE_SIZE }, (_, i) => <span key={i} className={styles.skeleton} />)}
+                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton key={i} className={styles.skeleton} />)}
                     </div>
                   ) : pageItems.length === 0 ? (
                     <EmptyResults search={searchDebounced !== ''} />

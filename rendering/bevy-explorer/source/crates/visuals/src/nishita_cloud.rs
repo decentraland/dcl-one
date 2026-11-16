@@ -104,6 +104,15 @@ pub struct NishitaCloud {
     pub cloud_sharpness: f32,
     /// coverage value the contrast curve is centred on.
     pub cloud_sharp_mid: f32,
+    /// Scene-authored linear sky colors; alpha flags whether each band is overridden.
+    pub scene_zenith: Vec4,
+    pub scene_horizon: Vec4,
+    pub scene_nadir: Vec4,
+    pub scene_rim: Vec4,
+    pub scene_cloud_color: Vec4,
+    pub scene_cloud_opacity: f32,
+    pub scene_cloud_rotation: f32,
+    pub scene_sun_visible: f32,
 }
 
 #[derive(ShaderType)]
@@ -135,6 +144,15 @@ pub struct NishitaCloudUniform {
     pub cloud_lacunarity: f32,
     pub cloud_sharpness: f32,
     pub cloud_sharp_mid: f32,
+    /// Scene-authored linear sky colors; alpha flags whether each band is overridden.
+    pub scene_zenith: Vec4,
+    pub scene_horizon: Vec4,
+    pub scene_nadir: Vec4,
+    pub scene_rim: Vec4,
+    pub scene_cloud_color: Vec4,
+    pub scene_cloud_opacity: f32,
+    pub scene_cloud_rotation: f32,
+    pub scene_sun_visible: f32,
 }
 
 impl From<&NishitaCloud> for NishitaCloudUniform {
@@ -164,6 +182,14 @@ impl From<&NishitaCloud> for NishitaCloudUniform {
             cloud_lacunarity: value.cloud_lacunarity,
             cloud_sharpness: value.cloud_sharpness,
             cloud_sharp_mid: value.cloud_sharp_mid,
+            scene_zenith: value.scene_zenith,
+            scene_horizon: value.scene_horizon,
+            scene_nadir: value.scene_nadir,
+            scene_rim: value.scene_rim,
+            scene_cloud_color: value.scene_cloud_color,
+            scene_cloud_opacity: value.scene_cloud_opacity,
+            scene_cloud_rotation: value.scene_cloud_rotation,
+            scene_sun_visible: value.scene_sun_visible,
         }
     }
 }
@@ -196,6 +222,14 @@ impl Default for NishitaCloud {
             cloud_lacunarity: 2.0,
             cloud_sharpness: 50.0,
             cloud_sharp_mid: 0.1,
+            scene_zenith: Vec4::ZERO,
+            scene_horizon: Vec4::ZERO,
+            scene_nadir: Vec4::ZERO,
+            scene_rim: Vec4::ZERO,
+            scene_cloud_color: Vec4::ZERO,
+            scene_cloud_opacity: 1.0,
+            scene_cloud_rotation: 0.0,
+            scene_sun_visible: 1.0,
         }
     }
 }
@@ -341,6 +375,11 @@ pub fn init_noise(size: usize) -> Image {
     )
     .unwrap();
     let seed = datetime.date_naive().day();
+    init_noise_seeded(size, seed)
+}
+
+/// Explicit seed for reproducible captures; normal skies retain the calendar seed.
+pub(crate) fn init_noise_seeded(size: usize, seed: u32) -> Image {
     let noise_pixels = PlaneMapBuilder::new(Perlin::new(seed))
         .set_size(size, size)
         .set_is_seamless(true)
