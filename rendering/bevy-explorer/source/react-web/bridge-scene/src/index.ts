@@ -23,6 +23,7 @@ import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
+import { registerGifting } from './domains/gifting'
 import { registerOutfits } from './domains/outfits'
 import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
@@ -68,6 +69,7 @@ export function main(): void {
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
+    registerGifting(ctx)
     registerOutfits(ctx)
     registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
