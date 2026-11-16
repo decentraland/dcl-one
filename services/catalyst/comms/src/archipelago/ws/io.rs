@@ -2058,8 +2058,17 @@ mod bounds_tests {
         let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
         let session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let store = SafetyStore::unfenced_test(pool.clone());
-        let safety = store.snapshot(&wallet).await.unwrap();
-        assert!(safety.generation > 0);
+        // Seed the admission fence under the pool's statement budget. The
+        // store's 1.5 s budget is the writer's to exercise; a shared database
+        // stall during fixture setup must not fail the case before it starts.
+        let (generation, token_floor): (i64, i64) = sqlx::query_as(
+            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) RETURNING generation,token_floor",
+        )
+        .bind(&wallet)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(generation > 0);
         let token_fence = fenced.then(|| TokenFence {
             audience: "queued-committed-fence".into(),
             lane: "realm".into(),
@@ -2086,8 +2095,8 @@ mod bounds_tests {
             pending_takeovers: vec![],
         };
         let mut stamp = PulseAdmissionStamp::from_snapshot(&plan, 0).unwrap();
-        stamp.safety_generation = safety.generation;
-        stamp.safety_token_floor = safety.token_floor;
+        stamp.safety_generation = generation as u64;
+        stamp.safety_token_floor = token_floor as u64;
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |_, _| Ok(plan.encode_to_vec())));
         let gatekeeper = Arc::new(
