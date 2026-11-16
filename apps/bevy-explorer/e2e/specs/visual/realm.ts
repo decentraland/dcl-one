@@ -17,7 +17,7 @@ async function build(id: string): Promise<BuiltScene> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (message.includes('build the scene first')) {
-      throw new Error(`the scene "${id}" is not built (${message}); run \`npm run build-scenes\` in apps/bevy-explorer/e2e`, { cause: error })
+      throw new Error(`the scene "${id}" is not built (${message}); run \`pnpm run build-scenes\` in apps/bevy-explorer/e2e`, { cause: error })
     }
     throw error
   }
