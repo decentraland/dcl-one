@@ -109,7 +109,7 @@ pub struct FeedCache {
     no_session_socket: AtomicU64,
     deduplicated: AtomicU64,
     undecodable: AtomicU64,
-    coalesced: AtomicU64,
+    assignment_full: AtomicU64,
     assignment_oversized: AtomicU64,
     socket_write_timeout: AtomicU64,
     dropped_close: AtomicU64,
@@ -154,8 +154,13 @@ impl FeedCache {
         self.undecodable.load(Ordering::Relaxed)
     }
 
+    /// Retained for health-response compatibility; accepted assignments are never coalesced.
     pub fn coalesced_count(&self) -> u64 {
-        self.coalesced.load(Ordering::Relaxed)
+        0
+    }
+
+    pub fn assignment_full_count(&self) -> u64 {
+        self.assignment_full.load(Ordering::Relaxed)
     }
 
     pub fn assignment_oversized_count(&self) -> u64 {
@@ -304,7 +309,10 @@ fn deliver(
     }
     let outcome = match link.send_assignment(&data, pulse_admission) {
         AssignmentSend::Queued => Routed::Delivered,
-        AssignmentSend::Full => return Routed::Full,
+        AssignmentSend::Full => {
+            state.feed.assignment_full.fetch_add(1, Ordering::Relaxed);
+            return Routed::Full;
+        }
         AssignmentSend::TooLarge => {
             state
                 .feed
@@ -1260,6 +1268,10 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(11)).await;
         let first = island_in(&mut events).expect("the socket got its first island");
         assert_eq!(first.island_id, "island-c1");
+        // Model the writer consuming every accepted follow-up, including repeats.
+        while let Some(repeated) = island_in(&mut events) {
+            assert_eq!(repeated.island_id, "island-c1");
+        }
         socket.assignment_sent();
 
         // Down from 16 s to 19 s; Pulse moves the wallet to c2 meanwhile, and the cluster change

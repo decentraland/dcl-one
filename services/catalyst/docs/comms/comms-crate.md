@@ -90,7 +90,13 @@ re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; position
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
 accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
 `kicked` has a separate terminal slot. Full for 10 s closes
-with 1013; undecodable frames 1007; restart closes every socket with 1012.
+with 1013, including when accepted mailbox work cannot advance during handler stalls,
+not only when the wire is slow. Direct output waiting for credit advances accepted mailbox
+work into the writer without taking another credit. Rejected assignments remain eligible
+for the short reconciliation rounds even after older accepted assignments flush.
+`/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
+`feed_assignment_coalesced` remains zero for response compatibility.
+Undecodable frames close with 1007; restart closes every socket with 1012.
 
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.

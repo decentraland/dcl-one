@@ -201,7 +201,7 @@ impl SocketEvents {
         self.try_recv_credited().map(|received| received.event)
     }
 
-    fn try_recv_credited(&mut self) -> Result<ReceivedSocketEvent, TryRecvError> {
+    pub(crate) fn try_recv_credited(&mut self) -> Result<ReceivedSocketEvent, TryRecvError> {
         let mut pending = self.0.pending.lock();
         if std::mem::take(&mut pending.kicked) {
             return Ok(ReceivedSocketEvent {

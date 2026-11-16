@@ -713,6 +713,7 @@ async fn an_assignment_backlog_preserves_every_accepted_room_in_order() {
         route_island(&state, &address, &session, &island("overflow")),
         Routed::Full
     );
+    assert_eq!(state.feed.assignment_full_count(), 1);
     for index in 0..64 {
         assert_eq!(
             recv_island(&mut ws, Duration::from_secs(3)).await,
@@ -1530,4 +1531,133 @@ async fn a_suppressed_repeat_does_not_extend_the_original_acceptance_window() {
         Some("original-window".into())
     );
     assert_eq!(state.feed.deduplicated_count(), 1);
+}
+
+async fn ping_with_full_mailbox() -> (WsStream, AppState, String) {
+    let (port, state, _) = start_server(10_000).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let device = Device::new();
+    let mut socket = handshake(port, &wallet, &device).await;
+    state.ws_ping_gate.arm();
+    socket
+        .send(WsMessage::Ping(b"full-mailbox".as_slice().into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), state.ws_ping_gate.entered())
+        .await
+        .unwrap();
+    assert_eq!(
+        state.ws_ping_gate.available(),
+        64,
+        "Welcome must have flushed"
+    );
+    assert_eq!(state.ws_ping_gate.writer_pending(), 0);
+    for index in 0..64 {
+        assert_eq!(
+            route_island(
+                &state,
+                &address,
+                &device.session(),
+                &island(&format!("queued-{index}"))
+            ),
+            Routed::Delivered
+        );
+    }
+    assert_eq!(state.ws_ping_gate.available(), 0);
+    assert_eq!(
+        state.ws_ping_gate.writer_pending(),
+        0,
+        "all credits are in the real mailbox"
+    );
+    assert_eq!(state.feed.socket_assignments_written_count(), 0);
+    assert_eq!(
+        route_island(&state, &address, &device.session(), &island("overflow")),
+        Routed::Full
+    );
+    (socket, state, address)
+}
+
+#[tokio::test]
+async fn production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment() {
+    let (mut socket, state, address) = ping_with_full_mailbox().await;
+    state.ws_ping_gate.release();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut pong = false;
+        let mut assignments = 0;
+        while !pong || assignments < 64 {
+            match socket.next().await.unwrap().unwrap() {
+                WsMessage::Pong(payload) => {
+                    assert_eq!(payload.as_ref(), b"full-mailbox");
+                    pong = true;
+                }
+                WsMessage::Binary(bytes) => {
+                    let packet = ServerPacket::decode(bytes).unwrap();
+                    let Some(server_packet::Message::IslandChanged(assignment)) = packet.message
+                    else {
+                        panic!("unexpected packet")
+                    };
+                    assert_eq!(assignment, island(&format!("queued-{assignments}")));
+                    assignments += 1;
+                }
+                frame => panic!("healthy writer must not retire: {frame:?}"),
+            }
+        }
+        while state.ws_ping_gate.available() != 64 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the actual Ping handler must drain its mailbox while Pong waits for capacity");
+    assert!(state.registry.has_peer(&address));
+    assert_eq!(state.feed.socket_assignments_written_count(), 64);
+    assert_eq!(state.feed.dropped_close_count(), 0);
+    socket.close(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn production_full_mailbox_ping_preserves_kick_restart_and_retirement() {
+    for terminal in ["kick", "restart", "retire"] {
+        let (mut socket, state, address) = ping_with_full_mailbox().await;
+        match terminal {
+            "kick" => {
+                assert_eq!(state.registry.kick(&address), 1);
+            }
+            "restart" => state.restart.cancel(),
+            "retire" => state.registry.sessions_of(&address)[0].close(),
+            _ => unreachable!(),
+        }
+        state.ws_ping_gate.release();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut kicked = false;
+            loop {
+                match socket.next().await.unwrap().unwrap() {
+                    WsMessage::Pong(_) => {}
+                    WsMessage::Binary(bytes) => {
+                        assert_eq!(terminal, "kick");
+                        assert!(matches!(
+                            ServerPacket::decode(bytes).unwrap().message,
+                            Some(server_packet::Message::Kicked(_))
+                        ));
+                        kicked = true;
+                    }
+                    WsMessage::Close(frame) => {
+                        if terminal == "restart" {
+                            assert_eq!(u16::from(frame.unwrap().code), 1012);
+                        }
+                        assert_eq!(kicked, terminal == "kick");
+                        break;
+                    }
+                    frame => panic!("unexpected terminal frame: {frame:?}"),
+                }
+            }
+            while state.registry.has_peer(&address) || state.ws_ping_gate.available() != 64 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("terminal handling must preempt the full mailbox/Pong wait");
+        assert_eq!(state.feed.socket_assignments_written_count(), 0);
+        assert_eq!(state.feed.dropped_close_count(), 0);
+    }
 }

@@ -27,6 +27,8 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::registry::tests::full_assignment_retries_even_after_older_accepted_frames_flush",
+        "archipelago::ws::io::bounds_tests::blocked_direct_output_keeps_original_stamp_while_servicing_full_mailbox",
         "archipelago::registry::mailbox::tests::capacity_follows_accepted_assignments_through_validation_until_drop",
         "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
         "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
@@ -240,6 +242,8 @@ MANDATORY_ARCHIPELAGO = {
         "assignment_pressure_preserves_fifo_and_rejects_oversize",
     ],
     ("archipelago_ws_island_dedup", "test"): [
+        "production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment",
+        "production_full_mailbox_ping_preserves_kick_restart_and_retirement",
         "assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
         "assignment_capacity_stays_charged_through_validation_and_physical_flush",
         "full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",

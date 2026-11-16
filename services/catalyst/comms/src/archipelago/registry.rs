@@ -27,6 +27,7 @@ pub struct PeerLink {
     pub session: String,
     pub id: u64,
     assignment_sent: Arc<AtomicBool>,
+    assignment_retry: Arc<Mutex<bool>>,
     tx: Arc<MailboxSender>,
 }
 
@@ -120,7 +121,8 @@ impl PeerLink {
     }
 
     pub fn needs_assignment(&self) -> bool {
-        !self.is_closed() && !self.assignment_sent.load(Ordering::SeqCst)
+        !self.is_closed()
+            && (*self.assignment_retry.lock() || !self.assignment_sent.load(Ordering::SeqCst))
     }
 
     pub(crate) fn assignment_sent(&self) {
@@ -145,7 +147,16 @@ impl PeerLink {
         bytes: &[u8],
         stamp: Option<crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp>,
     ) -> AssignmentSend {
-        self.tx.assignment(bytes, stamp)
+        // Serialize acceptance with retry state: an older physical flush must not hide a
+        // rejected newer assignment from the short reconciliation rounds.
+        let mut retry = self.assignment_retry.lock();
+        let outcome = self.tx.assignment(bytes, stamp);
+        match outcome {
+            AssignmentSend::Full => *retry = true,
+            AssignmentSend::Queued => *retry = false,
+            _ => {}
+        }
+        outcome
     }
 
     pub(crate) async fn cancelled(&self) {
@@ -379,6 +390,7 @@ impl PeersRegistry {
             session: session.to_string(),
             id: self.next_id.fetch_add(1, Ordering::SeqCst) + 1,
             assignment_sent: Arc::new(AtomicBool::new(false)),
+            assignment_retry: Arc::new(Mutex::new(false)),
             tx,
         };
         (link, rx)
@@ -955,6 +967,36 @@ mod tests {
         );
         registry.on_peer_disconnected("0xb", "0xs3", _c.id);
         assert_eq!(registry.snapshot().len(), 2);
+    }
+
+    #[test]
+    fn full_assignment_retries_even_after_older_accepted_frames_flush() {
+        let registry = PeersRegistry::new();
+        let (link, mut events, _) = registry.on_peer_connected("0xa", "0xs1");
+        link.assignment_sent();
+        for _ in 0..OUTPUT_CAPACITY {
+            assert!(matches!(
+                link.send_assignment(&[1], None),
+                AssignmentSend::Queued
+            ));
+        }
+        assert!(matches!(
+            link.send_assignment(&[2], None),
+            AssignmentSend::Full
+        ));
+        while events.try_recv().is_ok() {
+            link.assignment_sent();
+        }
+        assert!(
+            link.needs_assignment(),
+            "older flushes cannot acknowledge the rejected room"
+        );
+        assert_eq!(registry.reconciliation_snapshot(true).len(), 1);
+        assert!(matches!(
+            link.send_assignment(&[2], None),
+            AssignmentSend::Queued
+        ));
+        assert!(!link.needs_assignment(), "the retry was accepted");
     }
 
     #[test]
