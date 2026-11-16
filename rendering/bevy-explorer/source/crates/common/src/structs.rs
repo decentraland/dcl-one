@@ -433,6 +433,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,

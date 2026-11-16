@@ -178,8 +178,8 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       the head through emotes with no lag.
 - [ ] **Exactly one tag per player — no duplicates / orphans / pile-up.** None accumulate over a long
       session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn. A
-      player who leaves takes their tag with them at once. Tags are pooled: `/nametag_state` shows
-      `shown` and `pooled`.
+      player who leaves takes their tag with them at once. `/nametag_state` counts the tags as
+      `shown` and `hidden`: together, one per player with a profile.
 - [ ] Tags show from 2 m to 40 m from the camera, **fading out** from 20 m, and not behind a wall.
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.

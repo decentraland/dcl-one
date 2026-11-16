@@ -1,9 +1,12 @@
 //! The nametags' console commands and their section of the debug panel.
 
 use alloy_core::primitives::Address;
-use bevy::{prelude::*, render::mesh::MeshTag};
+use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::{structs::AppConfig, util::AsH160};
+use common::{
+    structs::{AppConfig, PrimaryCamera},
+    util::AsH160,
+};
 use comms::global_crdt::ForeignPlayer;
 use console::{DebugInput, DebugInputKind, DebugSection};
 use scene_runner::update_world::text_shape::Page;
@@ -12,8 +15,9 @@ use serde_json::{json, Value};
 use super::{
     bubble::{BubbleKind, ChatBubbleRequest, ChatBubbleRetext},
     layout::Voice,
+    tag_opacity, tag_scale,
     text::TextShaper,
-    ChatBubble, Nametag, NametagContent, NametagOf, NametagVoice, OfficialWallets, ShownNametag,
+    ChatBubble, Nametag, NametagContent, NametagVoice, OfficialWallets,
 };
 use crate::dynamic_nametag::{NametagHeadOffset, NametagsVisible};
 
@@ -22,7 +26,7 @@ pub const SECTION: DebugSection = DebugSection {
     query: "/nametag_state",
     fields: &[
         ("Shown", "shown"),
-        ("Pooled", "pooled"),
+        ("Hidden", "hidden"),
         ("Glyph atlas (distance field / colour px)", "atlas"),
         ("Chat bubbles", "bubbles"),
     ],
@@ -38,15 +42,16 @@ pub const SECTION: DebugSection = DebugSection {
     }],
 };
 
-/// Report the nametags as JSON: `visible` (the nametags toggle), `shown` and `pooled` (tag
-/// counts), `atlas` (the glyph atlas' distance-field and colour page sizes in pixels, 0 for
-/// a page not made), `bubbles` (the chat bubble setting) and `tags`, one per shown tag:
-/// `player` (an address, or `local`, or null for an avatar with no wallet), `name`, `suffix`,
-/// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` in
-/// metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit), `position`
-/// (world, metres), `headOffset` (how far over the head bone the tag sits, in metres; null
-/// until the avatar is built) and `bubble` (null, or its `kind`, `mention` and message `length`; never
-/// the message).
+/// Report the nametags as JSON: `visible` (the nametags toggle), `shown` and `hidden` (the
+/// players' tags that show, and those that don't: out of range, blocked, or hidden by the
+/// scene or a setting), `atlas` (the glyph atlas' distance-field and colour page sizes in
+/// pixels, 0 for a page not made), `bubbles` (the chat bubble setting) and `tags`, one per
+/// shown tag: `player` (an address, or `local`, or null for an avatar with no wallet), `name`,
+/// `suffix`, `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance`
+/// in metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit), `position`
+/// (world, metres; all four as of the last frame drawn), `headOffset` (how far over the head
+/// bone the tag sits, in metres; null until the avatar is built) and `bubble` (null, or its
+/// `kind`, `mention` and message `length`; never the message).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;
@@ -57,18 +62,14 @@ pub fn nametag_state(
     visible: Res<NametagsVisible>,
     config: Res<AppConfig>,
     mut shaper: TextShaper,
-    tags: Query<(
-        &Nametag,
-        Option<&NametagOf>,
-        &Transform,
-        &MeshTag,
-        Option<&ChatBubble>,
-    )>,
+    camera: Query<(&GlobalTransform, &Projection), With<PrimaryCamera>>,
+    tags: Query<(&Nametag, &ChildOf, &GlobalTransform, &Visibility)>,
     owners: Query<(
         &NametagContent,
         &NametagVoice,
         Option<&ForeignPlayer>,
         Option<&NametagHeadOffset>,
+        Option<&ChatBubble>,
     )>,
     local: Res<common::structs::PrimaryPlayerRes>,
 ) {
@@ -79,21 +80,35 @@ pub fn nametag_state(
     let page_size = |page| atlas.page_image(page).map_or(0, |(_, size)| size);
     let atlas = [page_size(Page::Sdf), page_size(Page::Color)];
 
-    let mut pooled = 0;
-    let mut shown = Vec::new();
-    for (nametag, owner, transform, opacity, bubble) in &tags {
-        let Some(owner) = owner else {
-            pooled += 1;
-            continue;
+    // the shader's view of each tag, worked out the same way
+    let view = camera.single().ok().map(|(transform, projection)| {
+        let fov = match projection {
+            Projection::Perspective(perspective) => Some(perspective.fov),
+            _ => None,
         };
-        let Ok((content, voice, foreign, head_offset)) = owners.get(owner.0) else {
+        (transform.translation(), fov)
+    });
+
+    let mut hidden = 0;
+    let mut shown = Vec::new();
+    for (nametag, owner, transform, visibility) in &tags {
+        if !nametag.shown || *visibility == Visibility::Hidden {
+            hidden += 1;
+            continue;
+        }
+        let Ok((content, voice, foreign, head_offset, bubble)) = owners.get(owner.parent()) else {
             continue;
         };
         let player = match foreign {
             Some(player) => json!(format!("{:#x}", player.address)),
-            None if owner.0 == local.0 => json!("local"),
+            None if owner.parent() == local.0 => json!("local"),
             None => Value::Null,
         };
+        let position = transform.translation();
+        let distance = view.map(|(camera, _)| camera.distance(position));
+        let scale = distance
+            .zip(view.and_then(|(_, fov)| fov))
+            .map(|(distance, fov)| tag_scale(distance, fov));
         shown.push(json!({
             "player": player,
             "name": content.name,
@@ -106,10 +121,10 @@ pub fn nametag_state(
                 Voice::Speaking => "speaking",
                 Voice::Hushed => "hushed",
             },
-            "distance": nametag.placed.map(|(squared, _)| squared.sqrt()),
-            "opacity": super::material::mesh_tag_opacity(opacity.0),
-            "scale": transform.scale.x,
-            "position": transform.translation.to_array(),
+            "distance": distance,
+            "opacity": distance.map(tag_opacity),
+            "scale": scale,
+            "position": position.to_array(),
             "headOffset": head_offset.map(|offset| offset.0),
             "bubble": bubble.map(|bubble| json!({
                 "kind": match bubble.kind {
@@ -127,7 +142,7 @@ pub fn nametag_state(
         json!({
             "visible": visible.0,
             "shown": shown.len(),
-            "pooled": pooled,
+            "hidden": hidden,
             "atlas": atlas,
             "bubbles": format!("{:?}", config.chat_bubble_visibility),
             "tags": shown,
@@ -160,7 +175,8 @@ pub struct NametagBubbleCommand {
 pub fn nametag_bubble(
     mut cmd: ConsoleCommand<NametagBubbleCommand>,
     local: Res<common::structs::PrimaryPlayerRes>,
-    shown: Query<(Entity, Option<&ForeignPlayer>), With<ShownNametag>>,
+    tags: Query<(&Nametag, &ChildOf)>,
+    players: Query<Option<&ForeignPlayer>>,
     mut requests: EventWriter<ChatBubbleRequest>,
 ) {
     let Some(Ok(command)) = cmd.take() else {
@@ -176,13 +192,18 @@ pub fn nametag_bubble(
         TestBubbleKind::Community => BubbleKind::Community(Some("Test community".to_owned())),
         TestBubbleKind::Dm => BubbleKind::Dm { recipient: None },
     };
-    let senders = shown
+    let senders = tags
         .iter()
-        .filter(|(player, foreign)| match address {
-            Some(address) => foreign.is_some_and(|foreign| foreign.address == address),
+        .filter(|(nametag, _)| nametag.shown)
+        .map(|(_, owner)| owner.parent())
+        .filter(|player| match address {
+            Some(address) => players
+                .get(*player)
+                .ok()
+                .flatten()
+                .is_some_and(|foreign| foreign.address == address),
             None => command.target == "all" || *player == local.0,
         })
-        .map(|(player, _)| player)
         .collect::<Vec<_>>();
     for (index, sender) in senders.iter().enumerate() {
         requests.write(ChatBubbleRequest {

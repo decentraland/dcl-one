@@ -24,14 +24,14 @@ than once. Check here before correcting something surprising.
   adaptations of later upstream work.
 - **bevy 0.16 ignores `Changed<MeshTag>`** in GPU mesh extraction. A tag that changes on its own
   stays stale in the mesh uniform. After writing the tag, call `set_changed` on the `Mesh3d`
-  so the entity re-extracts. The particle system does this every frame. An entity whose
-  `GlobalTransform` changes that frame re-extracts anyway and carries its tag along, so it
-  skips the call, which would also specialize its pipeline again; nametags rely on this.
+  so the entity re-extracts. The particle system does this every frame.
 - **Nametags are drawn by the engine**, not by the system UI scene: `crates/avatar/src/nametag`
-  gives each player in range a pooled tag entity with one mesh, drawn by one shared material
-  in the main pass, facing the camera and scaled to keep its size on screen. A tag is a
-  transparent mesh that tests depth, so it is hidden behind walls and still passes through
-  tonemapping and bloom. Tags come from player profiles, so scene `AvatarShape` NPCs never
+  gives each player a tag entity as a child, with one mesh drawn by one shared material in the
+  main pass. The tag's transform is only its player's name-tag anchor: the vertex shader turns
+  it to the camera, scales it to keep its size on screen and fades it with distance, so its
+  `Aabb` is a cube sized for the far end of its range, not its mesh's bounds. A name that
+  should not show is hidden, never despawned. A tag is a transparent mesh that tests depth, so
+  it is hidden behind walls and is tonemapped and bloomed with the frame. Tags come from player profiles, so scene `AvatarShape` NPCs never
   get one.
 - **The imposter store is multi-realm by design.** The fetch URL carries the realm's about
   URL, and each tile's CRC is derived from the scene set at bake time. A CRC mismatch after a

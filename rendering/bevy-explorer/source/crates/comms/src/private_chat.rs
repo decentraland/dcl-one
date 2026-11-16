@@ -59,7 +59,6 @@ impl Plugin for PrivateChatPlugin {
         app.add_event::<PrivateChatRouterChanged>();
         app.add_event::<CommunityChatReceived>();
         app.init_resource::<CommunityChannels>();
-        app.init_resource::<CommunityNames>();
         app.add_systems(
             Update,
             (
@@ -134,20 +133,22 @@ struct DroppedCommunityPackets {
 /// The community channels the local user listens to: the communities they are a member of,
 /// minus those whose chat they closed, as lowercased ids. Pushed by the HUD
 /// (`SystemApi::SetCommunityChannels`); packets on any other community channel are dropped
-/// before they are recorded. Cleared with the identity.
+/// before they are recorded. Cleared with the identity. Each carries its community's name as
+/// far as the HUD knew it when it pushed the channels: a community message shows it over its
+/// author's nametag.
 #[derive(Resource, Default)]
-pub struct CommunityChannels(pub HashSet<String>);
+pub struct CommunityChannels(pub HashMap<String, Option<String>>);
 
 impl CommunityChannels {
     pub fn contains(&self, community_id: &str) -> bool {
-        self.0.contains(&community_id.to_ascii_lowercase())
+        self.0.contains_key(&community_id.to_ascii_lowercase())
+    }
+
+    /// The name of a community listened to, when the HUD knew it.
+    pub fn name(&self, community_id: &str) -> Option<&str> {
+        self.0.get(&community_id.to_ascii_lowercase())?.as_deref()
     }
 }
-
-/// The names of the communities listened to, by lowercased id, as far as the HUD knew them
-/// when it pushed the channels. Shown with a community message over its author's nametag.
-#[derive(Resource, Default)]
-pub struct CommunityNames(pub HashMap<String, String>);
 
 /// On a private chat room participant: the DM privacy the server stamped into their participant
 /// metadata, `None` until it arrives.
@@ -249,21 +250,16 @@ fn connect_private_chat_room(
 fn apply_community_channels(
     mut requests: EventReader<SystemApi>,
     mut channels: ResMut<CommunityChannels>,
-    mut names: ResMut<CommunityNames>,
 ) {
     for request in requests.read() {
         let SystemApi::SetCommunityChannels(communities) = request else {
             continue;
         };
-        let mut next = HashSet::new();
-        names.0.clear();
+        let mut next = HashMap::new();
         for ListenedCommunity { id, name } in communities {
             match community_id(&channel_for(id)) {
                 Some(id) => {
-                    next.insert(id.to_owned());
-                    if let Some(name) = name {
-                        names.0.insert(id.to_owned(), name.clone());
-                    }
+                    next.insert(id.to_owned(), name.clone());
                 }
                 None => warn!(target: "comms::private_chat", "ignoring community channel `{id}`"),
             }
@@ -721,7 +717,7 @@ fn community_channels(
                 return;
             };
             if action == "add" {
-                channels.0.insert(valid.to_owned());
+                channels.0.insert(valid.to_owned(), None);
             } else {
                 channels.0.remove(valid);
             }
@@ -733,7 +729,7 @@ fn community_channels(
             return;
         }
     }
-    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    let mut listed: Vec<_> = channels.0.keys().cloned().collect();
     listed.sort();
     input.reply_ok(format!("community channels: {listed:?}"));
 }
@@ -771,7 +767,7 @@ fn community_state_json(
     channels: &CommunityChannels,
     stats: Option<&CommunityChatStats>,
 ) -> serde_json::Value {
-    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    let mut listed: Vec<_> = channels.0.keys().cloned().collect();
     listed.sort();
     let mut state = json!({
         "routerIdentity": router,
@@ -937,7 +933,6 @@ mod tests {
                 .init_resource::<crate::SceneRoomAdapterOverride>()
                 .init_resource::<DisableSceneRoomGatekeeper>()
                 .init_resource::<CommunityChannels>()
-                .init_resource::<CommunityNames>()
                 .add_event::<crate::SetCurrentScene>()
                 .add_event::<crate::websocket_room::StartWsRoom>()
                 .add_event::<crate::signed_login::StartSignedLogin>()
@@ -1066,7 +1061,7 @@ mod tests {
         world.init_resource::<Events<CommunityChatReceived>>();
         world.init_resource::<Events<ChatReactionEvent>>();
         let mut channels = CommunityChannels::default();
-        channels.0.insert(COMMUNITY.to_owned());
+        channels.0.insert(COMMUNITY.to_owned(), None);
         world.insert_resource(channels);
         let room = world
             .spawn((PrivateChatRoom, CommunityChatStats::default()))

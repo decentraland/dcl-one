@@ -739,7 +739,7 @@ fn pipe_chats_to_scene(
         comms::private_chat::CommunityChatReceived,
     >,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
-    #[cfg(feature = "livekit")] community_names: Res<comms::private_chat::CommunityNames>,
+    #[cfg(feature = "livekit")] community_channels: Res<comms::private_chat::CommunityChannels>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     mut bubbles: EventWriter<ChatBubbleRequest>,
@@ -750,7 +750,7 @@ fn pipe_chats_to_scene(
     // a community's name for the bubble of one of its messages
     #[cfg(feature = "livekit")]
     let community =
-        |id: &str| BubbleKind::Community(community_names.0.get(&id.to_ascii_lowercase()).cloned());
+        |id: &str| BubbleKind::Community(community_channels.name(id).map(str::to_owned));
     #[cfg(not(feature = "livekit"))]
     let community = |_: &str| BubbleKind::Community(None);
     #[cfg(feature = "livekit")]

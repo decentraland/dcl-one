@@ -45,33 +45,50 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   `AtlasGlyphUse` component keeps its glyphs counted as in use. The coverage maths is one WGSL
   module (`sdf_coverage.wgsl`) imported by both shaders. Tags build text spans directly, so a name
   or message cannot inject markup.
-- **Placement on the CPU, every frame.** After the avatar's bones are final, each shown tag is
-  placed at the highest of the head, toes and hips, plus the height of what the avatar wears above
-  its head bone, measured in the head bone's bind space when the avatar is built. It faces the
-  camera plane and is scaled by distance so that it keeps its size on screen. It is shown from 2 m
-  to 40 m and fades over the second half of that range. Opacity travels in the tag's `MeshTag`,
-  so a fade changes neither the mesh nor the material.
-- **State is on entities.** A player carries `NametagContent` and `NametagVoice`. A shown tag is
-  its own entity, related one-to-one to its player (`NametagOf` / `ShownNametag`), and carries the
-  `ChatBubble` it is showing. Despawning the player removes the relationship, and an observer
-  frees the tag, so a disconnect needs no polling.
-- **Tags are pooled.** A tag is released when its player is out of range, behind the camera,
-  hidden by an avatar modifier area, beyond the avatar cap, the local player in first person, or
-  when nametags are off. Released tags keep their mesh handle and wait hidden; at most 32 wait,
-  and the rest are despawned.
-- **Meshes rebuild on change only.** A tag's mesh is rebuilt when its content changes, while its
-  bubble animates, or when the glyph atlas is repacked. An idle tag costs one transform write a
-  frame.
+- **One tag per player, as the player's child.** A player with a profile carries
+  `NametagContent` and `NametagVoice`, and has one tag entity as a child for as long as it has
+  that content. Despawning the player despawns the tag, so a disconnect needs no polling and
+  there is no pool: a tag is a handful of components, and reusing one saved nothing, since its
+  name was shaped and its mesh uploaded again for the next player.
+- **The anchor on the CPU, the rest in the vertex shader.** After the avatar's bones are final,
+  the tag's translation is set to the player's name-tag anchor: the highest of the head, toes and
+  hips, plus the height of what the avatar wears above its head bone, measured in the head bone's
+  bind space when the avatar is built. The anchor is relative to the player, so transform
+  propagation places the tag from the player's transform of the same frame. The vertex shader
+  turns the tag to the camera plane, scales it by distance so that it keeps its size on screen,
+  and fades it over the second half of its 2 m to 40 m range. Nothing on an idle tag changes from
+  frame to frame except, when its player moves, its place in the world. Its bounds are a cube
+  around the anchor that covers the mesh at the far end of the range, where it is largest.
+- **A name that should not show is hidden, not removed.** Out of range, hidden by an avatar
+  modifier area, beyond the avatar cap, blocked either way or banned from the scene's room, the
+  local player in first person (with a scene's camera override applied), or with nametags off:
+  the tag's `Visibility` is hidden and the tag is left as it is. A tag out of view is culled by
+  the frustum like any mesh. A hidden tag is not rebuilt; it is brought up to date when it shows
+  again.
+- **Meshes rebuild on change only.** A tag's mesh is rebuilt, in place under one asset id, when
+  what it was built from differs from what it should show: the content, the voice badge, the
+  glyph atlas' generation, or how far its bubble has opened. A bubble opening or closing
+  therefore rebuilds it each frame for about 0.4 s, and once more at its final size.
 - **Bubbles come from the filtered chat stream.** `pipe_chats_to_scene` writes a
   `ChatBubbleRequest` where it forwards a nearby, community or direct message, after block and ban
-  filtering. A bubble is shown only if its sender has a tag at that moment; nothing is queued. The
-  setting `ChatBubbleVisibility` chooses all messages, nearby only, or none.
+  filtering. The `ChatBubble` is the sender's, not the tag's: a tag hidden for a moment shows the
+  rest of the message when it is back, and a message whose five seconds ran out unseen is
+  dropped. A blank message opens no bubble. The setting `ChatBubbleVisibility` chooses all
+  messages, nearby only, or none.
+- **A translation reaches the bubble through a typed call.** The HUD translates messages, so the
+  bridge tells the engine the new words with `SystemApi::SetChatBubbleText`, which replaces the
+  text of the bubble still showing that message and keeps its time. Words that arrive while the
+  bubble is closing do not open it again.
+- **Tags are tonemapped with the frame.** The material writes its colours as they are specified
+  and the main pass tonemaps them with everything else in the frame. An earlier
+  version approximately inverted the tonemapper in the shader. On the web build that made no
+  measurable difference (see the colour sample below), so it was removed.
 - **What a peer sends is bounded and checked before it is drawn.** A bubble shows the first 100
   characters of a message on wrapped lines, with line breaks read as spaces; a community's name
   shows its first 28 characters and a player's name its first 32. An unclaimed name shows the
-  last four characters of its address, and anything after a `#` in the name itself is dropped.
-  The verified seal needs a claimed name on a profile with a connected wallet: a guest's profile
-  is only the guest's word.
+  last four characters of its address in lower case, and anything after a `#` in the name itself
+  is dropped. The verified seal needs a claimed name on a profile that says it has a connected
+  wallet. Both flags are the peer's word: nothing confirms them against the catalyst yet.
 - **The foundation badge has an input and no source.** `OfficialWallets` lists the wallets that
   show it. Nothing fills it yet.
 - **Observable through the console.** `/nametag_state` reports every shown tag without message
@@ -86,16 +103,26 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   buffer, so tags would show through walls.
 - **A DOM overlay in the HUD**: positions would arrive over the bridge at the scene's tick, and on
   desktop the HUD is a texture composited over the frame, with no depth either.
-- **A dedicated pass after tonemapping**: it would give exact colours, but needs its own render
-  node reading prepass depth and its own handling of anti-aliasing and depth of field. The
-  material approximately inverts the tonemapper instead. This is the fallback if the colours are
-  measurably off.
+- **A dedicated pass after tonemapping**: it would give exactly the specified colours and draw
+  tags over every other transparent object, but needs its own render node reading prepass depth
+  and its own handling of anti-aliasing and depth of field.
+- **Inverting the tonemapper in the material**: the approximate inverse brought the sampled
+  colours no closer to the specified ones, and an exact inverse of the tonemapper would write
+  white at an HDR value that bloom turns into a halo.
+- **A pool of tags handed to the players in range**: it kept only a mesh handle whose contents
+  were replaced anyway, and cost a relationship, a release observer and the loss of a bubble
+  whenever its sender's tag was released.
+- **Placing, scaling and fading each tag on the CPU**: three writes per tag per frame, and a tag
+  one frame behind a player who moved after their transform was last propagated.
 - **Keeping the scene and raising its tick or texture size**: neither removes the single point of
   failure, and the texture atlas is bounded by the device's texture size.
 - **Smoothing the anchor's height**: the previous quarter-second hold kept a tag above an avatar's
   highest recent pose, and lagged behind it when the avatar sat or crouched.
-- **Queueing bubbles for players without a tag**: a message would appear seconds late over a
-  player who has just come into range.
+- **Keeping a message past its five seconds for a sender whose tag was hidden**: it would appear
+  late over a player who has just come into range.
+- **A console command as the bridge's way to replace a bubble's text**: untyped, and it would
+  freeze a debug command's name and arguments into a contract. `/chat_bubble_text` stays for
+  tests only.
 
 ## Consequences
 
@@ -103,13 +130,21 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   freed in the frame the player despawns.
 - Changing how a tag looks needs an engine build; a scene deploy no longer changes it.
 - Tags pass through tonemapping, bloom and anti-aliasing with the rest of the 3D pass. Their
-  colours are close to the specified ones, not exact.
+  colours come out darker than specified: sampled from a frame of the web build (Chrome on an
+  Apple M1 Pro, 2026-11-16), the `#161518` fill is about `#040506`, the `#43404A` border about
+  `#16171D` and the `#FCFCFC` message text `#C9C9C9`, a contrast of about 12:1. A build with the
+  approximate inverse sampled `#020202` and `#C9C9C9` for the same fill and text.
+- Tags sort among the other transparent objects by distance, so hair, glass or particles nearer
+  the camera draw over a tag.
+- Each tag is one draw and one mesh; the count follows the avatar cap (20 by default, up to 100).
+- A blocked or scene-banned player's name is hidden. Their avatar still shows.
 - A scene item attached to the name-tag attach point now follows the avatar's bones every frame.
 - A player's name colour is derived from their name by one hash, shared with the HUD
   (`library/explorer-core/engine/nameColor.ts`, same test vectors). The loading ghost and the
   point-at marker use it too.
 - `SetCommunityChannels` carries each community's name beside its id, so a community bubble can
-  show it.
+  show it. The HUD sends the set again when its ids change, so a community renamed meanwhile
+  keeps its old name on bubbles until then.
 - Names in scripts the nametag font and the emoji font do not cover show missing glyphs.
 
 **Measured.** Web builds of this change and of its base (`main` `6d490cdf9`), both without
@@ -136,8 +171,10 @@ them, which halves the work in the frame.
 
 ## Follow-ups
 
-- Fill `OfficialWallets` from feature flags once the Explorer has them.
+- Fill `OfficialWallets` with the profile data the dcl-one services send: the social service
+  already marks official wallets on community messages.
+- Confirm a claimed name against the catalyst before drawing the verified seal.
 - Tags for scene avatars (`AvatarShape`) and the SDK's nametag plate.
 - A fallback font for CJK names.
-- Measure a crowd of twenty or more players before and after, and on a desktop build.
-- Sample the tag's fill colour against its specified value on the web build.
+- Measure a crowd of twenty or more players before and after, and on a desktop build; decide
+  from it whether one draw per tag needs batching.

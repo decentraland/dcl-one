@@ -231,6 +231,11 @@ pub fn op_send_chat(state: &WorkerContext, message: String, channel: String) {
 }
 
 #[wasm_bindgen]
+pub fn op_set_chat_bubble_text(state: &WorkerContext, message_id: String, message: String) {
+    dcl_js::system_api::op_set_chat_bubble_text(state.rc(), message_id, message)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_chat_reaction_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_chat_reaction_stream(state.rc()).await
 }

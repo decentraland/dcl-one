@@ -170,7 +170,10 @@ impl Plugin for TextShapePlugin {
         // chained: the rebuild sees the shapes built this frame
         app.add_systems(
             Update,
-            (update_text_shapes, maintain_glyph_atlases)
+            (
+                update_text_shapes,
+                maintain_glyph_atlases.in_set(GlyphAtlasMaintenance),
+            )
                 .chain()
                 .in_set(SceneLoopSets::UpdateWorld),
         );
@@ -523,6 +526,11 @@ impl From<&TextFontFamily> for AtlasKey {
         }
     }
 }
+
+/// The rebuild of the atlases that ran out of room. Whatever else draws from an atlas in a
+/// frame orders itself after this: a rebuild moves every glyph.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GlyphAtlasMaintenance;
 
 #[derive(Default, Resource)]
 pub struct GlyphAtlases(HashMap<AtlasKey, GlyphAtlas>);
@@ -1950,6 +1958,27 @@ fn update_text_shapes(
     }
 
     debug!("built: {built}, deferred: {deferred}");
+}
+
+/// The atlases' upkeep alone, for a test of something that draws from an atlas without scene
+/// text.
+#[cfg(feature = "test-support")]
+pub fn add_glyph_atlas_maintenance(app: &mut App) {
+    // what the text shapes' own build does first each frame
+    fn collect_rasters(mut atlases: ResMut<GlyphAtlases>, mut images: ResMut<Assets<Image>>) {
+        for atlas in atlases.0.values_mut() {
+            atlas.collect(&mut images);
+        }
+    }
+
+    app.init_resource::<GlyphAtlases>()
+        .init_asset::<TextSdfMaterial>()
+        .add_systems(
+            Update,
+            (collect_rasters, maintain_glyph_atlases)
+                .chain()
+                .in_set(GlyphAtlasMaintenance),
+        );
 }
 
 /// After the frame's builds have been applied: rebuild the atlases that ran out of room from

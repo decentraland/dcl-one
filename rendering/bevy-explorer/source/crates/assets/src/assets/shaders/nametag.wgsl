@@ -1,7 +1,9 @@
 // A nametag (avatar/src/nametag): one mesh of quads, drawn back to front in index order. Each
 // quad carries its kind in `shape.x`: a glyph from the distance-field atlas page, a colour
 // glyph from the bitmap page, an icon, a rounded rectangle, or a voice bar. Unlit, blended and
-// depth-tested without writing depth. The tag's opacity travels in its mesh tag.
+// depth-tested without writing depth. The mesh is flat, in tag units around its anchor: the
+// vertex stage turns it to the camera, sizes it to keep its size on screen and fades it with
+// distance. Its colours are tonemapped with the rest of the frame.
 
 #import bevy_pbr::{
     forward_io::FragmentOutput,
@@ -9,7 +11,6 @@
     mesh_view_bindings::{view, globals},
     view_transformations,
 }
-#import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
 #import "embedded://shaders/sdf_coverage.wgsl"::sdf_layer_alpha
 
 @group(2) @binding(0) var sdf_texture: texture_2d<f32>;
@@ -46,14 +47,22 @@ struct VertexOutput {
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
-    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
-    let world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    out.position = view_transformations::position_world_to_clip(world_position.xyz);
+    // the anchor alone: the tag takes neither its player's turn nor its scale
+    let anchor = mesh_functions::get_world_from_local(vertex.instance_index)[3].xyz;
+    let range = distance(view.world_position, anchor);
+    // clip_from_view[1][1] is 1 / tan(fov / 2): a tag unit covers the same share of the
+    // view's height at any distance and field of view
+    let scale = range * f32(#{NAMETAG_SCALE_MILLIONTHS}) * 1e-6 / view.clip_from_view[1][1];
+    let right = view.world_from_view[0].xyz;
+    let up = view.world_from_view[1].xyz;
+    let world_position = anchor + (right * vertex.position.x + up * vertex.position.y) * scale;
+    out.position = view_transformations::position_world_to_clip(world_position);
     out.uv = vertex.uv;
     out.color = vertex.color;
     out.shape = vertex.shape;
     out.radii = vertex.radii;
-    out.opacity = f32(mesh_functions::get_tag(vertex.instance_index)) / f32(#{NAMETAG_OPACITY_STEPS});
+    let fade_from = f32(#{NAMETAG_FADE_DISTANCE});
+    out.opacity = saturate(1.0 - (range - fade_from) / (f32(#{NAMETAG_MAX_DISTANCE}) - fade_from));
     return out;
 }
 
@@ -116,8 +125,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     color.a *= in.opacity;
 
     var out: FragmentOutput;
-    // the colours are display colours: undo the tonemapping the main pass applies after this
-    out.color = vec4(approximate_inverse_tone_mapping(vec4(color.rgb, 1.0), view.color_grading).rgb, color.a);
+    out.color = color;
 
 #ifdef TRANSPARENT_FOCUS_OUTPUT
     // accumulate alpha-weighted view depth + coverage for depth of field

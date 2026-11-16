@@ -176,7 +176,8 @@ export interface NametagTag {
 export interface NametagState {
   visible: boolean
   shown: number
-  pooled: number
+  /** Tags of players whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
   atlas: [number, number]
   bubbles: 'All' | 'NearbyOnly' | 'None'

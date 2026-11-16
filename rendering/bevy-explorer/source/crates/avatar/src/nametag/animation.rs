@@ -8,7 +8,8 @@ use super::layout::{BubbleProgress, COMMUNITY_ROW_HEIGHT, DM_BADGE_MAX_WIDTH};
 pub const TRANSITION: f64 = 0.3;
 /// The message container starts resizing this long after the rest, in seconds.
 pub const CONTAINER_DELAY: f64 = 0.1;
-/// How long a message stays up, in seconds; a new message starts the count again.
+/// How long a message stays up from its arrival, in seconds; a new message starts the count
+/// again.
 pub const BUBBLE_LIFETIME: f64 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,8 +141,8 @@ pub struct BubbleAnimation {
 }
 
 impl BubbleAnimation {
-    /// The idle tag, about to show `target`.
-    pub fn show(now: f64, target: BubbleTarget) -> Self {
+    /// The idle tag, about to show `target` until `hide_at`.
+    pub fn show(now: f64, target: BubbleTarget, hide_at: f64) -> Self {
         let mut animation = Self {
             padding: Eased::settled_at(0.0),
             tail: Eased::settled_at(0.0),
@@ -153,14 +154,15 @@ impl BubbleAnimation {
             hide_at: 0.0,
             hiding: false,
         };
-        animation.retarget(now, target);
+        animation.retarget(now, target, hide_at);
         animation
     }
 
-    /// Show `target` from wherever the bubble is: over a message still up, or one coming down.
-    pub fn retarget(&mut self, now: f64, target: BubbleTarget) {
+    /// Show `target` until `hide_at` from wherever the bubble is: over a message still up, or
+    /// one coming down.
+    pub fn retarget(&mut self, now: f64, target: BubbleTarget, hide_at: f64) {
         self.hiding = false;
-        self.hide_at = now + BUBBLE_LIFETIME;
+        self.hide_at = hide_at;
         self.padding.retarget(now, 1.0, Curve::OutBack, 0.0);
         self.tail.retarget(now, 1.0, Curve::Ease, 0.0);
         self.mention
@@ -177,7 +179,12 @@ impl BubbleAnimation {
     }
 
     /// The message was replaced by one of another size (a translation); its time up is kept.
+    /// A bubble already coming down keeps coming down: it is not opened again for words that
+    /// would be gone before they could be read.
     pub fn resize(&mut self, now: f64, container: Vec2) {
+        if self.hiding {
+            return;
+        }
         // an overshoot while shrinking would take the size below its target, to less than nothing
         let shrinking = container.x < self.width.target() || container.y < self.height.target();
         let curve = if shrinking {
@@ -274,7 +281,7 @@ mod tests {
 
     #[test]
     fn a_message_shows_then_comes_down_after_its_lifetime() {
-        let mut bubble = BubbleAnimation::show(10.0, TARGET);
+        let mut bubble = BubbleAnimation::show(10.0, TARGET, 10.0 + BUBBLE_LIFETIME);
         assert_eq!(bubble.tick(10.0), BubblePhase::Showing);
         assert_eq!(bubble.progress(10.0).padding, 0.0);
 
@@ -300,7 +307,7 @@ mod tests {
 
     #[test]
     fn the_container_waits_before_resizing() {
-        let bubble = BubbleAnimation::show(0.0, TARGET);
+        let bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
         assert_eq!(bubble.progress(CONTAINER_DELAY).container, Vec2::ZERO);
         assert!(bubble.progress(CONTAINER_DELAY + 0.05).container.x > 0.0);
         assert!(bubble.progress(0.05).padding > 0.0);
@@ -308,14 +315,14 @@ mod tests {
 
     #[test]
     fn a_new_message_restarts_the_lifetime_from_the_current_size() {
-        let mut bubble = BubbleAnimation::show(0.0, TARGET);
+        let mut bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
         bubble.tick(4.0);
         let larger = BubbleTarget {
             container: Vec2::new(300.0, 80.0),
             mention: true,
             ..TARGET
         };
-        bubble.retarget(4.0, larger);
+        bubble.retarget(4.0, larger, 4.0 + BUBBLE_LIFETIME);
         // from the size it had, not from nothing
         assert_eq!(bubble.progress(4.0).container, TARGET.container);
         assert_eq!(bubble.progress(4.0).padding, 1.0);
@@ -327,14 +334,14 @@ mod tests {
 
     #[test]
     fn a_message_arriving_while_the_last_comes_down_shows_from_where_it_was() {
-        let mut bubble = BubbleAnimation::show(0.0, TARGET);
+        let mut bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
         let mid_hide = BUBBLE_LIFETIME + 0.15;
         assert_eq!(bubble.tick(BUBBLE_LIFETIME), BubblePhase::Hiding);
         assert_eq!(bubble.tick(mid_hide), BubblePhase::Hiding);
         let before = bubble.progress(mid_hide);
         assert!(before.tail > 0.0 && before.tail < 1.0);
 
-        bubble.retarget(mid_hide, TARGET);
+        bubble.retarget(mid_hide, TARGET, mid_hide + BUBBLE_LIFETIME);
         assert_eq!(bubble.tick(mid_hide), BubblePhase::Showing);
         assert_eq!(bubble.progress(mid_hide).tail, before.tail);
         assert_eq!(bubble.progress(mid_hide).padding, before.padding);
@@ -343,7 +350,7 @@ mod tests {
 
     #[test]
     fn shrinking_never_overshoots_below_the_target() {
-        let mut bubble = BubbleAnimation::show(0.0, TARGET);
+        let mut bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
         bubble.tick(1.0);
         let smaller = Vec2::new(60.0, 20.0);
         bubble.resize(1.0, smaller);
@@ -354,6 +361,57 @@ mod tests {
             now += 0.01;
         }
         // the lifetime is the first message's
+        assert_eq!(bubble.tick(BUBBLE_LIFETIME), BubblePhase::Hiding);
+    }
+
+    #[test]
+    fn other_words_while_the_bubble_opens_resize_it_and_keep_its_time() {
+        let mut bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
+        let mid_show = 0.15;
+        assert_eq!(bubble.tick(mid_show), BubblePhase::Showing);
+        let before = bubble.progress(mid_show);
+        let wider = Vec2::new(200.0, 60.0);
+        bubble.resize(mid_show, wider);
+        // from the size it had got to, and nothing else starts over
+        assert_eq!(bubble.progress(mid_show).container, before.container);
+        assert_eq!(bubble.progress(mid_show).padding, before.padding);
+        assert_eq!(bubble.progress(1.0).container, wider);
+        assert_eq!(bubble.progress(1.0).padding, 1.0);
+        assert_eq!(bubble.tick(BUBBLE_LIFETIME - 0.01), BubblePhase::Showing);
+        assert_eq!(bubble.tick(BUBBLE_LIFETIME), BubblePhase::Hiding);
+    }
+
+    #[test]
+    fn other_words_while_the_bubble_comes_down_leave_it_coming_down() {
+        let mut bubble = BubbleAnimation::show(0.0, TARGET, BUBBLE_LIFETIME);
+        let mid_hide = BUBBLE_LIFETIME + 0.15;
+        assert_eq!(bubble.tick(BUBBLE_LIFETIME), BubblePhase::Hiding);
+        assert_eq!(bubble.tick(mid_hide), BubblePhase::Hiding);
+        let before = bubble.progress(mid_hide);
+
+        bubble.resize(mid_hide, Vec2::new(300.0, 80.0));
+        assert_eq!(bubble.tick(mid_hide), BubblePhase::Hiding);
+        assert_eq!(bubble.progress(mid_hide), before);
+        // it never grows back, and is down when it would have been
+        let mut now = mid_hide;
+        let mut last = before.container;
+        while now < BUBBLE_LIFETIME + CONTAINER_DELAY + TRANSITION {
+            let container = bubble.progress(now).container;
+            assert!(container.x <= last.x + 1e-3 && container.y <= last.y + 1e-3);
+            last = container;
+            now += 0.01;
+        }
+        let hidden = BUBBLE_LIFETIME + CONTAINER_DELAY + TRANSITION + 1e-6;
+        assert_eq!(bubble.tick(hidden), BubblePhase::Hidden);
+        assert_eq!(bubble.progress(hidden).container, Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_message_first_seen_late_has_only_the_rest_of_its_time() {
+        // it came at 0 and its tag shows it from 3
+        let mut bubble = BubbleAnimation::show(3.0, TARGET, BUBBLE_LIFETIME);
+        assert_eq!(bubble.tick(3.0), BubblePhase::Showing);
+        assert_eq!(bubble.progress(3.0).padding, 0.0);
         assert_eq!(bubble.tick(BUBBLE_LIFETIME), BubblePhase::Hiding);
     }
 }

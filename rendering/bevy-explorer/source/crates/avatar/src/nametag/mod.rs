@@ -1,8 +1,9 @@
 //! Nametags: the name over each player, with its badges and, when they write, their message.
 //!
-//! A tag is an entity of its own with one mesh, drawn in the world by one shared material
-//! (nametag.wgsl), facing the camera and scaled to keep its size on screen. Tags are pooled:
-//! a player gets one while their name should show, and gives it back otherwise.
+//! A tag is a child of its player with one mesh, drawn in the world by one shared material
+//! (nametag.wgsl). It stands on the player's nametag anchor; the shader turns it to the camera,
+//! keeps its size on screen and fades it with distance. A name that should not show is hidden,
+//! and its tag goes when its player does.
 
 pub mod animation;
 pub mod bubble;
@@ -12,15 +13,16 @@ mod material;
 mod text;
 
 use alloy_core::primitives::Address;
+use ban_block::BanBlock;
 use bevy::{
-    color::Mix, pbr::NotShadowCaster, platform::collections::HashSet, prelude::*,
-    render::mesh::MeshTag,
+    color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
+    platform::collections::HashSet, prelude::*, render::primitives::Aabb,
 };
 use common::{
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, AttachPoints, MicState, PlayerModifiers, PrimaryCamera, PrimaryPlayerRes,
-        PrimaryUser,
+        AppConfig, AttachPoints, CameraView, MicState, PlayerModifiers, PrimaryCamera,
+        PrimaryPlayerRes, PrimaryUser,
     },
     util::AsH160,
 };
@@ -33,13 +35,14 @@ use comms::{
 use console::{AddDebugSection, DoAddConsoleCommand};
 use scene_runner::update_world::{
     avatar_modifier_area::HiddenNametag,
-    text_shape::{AtlasGlyphUse, GlyphAtlases, Page, Pending},
+    text_shape::{GlyphAtlasMaintenance, GlyphAtlases, Page, Pending},
 };
+use system_bridge::SystemApi;
 
 use crate::{dynamic_nametag::NametagsVisible, BeyondMaxAvatars};
 
 use self::{
-    animation::{BubbleAnimation, BubblePhase, BubbleTarget},
+    animation::{BubbleAnimation, BubblePhase, BubbleTarget, BUBBLE_LIFETIME},
     bubble::{
         capped, message_spans, BubbleKind, ChatBubbleRequest, ChatBubbleRetext,
         MAX_COMMUNITY_NAME_CHARS, MAX_MESSAGE_CHARS, MAX_NAME_CHARS,
@@ -49,7 +52,7 @@ use self::{
         COMMUNITY_FONT_SIZE, CORNER_RADIUS, DM_TAG_FONT_SIZE, LINE_HEIGHT, MENTION_RING,
         MESSAGE_FONT_SIZE, NAME_FONT_SIZE,
     },
-    material::{opacity_mesh_tag, quad_mesh, Icon, NametagMaterial, Quad},
+    material::{quad_mesh, Icon, NametagMaterial, Quad},
     text::{glyph_use, GlyphBudget, Shaped, Span, TextShaper},
 };
 
@@ -63,12 +66,6 @@ const FADE_DISTANCE: f32 = 20.0;
 const SCREEN_SCALE: f32 = 0.15;
 /// A tag unit, in metres, at a scale of one.
 const UNIT: f32 = 0.01;
-/// A tag is rescaled and refaded once its squared distance has changed by this much.
-const DISTANCE_CHANGE: f32 = 1e-4;
-/// Tags kept waiting for a player; the rest are despawned.
-const MAX_FREE_TAGS: usize = 32;
-/// The camera is in first person when it is this close behind the player.
-const FIRST_PERSON_DISTANCE: f32 = 0.05;
 
 const BACKGROUND: Color = Color::srgb_u8(0x16, 0x15, 0x18);
 const BORDER_COLOR: Color = Color::srgb_u8(0x43, 0x40, 0x4A);
@@ -112,13 +109,17 @@ impl Plugin for NametagPlugin {
             (
                 resolve_content,
                 resolve_voice,
-                acquire_and_release_tags,
+                mark_blocked,
+                show_tags,
+                retext_from_bridge,
                 show_chat_bubbles,
                 follow_glyph_atlas,
                 build_tags,
             )
                 .chain()
-                .in_set(SceneSets::PostLoop),
+                .in_set(SceneSets::PostLoop)
+                // a rebuilt atlas has moved every glyph: bind and build from where they are now
+                .after(GlyphAtlasMaintenance),
         )
         .add_systems(
             PostUpdate,
@@ -127,7 +128,8 @@ impl Plugin for NametagPlugin {
                 .after(crate::dynamic_nametag::dynamic_nametag_position),
         )
         .add_observer(forget_content)
-        .add_observer(release_tag);
+        .add_observer(spawn_tag)
+        .add_observer(despawn_tag);
         app.add_console_command::<diagnostics::NametagStateCommand, _>(diagnostics::nametag_state)
             .add_console_command::<diagnostics::NametagBubbleCommand, _>(
                 diagnostics::nametag_bubble,
@@ -194,8 +196,10 @@ pub struct NametagContent {
 impl NametagContent {
     fn from_profile(profile: &UserProfile, official: &OfficialWallets) -> Self {
         let content = &profile.content;
-        let address = &content.eth_address;
-        // a guest's profile is its own word, with no catalyst to confirm the claim
+        // one spelling of the address for the tag, the colour and the badge
+        let address = &content.eth_address.to_lowercase();
+        // the flags are the peer's word, which nothing here checks against the catalyst: this
+        // only keeps the seal off a profile that says itself it has no wallet behind it
         let claimed = content.has_claimed_name && content.has_connected_web3 == Some(true);
         // the tag is always the address' own: whatever follows a `#` in the name is dropped
         let suffix = match address.len().checked_sub(4) {
@@ -228,52 +232,45 @@ impl NametagContent {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NametagVoice(pub Voice);
 
-/// On a tag: the player it is shown for. A tag without one waits in the pool.
+/// On a player: the local user blocked them or is blocked by them, or the scene's room banned
+/// them. Their name is not shown.
 #[derive(Component)]
-#[relationship(relationship_target = ShownNametag)]
-pub struct NametagOf(pub Entity);
+pub struct NametagBlocked;
 
-/// On a player: the tag showing their name.
-#[derive(Component)]
-#[relationship_target(relationship = NametagOf)]
-pub struct ShownNametag(Entity);
-
-impl ShownNametag {
-    pub fn tag(&self) -> Entity {
-        self.0
-    }
-}
-
-/// A tag, shown or pooled, and what its mesh was last built from.
+/// A player's tag, a child of the player, and what its mesh was last built from.
 #[derive(Component, Default)]
 struct Nametag {
+    /// The name should show; a tag that should not is hidden and left as it is.
+    shown: bool,
     name: Option<Shaped>,
     /// What `name` was shaped from.
     named: Option<NametagContent>,
     built: Option<Built>,
-    /// A transition was still running when the mesh was last built.
-    animating: bool,
-    /// The squared distance and field of view the tag was last scaled and faded for.
-    placed: Option<(f32, f32)>,
+    /// The mesh waits for glyphs to be rastered.
+    awaiting: bool,
+    /// How far the mesh reaches from the anchor, in tag units.
+    reach: f32,
 }
 
+/// What a tag's mesh was built from: the tag is rebuilt when any of it differs.
 struct Built {
     content: NametagContent,
     voice: Voice,
     /// The glyph atlas' generation the mesh samples.
     generation: u32,
+    /// How far the bubble had got.
+    progress: BubbleProgress,
 }
 
-/// On a tag whose mesh waits for glyphs to be rastered.
-#[derive(Component)]
-struct AwaitingGlyphs;
-
-/// On a tag: the message it shows, from its arrival until the tag is back to idle.
+/// On a player: the message their tag shows, from its arrival until the tag is back to idle.
+/// It is the player's, so a tag hidden for a moment still shows it when it is back.
 #[derive(Component)]
 pub struct ChatBubble {
     kind: BubbleKind,
     message: String,
     message_id: String,
+    /// When the message came, in seconds of real time: its time up counts from here.
+    arrived: f64,
     /// The message mentions the local user.
     mention: bool,
     /// Who the local user's own DM is for, when they are around.
@@ -299,6 +296,29 @@ struct BubbleTexts {
     community: Option<Shaped>,
     dm_tag: Option<Shaped>,
     recipient: Option<Shaped>,
+}
+
+impl BubbleTexts {
+    fn iter(&self) -> impl Iterator<Item = &Shaped> {
+        [
+            &self.message,
+            &self.community,
+            &self.dm_tag,
+            &self.recipient,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
+/// Where a bubble has got to this frame.
+#[derive(Default)]
+struct BubbleStep {
+    progress: BubbleProgress,
+    /// Its labels were laid out again, or are gone.
+    texts_changed: bool,
+    /// The tag is back to idle: the message can be dropped.
+    over: bool,
 }
 
 impl ChatBubble {
@@ -356,6 +376,64 @@ impl ChatBubble {
         }
     }
 
+    /// Lay the labels out again when what they say changed, and move the transitions on to
+    /// `now`. The header gets the DM recipient's size while the bubble is up.
+    fn advance(
+        &mut self,
+        tag: Entity,
+        header: &mut Header,
+        content_changed: bool,
+        now: f64,
+        shaper: &mut TextShaper,
+    ) -> BubbleStep {
+        if content_changed && self.texts.is_some() && self.stale == Stale::No {
+            self.stale = Stale::Text;
+        }
+        let mut texts_changed = false;
+        if self.stale != Stale::No || self.texts.is_none() {
+            let texts = self.lay_out(tag, header, shaper);
+            let target = self.target(&texts);
+            let hide_at = self.arrived + BUBBLE_LIFETIME;
+            match (self.animation.as_mut(), self.stale) {
+                (Some(animation), Stale::Text) => animation.resize(now, target.container),
+                (Some(animation), _) => animation.retarget(now, target, hide_at),
+                (None, _) => self.animation = Some(BubbleAnimation::show(now, target, hide_at)),
+            }
+            self.texts = Some(texts);
+            self.stale = Stale::No;
+            texts_changed = true;
+        }
+        let Some(animation) = self.animation.as_mut() else {
+            return BubbleStep {
+                texts_changed,
+                ..default()
+            };
+        };
+        if animation.tick(now) == BubblePhase::Hidden {
+            return BubbleStep {
+                texts_changed: true,
+                over: true,
+                ..default()
+            };
+        }
+        header.recipient = self
+            .texts
+            .as_ref()
+            .and_then(|texts| texts.recipient.as_ref())
+            .map_or(Vec2::ZERO, |recipient| recipient.size);
+        BubbleStep {
+            progress: animation.progress(now),
+            texts_changed,
+            over: false,
+        }
+    }
+
+    /// Whether the message's time is up, for a tag that is not showing it: nobody sees it
+    /// come down.
+    fn over(&self, now: f64) -> bool {
+        now >= self.arrived + BUBBLE_LIFETIME
+    }
+
     fn target(&self, texts: &BubbleTexts) -> BubbleTarget {
         BubbleTarget {
             container: texts
@@ -395,6 +473,38 @@ fn forget_content(trigger: Trigger<OnRemove, UserProfile>, mut commands: Command
         .try_remove::<NametagContent>();
 }
 
+/// A player with something to show gets their tag, as their child: it goes when they do.
+fn spawn_tag(
+    trigger: Trigger<OnAdd, NametagContent>,
+    mut commands: Commands,
+    assets: Res<NametagAssets>,
+) {
+    commands.entity(trigger.target()).with_child((
+        Nametag::default(),
+        Transform::default(),
+        Visibility::Hidden,
+        Mesh3d::default(),
+        MeshMaterial3d(assets.material.clone()),
+        Aabb::default(),
+        NotShadowCaster,
+    ));
+}
+
+fn despawn_tag(
+    trigger: Trigger<OnRemove, NametagContent>,
+    mut commands: Commands,
+    children: Query<&Children>,
+    tags: Query<(), With<Nametag>>,
+) {
+    let player = trigger.target();
+    for child in children.iter_descendants(player) {
+        if tags.contains(child) {
+            commands.entity(child).try_despawn();
+        }
+    }
+    commands.entity(player).try_remove::<ChatBubble>();
+}
+
 /// The voice badge of a player: bars while they speak, a hushed mark instead when the local
 /// user muted their nearby voice, and dots on the local user while their microphone is open.
 fn voice_badge(speaking: Option<Speaking>, muted: bool, local_mic_open: bool) -> Voice {
@@ -430,18 +540,15 @@ fn resolve_voice(
 /// Where names are seen from.
 struct TagView {
     position: Vec3,
-    forward: Vec3,
     first_person: bool,
 }
 
 impl TagView {
-    /// Whether the name of a player standing at `player` shows: in range, in front of the
-    /// camera, and not the local player's own seen through their eyes.
+    /// Whether the name of a player standing at `player` shows: in range, and not the local
+    /// player's own seen through their eyes. A name out of view is left to frustum culling.
     fn shows(&self, player: Vec3, is_local: bool) -> bool {
-        let to_player = player - self.position;
-        let distance = to_player.length_squared();
+        let distance = player.distance_squared(self.position);
         (MIN_DISTANCE * MIN_DISTANCE..=MAX_DISTANCE * MAX_DISTANCE).contains(&distance)
-            && self.forward.dot(to_player) >= 0.0
             && !(is_local && self.first_person)
     }
 }
@@ -455,90 +562,90 @@ fn tag_scale(distance: f32, fov: f32) -> f32 {
     (fov * 0.5).tan() * SCREEN_SCALE * distance * UNIT
 }
 
-#[allow(clippy::type_complexity)]
-fn acquire_and_release_tags(
+/// Mark the players whose names the local user's blocks and the scene's bans hide: the same
+/// reading that keeps their messages out of the chat.
+fn mark_blocked(
     mut commands: Commands,
+    ban_block: BanBlock,
+    players: Query<(Entity, &ForeignPlayer, Has<NametagBlocked>), With<NametagContent>>,
+) {
+    let blocks = ban_block.blocks();
+    let room = ban_block.scene_room();
+    for (player, foreign, marked) in &players {
+        let blocked = blocks.is_blocked_either_way(foreign.address)
+            || room.is_addr_banned_in_scene(foreign.address);
+        match (blocked, marked) {
+            (true, false) => {
+                commands.entity(player).try_insert(NametagBlocked);
+            }
+            (false, true) => {
+                commands.entity(player).try_remove::<NametagBlocked>();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Decide which names show. One that doesn't is only hidden: its tag, and its message, stay.
+#[allow(clippy::type_complexity)]
+fn show_tags(
     visible: Res<NametagsVisible>,
-    assets: Res<NametagAssets>,
     camera: Query<(&Transform, &PrimaryCamera)>,
     players: Query<
         (
-            Entity,
             &GlobalTransform,
-            Option<&ShownNametag>,
             Has<PrimaryUser>,
             Has<HiddenNametag>,
             Has<BeyondMaxAvatars>,
+            Has<NametagBlocked>,
             Option<&PlayerModifiers>,
         ),
-        (With<NametagContent>, With<AttachPoints>),
+        With<AttachPoints>,
     >,
-    stranded: Query<&ShownNametag, Or<(Without<NametagContent>, Without<AttachPoints>)>>,
-    free: Query<Entity, (With<Nametag>, Without<NametagOf>)>,
+    mut tags: Query<(&ChildOf, &mut Nametag)>,
 ) {
     let Ok((camera_transform, camera)) = camera.single() else {
         return;
     };
     let view = TagView {
         position: camera_transform.translation,
-        forward: camera_transform.forward().as_vec3(),
-        first_person: camera.distance <= FIRST_PERSON_DISTANCE,
+        first_person: camera.view() == CameraView::FirstPerson,
     };
 
-    let mut free = free.iter();
-    for (player, transform, shown, is_local, hidden, beyond_max, modifiers) in &players {
-        let wanted = visible.0
-            && !hidden
-            && !beyond_max
-            && !modifiers.is_some_and(|modifiers| modifiers.hide)
-            && view.shows(transform.translation(), is_local);
-        match (wanted, shown) {
-            (true, None) => {
-                let tag = free.next().unwrap_or_else(|| {
-                    commands
-                        .spawn((
-                            Nametag::default(),
-                            Transform::default(),
-                            Visibility::Hidden,
-                            Mesh3d::default(),
-                            MeshMaterial3d(assets.material.clone()),
-                            MeshTag(0),
-                            NotShadowCaster,
-                        ))
-                        .id()
-                });
-                commands.entity(tag).insert(NametagOf(player));
-            }
-            (false, Some(shown)) => {
-                commands.entity(shown.tag()).remove::<NametagOf>();
-            }
-            _ => {}
+    for (owner, mut nametag) in &mut tags {
+        let shown = visible.0
+            && players.get(owner.parent()).is_ok_and(
+                |(transform, is_local, hidden, beyond_max, blocked, modifiers)| {
+                    !hidden
+                        && !beyond_max
+                        && !blocked
+                        && !modifiers.is_some_and(|modifiers| modifiers.hide)
+                        && view.shows(transform.translation(), is_local)
+                },
+            );
+        if nametag.shown != shown {
+            nametag.shown = shown;
         }
-    }
-    for shown in &stranded {
-        commands.entity(shown.tag()).remove::<NametagOf>();
-    }
-    for surplus in free.skip(MAX_FREE_TAGS) {
-        commands.entity(surplus).despawn();
     }
 }
 
-/// A tag going back to the pool (or losing its player) starts over: nothing of the last
-/// player's shows on the next.
-fn release_tag(
-    trigger: Trigger<OnRemove, NametagOf>,
-    mut commands: Commands,
-    mut tags: Query<(&mut Nametag, &mut Visibility)>,
+/// The bridge's word that a message reads differently: a translation, or the original back.
+fn retext_from_bridge(
+    mut requests: EventReader<SystemApi>,
+    mut retexts: EventWriter<ChatBubbleRetext>,
 ) {
-    let tag = trigger.target();
-    let Ok((mut nametag, mut visibility)) = tags.get_mut(tag) else {
-        return;
-    };
-    *nametag = Nametag::default();
-    *visibility = Visibility::Hidden;
-    commands
-        .entity(tag)
-        .try_remove::<(ChatBubble, AwaitingGlyphs, AtlasGlyphUse)>();
+    for request in requests.read() {
+        if let SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        } = request
+        {
+            retexts.write(ChatBubbleRetext {
+                message_id: message_id.clone(),
+                message: message.clone(),
+            });
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -546,21 +653,28 @@ fn show_chat_bubbles(
     mut commands: Commands,
     mut requests: EventReader<ChatBubbleRequest>,
     mut retexts: EventReader<ChatBubbleRetext>,
+    time: Res<Time<Real>>,
     visible: Res<NametagsVisible>,
     config: Res<AppConfig>,
     local_player: Res<PrimaryPlayerRes>,
     local_profile: Res<CurrentUserProfile>,
-    shown: Query<&ShownNametag>,
+    named: Query<(), With<NametagContent>>,
     others: Query<(&ForeignPlayer, &NametagContent)>,
     mut bubbles: Query<&mut ChatBubble>,
 ) {
+    let now = time.elapsed_secs_f64();
     for request in requests.read() {
         if !visible.0 || !request.kind.allowed_by(config.chat_bubble_visibility) {
             continue;
         }
-        let Ok(tag) = shown.get(request.sender).map(ShownNametag::tag) else {
+        if !named.contains(request.sender) {
             continue;
-        };
+        }
+        let message = capped(&request.message, MAX_MESSAGE_CHARS);
+        // nothing to read: no bubble
+        if message.trim().is_empty() {
+            continue;
+        }
         let mention = request.sender != local_player.0
             && local_profile.profile.as_ref().is_some_and(|profile| {
                 let content = &profile.content;
@@ -588,21 +702,22 @@ fn show_chat_bubbles(
             }
             kind => kind.clone(),
         };
-        let message = capped(&request.message, MAX_MESSAGE_CHARS);
-        match bubbles.get_mut(tag) {
+        match bubbles.get_mut(request.sender) {
             Ok(mut bubble) => {
                 bubble.kind = kind;
                 bubble.message = message;
                 bubble.message_id = request.message_id.clone();
+                bubble.arrived = now;
                 bubble.mention = mention;
                 bubble.recipient = recipient;
                 bubble.stale = Stale::Message;
             }
             Err(_) => {
-                commands.entity(tag).try_insert(ChatBubble {
+                commands.entity(request.sender).try_insert(ChatBubble {
                     kind,
                     message,
                     message_id: request.message_id.clone(),
+                    arrived: now,
                     mention,
                     recipient,
                     stale: Stale::Message,
@@ -615,6 +730,9 @@ fn show_chat_bubbles(
 
     for retext in retexts.read() {
         let message = capped(&retext.message, MAX_MESSAGE_CHARS);
+        if message.trim().is_empty() {
+            continue;
+        }
         for mut bubble in &mut bubbles {
             if bubble.message_id == retext.message_id && bubble.message != message {
                 bubble.message = message.clone();
@@ -648,46 +766,66 @@ fn follow_glyph_atlas(
     }
 }
 
-#[allow(clippy::type_complexity)]
-fn build_tags(
-    mut commands: Commands,
-    time: Res<Time<Real>>,
-    mut tags: Query<(
-        Entity,
-        &NametagOf,
-        &mut Nametag,
-        Option<&mut ChatBubble>,
-        &mut Mesh3d,
-        &mut Visibility,
-        Has<AwaitingGlyphs>,
-    )>,
-    owners: Query<(&NametagContent, &NametagVoice)>,
-    mut shaper: TextShaper,
-    mut meshes: ResMut<Assets<Mesh>>,
-) {
-    let now = time.elapsed_secs_f64();
-    let generation = shaper.atlas().generation();
-    let mut budget = GlyphBudget::frame();
+/// What one frame's builds share.
+struct Frame {
+    /// Seconds of real time.
+    now: f64,
+    /// The glyph atlas' generation.
+    generation: u32,
+    budget: GlyphBudget,
+}
 
-    for (tag, owner, mut nametag, mut bubble, mut mesh, mut visibility, awaiting) in &mut tags {
-        let Ok((content, voice)) = owners.get(owner.0) else {
-            continue;
-        };
+/// Builds a tag's mesh from what its player shows.
+#[derive(SystemParam)]
+struct TagBuilder<'w, 's> {
+    commands: Commands<'w, 's>,
+    shaper: TextShaper<'w>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+}
+
+impl TagBuilder<'_, '_> {
+    fn frame(&mut self, now: f64) -> Frame {
+        Frame {
+            now,
+            generation: self.shaper.atlas().generation(),
+            budget: GlyphBudget::frame(),
+        }
+    }
+
+    /// Bring `tag` up to what `player` shows now. Returns whether the tag draws: it should
+    /// show, and its mesh samples the atlas as it is.
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        &mut self,
+        frame: &mut Frame,
+        tag: Entity,
+        player: Entity,
+        nametag: &mut Nametag,
+        content: &NametagContent,
+        voice: Voice,
+        mut bubble: Option<Mut<ChatBubble>>,
+        mesh: &mut Mut<Mesh3d>,
+    ) -> bool {
+        if !nametag.shown {
+            // a message whose time ran out unseen is not shown later
+            if bubble
+                .as_deref()
+                .is_some_and(|bubble| bubble.over(frame.now))
+            {
+                self.commands.entity(player).remove::<ChatBubble>();
+                self.keep_glyphs(tag, nametag, None);
+            }
+            return false;
+        }
+
         // shaped once for what it says, however long its glyphs take to be rastered
         let content_changed = nametag.named.as_ref() != Some(content);
-        let mut texts_changed = content_changed;
         if content_changed {
-            nametag.name = shaper.shape(tag, &content.spans(), NAME_FONT_SIZE, None);
+            nametag.name = self
+                .shaper
+                .shape(tag, &content.spans(), NAME_FONT_SIZE, None);
             nametag.named = Some(content.clone());
         }
-        let mut dirty = awaiting
-            || nametag.animating
-            || nametag.built.as_ref().is_none_or(|built| {
-                built.content != *content
-                    || built.voice != voice.0
-                    || built.generation != generation
-            });
-
         let mut header = Header {
             name: nametag
                 .name
@@ -697,125 +835,130 @@ fn build_tags(
                 }),
             verified: content.verified,
             official: content.official,
-            voice: voice.0,
+            voice,
             recipient: Vec2::ZERO,
         };
 
-        let mut progress = BubbleProgress::default();
-        let mut animating = false;
-        let mut bubble_hidden = false;
-        if let Some(bubble) = bubble.as_deref_mut() {
-            if content_changed && bubble.texts.is_some() && bubble.stale == Stale::No {
-                bubble.stale = Stale::Text;
-            }
-            if bubble.stale != Stale::No || bubble.texts.is_none() {
-                let texts = bubble.lay_out(tag, &header, &mut shaper);
-                let target = bubble.target(&texts);
-                let stale = bubble.stale;
-                match (bubble.animation.as_mut(), stale) {
-                    (Some(animation), Stale::Text) => animation.resize(now, target.container),
-                    (Some(animation), _) => animation.retarget(now, target),
-                    (None, _) => bubble.animation = Some(BubbleAnimation::show(now, target)),
-                }
-                bubble.texts = Some(texts);
-                bubble.stale = Stale::No;
-                texts_changed = true;
-                dirty = true;
-            }
-            if let Some(animation) = bubble.animation.as_mut() {
-                if animation.tick(now) == BubblePhase::Hidden {
-                    commands.entity(tag).remove::<ChatBubble>();
-                    // its glyphs are no longer this tag's to keep in the atlas
-                    bubble_hidden = true;
-                    texts_changed = true;
-                    dirty = true;
-                } else {
-                    animating = !animation.settled(now);
-                    dirty |= animating;
-                    progress = animation.progress(now);
-                    header.recipient = bubble
-                        .texts
-                        .as_ref()
-                        .and_then(|texts| texts.recipient.as_ref())
-                        .map_or(Vec2::ZERO, |recipient| recipient.size);
-                }
-            }
+        let step = bubble
+            .as_deref_mut()
+            .map_or_else(BubbleStep::default, |bubble| {
+                bubble.advance(
+                    tag,
+                    &mut header,
+                    content_changed,
+                    frame.now,
+                    &mut self.shaper,
+                )
+            });
+        if step.over {
+            self.commands.entity(player).remove::<ChatBubble>();
         }
-        nametag.animating = animating;
-        if !dirty {
-            continue;
-        }
-
-        let bubble_texts = bubble
+        let texts = bubble
             .as_deref()
-            .filter(|_| !bubble_hidden)
+            .filter(|_| !step.over)
             .and_then(|bubble| bubble.texts.as_ref());
-        if texts_changed {
-            commands.entity(tag).insert(glyph_use(
-                nametag.name.iter().chain(
-                    bubble_texts
-                        .into_iter()
-                        .flat_map(|texts| {
-                            [
-                                &texts.message,
-                                &texts.community,
-                                &texts.dm_tag,
-                                &texts.recipient,
-                            ]
-                        })
-                        .flatten(),
-                ),
-            ));
+        if content_changed || step.texts_changed {
+            self.keep_glyphs(tag, nametag, texts);
         }
 
-        let tag_layout = layout(&header, &progress);
-        let mut quads = Vec::new();
-        let drawn = tag_quads(
-            &tag_layout,
-            progress.mention,
-            voice.0,
-            nametag.name.as_ref(),
-            bubble_texts,
-            &mut shaper,
-            &mut budget,
-            &mut quads,
-        );
-        match drawn {
-            Ok(()) => {
-                let (tag_mesh, aabb) = quad_mesh(&quads);
-                // a tag keeps one mesh for as long as it lives
-                match meshes.get_mut(&mesh.0) {
-                    Some(current) => *current = tag_mesh,
-                    None => mesh.0 = meshes.add(tag_mesh),
+        let dirty = nametag.awaiting
+            || step.texts_changed
+            || nametag.built.as_ref().is_none_or(|built| {
+                built.content != *content
+                    || built.voice != voice
+                    || built.generation != frame.generation
+                    || built.progress != step.progress
+            });
+        if dirty {
+            let mut quads = Vec::new();
+            let drawn = tag_quads(
+                &layout(&header, &step.progress),
+                step.progress.mention,
+                voice,
+                nametag.name.as_ref(),
+                texts,
+                &mut self.shaper,
+                &mut frame.budget,
+                &mut quads,
+            );
+            match drawn {
+                Ok(()) => {
+                    nametag.reach = self.write_mesh(mesh, &quads);
+                    nametag.awaiting = false;
+                    nametag.built = Some(Built {
+                        content: content.clone(),
+                        voice,
+                        generation: frame.generation,
+                        progress: step.progress,
+                    });
                 }
-                let mut tag_commands = commands.entity(tag);
-                tag_commands.insert(aabb);
-                if awaiting {
-                    tag_commands.remove::<AwaitingGlyphs>();
-                }
-                visibility.set_if_neq(Visibility::Inherited);
-                nametag.built = Some(Built {
-                    content: content.clone(),
-                    voice: voice.0,
-                    generation,
-                });
-            }
-            // the last mesh shows until the glyphs are in, unless the atlas it samples has been
-            // rebuilt: the shared material already binds the new one, where its UVs point at
-            // other glyphs
-            Err(Pending { .. }) => {
-                if !awaiting {
-                    commands.entity(tag).insert(AwaitingGlyphs);
-                }
-                if nametag
-                    .built
-                    .as_ref()
-                    .is_some_and(|built| built.generation != generation)
-                {
-                    visibility.set_if_neq(Visibility::Hidden);
-                }
+                Err(Pending { .. }) => nametag.awaiting = true,
             }
         }
+
+        // the last mesh shows until the glyphs are in, unless the atlas it samples has been
+        // rebuilt: the shared material already binds the new one, where its UVs point at other
+        // glyphs
+        nametag
+            .built
+            .as_ref()
+            .is_some_and(|built| built.generation == frame.generation)
+    }
+
+    /// The tag's glyphs, the bubble's included while it is up, are its to keep in the atlas.
+    fn keep_glyphs(&mut self, tag: Entity, nametag: &Nametag, bubble: Option<&BubbleTexts>) {
+        self.commands.entity(tag).insert(glyph_use(
+            nametag
+                .name
+                .iter()
+                .chain(bubble.into_iter().flat_map(BubbleTexts::iter)),
+        ));
+    }
+
+    /// Replace the tag's mesh with `quads`. Returns how far it reaches from the anchor.
+    fn write_mesh(&mut self, mesh: &mut Mut<Mesh3d>, quads: &[Quad]) -> f32 {
+        let (tag_mesh, reach) = quad_mesh(quads);
+        if mesh.0 == Handle::default() {
+            mesh.0 = self.meshes.add(tag_mesh);
+        } else {
+            // a tag keeps one mesh for as long as it lives. The renderer takes each version
+            // out of the assets, so it is put back under the same id; and it reads a mesh's
+            // place in its buffers only from entities that changed
+            self.meshes.insert(mesh.0.id(), tag_mesh);
+            mesh.set_changed();
+        }
+        reach
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn build_tags(
+    time: Res<Time<Real>>,
+    mut tags: Query<(Entity, &ChildOf, &mut Nametag, &mut Mesh3d, &mut Visibility)>,
+    mut owners: Query<(&NametagContent, &NametagVoice, Option<&mut ChatBubble>)>,
+    mut builder: TagBuilder,
+) {
+    let mut frame = builder.frame(time.elapsed_secs_f64());
+    for (tag, owner, mut nametag, mut mesh, mut visibility) in &mut tags {
+        let player = owner.parent();
+        let Ok((content, voice, bubble)) = owners.get_mut(player) else {
+            continue;
+        };
+        let draws = builder.build(
+            &mut frame,
+            tag,
+            player,
+            &mut nametag,
+            content,
+            voice.0,
+            bubble,
+            &mut mesh,
+        );
+        visibility.set_if_neq(if draws {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 }
 
@@ -952,53 +1095,36 @@ fn tag_quads(
     Ok(())
 }
 
-/// Stand each tag on its player's anchor, facing the camera, at the size and opacity its
-/// distance calls for.
-#[allow(clippy::type_complexity)]
+/// Stand each tag on its player's anchor. The player's transform carries it from there, and
+/// the shader turns, sizes and fades it; its bounds cover it at its largest, when farthest.
 fn place_tags(
-    camera: Query<(&Transform, &Projection), (With<PrimaryCamera>, Without<Nametag>)>,
-    owners: Query<(&GlobalTransform, &AttachPoints, Has<ChildOf>)>,
+    camera: Query<&Projection, With<PrimaryCamera>>,
+    owners: Query<&AttachPoints>,
     anchors: Query<&Transform, Without<Nametag>>,
-    mut tags: Query<(&NametagOf, &mut Nametag, &mut Transform, &mut MeshTag)>,
+    mut tags: Query<(&ChildOf, &Nametag, &mut Transform, &mut Aabb)>,
 ) {
-    // the camera's own transform: its global one is a frame behind here, and it has no parent
-    let Ok((camera, projection)) = camera.single() else {
+    let Ok(Projection::Perspective(perspective)) = camera.single() else {
         return;
     };
-    let Projection::Perspective(perspective) = projection else {
-        return;
-    };
+    let largest = tag_scale(MAX_DISTANCE, perspective.fov);
 
-    for (owner, mut nametag, mut transform, mut mesh_tag) in &mut tags {
-        let Ok((global, attach_points, parented)) = owners.get(owner.0) else {
-            continue;
-        };
-        // a player with no parent is where its own transform says: its global one is a frame
-        // behind here once the player has moved
-        let player = match anchors.get(owner.0) {
-            Ok(local) if !parented => GlobalTransform::from(*local),
-            _ => *global,
-        };
-        let Ok(anchor) = anchors.get(attach_points.nametag) else {
-            continue;
-        };
-        transform.translation = player.transform_point(anchor.translation);
-        transform.rotation = camera.rotation;
-
-        let distance = camera.translation.distance_squared(player.translation());
-        if nametag.placed.is_some_and(|(placed, fov)| {
-            (placed - distance).abs() < DISTANCE_CHANGE && fov == perspective.fov
-        }) {
-            continue;
+    for (owner, nametag, mut transform, mut aabb) in &mut tags {
+        let anchor = owners
+            .get(owner.parent())
+            .ok()
+            .and_then(|attach_points| anchors.get(attach_points.nametag).ok());
+        if let Some(anchor) = anchor {
+            if transform.translation != anchor.translation {
+                transform.translation = anchor.translation;
+            }
         }
-        nametag.placed = Some((distance, perspective.fov));
-        let distance = distance.sqrt();
-        transform.scale = Vec3::splat(tag_scale(distance, perspective.fov));
-        let opacity = opacity_mesh_tag(tag_opacity(distance));
-        // the transform written above re-extracts the tag each frame, and the mesh tag goes
-        // with it
-        if mesh_tag.0 != opacity {
-            mesh_tag.0 = opacity;
+        // a cube: the tag faces the camera whichever way its player does
+        let reach = Vec3A::splat(nametag.reach * largest);
+        if aabb.half_extents != reach {
+            *aabb = Aabb {
+                center: Vec3A::ZERO,
+                half_extents: reach,
+            };
         }
     }
 }

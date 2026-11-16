@@ -1420,6 +1420,7 @@ dependencies = [
  "alloy-core",
  "anyhow",
  "assets",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",

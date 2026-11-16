@@ -162,7 +162,7 @@ describe('Explorer', () => {
   test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
     const tag = { player: 'local', name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
     const fake = new FakeConsole({
-      nametag_state: JSON.stringify({ visible: true, shown: 1, pooled: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_state: JSON.stringify({ visible: true, shown: 1, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
       nametag_bubble: JSON.stringify({ bubbles: 1 })
     })
     const explorer = new Explorer(fake)
