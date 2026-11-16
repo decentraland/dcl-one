@@ -134,6 +134,10 @@ pub trait Broker: Send + Sync {
     /// item or trade; `Ok` is the forward transaction hash.
     async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError>;
 
+    /// Whether a buy released as dead under `idempotency_key` has a receipt
+    /// after all, so the line spent MANA and must not be refunded.
+    async fn released_buy_mined(&self, idempotency_key: &str) -> Result<bool, ApiError>;
+
     async fn reclaim(
         &self,
         collection: &str,
@@ -275,6 +279,18 @@ impl Broker for EconomyBroker {
             .map_err(Self::broker_error)
     }
 
+    async fn released_buy_mined(&self, idempotency_key: &str) -> Result<bool, ApiError> {
+        let Some(signer) = self.state.transaction.direct_signer() else {
+            return Err(ApiError::ServiceUnavailable(
+                "checking a released broker buy requires the direct JSON-RPC signer".into(),
+            ));
+        };
+        crate::checkout::broker::mined_released_tx(&self.state, signer, idempotency_key)
+            .await
+            .map(|mined| mined.is_some())
+            .map_err(|e| ApiError::BadGateway(format!("released broker buy look failed: {e}")))
+    }
+
     async fn reclaim(
         &self,
         collection: &str,
@@ -372,6 +388,12 @@ impl Broker for NoBroker {
 
     async fn resume(&self, _idempotency_key: &str) -> Result<String, BrokerError> {
         Err(BrokerError::Retryable(
+            "the economy broker is not configured on this node".into(),
+        ))
+    }
+
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        Err(ApiError::ServiceUnavailable(
             "the economy broker is not configured on this node".into(),
         ))
     }

@@ -118,6 +118,8 @@ pub enum Rebroadcast {
     Settled,
     /// It had none and was re-sent (or the node already holds it).
     Sent,
+    /// No receipt, but the node knows the transaction: alive, not re-sent.
+    Known,
     /// On this look it can never mine: a finalized transaction holds its
     /// nonce, and neither its receipt nor the transaction itself is found.
     /// One look can be wrong (a lagging backend, a bounded transaction
@@ -303,11 +305,16 @@ impl DirectSigner {
         &self,
         hash: TxHash,
     ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>)>, RpcError> {
+        // Only an explicit `"result": null` means "no receipt": a reply
+        // without a result is an error, never evidence that nothing mined.
         let value = self
             .chain
             .rpc()
-            .call("eth_getTransactionReceipt", json!([format!("{hash:#x}")]))
-            .await?;
+            .call_result("eth_getTransactionReceipt", json!([format!("{hash:#x}")]))
+            .await?
+            .ok_or_else(|| {
+                RpcError::Transport("eth_getTransactionReceipt returned no result".into())
+            })?;
         if value.is_null() {
             return Ok(None);
         }
@@ -451,10 +458,7 @@ impl DirectSigner {
                     );
                     return Ok(Rebroadcast::Dead);
                 }
-                return Err(ApiError::RelayerTimeout(format!(
-                    "recorded transaction {tx_hash} has no receipt but the node knows it; retry \
-                     to settle"
-                )));
+                return Ok(Rebroadcast::Known);
             }
             tracing::warn!(tx_hash = %tx_hash, nonce, "another transaction holds the recorded nonce; waiting for finality");
             return Err(ApiError::RelayerTimeout(format!(
@@ -471,15 +475,16 @@ impl DirectSigner {
         Ok(Rebroadcast::Sent)
     }
 
-    /// Whether `eth_getTransactionByHash` answers `null` for `tx_hash`; an
-    /// error proves nothing and reads as known.
+    /// Whether `eth_getTransactionByHash` answers an explicit `"result":
+    /// null` for `tx_hash`; an error or a reply without a result proves
+    /// nothing and reads as known.
     async fn transaction_unknown(&self, tx_hash: &str) -> bool {
         matches!(
             self.chain
                 .rpc()
-                .call("eth_getTransactionByHash", json!([tx_hash]))
+                .call_result("eth_getTransactionByHash", json!([tx_hash]))
                 .await,
-            Ok(serde_json::Value::Null)
+            Ok(Some(serde_json::Value::Null))
         )
     }
 

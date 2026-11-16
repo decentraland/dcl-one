@@ -174,6 +174,8 @@ pub(crate) struct MockBroker {
     pub claims: Option<(PgPool, &'static str)>,
     pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
     pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
+    /// What [`Broker::released_buy_mined`] answers.
+    pub released_mined: Arc<parking_lot::Mutex<Result<bool, String>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -186,6 +188,7 @@ impl MockBroker {
             claims: None,
             resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
             resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
+            released_mined: Arc::new(parking_lot::Mutex::new(Ok(false))),
             verifications: HashMap::new(),
         }
     }
@@ -226,6 +229,13 @@ impl Broker for MockBroker {
             .lock()
             .clone()
             .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
+    }
+
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        self.released_mined
+            .lock()
+            .clone()
+            .map_err(ApiError::BadGateway)
     }
 
     async fn reclaim(
@@ -6234,6 +6244,7 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     seed_wallet(&pool, &addr, "0", "10").await;
     let broker = MockBroker::configured();
     let resumes = broker.resumes.clone();
+    let released_mined = broker.released_mined.clone();
     *broker.resume_answer.lock() = Err(BrokerError::Retryable(
         "broker status 504: broker buy tx not yet mined".into(),
     ));
@@ -6331,6 +6342,59 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
         "the legacy claim is held"
     );
     assert_reconciles(&pool, &addr, "after holding the legacy claim").await;
+
+    // A claim that released a buy as dead is refunded only once a later look
+    // finds none of its released buys mined; a failed look waits.
+    let released_line = |checkout: i64| {
+        let pool = pool.clone();
+        async move {
+            let line = outbox_lines(&pool, checkout).await[0].0;
+            let key = format!("checkout:{checkout}:{line}");
+            claim_broker_buy(&pool, &key, "error", None).await;
+            sqlx::query(
+                "UPDATE shop.broker_purchases SET tx_hash = NULL, \
+                 released_tx_hashes = ARRAY['0xdead'] WHERE idempotency_key = $1",
+            )
+            .bind(&key)
+            .execute(&pool)
+            .await
+            .unwrap();
+            line
+        }
+    };
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Err("rpc down".into());
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "a failed look waits"
+    );
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Ok(false);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "no released buy mined: refunded"
+    );
+
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    *released_mined.lock() = Ok(true);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "1",
+        "a released buy mined: held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the mined released buy").await;
 
     cleanup(&pool, &addr).await;
 }

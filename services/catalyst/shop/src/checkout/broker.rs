@@ -824,6 +824,11 @@ struct ExistingRow {
 /// sends nothing. A failure before the record leaves nothing sent and marks
 /// the claim `error`, which the next claim re-arms; after the record, the
 /// claim stays `sent` and a resume re-sends the recorded bytes.
+///
+/// A claim re-armed after a dead buy was released first checks the
+/// released hashes: if one has a receipt after all, that buy is recorded
+/// again (`sent`) and returned for the caller to settle, and nothing new is
+/// signed.
 pub(crate) async fn send_recorded_buy(
     state: &SharedState,
     signer: &DirectSigner,
@@ -831,16 +836,76 @@ pub(crate) async fn send_recorded_buy(
     claimed_at: NaiveDateTime,
     call: BrokerCall,
 ) -> Result<String, ApiError> {
-    let sent = signer
-        .send_direct_call_recorded(call.to, call.data, |signed| {
-            record_buy(state, key, claimed_at, signed)
-        })
-        .await;
+    let sent = match mined_released_tx(state, signer, key).await {
+        Ok(Some(mined)) => restore_mined_buy(state, key, claimed_at, &mined)
+            .await
+            .map(|()| mined),
+        Ok(None) => {
+            signer
+                .send_direct_call_recorded(call.to, call.data, |signed| {
+                    record_buy(state, key, claimed_at, signed)
+                })
+                .await
+        }
+        Err(e) => Err(e),
+    };
     if sent.is_err() {
         // Fenced on `pending` and the claim's clock: a no-op once recorded.
         mark_error(state, key, claimed_at).await;
     }
     sent
+}
+
+/// The first transaction released as dead under `key` that has a receipt
+/// after all (a later look than the two that released it). An RPC error is
+/// returned, never read as "none mined".
+pub(crate) async fn mined_released_tx(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+) -> Result<Option<String>, ApiError> {
+    let released: Option<Vec<String>> = sqlx::query_scalar(
+        "SELECT released_tx_hashes FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    for hash in released.unwrap_or_default() {
+        let (outcome, _) = signer.fetch_receipt_once(&hash).await?;
+        if outcome != ReceiptOutcome::Pending {
+            tracing::error!(idempotency_key = %key, tx_hash = %hash, "a broker transaction released as dead has a receipt; resuming it instead of buying again");
+            return Ok(Some(hash));
+        }
+    }
+    Ok(None)
+}
+
+/// Records a released buy that mined after all back on its re-armed claim,
+/// fenced like [`record_buy`].
+async fn restore_mined_buy(
+    state: &SharedState,
+    key: &str,
+    claimed_at: NaiveDateTime,
+    mined: &str,
+) -> Result<(), ApiError> {
+    let restored = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'sent', tx_hash = $2, signed_tx = NULL, \
+         released_tx_hashes = array_remove(released_tx_hashes, $2), \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $3",
+    )
+    .bind(key)
+    .bind(mined)
+    .bind(claimed_at)
+    .execute(&state.pool)
+    .await?;
+    if restored.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        )));
+    }
+    Ok(())
 }
 
 async fn record_buy(
