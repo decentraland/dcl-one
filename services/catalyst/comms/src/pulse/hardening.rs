@@ -168,7 +168,8 @@ type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
 pub const DEFAULT_REPLAY_ENTRIES_PER_SOURCE: usize = 256;
 
 /// Prefix of the IPv6 site a peer is also counted against, so addresses spread over the /64s of
-/// one allocation share one quota, as the clients behind one IPv4 address do.
+/// one allocation share one quota, as the clients behind one IPv4 address do. A provider that
+/// places many subscribers in one /48 therefore shares one quota, like an IPv4 carrier NAT.
 pub const IPV6_REPLAY_SITE_PREFIX_BITS: u32 = 48;
 
 /// The sources a peer address counts against: its `client_ip::source_key` (the IPv4 address, or
