@@ -133,6 +133,17 @@ pub(super) struct Watchdog {
 }
 
 impl Watchdog {
+    fn new() -> Self {
+        Watchdog {
+            deadline_ms: AtomicU64::new(0),
+            tick_active: AtomicBool::new(false),
+            fired: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            epoch: std::time::Instant::now(),
+            isolate: parking_lot::Mutex::new(None),
+        }
+    }
+
     fn now_ms(&self) -> u64 {
         self.epoch.elapsed().as_millis() as u64
     }
@@ -265,14 +276,7 @@ pub fn spawn(
         desynced_closes: AtomicU64::new(0),
     });
 
-    let watchdog = Arc::new(Watchdog {
-        deadline_ms: AtomicU64::new(0),
-        tick_active: AtomicBool::new(false),
-        fired: AtomicBool::new(false),
-        stopped: AtomicBool::new(false),
-        epoch: std::time::Instant::now(),
-        isolate: parking_lot::Mutex::new(None),
-    });
+    let watchdog = Arc::new(Watchdog::new());
 
     let (tx, rx) = mpsc::unbounded_channel::<Command>();
 
@@ -445,15 +449,25 @@ pub(super) fn finish(
     tracing::info!(scene = %scene_hash, "scene JS loop stopped");
 }
 
+// The watchdog decides and terminates in one critical section on `isolate`:
+// it re-reads `tick_active` and the deadline under the lock, then sets `fired`
+// and terminates before releasing it. `arm` and `disarm` change `tick_active`
+// and the deadline only under the same lock. So every termination falls
+// strictly between an `arm` and its `disarm`, and `was_terminated`, which
+// always follows `disarm`, sees it and cancels it. No termination reaches a
+// later phase. None of these calls takes another lock while holding it.
+// `arm` leaves `fired` to `was_terminated`: only the heap-limit callback can
+// set it outside a phase, and the next phase then reports that request.
 impl Watchdog {
     pub(super) fn arm(&self, budget_ms: u64) {
-        self.fired.store(false, Ordering::SeqCst);
+        let _isolate = self.isolate.lock();
         self.deadline_ms
             .store(self.now_ms().saturating_add(budget_ms), Ordering::SeqCst);
         self.tick_active.store(true, Ordering::SeqCst);
     }
 
     pub(super) fn disarm(&self) {
+        let _isolate = self.isolate.lock();
         self.tick_active.store(false, Ordering::SeqCst);
     }
 
@@ -464,26 +478,34 @@ impl Watchdog {
         }
         fired
     }
+
+    /// One watchdog check: terminates the armed phase once its deadline has
+    /// passed. `decided` runs between that decision and the termination.
+    fn fire_if_due(&self, decided: impl FnOnce()) -> bool {
+        let isolate = self.isolate.lock();
+        if !self.tick_active.load(Ordering::SeqCst)
+            || self.now_ms() < self.deadline_ms.load(Ordering::SeqCst)
+        {
+            return false;
+        }
+        decided();
+        self.fired.store(true, Ordering::SeqCst);
+        if let Some(h) = isolate.as_ref() {
+            h.terminate_execution();
+        }
+        true
+    }
 }
 
 pub(super) fn watchdog_loop(watchdog: Arc<Watchdog>) {
     while !watchdog.stopped.load(Ordering::SeqCst) {
-        if watchdog.tick_active.load(Ordering::SeqCst) {
-            let now = watchdog.now_ms();
-            let deadline = watchdog.deadline_ms.load(Ordering::SeqCst);
-            if now >= deadline {
-                watchdog.fired.store(true, Ordering::SeqCst);
-                if let Some(h) = watchdog.isolate.lock().as_ref() {
-                    h.terminate_execution();
-                }
-
-                while watchdog.tick_active.load(Ordering::SeqCst)
-                    && !watchdog.stopped.load(Ordering::SeqCst)
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                continue;
+        if watchdog.fire_if_due(|| {}) {
+            while watchdog.tick_active.load(Ordering::SeqCst)
+                && !watchdog.stopped.load(Ordering::SeqCst)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
+            continue;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -1371,19 +1393,6 @@ mod tests {
         );
     }
 
-    /// Whether the scene stops within `budgets` tick budgets of `limits`.
-    fn stops_within(handle: &JsRuntimeHandle, limits: RuntimeLimits, budgets: u64) -> bool {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(limits.js_tick_budget_ms * budgets);
-        while handle.shared.running.load(Ordering::SeqCst) {
-            if std::time::Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        true
-    }
-
     #[test]
     fn a_spinning_on_update_getter_is_terminated() {
         let js = r#"
@@ -1404,9 +1413,66 @@ mod tests {
             Vec::new(),
             None,
         );
+        // Bounded well below the hang guard, so the test fails fast if the
+        // lookup runs unwatched.
+        let bound = std::time::Instant::now()
+            + std::time::Duration::from_millis(limits.js_tick_budget_ms * 30);
+        wait_for(|| {
+            !handle.shared.running.load(Ordering::SeqCst) || std::time::Instant::now() >= bound
+        });
         assert!(
-            stops_within(&handle, limits, 30),
+            !handle.shared.running.load(Ordering::SeqCst),
             "the watchdog must stop an onUpdate getter that never returns"
+        );
+    }
+
+    /// The watchdog decides a phase is over budget, and the scene disarms
+    /// before the termination lands. The scene must still see it, so it can
+    /// never carry into the next phase.
+    #[test]
+    fn a_termination_decided_before_disarm_is_reported_by_that_phase() {
+        let wd = Arc::new(Watchdog::new());
+        wd.arm(0);
+
+        let (decided_tx, decided_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let fire = std::thread::spawn({
+            let wd = Arc::clone(&wd);
+            move || {
+                wd.fire_if_due(|| {
+                    decided_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+            }
+        });
+        decided_rx
+            .recv_timeout(crate::shared::test_wait::HANG_GUARD)
+            .expect("the watchdog decides the phase is over budget");
+
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        let scene = std::thread::spawn({
+            let wd = Arc::clone(&wd);
+            move || {
+                wd.disarm();
+                seen_tx.send(wd.was_terminated()).unwrap();
+            }
+        });
+        // The scene may report only after the decided termination has landed.
+        let early = seen_rx.recv_timeout(std::time::Duration::from_millis(100));
+        release_tx.send(()).unwrap();
+        assert!(fire.join().unwrap(), "the watchdog fires the decided phase");
+        let seen = early
+            .or_else(|_| seen_rx.recv_timeout(crate::shared::test_wait::HANG_GUARD))
+            .expect("the scene thread reports");
+        scene.join().unwrap();
+
+        assert!(
+            seen,
+            "the phase that was decided must report the termination"
+        );
+        assert!(
+            !wd.fired.load(Ordering::SeqCst),
+            "no termination may remain for the next phase"
         );
     }
 
