@@ -204,7 +204,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_REPLAY_ENTRIES_PER_SOURCE",
-        "consumed-handshake entries one source IP (IPv6 by its /64) may hold while they are fresh; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
+        "consumed-handshake entries one source may hold while they are fresh, where a source is an IPv4 address, an IPv6 /64 and, separately, an IPv6 /48; a handshake over it is refused with the pre-auth IP limit code; PULSE_IP_LIMITER_WHITELIST sources are exempt; 0 means unlimited (default 256)",
     ),
     (
         "ARCHIPELAGO_CONTROL_V4_AUDIENCE",
