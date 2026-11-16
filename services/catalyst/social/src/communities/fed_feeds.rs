@@ -78,7 +78,12 @@ pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result
         .iter()
         .map(|r| {
             let (community_id, signer, kind): (String, String, String) = (r.get("community_id"), r.get("signer"), r.get("kind"));
-            let payload = if kind == "create" { json!({ "type": "CommunityCreate", "community_id": community_id, "creator": signer, "role": "owner" }) } else { r.get("payload") };
+            let mut payload: Value = if kind == "create" { json!({ "type": "CommunityCreate", "community_id": community_id, "creator": signer, "role": "owner" }) } else { r.get("payload") };
+            // A ban's free-text reason is for the community's moderators, who
+            // read it through the ban listing; peers apply the ban without it.
+            if let Some(fields) = payload.as_object_mut() {
+                fields.remove("reason");
+            }
             json!({
                 "kind": "role",
                 "signature_hash": r.get::<String, _>("signature_hash"),

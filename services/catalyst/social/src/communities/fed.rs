@@ -2662,6 +2662,16 @@ mod tests {
             mine[0]["payload"],
             json!({ "type": "CommunityCreate", "community_id": hex_id, "creator": address(&owner), "role": "owner" })
         );
+        // A ban travels with its target; its free-text reason stays local.
+        let banned = mine.iter().find(|r| r["role"] == json!("banned")).unwrap();
+        assert_eq!(
+            (banned["target"].clone(), banned["payload"].clone()),
+            (
+                json!(address(&member)),
+                json!({ "community_id": hex_id, "target": address(&member) })
+            )
+        );
+        assert!(!feed.to_string().contains("\"reason\""), "{feed}");
         let posts: Vec<&Value> = feed["posts"]
             .as_array()
             .unwrap()
