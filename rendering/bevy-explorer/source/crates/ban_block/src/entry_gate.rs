@@ -1,7 +1,6 @@
-//! The platform ban as an entry gate. While a ban is known, `PlatformBanEntryGate` is set and the
-//! realm change (`ipfs::change_realm`) refuses every request, so a held lobby stays held and a
-//! player in a realm stays there. The HUD reads the same ban from `GetPlatformBanStream` to show
-//! it. An unknown or failed check leaves the gate open.
+//! The platform ban as an entry gate: `PlatformBanEntryGate` is set while a ban is known, and
+//! `GetPlatformBanStream` streams the ban now and on every change. An unknown or failed check
+//! leaves the gate open.
 
 use bevy::{
     app::{App, Plugin, PostUpdate, Update},
@@ -18,7 +17,7 @@ use system_bridge::{PlatformBanNotice, SystemApi};
 
 use crate::PlatformBanStatus;
 
-/// The ban as the HUD shows it; not banned unless a ban is known.
+/// The notice for `status`; not banned unless a ban is known.
 pub fn notice(status: &PlatformBanStatus) -> PlatformBanNotice {
     match status.ban() {
         None => PlatformBanNotice::default(),
@@ -131,7 +130,7 @@ mod tests {
         });
         assert!(gate(&app));
 
-        // a refusal-learnt ban survives a failed check, so the gate stays closed
+        // a failed check after a refusal-learnt ban: the gate stays closed
         set(&mut app, |s| {
             s.apply_platform_ban(
                 Some(PlatformBanInfo::from_refusal("banned")),

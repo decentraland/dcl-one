@@ -12,7 +12,7 @@
 // | a failed check: a realm change enters                | New, native only |
 // | banned at sign-in: the entry is closed before a pick | New, native only |
 //
-// The entry gate refuses every realm change while a ban is known.
+// Asserts the entry gate refuses every realm change while a ban is known.
 //
 // Zone's live accounts cannot be banned by a test, so the stub scenarios start their own
 // standalone pointed at a loopback gatekeeper stub (`--comms-gatekeeper`). On the web a service
@@ -158,7 +158,7 @@ scenario(
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e'))
     try {
-      // a new wallet is checked at once: the gate closes before anything asks to enter
+      // the new wallet's gate reads closed before any realm change is asked for
       await explorer.logout()
       await explorer.loginGuest()
       const state = await until(() => explorer.banBlockState(), (s) => s.entryGate === 'closed', {

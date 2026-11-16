@@ -1,6 +1,6 @@
 // The platform ban: the ban period and reason when the record carries them, then where to get
 // help. Blocking before the world (no way past it but signing out); dismissible after a refused
-// in-world travel, where the player stays put.
+// in-world travel.
 
 import { siteUrl } from '@hud-host'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'

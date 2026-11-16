@@ -340,7 +340,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [travelError])
 
   // A known platform ban before the world: a blocking notice over the lobby (or the welcome page,
-  // the picker, the loader) that only a sign-out leaves. The engine refuses the entry regardless.
+  // the picker, the loader) that only a sign-out leaves.
   const banNotice = session.platformBan.notice
   const banBlocksEntry = banNotice != null && session.phase !== 'login' && session.phase !== 'world'
   const banKey = banBlocksEntry ? JSON.stringify(banNotice) : null
@@ -349,7 +349,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     return openPlatformBanDialog(banNotice, { signOut: session.logout })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the notice changes
   }, [banKey])
-  // An in-world travel refused for the ban: the player stays where they are and is told why.
+  // An in-world travel refused for the ban: a dismissible notice says why.
   const banRefusedTravel = session.platformBan.travelRefused && !banBlocksEntry
   useEffect(() => {
     if (!banRefusedTravel) return

@@ -269,7 +269,7 @@ export interface BanBlockState {
     checkedAgoSecs: number | null
     error: string | null
   }
-  /** `closed` while a platform ban is known: every realm change is refused. */
+  /** `closed` while a platform ban is known. */
   entryGate: 'open' | 'closed'
   sceneAdmission: {
     state: 'unknown' | 'allowed' | 'refused'

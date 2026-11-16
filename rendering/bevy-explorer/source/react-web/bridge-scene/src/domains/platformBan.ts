@@ -1,4 +1,4 @@
-// The signed-in wallet's platform ban, for the HUD's ban screen and its refused-travel notice.
+// The signed-in wallet's platform ban, relayed to the page.
 //   from: SystemApi.getPlatformBanStream (the engine's ban_block answer, whole on every change)
 //   to:   the page, as `platformBan`
 import { BevyApi } from '../bevy-api'
@@ -11,7 +11,7 @@ export function registerPlatformBan(ctx: Ctx): void {
   const send = (): void => {
     if (latest != null) ctx.send({ kind: 'platformBan', ban: latest })
   }
-  // A page that starts late or reloads missed the notice.
+  // Re-sends the last notice on every `hello`.
   ctx.on('hello', send)
 
   const open = BevyApi.getPlatformBanStream

@@ -1729,8 +1729,7 @@ pub struct WorldHold;
 /// What a realm change refused for a platform ban answers.
 pub const PLATFORM_BANNED: &str = "You are banned from Decentraland";
 
-/// The signed-in wallet's known platform ban. Realm changes are refused while it is set; an
-/// unknown or failed check leaves it clear.
+/// The signed-in wallet's known platform ban; `banned` is true only while a ban is known.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformBanEntryGate {
     pub banned: bool,

@@ -5639,7 +5639,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "1efe55d417d2ba7e02fdd7a1a857d3dae53e3a590c6ab33e0538cdb393a27078"
+      "sha256": "49a96e044621c239c658571863134f10a942bf42f2369a81c7b1a94bb2819497"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6107,7 +6107,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "03235a1640239972492201adee9150875c2685c7415046dcd6961efd3e0dc3b7"
+      "sha256": "0babd0025fd42d57712a9b21e15fb95b39764d7400a61231ea4ba426b82f8f96"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -8635,7 +8635,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
-      "sha256": "3a27390058f88e3727c383671605515ac36fe87b63092b0c80abe5a98b713eb8"
+      "sha256": "2f6cee9dc97bd423c169590ae74fa363869870108f4bf711185d7bf1baf4cab0"
     },
     {
       "path": "library/ui/apps/hud/features/session/SceneLoadingOverlay.module.css",

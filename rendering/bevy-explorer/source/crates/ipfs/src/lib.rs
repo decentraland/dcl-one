@@ -921,7 +921,7 @@ pub fn change_realm(
                 .spawn_compat(async move {
                     let mut superseded = superseded;
                     let result = async {
-                        // a known platform ban keeps the player where they are, the hold included
+                        // a known platform ban refuses the change before world access
                         if banned {
                             return Err(PLATFORM_BANNED.to_owned());
                         }

@@ -764,8 +764,8 @@ pub struct FriendConnectivityEvent {
     pub status: String,
 }
 
-/// The signed-in wallet's platform ban as the HUD shows it. `banned` is false while the check is
-/// unknown or failed. Dates are the gatekeeper's ISO strings.
+/// The signed-in wallet's platform ban. `banned` is false while the check is unknown or
+/// failed. Dates are the gatekeeper's ISO strings.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
