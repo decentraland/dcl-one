@@ -124,6 +124,13 @@
     outline: 2px solid currentColor;
     outline-offset: 3px;
   }
+  .root[data-variant='primary']:not([data-icon-only='true']):is(
+      :focus-visible,
+      [data-force-state='focus']
+    ) {
+    outline-color: var(--dcl-neutrals-white);
+    box-shadow: 0 0 0 3px var(--dcl-neutrals-black);
+  }
   .root[aria-disabled='true'] {
     cursor: default;
   }

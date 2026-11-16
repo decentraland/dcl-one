@@ -1766,7 +1766,7 @@ async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry(
         };
 
     // The read checks the seeded index (estate 5 holds LAND 2) and stalls.
-    let mut held = super::nft_reads::land_snapshot(&db.pool)
+    let mut held = super::nft_reads::land_snapshot(&db.pool, crate::land_authz::LAND_MAINNET)
         .await
         .expect("the seeded land index is published");
 
@@ -1856,6 +1856,81 @@ async fn user_lands_answer_on_a_pool_of_one_connection() {
         (Some(2), vec!["5", "1"])
     );
     one.close().await;
+    db.drop().await;
+}
+
+/// LL-15: `/lands` and `/genesis-parcels` read the index of the registries
+/// `ETH_NETWORK` names. A Sepolia node answers from its Sepolia index; a
+/// mainnet node over the same database finds no mainnet cursor and does not
+/// read the Sepolia rows.
+#[tokio::test]
+async fn user_lands_read_the_registries_of_the_configured_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use crate::land_authz::{ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_SEPOLIA};
+    let now = chrono::Utc::now().naive_utc();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) \
+         VALUES ('ethereum-sepolia', $1, $2, 10, 10, $3)",
+    )
+    .bind(LAND_REGISTRY_SEPOLIA)
+    .bind(ESTATE_REGISTRY_SEPOLIA)
+    .bind(now)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+    )
+    .bind(now)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+         VALUES ($1, 7::numeric, 10, -3, $2, 5, 0)",
+    )
+    .bind(LAND_REGISTRY_SEPOLIA)
+    .bind(OWNER)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let state_for = |network: &str| {
+        Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            Settings {
+                eth_network: network.to_string(),
+                ..Settings::for_tests()
+            },
+        ))
+    };
+    let sepolia = state_for("sepolia");
+    let (status, body) = get(&sepolia, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            body["totalAmount"].as_i64(),
+            body["elements"][0]["contractAddress"].as_str(),
+            body["elements"][0]["tokenId"].as_str()
+        ),
+        (Some(1), Some(LAND_REGISTRY_SEPOLIA), Some("7")),
+        "{body}"
+    );
+    let (status, body) = get(&sepolia, &format!("/lambdas/users/{OWNER}/genesis-parcels")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["totalAmount"].as_i64(), Some(1), "{body}");
+
+    let mainnet = state_for("mainnet");
+    let (status, body) = get(&mainnet, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "no mainnet cursor: {body}"
+    );
     db.drop().await;
 }
 

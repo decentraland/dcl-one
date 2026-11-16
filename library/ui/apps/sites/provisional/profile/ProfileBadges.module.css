@@ -1,0 +1,118 @@
+/* TODO(figma-ds): replace with the Figma-generated badges row's styles. The source's 30px gap has
+ * no spacing token; the nearest one (32px) is used. */
+.root {
+  width: 100%;
+}
+
+.title {
+  margin: 0 0 var(--dcl-space-12);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  line-height: normal;
+  text-transform: uppercase;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge {
+  position: relative;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--dcl-radius-md);
+  outline: none;
+}
+
+.slot:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.fallback {
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+}
+
+.tip {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + var(--dcl-space-8));
+  left: 50%;
+  display: none;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 240px;
+  padding: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-surface-raised);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  transform: translateX(-50%);
+}
+
+.badge:hover .tip,
+.slot:focus-visible + .tip {
+  display: flex;
+}
+
+.tipName {
+  font-weight: 600;
+}
+
+.tipTier {
+  opacity: 0.7;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.tipDate {
+  opacity: 0.6;
+}
+
+.status,
+.empty {
+  margin: 0;
+  color: var(--dcl-text-disabled);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.5;
+}
+
+.empty {
+  font-style: italic;
+}
+
+@media (min-width: 1024px) {
+  .row {
+    gap: var(--dcl-space-32);
+  }
+
+  .slot {
+    width: 86px;
+    height: 86px;
+  }
+}

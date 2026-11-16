@@ -659,7 +659,16 @@ pub async fn published_among(
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
     let mut conn = pool.acquire().await?;
-    references_among(&mut conn, pins, keys, false).await
+    published_among_on(&mut conn, pins, keys).await
+}
+
+/// Published references using the caller's existing session.
+pub async fn published_among_on(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    references_among(conn, pins, keys, false).await
 }
 
 async fn references_among(
