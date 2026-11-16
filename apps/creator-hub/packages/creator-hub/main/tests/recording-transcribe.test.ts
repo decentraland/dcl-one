@@ -79,6 +79,74 @@ function fakeWorker(outcome: {
   return worker;
 }
 
+describe('when the worker never answers', () => {
+  let sessionDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mocks.toolsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-tools-'));
+    sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-session-'));
+    fs.writeFileSync(path.join(sessionDir, 'audio.wav'), Buffer.alloc(44));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(mocks.toolsDir, { recursive: true, force: true });
+  });
+
+  it('should kill it, wait for it to die, then fail', async () => {
+    const order: string[] = [];
+    let started!: () => void;
+    const running = new Promise<void>(resolve => (started = resolve));
+    let die!: () => void;
+    mocks.run.mockImplementation(() => {
+      started();
+      return {
+        on: () => 0,
+        kill: vi.fn(async () => {
+          order.push('kill');
+          await new Promise(resolve => setTimeout(resolve, 50));
+          die();
+          order.push('dead');
+        }),
+        wait: () =>
+          new Promise<Buffer>((_, reject) => {
+            die = () => reject(new Error('killed'));
+          }),
+      };
+    });
+    const result = transcribe(path.join(sessionDir, 'audio.wav'), 'en', 'en', undefined).then(
+      () => order.push('resolved'),
+      () => order.push('rejected'),
+    );
+    await running;
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 100);
+    await result;
+    expect(order).toEqual(['kill', 'dead', 'rejected']);
+  });
+
+  it('should say that it took too long', async () => {
+    mocks.run.mockImplementation(() => {
+      let die!: () => void;
+      return {
+        on: () => 0,
+        kill: vi.fn(async () => die()),
+        wait: () =>
+          new Promise<Buffer>((_, reject) => {
+            die = () => reject(new Error('killed'));
+          }),
+      };
+    });
+    const result = transcribe(path.join(sessionDir, 'audio.wav'), 'en', 'en', undefined);
+    const outcome = result.catch((error: Error) => error.message);
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 100);
+    expect(await outcome).toBe('Transcription took too long.');
+  });
+});
+
 describe('when transcribing a recording', () => {
   let sessionDir: string;
   let wavPath: string;

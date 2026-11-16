@@ -277,7 +277,9 @@ export async function downloadModel(
     }
     await fs.rename(partial, target);
   } finally {
-    await fs.rm(partial, { force: true });
+    // Best effort: on Windows the partial file can still be held open for a moment after a
+    // failed pipeline, and the cleanup must not replace the error that explains the failure.
+    await fs.rm(partial, { force: true }).catch(() => undefined);
   }
 }
 

@@ -79,26 +79,31 @@ async function runWorker(toolsDir: string, jobFile: string): Promise<TranscriptW
   const stderrLines: string[] = [];
   child.on(/[\s\S]/, line => stderrLines.push(line ?? ''), { type: 'stderr' });
 
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      void child.kill();
-      reject(new Error('Transcription took too long.'));
-    }, TRANSCRIBE_TIMEOUT_MS);
-  });
+  // On timeout the worker is killed and waited for before the error goes out, so the next
+  // transcription never runs beside a worker that is still holding the model.
+  let killed: Promise<void> | undefined;
+  const timer = setTimeout(() => {
+    killed = child.kill().catch(() => undefined);
+  }, TRANSCRIBE_TIMEOUT_MS);
 
   // Read the outcome from the complete buffer, not the live stream: `bin` can drop the last
   // chunk on exit (see the optimizer's runWorker).
   let stdout: Buffer;
   let failure: string | null = null;
   try {
-    stdout = await Promise.race([child.wait(), timeout]);
+    stdout = await child.wait();
   } catch (error) {
-    if (!(error instanceof StreamError)) throw error;
-    stdout = error.stdout;
-    failure = error.message;
+    if (killed) stdout = Buffer.alloc(0);
+    else if (error instanceof StreamError) {
+      stdout = error.stdout;
+      failure = error.message;
+    } else throw error;
   } finally {
     clearTimeout(timer);
+  }
+  if (killed) {
+    await killed;
+    throw new Error('Transcription took too long.');
   }
 
   const stderr = stderrLines.join('').trim();

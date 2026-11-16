@@ -184,6 +184,7 @@ export function useSessionRecorder({
     async (reason: StopReason = 'user') => {
       const current = active.current;
       if (!current || status !== 'recording') return;
+      const token = attempt.current;
       setStatus('stopping');
       if (current.limitTimer) clearTimeout(current.limitTimer);
       current.microphone?.stop();
@@ -230,7 +231,9 @@ export function useSessionRecorder({
           );
         }
       } catch (error) {
-        fail(error);
+        // An abort meanwhile (the editor closed) already ended the session on both sides; the
+        // rejection it causes is not news for the user.
+        if (attempt.current === token) fail(error);
       } finally {
         setStatus('idle');
         setStartedAt(null);

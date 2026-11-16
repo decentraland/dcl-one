@@ -192,6 +192,43 @@ describe('useSessionRecorder', () => {
     });
   });
 
+  describe('when the editor goes away while main is finishing the stop', () => {
+    it('should not report the rejection that the abort itself causes', async () => {
+      const stopping = deferred<Awaited<ReturnType<typeof recording.stop>>>();
+      vi.mocked(recording.stop).mockReturnValue(stopping.promise);
+      const { result, rerender } = render();
+      await act(() => result.current.start());
+      dispatch.mockClear();
+      let stopped: Promise<void>;
+      act(() => {
+        stopped = result.current.stop();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      rerender({ on: false });
+      stopping.reject(new Error('This recording is no longer active.'));
+      await act(() => stopped);
+      expect(result.current.status).toBe('idle');
+      expect(dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'snackbar/pushSnackbar' }),
+      );
+    });
+
+    it('should still report a failure when the editor stays', async () => {
+      vi.mocked(recording.stop).mockRejectedValue(new Error('disk full'));
+      const { result } = render();
+      await act(() => result.current.start());
+      await act(() => result.current.stop());
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'snackbar/pushSnackbar',
+          payload: expect.objectContaining({ severity: 'error' }),
+        }),
+      );
+    });
+  });
+
   describe('when the microphone cannot be opened', () => {
     it('should abort the session and report the error', async () => {
       mic.startMicrophone.mockRejectedValue(new Error('Permission denied'));

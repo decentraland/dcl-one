@@ -316,6 +316,25 @@ describe('when the user discards a finished recording', () => {
     expect(fs.existsSync(dir)).toBe(true);
   });
 
+  it('should refuse the recording still being transcribed', async () => {
+    const { sessionId } = await start(owner, '/scenes/Discard', 'Discard', 'en');
+    const tone = Array.from({ length: 8000 }, (_, i) => Math.round(12000 * Math.sin(i / 3)));
+    appendAudio(owner.id, sessionId, pcm(tone), Date.now());
+    let finish!: (words: never[]) => void;
+    transcriber.transcribe.mockReturnValueOnce(new Promise(resolve => (finish = resolve)));
+    const stopping = stop(owner.id, sessionId);
+    await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalled());
+    const transcribingDir = currentSessionDir('Discard');
+    await expect(discard(transcribingDir)).rejects.toThrow(
+      'This recording is still being transcribed.',
+    );
+    expect(fs.existsSync(path.join(transcribingDir, 'audio.wav'))).toBe(true);
+    finish([]);
+    expect((await stopping).dir).toBe(transcribingDir);
+    await discard(transcribingDir);
+    expect(fs.existsSync(transcribingDir)).toBe(false);
+  });
+
   it('should refuse the recording still running', async () => {
     const { sessionId } = await start(owner, '/scenes/Discard', 'Discard', 'en');
     const running = currentSessionDir('Discard');

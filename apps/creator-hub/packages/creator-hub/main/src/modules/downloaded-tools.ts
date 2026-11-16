@@ -57,17 +57,22 @@ export async function installLocked({
     ],
     cwd: dir,
   });
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      void install.kill();
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
-  });
+  // On timeout the child is killed and waited for before the error goes out, so a retry never
+  // finds the previous npm ci still writing into the same node_modules.
+  let killed: Promise<void> | undefined;
+  const timer = setTimeout(() => {
+    killed = install.kill().catch(() => undefined);
+  }, timeoutMs);
   try {
-    await Promise.race([install.wait(), timeout]);
+    await install.wait();
+  } catch (error) {
+    if (!killed) throw error;
   } finally {
     clearTimeout(timer);
+  }
+  if (killed) {
+    await killed;
+    throw new Error(timeoutMessage);
   }
   for (const pkg of expected) {
     if (!(await exists(path.join(dir, 'node_modules', pkg, 'package.json')))) {

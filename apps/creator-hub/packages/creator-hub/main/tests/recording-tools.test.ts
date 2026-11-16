@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -154,6 +155,24 @@ describe('when downloading a speech model', () => {
     ).rejects.toThrow('socket hang up');
     expect(fs.existsSync(target)).toBe(false);
     expect(fs.existsSync(`${target}.download`)).toBe(false);
+  });
+
+  it('should keep the download error when the partial file cannot be removed', async () => {
+    const { fetchImpl } = fakeFetch([data.subarray(0, 1000), data.subarray(1000)], {
+      failAfter: 1,
+    });
+    const rm = vi.spyOn(fsp, 'rm').mockRejectedValueOnce(new Error('EBUSY: resource busy'));
+    try {
+      await expect(
+        downloadModel(
+          { url: 'https://example.invalid/m', target, sha256: sha256(data), bytes: 3000 },
+          () => {},
+          fetchImpl,
+        ),
+      ).rejects.toThrow('socket hang up');
+    } finally {
+      rm.mockRestore();
+    }
   });
 
   it('should fail and clean up when the file cannot be written', async () => {

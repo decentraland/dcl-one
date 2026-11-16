@@ -119,8 +119,16 @@ describe('optimizer tools', () => {
       // A registry stall left the modal on "Downloading…" with nothing to cancel it.
       vi.useFakeTimers();
       try {
-        const kill = vi.fn(async () => {});
-        mocks.run.mockImplementation(() => ({ wait: () => new Promise(() => {}), kill }));
+        // Like bin.kill(): the child's wait() settles once it is dead.
+        let die!: () => void;
+        const kill = vi.fn(async () => die());
+        mocks.run.mockImplementation(() => ({
+          wait: () =>
+            new Promise<Buffer>((_, reject) => {
+              die = () => reject(new Error('killed'));
+            }),
+          kill,
+        }));
 
         const attempt = installTools(() => {});
         const outcome = expect(attempt).rejects.toThrow(/took too long/);

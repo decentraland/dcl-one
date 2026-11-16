@@ -206,9 +206,10 @@ export function pointingNote(utterance: Utterance, events: RecordedEvent[]): str
     // Objects before on-screen text (a banner is context, rarely what "this" means), newest first.
     .sort((a, b) => Number(!a.entity) - Number(!b.entity))
     .map(e => {
+      // On-screen text is scene text too: quoted like a name, so it stays data in the SAID line.
       const what = e.entity
         ? entityLabel(e.entity)
-        : e.text.replace(/^While playing: /, '').replace(/ appeared$/, '');
+        : JSON.stringify(e.text.replace(/^While playing: /, '').replace(/ appeared$/, ''));
       const offset = (Math.abs(utterance.anchor - e.t) / 1000).toFixed(1);
       return {
         what,
@@ -222,7 +223,11 @@ export function pointingNote(utterance: Utterance, events: RecordedEvent[]): str
   const parts: string[] = [];
   if (candidates.length > 0) parts.push(`pointer on ${candidates.join(' then ')}`);
   if (appeared.length > 0) parts.push(`just appeared: ${appeared.join(', ')}`);
-  if (selection) parts.push(`selection: ${selection.text}`);
+  if (selection) {
+    parts.push(
+      `selection: ${selection.entity ? entityLabel(selection.entity) : JSON.stringify(selection.text)}`,
+    );
+  }
   return parts.length > 0 ? parts.join('; ') : undefined;
 }
 

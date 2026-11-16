@@ -59,6 +59,8 @@ type Session = {
 };
 
 let session: Session | null = null;
+// Folders whose audio.wav a transcription worker is still reading; discard() refuses them.
+const transcribing = new Set<string>();
 
 export function getRecordingsDir(): string {
   return path.join(app.getPath('userData'), 'recordings');
@@ -356,32 +358,14 @@ export async function stop(senderId: number, sessionId: string): Promise<Recordi
   session = null;
   const endedAt = finalizeFiles(s);
 
+  const dir = path.resolve(s.dir);
+  transcribing.add(dir);
   let words: TranscriptWord[] = [];
   let transcriptionError: string | undefined;
-  if (s.audioBytes === 0) {
-    transcriptionError = 'no audio was captured';
-  } else if (s.peak === 0) {
-    // Exact digital zero is a muted or blocked input, not a quiet room (which still has noise).
-    transcriptionError =
-      'the microphone sent only silence. Check that it is not muted and that Creator Hub is allowed to use it in your system settings';
-  } else if (s.peak >= SILENCE_PEAK) {
-    try {
-      const model = modelFor(s.language);
-      await install(model, () => {});
-      // The worker finds the speech (Silero, or loudness when that fails) and transcribes each
-      // stretch; nothing of the audio is read on this thread.
-      words = dropNonSpeech(
-        await transcribe(
-          path.join(s.dir, 'audio.wav'),
-          model,
-          s.language.slice(0, 2),
-          vocabularyPrompt(s.events),
-        ),
-      );
-    } catch (error) {
-      transcriptionError = error instanceof Error ? error.message : String(error);
-      log.error('[Recording] transcription failed:', error);
-    }
+  try {
+    ({ words, transcriptionError } = await transcribeSession(s));
+  } finally {
+    transcribing.delete(dir);
   }
   const result = writeSessionFiles(s, endedAt, words, transcriptionError);
   void prune(path.dirname(s.dir));
@@ -409,6 +393,42 @@ export function isRecording(): boolean {
 
 // The user discarded a finished recording before sending it: nothing of it stays on disk. Only
 // a session folder under the recordings dir qualifies, never the one still being written.
+async function transcribeSession(
+  s: Session,
+): Promise<{ words: TranscriptWord[]; transcriptionError?: string }> {
+  if (s.audioBytes === 0) return { words: [], transcriptionError: 'no audio was captured' };
+  if (s.peak === 0) {
+    // Exact digital zero is a muted or blocked input, not a quiet room (which still has noise).
+    return {
+      words: [],
+      transcriptionError:
+        'the microphone sent only silence. Check that it is not muted and that Creator Hub is allowed to use it in your system settings',
+    };
+  }
+  if (s.peak < SILENCE_PEAK) return { words: [] };
+  try {
+    const model = modelFor(s.language);
+    await install(model, () => {});
+    // The worker finds the speech (Silero, or loudness when that fails) and transcribes each
+    // stretch; nothing of the audio is read on this thread.
+    const words = dropNonSpeech(
+      await transcribe(
+        path.join(s.dir, 'audio.wav'),
+        model,
+        s.language.slice(0, 2),
+        vocabularyPrompt(s.events),
+      ),
+    );
+    return { words };
+  } catch (error) {
+    log.error('[Recording] transcription failed:', error);
+    return {
+      words: [],
+      transcriptionError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function discard(dir: string): Promise<void> {
   const root = getRecordingsDir();
   const target = path.resolve(dir);
@@ -419,6 +439,9 @@ export async function discard(dir: string): Promise<void> {
   }
   if (session && path.resolve(session.dir) === target) {
     throw new Error('This recording is still running.');
+  }
+  if (transcribing.has(target)) {
+    throw new Error('This recording is still being transcribed.');
   }
   await fsp.rm(target, { recursive: true, force: true });
   log.info(`[Recording] discarded ${target}`);
