@@ -1,0 +1,65 @@
+name: Drop pre-release
+on:
+  workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
+    inputs:
+      dry-run:
+        description: 'Compiles the app but not upload artifacts to distribution server'
+        default: false
+        required: false
+        type: boolean
+      unfinished-only:
+        description: 'Delete only pre-releases with no creator-hub@X.Y.Z tag in this repository'
+        default: false
+        required: false
+        type: boolean
+      keep:
+        description: 'Version of a pre-release that is never deleted (the one this run published)'
+        default: ''
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-drop-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+jobs:
+  drop:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run && 'creator-hub-release' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          filter: blob:none
+
+      - name: Token for the release repository
+        id: release-token
+        if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CREATOR_HUB_RELEASES_APP_ID }}
+          private-key: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+          owner: decentraland
+          repositories: creator-hub
+
+      # The installers' pre-releases live in decentraland/creator-hub (release-only), so the
+      # bare X.Y.Z pattern can't reach another project's releases here.
+      - name: Delete prereleases
+        if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        uses: ./.github/actions/creator-hub-delete-prereleases
+        with:
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+          dry_run: 'false'
+          keep: ${{ inputs.keep }}
+          unfinished_only: ${{ inputs.unfinished-only }}
+          repository: decentraland/creator-hub
+          github_token: ${{ steps.release-token.outputs.token }}

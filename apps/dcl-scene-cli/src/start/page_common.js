@@ -3,16 +3,26 @@ const PAGE_OFFLINE = 'The preview server did not answer';
 const pageToast = (() => {
   let timer;
   return (message, isError, holdMs) => {
-    let el = document.querySelector('.toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'toast';
-      document.body.appendChild(el);
-    }
-    el.classList.toggle('toast--err', Boolean(isError));
+    const region = document.getElementById(isError ? 'page-errors' : 'page-feedback');
+    const el = document.createElement('div');
+    el.className = 'toast' + (isError ? ' toast--err' : '');
     el.textContent = message;
-    clearTimeout(timer);
-    timer = setTimeout(() => el.remove(), holdMs || (isError ? 6000 : 2200));
+    if (isError) {
+      const origin = document.activeElement;
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.textContent = 'Dismiss';
+      dismiss.addEventListener('click', () => {
+        const focused = el.contains(document.activeElement);
+        region.replaceChildren();
+        if (focused && origin?.isConnected) origin.focus();
+      });
+      el.appendChild(dismiss);
+    } else {
+      clearTimeout(timer);
+      timer = setTimeout(() => region.replaceChildren(), holdMs || 2200);
+    }
+    region.replaceChildren(el);
   };
 })();
 // The run's capability token, when the server put it in the page (a
@@ -144,5 +154,57 @@ const pageRefreshWhen = async (ready, timeoutMs) => {
   };
   window.addEventListener('offline', () => show(false));
   window.addEventListener('online', check);
+  check();
+})();
+
+// What `start` warned about and still holds: a failed rebuild, type errors, an
+// error the running scene threw. The terminal prints them as they happen; this
+// keeps the current ones on the page, each with its next steps.
+(() => {
+  const box = document.getElementById('preview-problems');
+  if (!box) return;
+  const TITLES = { build: 'Build failed', types: 'Type errors', scene: 'Scene error', preview: 'Preview warning' };
+  let revision = -1;
+  let timer;
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const draw = (problems) => {
+    box.replaceChildren(...problems.map((problem) => {
+      const item = el('article', 'problem problem--' + problem.topic);
+      const head = el('h2', 'problem__what');
+      head.append(el('span', 'problem__topic', TITLES[problem.topic] || 'Problem'), ' ', problem.what);
+      item.append(head);
+      if (problem.why) item.append(el('pre', 'problem__why', problem.why));
+      if (problem.steps.length) {
+        const steps = el('ul', 'problem__steps');
+        steps.append(...problem.steps.map((step) => el('li', '', step)));
+        item.append(steps);
+      }
+      return item;
+    }));
+    box.hidden = problems.length === 0;
+  };
+  const check = async () => {
+    clearTimeout(timer);
+    try {
+      const response = await fetch(box.dataset.problemsUrl, { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      if (response.ok) {
+        const state = await response.json();
+        if (state.revision !== revision) {
+          revision = state.revision;
+          draw(state.problems);
+        }
+      }
+    } catch {
+      // The connection indicator in the bar reports an unreachable preview.
+    } finally {
+      timer = setTimeout(check, document.hidden ? 5000 : 1000);
+    }
+  };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
   check();
 })();

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "asset-packs::Placeholder",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/camera.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "data": {
+        "0": {
+          "json": {
+            "value": "Camera"
+          }
+        }
+      }
+    },
+    {
+      "name": "core::VirtualCamera",
+      "data": {
+        "0": {
+          "json": {
+            "defaultTransition": {
+              "transitionMode": {
+                "$case": "time",
+                "time": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "inspector::Config",
+      "data": {
+        "0": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Camera",
+            "helpTooltip": {
+              "text": "Momentarily switch to this camera by triggering the item's actions. Set the transition time for camera changes and optionally select an entity for the camera to always look at."
+            },
+            "sections": [
+              {
+                "id": "camera-settings",
+                "items": [
+                  {
+                    "component": "core::VirtualCamera",
+                    "widget": "RangeField",
+                    "label": "Transition Time",
+                    "path": "defaultTransition.time",
+                    "constraints": {
+                      "min": 0,
+                      "max": 10,
+                      "step": 0.1,
+                      "default": "1"
+                    }
+                  },
+                  {
+                    "component": "core::VirtualCamera",
+                    "widget": "EntityField",
+                    "label": "Look At Entity",
+                    "path": "lookAtEntity"
+                  }
+                ],
+                "columns": 1
+              }
+            ],
+            "version": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Select Camera",
+                "type": "change_camera",
+                "jsonPayload": "{}"
+              },
+              {
+                "name": "Reset View",
+                "type": "change_camera",
+                "jsonPayload": "{\"virtualCameraEntity\":0}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

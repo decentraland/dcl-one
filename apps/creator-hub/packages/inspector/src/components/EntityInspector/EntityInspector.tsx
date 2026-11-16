@@ -1,0 +1,285 @@
+import { useMemo } from 'react';
+import { type Entity } from '@dcl/ecs';
+
+import { withSdk } from '../../hoc/withSdk';
+
+type WithEntity = { entity: Entity; initialOpen: boolean };
+type WithEntities = { entities: Entity[]; initialOpen: boolean };
+import { useEntitiesWith } from '../../hooks/sdk/useEntitiesWith';
+import { useAppSelector } from '../../redux/hooks';
+import { getHiddenComponents } from '../../redux/ui';
+import { EDITOR_ENTITIES, PLAYER } from '../../lib/sdk/tree';
+
+import { Divider } from '../ui';
+
+import { GltfInspector } from './GltfInspector';
+import { ActionInspector } from './ActionInspector';
+import { TriggerInspector } from './TriggerInspector';
+import { MaterialInspector } from './MaterialInspector';
+import { MeshColliderInspector } from './MeshColliderInspector';
+import { MeshRendererInspector } from './MeshRendererInspector';
+import { SceneInspector } from './SceneInspector';
+import { TextShapeInspector } from './TextShapeInspector';
+import { TransformInspector } from './TransformInspector';
+import { StatesInspector } from './StatesInspector';
+import { CounterInspector } from './CounterInspector';
+import { AudioSourceInspector } from './AudioSourceInspector';
+import { VisibilityComponentInspector } from './VisibilityComponentInspector';
+import { VideoPlayerInspector } from './VideoPlayerInspector';
+import { AudioStreamInspector } from './AudioStreamInspector';
+import AvatarAttachInspector from './AvatarAttachInspector';
+import BillboardInspector from './BillboardInspector';
+import { NftShapeInspector } from './NftShapeInspector';
+import { AnimatorInspector } from './AnimatorInspector';
+import { PointerEventsInspector } from './PointerEventsInspector';
+import { SyncComponentsInspector } from './SyncComponentsInspector';
+import { EntityHeader } from './EntityHeader';
+import { CounterBarInspector } from './CounterBarInspector';
+import { TweenInspector } from './TweenInspector';
+import { SmartItemBasicView } from './SmartItemBasicView';
+import { AdminToolkitView } from './AdminToolkitView';
+import { RewardInspector } from './RewardInspector';
+import { LightSourceInspector } from './LightSourceInspector';
+import { GltfNodeModifiersInspector } from './GltfNodeModifiersInspector';
+import { ScriptInspector } from './ScriptInspector';
+import { TagsInspector } from './TagsInspector';
+import { VirtualCameraInspector } from './VirtualCameraInspector';
+import { AvatarModifierAreaInspector } from './AvatarModifierAreaInspector';
+import { CameraModeAreaInspector } from './CameraModeAreaInspector';
+import { PlaceholderInspector } from './PlaceholderInspector';
+import { PlayerInspector } from './PlayerInspector';
+import { ParticleSystemInspector } from './ParticleSystemInspector';
+
+import './EntityInspector.css';
+
+export function EntityInspector() {
+  const selectedEntities = useEntitiesWith(components => components.Selection);
+  const ownedEntities = useMemo(
+    () => selectedEntities.filter(entity => !EDITOR_ENTITIES.includes(entity)),
+    [selectedEntities],
+  );
+  const entity = useMemo(
+    () => (selectedEntities.length > 0 ? selectedEntities[0] : null),
+    [selectedEntities],
+  );
+
+  if (ownedEntities.length > 1) {
+    return <MultiEntityInspector entities={ownedEntities} />;
+  }
+
+  return <SingleEntityInspector entity={entity} />;
+}
+
+const MultiEntityInspector = withSdk<{ entities: Entity[] }>(({ sdk, entities }) => {
+  const hiddenComponents = useAppSelector(getHiddenComponents);
+  const inspectors = useMemo(
+    () => [
+      { name: sdk.components.Tags.componentName, component: TagsInspector },
+      { name: sdk.components.Transform.componentName, component: TransformInspector },
+      { name: sdk.components.Material.componentName, component: MaterialInspector },
+      { name: sdk.components.MeshCollider.componentName, component: MeshColliderInspector },
+      { name: sdk.components.AudioSource.componentName, component: AudioSourceInspector },
+      { name: sdk.components.AudioStream.componentName, component: AudioStreamInspector },
+      { name: sdk.components.TextShape.componentName, component: TextShapeInspector },
+      { name: sdk.components.States.componentName, component: StatesInspector },
+      {
+        name: sdk.components.VisibilityComponent.componentName,
+        component: VisibilityComponentInspector,
+      },
+      { name: sdk.components.LightSource.componentName, component: LightSourceInspector },
+      {
+        name: sdk.components.ParticleSystem.componentName,
+        component: ParticleSystemInspector,
+      },
+    ],
+    [sdk],
+  );
+
+  return (
+    <div className="EntityInspector">
+      <div className="EntityHeader">
+        <div className="title">{entities.length} entities selected</div>
+      </div>
+      {inspectors.map(
+        ({ name, component: Inspector }, index) =>
+          !hiddenComponents[name] && (
+            <Inspector
+              key={`${index}-${entities.join(',')}`}
+              entities={entities}
+            />
+          ),
+      )}
+    </div>
+  );
+});
+
+const SingleEntityInspector = withSdk<{ entity: Entity | null }>(({ sdk, entity }) => {
+  const hiddenComponents = useAppSelector(getHiddenComponents);
+  const isBasicViewEnabled = useMemo(() => {
+    if (entity === null) {
+      return false;
+    }
+    return !!sdk.components.Config.getOrNull(entity);
+  }, [entity, sdk]);
+
+  const inspectors = useMemo(
+    () => [{ name: sdk.components.Transform.componentName, component: TransformInspector }],
+    [sdk],
+  );
+
+  const advancedInspectorComponents = useMemo(
+    () => [
+      { name: sdk.components.GltfContainer.componentName, component: GltfInspector },
+      { name: sdk.components.Placeholder.componentName, component: PlaceholderInspector },
+      { name: sdk.components.Script.componentName, component: ScriptInspector },
+      {
+        name: sdk.components.VisibilityComponent.componentName,
+        component: VisibilityComponentInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.AvatarAttach.componentName,
+        component: AvatarAttachInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.Billboard.componentName,
+        component: BillboardInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.Material.componentName,
+        component: MaterialInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.MeshCollider.componentName,
+        component: MeshColliderInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.MeshRenderer.componentName,
+        component: MeshRendererInspector,
+      },
+      { name: sdk.components.Scene.componentName, component: SceneInspector },
+      {
+        name: sdk.components.TextShape.componentName,
+        component: TextShapeInspector,
+        multiEntity: true,
+      },
+      { name: sdk.components.Tween.componentName, component: TweenInspector },
+      { name: sdk.components.Actions.componentName, component: ActionInspector },
+      {
+        name: sdk.components.Triggers.componentName,
+        component: TriggerInspector,
+      },
+      { name: sdk.components.States.componentName, component: StatesInspector, multiEntity: true },
+      { name: sdk.components.Counter.componentName, component: CounterInspector },
+      {
+        name: sdk.components.AudioSource.componentName,
+        component: AudioSourceInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.VideoPlayer.componentName,
+        component: VideoPlayerInspector,
+      },
+      {
+        name: sdk.components.AudioStream.componentName,
+        component: AudioStreamInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.NftShape.componentName,
+        component: NftShapeInspector,
+      },
+      {
+        name: sdk.components.Animator.componentName,
+        component: AnimatorInspector,
+      },
+      {
+        name: sdk.components.PointerEvents.componentName,
+        component: PointerEventsInspector,
+      },
+      {
+        name: sdk.components.SyncComponents.componentName,
+        component: SyncComponentsInspector,
+      },
+      { name: sdk.components.CounterBar.componentName, component: CounterBarInspector },
+      { name: sdk.components.AdminTools.componentName, component: AdminToolkitView },
+      { name: sdk.components.Rewards.componentName, component: RewardInspector },
+      {
+        name: sdk.components.LightSource.componentName,
+        component: LightSourceInspector,
+        multiEntity: true,
+      },
+      {
+        name: sdk.components.VirtualCamera.componentName,
+        component: VirtualCameraInspector,
+      },
+      {
+        name: sdk.components.AvatarModifierArea.componentName,
+        component: AvatarModifierAreaInspector,
+      },
+      {
+        name: sdk.components.CameraModeArea.componentName,
+        component: CameraModeAreaInspector,
+      },
+      {
+        name: sdk.components.GltfNodeModifiers.componentName,
+        component: GltfNodeModifiersInspector,
+      },
+      {
+        name: sdk.components.ParticleSystem.componentName,
+        component: ParticleSystemInspector,
+        multiEntity: true,
+      },
+    ],
+    [sdk],
+  );
+
+  return (
+    <div className="EntityInspector">
+      {entity !== null ? (
+        <>
+          <EntityHeader entity={entity} />
+          {entity === PLAYER ? (
+            <PlayerInspector entity={entity} />
+          ) : (
+            <>
+              {inspectors.map(
+                ({ name, component: Inspector }, index) =>
+                  !hiddenComponents[name] && (
+                    <Inspector
+                      key={`${index}-${entity}`}
+                      entities={[entity]}
+                    />
+                  ),
+              )}
+              {isBasicViewEnabled ? (
+                <>
+                  <SmartItemBasicView entity={entity} />
+                  <Divider label="Advanced" />
+                </>
+              ) : null}
+              {advancedInspectorComponents.map(
+                ({ name, component: Inspector, multiEntity }, index) =>
+                  !hiddenComponents[name] && (
+                    <Inspector
+                      key={`${index}-${entity}`}
+                      {...((multiEntity
+                        ? { entities: [entity], initialOpen: !isBasicViewEnabled }
+                        : { entity, initialOpen: !isBasicViewEnabled }) as unknown as WithEntity &
+                        WithEntities)}
+                    />
+                  ),
+              )}
+            </>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+});
+
+export default EntityInspector;

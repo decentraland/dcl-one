@@ -128,6 +128,10 @@ class DevTest(unittest.TestCase):
           }
           python3() { echo "python:$*" >> "$CALLS"; }
           cargo() { echo "cargo:$*" >> "$CALLS"; }
+          # Resource handling has its own tests; isolate this lifecycle fixture
+          # from the machine's descriptor limits without changing them.
+          ulimit() { case "$*" in -Sn) echo 65536 ;; -Hn) echo unlimited ;; *) return 77 ;; esac; }
+          sysctl() { [ "$*" = '-n kern.maxfilesperproc' ] || return 77; echo 65536; }
           make() {
             echo "make:${*: -1}" >> "$CALLS"
             [ "$1" = -C ] && [ "$2" -ef "$FOUNDATION_DEV_ROOT" ] && [ "$3" = catalyst-test ] || exit 78
@@ -137,7 +141,7 @@ class DevTest(unittest.TestCase):
             [ "$ARCHIPELAGO_NATS_SERVER_BIN" = "$PULSE_NATS_SERVER_BIN" ] || exit 82
             return 42
           }
-          export -f foundation-dev python3 cargo make
+          export -f foundation-dev python3 cargo make ulimit sysctl
           bash "$1" rust
         '''
         calls = self.state / 'calls'
@@ -150,11 +154,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual(calls.read_text().splitlines(),
                          ['up --postgres-only', 'wait --postgres-only --timeout 3600', 'env',
                           'nats:--version',
+                          "python:-m unittest discover -s tooling/tests -p test_catalyst_test_resources.py",
                           "python:-m unittest discover -s tooling/tests -p test_dev_regressions.py",
+                          "python:-m unittest discover -s tooling/tests -p test_archipelago_fixtures.py",
+                          'python:tooling/archipelago-fixtures.py check',
                           "python:-m unittest discover -s tooling/tests -p test_enet_provenance.py",
                           'python:library/vendor/rusty_enet/verify.py', 'python:tooling/dev-regressions.py',
                           'cargo:check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets',
                           'cargo:test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib',
+                          'python:tooling/dev-regressions.py --archipelago-external',
                           'make:catalyst-test', 'down'])
 
     @unittest.skipUnless(shutil.which('process-compose') and shutil.which('initdb') and shutil.which('psql')
@@ -198,10 +206,40 @@ class DevTest(unittest.TestCase):
         env = dev.pulse_env(self.config, self.state / 'cert.pem', self.state / 'key.pem')
         self.assertEqual(env['COMMS_MODERATOR_TOKEN'], token)
         self.assertEqual(env['PULSE_BANS_URL'], f"http://127.0.0.1:{self.config['port']}/comms-gatekeeper/bans")
+        self.assertNotIn('AUTHORITATIVE_SERVER_ADDRESS', env)
+        host = '0x1111111111111111111111111111111111111111'
+        hosted = dev.pulse_env({**self.config, 'AUTHORITATIVE_SERVER_ADDRESS': host},
+                               self.state / 'cert.pem', self.state / 'key.pem')
+        self.assertEqual(hosted['AUTHORITATIVE_SERVER_ADDRESS'], host)
         older = {k: v for k, v in self.config.items() if k != 'MODERATOR_TOKEN'}
         dev.save_json(dev.SETTINGS, older)
         self.assertEqual({k: dev.settings()[k] for k in older}, older, 'a stack from before the token keeps its secrets')
         self.assertTrue(dev.settings()['MODERATOR_TOKEN'])
+
+    def test_scenes_reach_their_third_party_services_through_the_nodes_proxy(self):
+        self.assertEqual(dev.runtime_env(self.config)['SCENE_PROXY_HOSTS'], ','.join(dev.SCENE_PROXY_HOSTS))
+        own = {**self.config, 'scene_proxy_hosts': ['rooms.example.test', 'files.example.test']}
+        self.assertEqual(dev.runtime_env(own)['SCENE_PROXY_HOSTS'], 'rooms.example.test,files.example.test')
+        self.assertEqual(dev.runtime_env({**self.config, 'scene_proxy_hosts': []})['SCENE_PROXY_HOSTS'], '')
+        with self.assertRaises(SystemExit):
+            dev.runtime_env({**self.config, 'scene_proxy_hosts': 'rooms.example.test'})
+
+    def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
+        with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
+            os.environ.pop('FOUNDATION_DEV_AVATAR_RENDER_BIN', None)
+            env = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertNotIn('PROFILE_IMAGES_RENDER_ENABLED', env)
+        self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
+        renderer = self.state / 'avatar_render'
+        renderer.write_text('#!/bin/sh\n')
+        renderer.chmod(0o755)
+        with patch.dict(os.environ, {'FOUNDATION_DEV_AVATAR_RENDER_BIN': str(renderer)}):
+            env = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['PROFILE_IMAGES_RENDER_ENABLED'], 'true')
+        self.assertEqual(env['PROFILE_IMAGES_RENDERER'], 'bevy')
+        self.assertEqual(env['PROFILE_IMAGES_AVATAR_RENDER_BIN'], str(renderer))
+        self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org',
+                         'the upstream stays the last resort')
 
     def test_a_stack_created_before_livekit_gets_a_pair_and_keeps_its_secrets(self):
         old = {k: v for k, v in self.config.items() if not k.startswith('LIVEKIT_')}
@@ -361,6 +399,101 @@ class DevTest(unittest.TestCase):
         self.assertNotIn('COMMS_FIXED_ADAPTER', env, 'the realm keeps the archipelago adapter of runtime_env')
         self.assertEqual(env['COMMS_V4_PULSE_WEBTRANSPORT_URL'], f'https://127.0.0.1:{dev.pulse_ports(self.config)[0]}')
         self.assertTrue(env['COMMS_V4_PULSE_AUDIENCE'])
+
+    def test_a_public_origin_is_what_the_realm_advertises(self):
+        config = {**self.config, 'public_origin': 'https://dev.example.test:5443'}
+        env = dev.runtime_env(config)
+        self.assertEqual(env['PUBLIC_URL'], 'https://dev.example.test:5443')
+        self.assertEqual(env['COMMS_FIXED_ADAPTER'], 'archipelago:wss://dev.example.test:5443/ws')
+        self.assertEqual(env['COMMS_ADAPTER'], 'fixed-adapter:' + env['COMMS_FIXED_ADAPTER'])
+        self.assertEqual(env['LIVEKIT_WS_URL'], 'wss://dev.example.test:5443', 'players reach LiveKit through the front')
+        self.assertEqual(env['LIVEKIT_HOST'], f'ws://127.0.0.1:{dev.livekit_ports(config)[0]}', 'the API still dials loopback')
+        self.assertEqual(env['DEV_ALLOWED_HOSTS'], '.dev.example.test', 'the host and its subdomains')
+        self.assertEqual(dev.runtime_env({**self.config, 'public_origin': 'http://10.0.0.5:5443'})['DEV_ALLOWED_HOSTS'],
+                         '10.0.0.5')
+        self.assertEqual(env['HTTP_TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128', 'the front is the loopback peer')
+        self.assertEqual((env['HTTP_SERVER_HOST'], env['HOST']), ('127.0.0.1', '127.0.0.1'), 'the front is the only listener')
+        # The web Explorer dials Pulse at the page's host and port over UDP, which the front cannot carry.
+        self.assertEqual(dev.pulse_ports(config)[0], 5443)
+        about = dev.pulse_about_env(config)
+        self.assertEqual(about['COMMS_V4_PULSE_WEBTRANSPORT_URL'], 'https://dev.example.test:5443')
+        self.assertEqual(about['COMMS_V4_PULSE_AUDIENCE'], 'dev.example.test:5443')
+        self.assertEqual(dev.pulse_env(config, Path('c'), Path('k'))['PULSE_WT_BIND'], '0.0.0.0:5443')
+        portless = {**self.config, 'public_origin': 'http://dev.example.test'}
+        self.assertEqual(dev.pulse_ports(portless)[0], dev.WEB_PULSE_PORT, "the engine's default when the page has no port")
+        self.assertEqual(dev.runtime_env(portless)['COMMS_FIXED_ADAPTER'], 'archipelago:ws://dev.example.test/ws')
+        loopback = dev.runtime_env(self.config)
+        self.assertEqual(loopback['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
+        self.assertNotIn('LIVEKIT_WS_URL', loopback)
+        self.assertNotIn('DEV_ALLOWED_HOSTS', loopback)
+        self.assertNotIn('HTTP_TRUSTED_PROXY_CIDRS', loopback)
+        self.assertEqual(dev.pulse_env(self.config, Path('c'), Path('k'))['PULSE_WT_BIND'],
+                         f"127.0.0.1:{self.config['port'] + 2}")
+
+    def test_the_public_origin_is_an_origin_taken_on_first_startup(self):
+        for bad in ('dev.example.test', 'https://dev.example.test/play', 'https://dev.example.test?x=1',
+                    'ftp://dev.example.test', 'https://user@dev.example.test'):
+            with self.assertRaisesRegex(ValueError, 'origin'):
+                dev.public_origin(bad)
+        self.assertEqual(dev.public_origin('https://dev.example.test/'), 'https://dev.example.test')
+        self.assertIsNone(dev.public_origin('local'))
+        self.assertIsNone(dev.public_origin(None))
+        self.assertIsNone(self.config.get('public_origin'), 'the default stack stays on loopback')
+        state = self.state / 'public'
+        state.mkdir()
+        with patch.object(dev, 'STATE', state), patch.object(dev, 'SETTINGS', state / 'settings.json'), \
+                patch.dict(os.environ, {'FOUNDATION_DEV_PUBLIC_ORIGIN': 'https://dev.example.test:5443',
+                                        'FOUNDATION_DEV_PORT': '6300'}):
+            self.assertEqual(dev.settings(create=True)['public_origin'], 'https://dev.example.test:5443')
+            self.assertEqual(json.loads((state / 'settings.json').read_text())['public_origin'],
+                             'https://dev.example.test:5443', 'the installed service has no environment')
+        with self.assertRaisesRegex(ValueError, 'go together'):
+            dev.origin_settings({'FOUNDATION_DEV_PUBLIC_ORIGIN': 'https://dev.example.test',
+                                 'FOUNDATION_DEV_TLS_CERT': '/unused'})
+        with self.assertRaisesRegex(ValueError, 'FOUNDATION_DEV_PUBLIC_ORIGIN'):
+            dev.origin_settings({'FOUNDATION_DEV_TLS_CERT': '/unused', 'FOUNDATION_DEV_TLS_KEY': '/unused'})
+
+    def test_a_developers_certificate_replaces_the_generated_pulse_pair(self):
+        # The settings keep resolved paths, and the macOS temporary directory is behind a link.
+        certificate, key = (self.state / 'dev.crt').resolve(), (self.state / 'dev.key').resolve()
+        config = {**self.config, 'public_origin': 'https://dev.example.test'}
+        with self.assertRaisesRegex(RuntimeError, 'missing'):
+            dev.origin_settings({}, 'https://dev.example.test', str(certificate), str(key))
+        certificate.write_text('cert'), key.write_text('key')
+        config.update(dev.origin_settings({}, 'https://dev.example.test', str(certificate), str(key)))
+        dev.save_json(dev.SETTINGS, config)
+        self.assertEqual(dev.pulse_certificate(config), (certificate, key))
+        self.assertFalse((self.state / 'pulse').exists(), 'nothing generated beside the given pair')
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execve') as execve:
+            dev.task('pulse')
+        self.assertEqual(execve.call_args.args[2]['PULSE_WT_CERT_PATH'], str(certificate))
+        self.assertEqual(execve.call_args.args[2]['PULSE_WT_BIND'], f'0.0.0.0:{dev.WEB_PULSE_PORT}')
+        # Without one, the generated certificate names the public host so a pinned browser can match it.
+        generated, _ = dev.pulse_certificate({**self.config, 'public_origin': 'https://dev.example.test'})
+        text = subprocess.run(['openssl', 'x509', '-in', generated, '-noout', '-ext', 'subjectAltName'],
+                              capture_output=True, text=True, check=True).stdout
+        self.assertIn('DNS:dev.example.test', text)
+        self.assertIn('IP Address:127.0.0.1', text)
+
+    def test_the_origin_command_reconfigures_a_stopped_stack(self):
+        out = io.StringIO()
+        with patch.object(dev, 'supervisor_running', return_value=True), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'https://dev.example.test']):
+            with self.assertRaisesRegex(RuntimeError, 'foundation-dev down'):
+                dev.main()
+        with patch.object(dev, 'supervisor_running', return_value=False), contextlib.redirect_stdout(out), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'https://dev.example.test:5443']):
+            dev.main()
+        self.assertEqual(dev.settings()['public_origin'], 'https://dev.example.test:5443')
+        self.assertIn('https://dev.example.test:5443', out.getvalue())
+        with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
+            dev.main()
+        self.assertIn("FOUNDATION_DEV_PUBLIC_URL=https://dev.example.test:5443", out.getvalue())
+        with patch.object(dev, 'supervisor_running', return_value=False), contextlib.redirect_stdout(out), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'local']):
+            dev.main()
+        self.assertIsNone(dev.settings()['public_origin'])
+        self.assertEqual(dev.runtime_env(dev.settings())['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
 
     @unittest.skipUnless(shutil.which('livekit-server'), 'livekit-server is supplied by nix develop')
     def test_livekit_server_starts_on_the_generated_config(self):

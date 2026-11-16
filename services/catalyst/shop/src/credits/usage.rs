@@ -9,7 +9,7 @@
 //! `land_authz` pattern:
 //! - `eth_getLogs` over `CREDITS_MANAGER_CONTRACT` and the CreditUsed topic
 //!   on the collections chain (`RPC_ENDPOINT_POLYGON`, `COLLECTIONS_CHAIN_ID`)
-//!   through the land_authz JSON-RPC log client (`land_authz::indexer::Rpc`,
+//!   through the shared JSON-RPC log client (`chain_index::rpc::Rpc`,
 //!   over the ONE guarded client), up to the chain's `finalized` block
 //!   (Polygon milestones: a few blocks behind the head; an endpoint without
 //!   the tag gets head - [`FALLBACK_CONFIRMATIONS`]), so a reorg never
@@ -56,10 +56,10 @@ use sqlx::{PgConnection, PgPool};
 use super::errors::ApiError;
 use super::reconcile::CreditUsageDiff;
 use super::store::Credits;
+pub use crate::chain_index::rpc::{Rpc, RpcLog};
+use crate::chain_index::rpc::{RpcError, hex_to_i64};
 use crate::http::Outbound;
 use crate::jobs::JobContext;
-use crate::land_authz::indexer::{IndexError as RpcError, hex_to_i64};
-pub use crate::land_authz::indexer::{Rpc, RpcLog};
 
 pub const JOB_NAME: &str = "credits-usage-index";
 /// The source a refusal names, and the variable that attaches the job.
@@ -200,14 +200,10 @@ fn is_word(s: &str) -> bool {
     s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn is_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// A 0x-prefixed 20-byte address, lowercased; `None` for anything else.
 pub fn normalize_address(raw: &str) -> Option<String> {
     let lower = raw.trim().to_ascii_lowercase();
-    is_address(&lower).then_some(lower)
+    crate::types::is_hex_address(&lower).then_some(lower)
 }
 
 pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {

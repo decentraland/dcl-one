@@ -83,6 +83,10 @@ mod chain_abi {
     }
 }
 
+/// MANA payments the fake chain reports by transaction hash: `(from, to)`.
+static PAYMENTS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, (Address, Address)>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// What the fake chain saw broadcast: the raw transactions it accepted.
 type RawTxs = Arc<Mutex<Vec<Vec<u8>>>>;
 
@@ -121,8 +125,9 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
             "eth_maxPriorityFeePerGas" => Json(ok(json!("0x59682f00"))),
             "eth_getTransactionCount" => Json(ok(json!("0x5"))),
             "eth_getBlockByNumber" => Json(ok(
-                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00" }),
+                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00", "timestamp": "0x6553f100" }),
             )),
+            "eth_blockNumber" => Json(ok(json!("0x50"))),
             "eth_sendRawTransaction" => {
                 let raw = req["params"][0].as_str().unwrap_or("");
                 let bytes = hex::decode(raw.trim_start_matches("0x")).unwrap_or_default();
@@ -130,7 +135,26 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
                 seen.lock().unwrap().push(bytes);
                 Json(ok(json!(format!("{hash:#x}"))))
             }
-            "eth_getTransactionReceipt" => Json(ok(json!({ "status": "0x1", "logs": [] }))),
+            "eth_getTransactionReceipt" => {
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                let paid = PAYMENTS.lock().unwrap().get(&hash).copied();
+                match paid {
+                    Some((from, to)) => Json(ok(json!({
+                        "status": "0x1",
+                        "blockNumber": "0x10",
+                        "logs": [{
+                            "address": MANA,
+                            "topics": [
+                                format!("0x{}", hex::encode(alloy_primitives::keccak256("Transfer(address,address,uint256)"))),
+                                format!("0x{:0>64}", hex::encode(from)),
+                                format!("0x{:0>64}", hex::encode(to)),
+                            ],
+                            "data": format!("0x{:064x}", 7_000_000_000_000_000_000u128),
+                        }],
+                    }))),
+                    None => Json(ok(json!({ "status": "0x1", "logs": [] }))),
+                }
+            }
             "eth_call" => {
                 let call = &req["params"][0];
                 let to = call
@@ -471,6 +495,118 @@ fn component(pool: PgPool) -> TransactionComponent {
 
 fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
+}
+
+#[tokio::test]
+async fn the_free_call_budget_never_holds_back_a_sale() {
+    use axum::response::IntoResponse;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    // A day no other test reserves in.
+    let at = chrono::NaiveDate::from_ymd_opt(2100, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tc.reserve_free_call(
+                10,
+                budget,
+                &sender(&a),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                at,
+            )
+            .await
+        }
+    };
+    free(&addrs[0], 2).await.expect("first free call");
+    free(&addrs[1], 2).await.expect("second free call");
+    let err = free(&addrs[2], 2).await.unwrap_err();
+    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert_eq!(
+        err.into_response().status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at,
+    )
+    .await
+    .expect("a sale still relays when the free-call budget is spent");
+    free(&addrs[2], 0).await.expect("0 is no limit");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn sales_and_credits_spends_are_paid_calls() {
+    let settings = Settings::for_tests();
+    let call = |to: &str, data: String| super::transaction::TransactionData {
+        from: VICTIM.to_string(),
+        params: vec![to.to_string(), data],
+    };
+    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let meta = |inner: Vec<u8>| {
+        format!(
+            "0x{}",
+            hex::encode(
+                executeMetaTransactionCall {
+                    userAddress: VICTIM.parse().unwrap(),
+                    functionSignature: inner.into(),
+                    sigR: Default::default(),
+                    sigS: Default::default(),
+                    sigV: 27,
+                }
+                .abi_encode()
+            )
+        )
+    };
+    let mut use_credits = crate::policy_entry::USE_CREDITS_SELECTOR.to_vec();
+    use_credits.extend([0u8; 32]);
+    assert!(super::transaction::is_paid_call(
+        &settings,
+        &call(credits_manager, meta(use_credits.clone()))
+    ));
+    // The checkout client relays credits spends in the combined-signature form.
+    let combined = format!(
+        "0x{}",
+        hex::encode(
+            super::abi::combined_sig::executeMetaTransactionCall {
+                userAddress: VICTIM.parse().unwrap(),
+                functionData: use_credits.into(),
+                signature: vec![0u8; 65].into(),
+            }
+            .abi_encode()
+        )
+    );
+    assert!(
+        super::transaction::is_paid_call(&settings, &call(credits_manager, combined)),
+        "a combined-signature useCredits is a credits spend"
+    );
+    assert!(
+        !super::transaction::is_paid_call(
+            &settings,
+            &call(credits_manager, meta(vec![0xde, 0xad, 0xbe, 0xef]))
+        ),
+        "the manager's other functions are free calls"
+    );
+    assert!(
+        !super::transaction::is_paid_call(&settings, &call(COLLECTION, "0xa22cb465".into())),
+        "an approval on a collection is a free call"
+    );
 }
 
 #[tokio::test]
@@ -1560,6 +1696,35 @@ async fn upstream_524_keeps_the_slot_as_indeterminate() {
 /// An app whose only chain access is a direct signer against the fake chain
 /// and whose pool never connects: it serves the endpoints that read the chain
 /// without touching Postgres (payments config, nonce, balance).
+/// A confirmed payment reports where and how deep it was mined.
+#[tokio::test]
+async fn verify_reports_the_payment_block_and_depth() {
+    let (app, key, _) = chain_only_app(true).await;
+    let relayer = key.unwrap().address();
+    let payer = Address::repeat_byte(0x22);
+    let hash = format!("0x{}", "c4".repeat(32));
+    PAYMENTS
+        .lock()
+        .unwrap()
+        .insert(hash.clone(), (payer, relayer));
+    let (status, text) = send(
+        &app,
+        "POST",
+        "/v1/payments/verify",
+        Some(json!({ "txHash": hash }).to_string()),
+        &[("authorization", &format!("Bearer {ADMIN}"))],
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["status"], "confirmed");
+    assert_eq!(v["from"], format!("{payer:#x}"));
+    assert_eq!(v["valueWei"], "7000000000000000000");
+    assert_eq!(v["blockNumber"], 16);
+    assert_eq!(v["blockTimestamp"], 0x6553f100);
+    assert_eq!(v["confirmations"], 0x50 - 16);
+}
+
 async fn chain_only_app(with_signer: bool) -> (axum::Router, Option<PrivateKeySigner>, RawTxs) {
     let (chain_url, raws) = spawn_fake_chain().await;
     let mut settings = Settings {

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/robot.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Robot.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"health\":{\"type\":\"number\",\"value\":30,\"optional\":true,\"tooltip\":\"How many hits the robot takes before it's destroyed.\"},\"speed\":{\"type\":\"number\",\"value\":1,\"optional\":true,\"tooltip\":\"How fast it moves toward the player (units per second).\"},\"followDistance\":{\"type\":\"number\",\"value\":2,\"optional\":true,\"tooltip\":\"How close it gets before it stops moving in.\"},\"attackRadius\":{\"type\":\"number\",\"value\":3,\"optional\":true,\"tooltip\":\"How close the player must be to take damage.\"},\"attackDamage\":{\"type\":\"number\",\"value\":10,\"optional\":true,\"tooltip\":\"How much damage each attack deals.\"},\"attackInterval\":{\"type\":\"number\",\"value\":1,\"optional\":true,\"tooltip\":\"Seconds between attacks.\"},\"attackAnimation\":{\"type\":\"string\",\"value\":\"Attack\",\"optional\":true,\"tooltip\":\"Animation clip played when it attacks.\"},\"deathAnimation\":{\"type\":\"string\",\"value\":\"explode\",\"optional\":true,\"tooltip\":\"Animation clip played when it's destroyed.\"},\"removeAfter\":{\"type\":\"number\",\"value\":0.5,\"optional\":true,\"tooltip\":\"Seconds after dying before the robot is removed.\"}},\"actions\":[{\"methodName\":\"die\",\"description\":\"Destroys the robot: plays the death animation and removes it.\",\"params\":{}}],\"events\":[\"death\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Die",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Robot.ts\",\"methodName\":\"die\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

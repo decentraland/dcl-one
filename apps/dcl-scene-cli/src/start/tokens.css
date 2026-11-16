@@ -1,0 +1,29 @@
+:root {
+  color-scheme: dark light; --page: #0e0d10; --line-ctl: rgba(255,255,255,.18);
+  --brand-cta-hover: #b00021; --glass: rgba(13,12,15,.92); --shadow-bar: 0 2px 14px rgba(0,0,0,.35);
+  --brand-wash: color-mix(in srgb, var(--brand) 10%, transparent);
+  --brand-line: color-mix(in srgb, var(--brand) 45%, transparent);
+  --warn-wash: color-mix(in srgb, var(--warning) 10%, transparent);
+  --warn-line: color-mix(in srgb, var(--warning) 45%, transparent);
+  --err-wash: color-mix(in srgb, var(--error) 10%, transparent);
+  --err-line: color-mix(in srgb, var(--error) 45%, transparent);
+  --tr: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+  --ctl-radius: var(--r-control); --ctl-weight: var(--fw-semibold); --ctl-tracking: 0;
+  --sp-track: var(--fill-4); --ui-panel: var(--panel); --ui-border: var(--line);
+  --ui-border-strong: var(--line-ctl); --ui-text: var(--text); --ui-muted: var(--ink-6);
+  --ui-accent: var(--brand-ink); --ui-selected: var(--brand-wash); --ui-hover: var(--fill-2);
+  --ui-radius: var(--r-control); --ui-card-radius: var(--r-card); --ui-font: var(--font-sans);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #f3f2f5; --panel: #ffffff; --line: rgba(22,21,24,.14); --line-ctl: rgba(22,21,24,.18);
+    --fill-1: rgba(22,21,24,.04); --fill-2: rgba(22,21,24,.06); --fill-3: rgba(22,21,24,.08);
+    --fill-4: rgba(22,21,24,.1); --fill-5: rgba(22,21,24,.12); --text: rgba(22,21,24,.9);
+    --ink-85: rgba(22,21,24,.85); --ink-7: rgba(22,21,24,.68); --ink-6: rgba(22,21,24,.62);
+    --ink-45: rgba(22,21,24,.6); --brand-ink: #d80029; --glass: rgba(255,255,255,.92);
+    --shadow-bar: 0 1px 3px rgba(22,20,26,.08); --success: #0f7a3d; --online: #2b7a15;
+    --warning: #8a4b00; --error: #c11414;
+  }
+}
+.btn--primary { --brand-hover: var(--brand-cta-hover); }

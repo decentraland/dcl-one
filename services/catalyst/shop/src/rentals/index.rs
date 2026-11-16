@@ -21,18 +21,19 @@
 //! (`chain_walk::is_ready`); before that a listing is `open` as posted, and
 //! the rent quote (`shop::mana`) checks the nonces on chain instead.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol_data};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool, Row};
 
+use crate::chain_index::rpc::RpcLog;
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::land_authz::indexer::RpcLog;
 use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainIndex, ChainNet, LogGroup};
 
@@ -104,17 +105,6 @@ pub struct DecodeError {
     pub index: i32,
     pub what: &'static str,
     pub why: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn lower(a: Address) -> String {
@@ -557,12 +547,13 @@ pub async fn status(pool: &PgPool) -> Value {
     })
 }
 
-/// Attaches `rentals-index` when `enabled` (`SHOP_RENTALS_INDEX_ENABLED`)
-/// and a chain-1 JSON-RPC endpoint is configured (`TRADE_RPC_URLS` 1=, or
-/// `ETH_RPC_URL` on mainnet), on the market indexes' cadence and budget.
-/// Run by `catalyst index`; a fresh cursor walks from the contract's deployment.
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
-    if !enabled {
+/// Attaches `rentals-index` when a chain-1 JSON-RPC endpoint is configured
+/// (`TRADE_RPC_URLS` 1=, or `ETH_RPC_URL` on mainnet) and `enabled`
+/// (`SHOP_RENTALS_INDEX_ENABLED`) is not `Some(false)`, on the market
+/// indexes' cadence and budget. Run by `catalyst index`; a fresh cursor
+/// walks from the contract's deployment.
+pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: Option<bool>) {
+    if enabled == Some(false) {
         tracing::info!(
             "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): rental listings keep the status they were posted with"
         );
@@ -570,9 +561,12 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
     }
     // The venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
     let Some(url) = market.venue_rpc_url(1) else {
-        tracing::warn!(
-            "rentals index enabled but no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet): it stays off"
-        );
+        let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";
+        if enabled == Some(true) {
+            tracing::warn!("rentals index enabled but {why}: it stays off");
+        } else {
+            tracing::info!("rentals index off: {why}");
+        }
         return;
     };
     let settings = market.settings.market.indexes.clone();
@@ -585,7 +579,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
         move |ctx| {
             let (market, url, settings) = (market.clone(), url.clone(), settings.clone());
             async move {
-                let rpc = crate::land_authz::indexer::Rpc::at(&market.http, &url);
+                let rpc = crate::chain_index::rpc::Rpc::at(&market.http, &url);
                 crate::market::ensure_chain(&rpc, 1).await?;
                 let progress = |m: String| ctx.progress(m);
                 let outcome = chain_walk::run_pass(
@@ -608,7 +602,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::keccak256;
+    use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
 
     #[test]

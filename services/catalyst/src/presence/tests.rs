@@ -46,14 +46,12 @@ struct FakeSources {
 
 #[async_trait]
 impl Sources for FakeSources {
-    async fn peers(&self) -> anyhow::Result<Vec<Peer>> {
-        Ok(self.peers.clone())
-    }
-    async fn islands(&self) -> anyhow::Result<Vec<Island>> {
-        Ok(self.islands.clone())
-    }
-    async fn hot_scenes(&self) -> anyhow::Result<Vec<HotScene>> {
-        Ok(self.hot_scenes.clone())
+    async fn statistics(&self) -> anyhow::Result<super::sources::Statistics> {
+        Ok(super::sources::Statistics {
+            peers: self.peers.clone(),
+            islands: self.islands.clone(),
+            hot_scenes: self.hot_scenes.clone(),
+        })
     }
     async fn scene_participants(
         &self,
@@ -803,113 +801,413 @@ async fn daily_stats_rolls_a_day_up_and_rebuilds_on_rerun() {
 }
 
 mod module_sources {
-    use super::super::sources::{
-        HOT_SCENES_LIMIT, hot_scenes_of, island_of, peer_of, peers_per_tile,
+    use crate::comms::{
+        gatekeeper::bus::InProcessBus,
+        protocol::bus::statistics::{
+            Change, Frames, Peer, SNAPSHOTS_SUBJECT, Snapshot, Update, frames,
+        },
+        stats,
     };
-    use crate::comms::archipelago::content::Scene;
-    use crate::comms::archipelago::feed::IslandReport;
-    use crate::comms::archipelago::peers::PeerState;
-    use std::collections::HashMap;
-
-    fn peer_state(address: &str, x: f32, z: f32) -> PeerState {
-        PeerState {
-            address: address.into(),
-            position: [x, 1.0, z],
-            parcel: [0, 0],
-            realm: "main".into(),
-            last_heartbeat: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-            island_id: None,
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    struct UpdatingContent {
+        bus: Arc<InProcessBus>,
+    }
+    #[async_trait]
+    impl stats::content::Source for UpdatingContent {
+        async fn fetch(
+            &self,
+            pointers: &[String],
+        ) -> Result<Vec<crate::content::OrderedJson>, stats::content::Error> {
+            assert_eq!(pointers, &["0,0"]);
+            let update = Update::Change {
+                revision: 2,
+                change: Change::Remove("MixedCase".into()),
+            };
+            for frame in Frames::new(&update, uuid::Uuid::nil(), 2, 65536).unwrap() {
+                self.bus.inject(SNAPSHOTS_SUBJECT, &frame);
+            }
+            Ok(vec![
+                serde_json::from_str(
+                    r#"{"id":"scene", "metadata":{"scene":{"base":"0,0","parcels":["0,0"]}}}"#,
+                )
+                .unwrap(),
+            ])
         }
     }
 
-    fn scene(id: &str, base: [i32; 2], parcels: &[&str]) -> Scene {
-        Scene {
-            id: id.into(),
-            name: Some(id.to_uppercase()),
-            base,
-            parcels: parcels.iter().map(|p| p.to_string()).collect(),
-            thumbnail: None,
-            creator: Some("0xc".into()),
-            project_id: None,
-            description: None,
-        }
-    }
-
-    #[test]
-    fn a_peer_row_carries_the_parcel_of_its_position_and_its_ping_in_ms() {
-        let p = peer_of(&peer_state("0xAb", 96.5 * 16.0, -132.0 * 16.0));
-        assert_eq!(
-            (p.address.as_str(), p.parcel_x, p.parcel_y),
-            ("0xAb", Some(96), Some(-132))
+    #[tokio::test]
+    async fn validated_historical_sync_order_reaches_hot_scenes_http() {
+        use crate::content::sync_deployer::{LiveSyncDeployer, SyncValidation};
+        use alloy::signers::{Signer as _, local::PrivateKeySigner};
+        let pool = crate::db::scratch::pool(3)
+            .await
+            .expect("test database required");
+        let temp = std::env::temp_dir().join(format!("ordered-ingestion-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&temp).await.unwrap());
+        let code = bytes::Bytes::from_static(b"export function onUpdate() {}");
+        let hash = dcl_auth::hash_bytes_v1(&code);
+        storage.store(&hash, code).await.unwrap();
+        // Historical sync legitimately skips the modern primitive-type metadata schema.
+        // Access is explicitly controlled; all other content validation runs.
+        let metadata = r#"{"main":"bin/index.js","scene":{"base":"23,24","parcels":["23,24"]},"display":{"title":{"z":9007199254740993,"a":2},"description":"archive text"},"contact":{"name":"creator"},"source":{"origin":"builder","projectId":"project"}}"#;
+        let raw = format!(
+            r#"{{"version":"v3","type":"scene","pointers":["23,24"],"timestamp":1650000000000,"content":[{{"file":"bin/index.js","hash":"{hash}"}}],"metadata":{metadata}}}"#
         );
-        assert_eq!(
-            (p.position_x, p.position_y, p.position_z),
-            (Some(1544.0), Some(1.0), Some(-2112.0))
+        let id = dcl_auth::hash_bytes_v1(raw.as_bytes());
+        storage
+            .store(&id, bytes::Bytes::copy_from_slice(raw.as_bytes()))
+            .await
+            .unwrap();
+        let key = PrivateKeySigner::random();
+        let chain = serde_json::from_value(serde_json::json!([
+            {"type":"SIGNER","payload":format!("{:#x}",key.address()),"signature":""},
+            {"type":"ECDSA_SIGNED_ENTITY","payload":id,"signature":key.sign_message(id.as_bytes()).await.unwrap().to_string()}
+        ])).unwrap();
+        let sources = crate::content::validator::Sources::new(
+            pool.clone(),
+            storage.clone(),
+            crate::http::Outbound::for_tests(),
+            None,
+            crate::content::validator::Settings {
+                ignore_blockchain_access: true,
+                eth_network: "mainnet".into(),
+                ..Default::default()
+            },
         );
-        assert_eq!(p.last_ping, Some(1_700_000_000_000));
-    }
-
-    #[test]
-    fn an_island_counts_only_the_members_this_replica_knows() {
-        let known: HashMap<String, PeerState> = [("0xa".to_string(), peer_state("0xa", 0.0, 0.0))]
-            .into_iter()
-            .collect();
-        let report = IslandReport {
-            id: "I1".into(),
-            peers: vec!["0xa".into(), "0xghost".into()],
-            max_peers: 100,
-            center: [1.0, 2.0, 3.0],
-            radius: 50.0,
+        let deployer =
+            LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::Content(Arc::new(sources)));
+        deployer
+            .deploy_entity(
+                raw.as_bytes(),
+                &id,
+                &chain,
+                crate::content::sync::DeploymentContext::Synced,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        deployer.flush().await.unwrap();
+        assert_eq!(
+            storage.retrieve(&id).await.unwrap().unwrap().as_ref(),
+            raw.as_bytes()
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, format!(r#"{{"v":{metadata}}}"#));
+        eprintln!("historical_sync_sql={stored}");
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let source = Arc::new(stats::content::Content {
+            pool: pool.clone(),
+            denylist: Arc::new(crate::content::Denylist::default()),
+        });
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "historical".into(),
+                position: [368., 0., 384.],
+                time: 1,
+            }],
+            ..Default::default()
         };
-        let i = island_of(&report, &known);
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let archive = super::super::sources::statistics(&reader, source.as_ref(), "")
+            .await
+            .unwrap();
+        assert_eq!(archive.hot_scenes.len(), 1);
+        assert_eq!(archive.hot_scenes[0].scene_id, id);
+        assert_eq!(archive.hot_scenes[0].name, None);
         assert_eq!(
-            (i.island_id.as_str(), i.peer_count, i.max_peers),
-            ("I1", 1, Some(100))
+            archive.hot_scenes[0].description.as_deref(),
+            Some("archive text")
         );
+        assert_eq!(archive.hot_scenes[0].creator.as_deref(), Some("creator"));
+        struct Hooks;
+        #[async_trait]
+        impl stats::http::Hooks for Hooks {
+            async fn probe(&self, _: bool) -> stats::http::Lifecycle {
+                Default::default()
+            }
+            async fn metrics(&self) -> Result<String, stats::content::Error> {
+                Ok(String::new())
+            }
+            async fn diagnostics(&self) -> Result<String, stats::content::Error> {
+                Ok(String::new())
+            }
+            fn observe(&self, _: stats::http::Observation) {}
+        }
+        let app = stats::http::standalone(stats::http::State::new(
+            reader,
+            source,
+            Arc::new(Hooks),
+            Default::default(),
+            stats::http::test_support::matcher(),
+        ));
+        async fn request(
+            app: axum::Router,
+            method: &str,
+            path: &str,
+        ) -> (axum::http::StatusCode, axum::http::HeaderMap, String) {
+            use tower::ServiceExt;
+            let response = app
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, headers, String::from_utf8(body.to_vec()).unwrap())
+        }
+        let (status, headers, body) = request(app.clone(), "GET", "/hot-scenes").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(
-            (i.center_x, i.center_y, i.center_z, i.radius),
-            (Some(1.0), Some(2.0), Some(3.0), Some(50.0))
+            body,
+            format!(
+                r#"[{{"id":"{id}","name":{{"z":9007199254740992,"a":2}},"baseCoords":[23,24],"usersTotalCount":1,"parcels":[[23,24]],"creator":"creator","projectId":"project","description":"archive text"}}]"#
+            )
         );
+        assert_eq!(headers["content-length"], body.len().to_string());
+        eprintln!("historical_sync_hot_scenes={body}");
+        assert!(request(app, "HEAD", "/hot-scenes").await.2.is_empty());
+        sqlx::query("DELETE FROM content.active_pointers WHERE entity_id=$1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content.content_files WHERE deployment IN (SELECT id FROM content.deployments WHERE entity_id=$1)").bind(&id).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM content.deployments WHERE entity_id=$1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(storage);
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
-    #[test]
-    fn hot_scenes_sum_their_parcels_and_come_busiest_first() {
-        let peers = vec![
-            peer_state("a", 0.0, 0.0),
-            peer_state("b", 5.0, 5.0),
-            peer_state("c", 16.0, 0.0),
-            peer_state("d", 800.0, 800.0),
-        ];
-        let per_tile = peers_per_tile(&peers);
-        assert_eq!(per_tile.get("0,0"), Some(&2));
-        assert_eq!(per_tile.get("1,0"), Some(&1));
-        assert_eq!(per_tile.get("50,50"), Some(&1));
-        let hot = hot_scenes_of(
-            &per_tile,
-            vec![
-                scene("far", [50, 50], &["50,50"]),
-                scene("plaza", [0, 0], &["0,0", "1,0", "2,0"]),
-            ],
-        );
+    #[tokio::test]
+    async fn selected_sql_archive_observes_shared_content_policy() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("test database required");
+        let tag = uuid::Uuid::new_v4();
+        let coordinate = 1_600_000 + (tag.as_u128() % 100_000) as i32;
+        let ids = [format!("allowed-{tag}"), format!("denied-{tag}")];
+        // Synthetic persisted rows test the read policy, not deployment admission.
+        for (i, id) in ids.iter().enumerate() {
+            let pointer = format!("{},0", coordinate + i as i32);
+            let metadata = serde_json::json!({"v":{"scene":{"base":pointer,"parcels":[pointer]},"display":{"title":"allowed title","description":"text"},"contact":{"name":"creator"}}});
+            sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(pointer).bind(id).execute(&pool).await.unwrap();
+        }
+        let denylist = Arc::new(crate::content::Denylist::default());
+        denylist.set_operator([ids[1].clone()]);
+        let source = stats::content::Content {
+            pool,
+            denylist: denylist.clone(),
+        };
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let snapshot = Snapshot {
+            peers: (0..2)
+                .map(|i| Peer {
+                    address: format!("peer-{i}"),
+                    position: [f64::from(coordinate + i) * 16., 0., 0.],
+                    time: 1,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let result = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
         assert_eq!(
-            hot.iter()
-                .map(|h| (h.scene_id.as_str(), h.users_count, h.parcel_count))
-                .collect::<Vec<_>>(),
-            vec![("plaza", Some(3), 3), ("far", Some(1), 1)]
+            result.peers.len(),
+            2,
+            "content policy leaves the retained population intact"
         );
-        assert_eq!(
-            (
-                hot[0].base_x,
-                hot[0].base_y,
-                hot[0].name.as_deref(),
-                hot[0].creator.as_deref()
-            ),
-            (Some(0), Some(0), Some("PLAZA"), Some("0xc"))
+        assert_eq!(result.hot_scenes.len(), 1);
+        let scene = &result.hot_scenes[0];
+        assert_eq!(scene.scene_id, ids[0]);
+        assert_eq!(scene.name.as_deref(), Some("allowed title"));
+        assert_eq!(scene.description.as_deref(), Some("text"));
+        assert_eq!(scene.creator.as_deref(), Some("creator"));
+        assert_eq!(scene.users_count, Some(1));
+        denylist.set_operator(ids);
+        let next = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        assert!(next.hot_scenes.is_empty());
+        assert_eq!(next.peers.len(), 2);
+        source.pool.close().await;
+        assert!(
+            super::super::sources::statistics(&reader, &source, "")
+                .await
+                .is_err(),
+            "SQL failure remains an archive failure even when every ID is denied"
         );
-        let many: Vec<Scene> = (0..HOT_SCENES_LIMIT + 5)
-            .map(|i| scene(&format!("s{i}"), [i as i32, 0], &[]))
-            .collect();
-        assert_eq!(hot_scenes_of(&HashMap::new(), many).len(), HOT_SCENES_LIMIT);
+        for frame in frames(&Snapshot::default(), uuid::Uuid::nil(), 2, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let empty = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        assert!(
+            empty.hot_scenes.is_empty(),
+            "empty population skips the closed SQL source"
+        );
+        assert!(empty.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_reads_selected_sql_metadata_and_omits_non_string_fields() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("test database required");
+        let id = format!("archive-{}", uuid::Uuid::new_v4());
+        let coordinate = 1_500_000 + (uuid::Uuid::new_v4().as_u128() % 100_000) as i32;
+        let pointer = format!("{coordinate},0");
+        let metadata = format!(
+            r#"{{"v":{{"scene":{{"base":"{pointer}","parcels":["{pointer}","{pointer}"]}},"display":{{"title":{{"z":1,"a":2}},"description":{{"z":true,"a":null}}}},"contact":{{"name":["legacy"]}}}}}}"#
+        );
+        sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2::json,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(&id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(&pointer).bind(&id).execute(&pool).await.unwrap();
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "archive".into(),
+                position: [f64::from(coordinate) * 16., 0., 0.],
+                time: 1,
+            }],
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let source = stats::content::Content {
+            pool,
+            denylist: Arc::new(crate::content::Denylist::default()),
+        };
+        let result = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        let scene = &result.hot_scenes[0];
+        assert_eq!(scene.scene_id, id);
+        assert_eq!(scene.users_count, Some(2));
+        assert_eq!(scene.parcel_count, 2);
+        assert_eq!(scene.base_x, Some(coordinate));
+        assert_eq!(scene.name, None);
+        assert_eq!(scene.creator, None);
+        assert_eq!(scene.description, None);
+        use stats::content::Source;
+        let docs = source.fetch(&[pointer.clone()]).await.unwrap();
+        let http = stats::content::hot_scenes(&docs, &[(pointer, 1)], "").unwrap();
+        assert!(http.contains(r#""name":{"z":1,"a":2}"#));
+        assert!(http.contains(r#""usersTotalCount":2"#));
+        assert!(http.contains(&format!(r#""id":"{id}""#)));
+    }
+
+    #[tokio::test]
+    async fn archive_rejects_count_overflow_instead_of_saturating() {
+        use prost::Message;
+        let bus = Arc::new(InProcessBus::new());
+        let reader = Arc::new(stats::Reader::default());
+        let _subscription = reader.subscribe(bus.as_ref());
+        let snapshot = Snapshot {
+            islands: crate::comms::protocol::archipelago::archipelago::IslandStatusMessage {
+                data: vec![
+                    crate::comms::protocol::archipelago::archipelago::IslandData {
+                        id: "oversized-capacity".into(),
+                        max_peers: u32::MAX,
+                        center: Some(Default::default()),
+                        ..Default::default()
+                    },
+                ],
+            }
+            .encode_to_vec(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        assert!(
+            super::super::sources::statistics(&reader, &UpdatingContent { bus }, "")
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn archive_retains_one_statistics_snapshot_while_content_awaits() {
+        use prost::Message;
+        let bus = Arc::new(InProcessBus::new());
+        let reader = Arc::new(stats::Reader::default());
+        let _subscription = reader.subscribe(bus.as_ref());
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "MixedCase".into(),
+                position: [1., 2., 3.],
+                time: 123,
+            }],
+            islands: crate::comms::protocol::archipelago::archipelago::IslandStatusMessage {
+                data: vec![
+                    crate::comms::protocol::archipelago::archipelago::IslandData {
+                        id: "island".into(),
+                        peers: vec!["MixedCase".into(), "unknown".into()],
+                        max_peers: 0,
+                        center: Some(crate::comms::protocol::archipelago::Position {
+                            x: 0.,
+                            y: 0.,
+                            z: 0.,
+                        }),
+                        radius: 1.0000000001,
+                    },
+                ],
+            }
+            .encode_to_vec(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let result = super::super::sources::statistics(
+            &reader,
+            &UpdatingContent { bus },
+            "https://content.invalid",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.peers.len(), 1);
+        assert_eq!(result.peers[0].address, "MixedCase");
+        assert_eq!(result.peers[0].last_ping, Some(123));
+        assert_eq!(result.islands[0].peer_count, 1);
+        assert_eq!(result.islands[0].radius, Some(1.0000000001));
+        assert_eq!(result.hot_scenes[0].users_count, Some(1));
+        assert!(
+            reader.snapshot().peers.is_empty(),
+            "content changed the live view while pass retained its Arc"
+        );
     }
 }
 

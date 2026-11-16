@@ -1,0 +1,613 @@
+[
+  {
+    "id": "default",
+    "kind": "route",
+    "pattern": "/metrics",
+    "inputs": [
+      "/metrics",
+      "/METRICS",
+      "/metrics/",
+      "/metrics?",
+      "/metrics#",
+      "/metrics\n",
+      "/metrics\r\n",
+      "/metrics\u2028",
+      "/metrics/x"
+    ]
+  },
+  {
+    "id": "modifier-?",
+    "kind": "route",
+    "pattern": "/scrape/:tenant?",
+    "inputs": [
+      "/scrape",
+      "/scrape/",
+      "/scrape/a",
+      "/scrape/a/b",
+      "/scrape/a/"
+    ]
+  },
+  {
+    "id": "modifier-*",
+    "kind": "route",
+    "pattern": "/scrape/:tenant*",
+    "inputs": [
+      "/scrape",
+      "/scrape/",
+      "/scrape/a",
+      "/scrape/a/b",
+      "/scrape/a/"
+    ]
+  },
+  {
+    "id": "modifier-+",
+    "kind": "route",
+    "pattern": "/scrape/:tenant+",
+    "inputs": [
+      "/scrape",
+      "/scrape/",
+      "/scrape/a",
+      "/scrape/a/b",
+      "/scrape/a/"
+    ]
+  },
+  {
+    "id": "braced",
+    "kind": "route",
+    "pattern": "/scrape{/:tenant}?",
+    "inputs": [
+      "/scrape",
+      "/scrape/a",
+      "/scrape/a/b"
+    ]
+  },
+  {
+    "id": "custom-digits",
+    "kind": "route",
+    "pattern": "/scrape/:tenant(\\d+)",
+    "inputs": [
+      "/scrape/123",
+      "/scrape/a"
+    ]
+  },
+  {
+    "id": "extension",
+    "kind": "route",
+    "pattern": "/scrape/:base.:ext",
+    "inputs": [
+      "/scrape/a.txt",
+      "/scrape/a.b.txt",
+      "/scrape/a"
+    ]
+  },
+  {
+    "id": "escaped-literal",
+    "kind": "route",
+    "pattern": "/scrape/\\:literal",
+    "inputs": [
+      "/scrape/:literal",
+      "/scrape/a"
+    ]
+  },
+  {
+    "id": "separator",
+    "kind": "route",
+    "pattern": "/scrape//x",
+    "inputs": [
+      "/scrape//x",
+      "/scrape/x",
+      "/scrape//x/"
+    ]
+  },
+  {
+    "id": "wildcard",
+    "kind": "route",
+    "pattern": "/scrape/(.*)",
+    "inputs": [
+      "/scrape",
+      "/scrape/",
+      "/scrape/a/b"
+    ]
+  },
+  {
+    "id": "suffix-prefix",
+    "kind": "route",
+    "pattern": "/scrape{pre-:id(\\d+)-post}?",
+    "inputs": [
+      "/scrape",
+      "/scrapepre-12-post",
+      "/scrapepre-x-post"
+    ]
+  },
+  {
+    "id": "safe-lookahead",
+    "kind": "route",
+    "pattern": "/x/:a-:b",
+    "inputs": [
+      "/x/a-b",
+      "/x/a-b-c",
+      "/x/-b"
+    ]
+  },
+  {
+    "id": "lookahead",
+    "kind": "route",
+    "pattern": "/x/:a((?=a)a+)",
+    "inputs": [
+      "/x/a",
+      "/x/aa",
+      "/x/b"
+    ]
+  },
+  {
+    "id": "lookbehind",
+    "kind": "route",
+    "pattern": "/x/:a((?<=/)a+)",
+    "inputs": [
+      "/x/a",
+      "/x/aa"
+    ]
+  },
+  {
+    "id": "backref",
+    "kind": "route",
+    "pattern": "/x/:a(a\\1)",
+    "inputs": [
+      "/x/a",
+      "/x/aa"
+    ]
+  },
+  {
+    "id": "error-0",
+    "kind": "route",
+    "pattern": "/:",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-1",
+    "kind": "route",
+    "pattern": "/x/(",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-2",
+    "kind": "route",
+    "pattern": "/x/{a",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-3",
+    "kind": "route",
+    "pattern": "/*",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-4",
+    "kind": "route",
+    "pattern": "/x/:a((a))",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-5",
+    "kind": "route",
+    "pattern": "/x/:a:b",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-6",
+    "kind": "route",
+    "pattern": "/x/:a()",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-7",
+    "kind": "route",
+    "pattern": "/x/:a(?=a)",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-8",
+    "kind": "route",
+    "pattern": "/x/:a([)",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "error-9",
+    "kind": "route",
+    "pattern": "/x/:a{2}",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "dotless",
+    "kind": "route",
+    "pattern": "/x/:a(\\u0131)",
+    "inputs": [
+      "/x/i",
+      "/x/I",
+      "/x/\u0131"
+    ]
+  },
+  {
+    "id": "long-s",
+    "kind": "route",
+    "pattern": "/x/:a(\\u017f)",
+    "inputs": [
+      "/x/s",
+      "/x/S",
+      "/x/\u017f"
+    ]
+  },
+  {
+    "id": "kelvin",
+    "kind": "route",
+    "pattern": "/x/\u212a",
+    "inputs": [
+      "/x/K",
+      "/x/k",
+      "/x/\u212a"
+    ]
+  },
+  {
+    "id": "unicode",
+    "kind": "route",
+    "pattern": "/x/\u00e9",
+    "inputs": [
+      "/x/\u00c9",
+      "/x/\u00e9"
+    ]
+  },
+  {
+    "id": "identity-u-brace",
+    "kind": "route",
+    "pattern": "/x/:a(\\u{61})",
+    "inputs": [
+      "/x/a",
+      "/x/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+      "/x/u{61}"
+    ]
+  },
+  {
+    "id": "identity-k",
+    "kind": "route",
+    "pattern": "/x/:a(\\k<a>)",
+    "inputs": [
+      "/x/k<a>",
+      "/x/a"
+    ]
+  },
+  {
+    "id": "octal",
+    "kind": "route",
+    "pattern": "/x/:a(\\141)",
+    "inputs": [
+      "/x/a",
+      "/x/141"
+    ]
+  },
+  {
+    "id": "escape8",
+    "kind": "route",
+    "pattern": "/x/:a(\\8)",
+    "inputs": [
+      "/x/8",
+      "/x/\b"
+    ]
+  },
+  {
+    "id": "escape-x",
+    "kind": "route",
+    "pattern": "/x/:a(\\xZ)",
+    "inputs": [
+      "/x/xZ",
+      "/x/Z"
+    ]
+  },
+  {
+    "id": "surrogate-quantifier",
+    "kind": "route",
+    "pattern": "/x/:a(\\uD83D\\uDE00+)",
+    "inputs": [
+      "/x/\ud83d\ude00",
+      "/x/\ud83d\ude00\ud83d\ude00"
+    ]
+  },
+  {
+    "id": "dot-units",
+    "kind": "route",
+    "pattern": "/x/:a(.)",
+    "inputs": [
+      "/x/\ud83d\ude00"
+    ]
+  },
+  {
+    "id": "dot-two",
+    "kind": "route",
+    "pattern": "/x/:a(..)",
+    "inputs": [
+      "/x/\ud83d\ude00",
+      "/x/ab"
+    ]
+  },
+  {
+    "id": "modifier-group",
+    "kind": "route",
+    "pattern": "/x/:a((?-i:a))",
+    "inputs": [
+      "/x/a",
+      "/x/A"
+    ]
+  },
+  {
+    "id": "possessive",
+    "kind": "route",
+    "pattern": "/x/:a(a++)",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "atomic",
+    "kind": "route",
+    "pattern": "/x/:a((?>a))",
+    "inputs": [
+      "/x/a"
+    ]
+  },
+  {
+    "id": "duplicate-before-inner-alternative",
+    "kind": "route",
+    "pattern": "/x/:v((?<a>a)(?:(?<b>b)|(?<a>c)))",
+    "inputs": [
+      "/x/ab",
+      "/x/ac",
+      "/x/a",
+      "/x/c"
+    ]
+  },
+  {
+    "id": "duplicate-nested-name",
+    "kind": "route",
+    "pattern": "/x/:v((?<a>(?<a>a)))",
+    "inputs": [
+      "/x/a",
+      "/x/aa"
+    ]
+  },
+  {
+    "id": "duplicate-mutually-exclusive-control",
+    "kind": "route",
+    "pattern": "/x/:v((?:(?<a>a)|(?<a>b)))",
+    "inputs": [
+      "/x/a",
+      "/x/b",
+      "/x/ab"
+    ]
+  },
+  {
+    "id": "duplicate-same-disjunct-control",
+    "kind": "route",
+    "pattern": "/x/:v((?<a>a)(?<a>b))",
+    "inputs": [
+      "/x/ab"
+    ]
+  },
+  {
+    "id": "different-name-before-inner-alternative-control",
+    "kind": "route",
+    "pattern": "/x/:v((?<a>a)(?:(?<b>b)|(?<c>c)))",
+    "inputs": [
+      "/x/ab",
+      "/x/ac",
+      "/x/a"
+    ]
+  },
+  {
+    "id": "utf8-ascii-15",
+    "kind": "route",
+    "pattern": "/x/aaaaaaaaaaaa",
+    "inputs": [
+      "/x/aaaaaaaaaaaa",
+      "/x/aaaaaaaaaaaa!",
+      "/x/aaaaaaaaaaaa/"
+    ]
+  },
+  {
+    "id": "utf8-ascii-16",
+    "kind": "route",
+    "pattern": "/x/aaaaaaaaaaaaa",
+    "inputs": [
+      "/x/aaaaaaaaaaaaa",
+      "/x/aaaaaaaaaaaaa!",
+      "/x/aaaaaaaaaaaaa/"
+    ]
+  },
+  {
+    "id": "utf8-ascii-17",
+    "kind": "route",
+    "pattern": "/x/aaaaaaaaaaaaaa",
+    "inputs": [
+      "/x/aaaaaaaaaaaaaa",
+      "/x/aaaaaaaaaaaaaa!",
+      "/x/aaaaaaaaaaaaaa/"
+    ]
+  },
+  {
+    "id": "utf8-latin1-15",
+    "kind": "route",
+    "pattern": "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+    "inputs": [
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9!",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9/"
+    ]
+  },
+  {
+    "id": "utf8-latin1-16",
+    "kind": "route",
+    "pattern": "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9a",
+    "inputs": [
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9a",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9a!",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9a/"
+    ]
+  },
+  {
+    "id": "utf8-latin1-17",
+    "kind": "route",
+    "pattern": "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+    "inputs": [
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9!",
+      "/x/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9/"
+    ]
+  },
+  {
+    "id": "utf8-bmp-15",
+    "kind": "route",
+    "pattern": "/x/\u4e2d\u4e2d\u4e2d\u4e2d",
+    "inputs": [
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2d",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2d!",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2d/"
+    ]
+  },
+  {
+    "id": "utf8-bmp-16",
+    "kind": "route",
+    "pattern": "/x/\u4e2d\u4e2d\u4e2d\u4e2da",
+    "inputs": [
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2da",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2da!",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2da/"
+    ]
+  },
+  {
+    "id": "utf8-bmp-17",
+    "kind": "route",
+    "pattern": "/x/\u4e2d\u4e2d\u4e2d\u4e2daa",
+    "inputs": [
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2daa",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2daa!",
+      "/x/\u4e2d\u4e2d\u4e2d\u4e2daa/"
+    ]
+  },
+  {
+    "id": "utf8-astral-15",
+    "kind": "route",
+    "pattern": "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+    "inputs": [
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00!",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00/"
+    ]
+  },
+  {
+    "id": "utf8-astral-16",
+    "kind": "route",
+    "pattern": "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00a",
+    "inputs": [
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00a",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00a!",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00a/"
+    ]
+  },
+  {
+    "id": "utf8-astral-17",
+    "kind": "route",
+    "pattern": "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00aa",
+    "inputs": [
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00aa",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00aa!",
+      "/x/\ud83d\ude00\ud83d\ude00\ud83d\ude00aa/"
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-high",
+    "kind": "route",
+    "pattern": "/x/:v(\\uD800)",
+    "inputs": [
+      "/x/\ud83d\ude00",
+      "/x/a",
+      "/x/\ufffd"
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-low",
+    "kind": "route",
+    "pattern": "/x/:v(\\uDC00)",
+    "inputs": [
+      "/x/\ud83d\ude00",
+      "/x/a",
+      "/x/\ufffd"
+    ]
+  },
+  {
+    "id": "literal-surrogate-escape-pair",
+    "kind": "route",
+    "pattern": "/x/:v(\\uD83D\\uDE00)",
+    "inputs": [
+      "/x/\ud83d\ude00",
+      "/x/a",
+      "/x/\ufffd"
+    ]
+  },
+  {
+    "id": "retained-routing-0",
+    "kind": "route",
+    "pattern": "/metrics//",
+    "inputs": [
+      "/metrics/",
+      "/metrics//",
+      "/metrics///"
+    ]
+  },
+  {
+    "id": "retained-routing-1",
+    "kind": "route",
+    "pattern": "/scrape/(.*)",
+    "inputs": [
+      "/scrape",
+      "/scrape/",
+      "/scrape//",
+      "/scrape//a/b/"
+    ]
+  },
+  {
+    "id": "retained-routing-2",
+    "kind": "route",
+    "pattern": "/scrape/\\:literal",
+    "inputs": [
+      "/scrape/:literal"
+    ]
+  },
+  {
+    "id": "retained-routing-3",
+    "kind": "route",
+    "pattern": "/scrape/:tenant",
+    "inputs": [
+      "/scrape/alice",
+      "/SCRAPE/alice/",
+      "/scrape/"
+    ]
+  }
+]
