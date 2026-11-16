@@ -296,19 +296,19 @@ importers:
         specifier: file:../asset-packs
         version: link:../asset-packs
       '@protobufjs/utf8':
-        specifier: 1.1.2
+        specifier: ^1.1.2
         version: 1.1.2
       '@well-known-components/pushable-channel':
         specifier: ^1.0.3
         version: 1.0.3
       ajv:
-        specifier: 8.18.0
+        specifier: ^8.18.0
         version: 8.18.0
       ignore:
         specifier: ^7.0.5
         version: 7.0.5
       long:
-        specifier: 5.3.2
+        specifier: ^5.3.2
         version: 5.3.2
       protobufjs:
         specifier: 7.6.6
