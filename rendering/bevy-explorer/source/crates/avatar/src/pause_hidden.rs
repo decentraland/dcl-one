@@ -29,7 +29,7 @@ impl Plugin for PauseHiddenAvatarsPlugin {
 
 /// The bones of a built avatar taken out of the animation evaluation while it is hidden, with
 /// the target each one had.
-#[derive(Component, Debug)]
+#[derive(Component)]
 pub struct PausedAnimationTargets(Vec<(Entity, AnimationTarget)>);
 
 #[allow(clippy::type_complexity)]
