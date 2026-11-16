@@ -324,8 +324,20 @@ registration writes no owner row. Expected work is one candidate allocation per
 changed eligible legacy transport, indexed single-wallet ownership reads, and
 conditional claim, renewal and assignment publication for the positively selected
 Pulse identity. Steady owned renewal is due after 30 seconds; the lease lapses after
-90 seconds. Native selection requires no signaling socket. This is a workload bound,
-not a measured capacity result.
+90 seconds. Native selection requires no signaling socket. Maintenance retries unknown,
+borrowed, conflicting or unfinished targets after five seconds; healthy exact owned
+targets become due 30 seconds after a confirmed local renewal. Each attempt can perform
+Pulse positive and retirement requests plus wallet-before-realm SQL settlement, even
+when an old source no longer responds. Due targets rotate in bounded batches refilled
+on capacity notifications, independently of the one-second fallback wake. Maintenance
+has at most 128 queued/running items, 128 lifetime mutation credits and 16 running
+items within the shared 1,024-credit, 32-running queue. Cold hint-only work may hold
+at most 112 maintenance items and lifetime credits and run eight tasks; known-owned
+or unfinished targets use the remaining maintenance reserve and run before cold
+ready lanes. Each class has its own rotating due cursor. Event and durable takeover
+lanes run first without overtaking earlier work in the same wallet. Uncertain SQL
+keeps its credit after its waiter ends. These are workload and memory bounds, not
+measured throughput or a guarantee of renewal capacity under slow dependencies.
 
 The wallet safety lock precedes the realm row lock; no broker, policy or media await
 runs inside that SQL transaction. A fresh foreign row cannot be replaced from an

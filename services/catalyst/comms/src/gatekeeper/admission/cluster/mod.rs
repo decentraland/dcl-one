@@ -172,7 +172,12 @@ impl ClusterRuntime {
             loop {
                 tokio::select! {
                     _=ctx.cancel.cancelled()=>break,
-                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>subscriber.replay_due().await,
+                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{},
+                    _=subscriber.maintenance_capacity_changed()=>{},
+                }
+                tokio::select! {
+                    _ = ctx.cancel.cancelled() => break,
+                    _ = subscriber.replay_due() => {},
                 }
             }
             subscriber.stop().await;

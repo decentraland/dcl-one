@@ -363,7 +363,20 @@ their credits before retiring the unchanged local slot; desired generation, sele
 identity and outstanding lease guards preserve concurrent successors. Retirement
 neither writes a foreign row nor releases a settled owner. Source restart remains
 unknown for an older incarnation; cross-incarnation retirement and lost-hint
-reconstruction remain unresolved within the finite selected bound.
+reconstruction remain unresolved. A Pulse-only restart can leave old-source slots
+retained until current-source evidence supersedes them; enough such residual wallets
+exhaust the selected bound and new wallets are refused island credentials. This is
+an unresolved rollout blocker. Slot occupancy and cap refusals are exposed as
+`comms_cluster_selected_slots` and `comms_cluster_selected_slot_refused_total`.
+Maintenance retries rotate with bounded item, lifetime-credit and running reservations;
+event and durable takeover lanes retain headroom. Cold hint-only work is limited to
+112 of 128 maintenance items and lifetime credits and eight of 16 maintenance runners;
+known-owned and unfinished targets retain the remaining reserve, run first and rotate
+separately without overtaking earlier work in the same wallet. Healthy exact owned targets wait
+until their 30-second renewal is due, while unknown or unfinished targets retry after
+five seconds. Capacity notifications refill batches without a global five-second
+throughput limit. The full shutdown settlement scan remains independent of due filtering.
+These bounds do not establish cross-incarnation retirement or measured useful throughput.
 
 Pulse budgets 24,573 simultaneous distinct transport/control wallets and one equally sized
 churn cohort, for 49,146 retained wallet records, with at most 32 pending operations per

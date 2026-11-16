@@ -34,8 +34,12 @@ const WORK_QUEUED: &str = "comms_cluster_work_queued";
 const FEED_OVERSIZED: &str = "comms_cluster_feed_oversized_total";
 const FEED_INVALID_SUBJECT: &str = "comms_cluster_feed_invalid_subject_total";
 
-const COUNTERS: [&str; 20] = [
+const SELECTED_SLOTS: &str = "comms_cluster_selected_slots";
+const SELECTED_REFUSED: &str = "comms_cluster_selected_slot_refused_total";
+
+const COUNTERS: [&str; 21] = [
     EVENTS_RECEIVED,
+    SELECTED_REFUSED,
     CONNECTS_RECEIVED,
     TOKENS_MINTED,
     PUBLISHED,
@@ -68,6 +72,14 @@ pub fn register_series() {
         counter!(WORK_REJECTED, "reason" => reason).increment(0);
     }
     cluster_work_depths(0, 0);
+    selected_slot_occupancy(0);
+}
+
+pub(crate) fn selected_slot_occupancy(slots: usize) {
+    gauge!(SELECTED_SLOTS).set(slots as f64);
+}
+pub(crate) fn selected_slot_refused() {
+    counter!(SELECTED_REFUSED).increment(1);
 }
 
 pub fn cluster_event_received() {
@@ -186,6 +198,7 @@ mod tests {
                 crate::gatekeeper::bus::metrics::NATS_CONNECTED,
                 WORK_RUNNING,
                 WORK_QUEUED,
+                SELECTED_SLOTS,
             ]
             .iter(),
         ) {
@@ -210,6 +223,8 @@ mod tests {
             cluster_feed_oversized();
             cluster_feed_invalid_subject();
             cluster_work_depths(32, 992);
+            selected_slot_occupancy(20_000);
+            selected_slot_refused();
         });
         for sample in [
             format!("{WORK_REJECTED}{{reason=\"wallet_full\"}} 1"),
@@ -218,6 +233,8 @@ mod tests {
             format!("{WORK_CANCELLED} 1"),
             format!("{FEED_OVERSIZED} 1"),
             format!("{FEED_INVALID_SUBJECT} 1"),
+            format!("{SELECTED_SLOTS} 20000"),
+            format!("{SELECTED_REFUSED} 1"),
             format!("{WORK_RUNNING} 32"),
             format!("{WORK_QUEUED} 992"),
         ] {

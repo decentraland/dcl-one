@@ -1040,7 +1040,25 @@ async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
     let Some(fixture) = Fixture::new().await else {
         return;
     };
-    let server = Server::start(&fixture).await;
+    let non_utc = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(8)
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::query("SET TIME ZONE 'Asia/Tokyo'")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect_with((*fixture.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let zone: String = sqlx::query_scalar("SHOW TimeZone")
+        .fetch_one(&non_utc)
+        .await
+        .unwrap();
+    assert_eq!(zone, "Asia/Tokyo");
+    let server = Server::with_pool(non_utc.clone(), true, None).await;
     let realm = LaneKey::parse("realm").unwrap();
     for delegated in [false, true] {
         let wallet = PrivateKeySigner::random();
@@ -1157,6 +1175,7 @@ async fn a_legacy_socket_receives_the_new_fenced_same_room_assignment() {
         drop((old_socket, replacement));
     }
     drop(server);
+    non_utc.close().await;
     fixture.finish().await;
 }
 

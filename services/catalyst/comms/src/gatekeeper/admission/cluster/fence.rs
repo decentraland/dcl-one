@@ -26,7 +26,7 @@ impl SelectedRoomOrigin {
             Self::LegacyIntentV2 => 3,
         }
     }
-    fn from_wire(value: i32) -> Self {
+    pub(crate) fn from_wire(value: i32) -> Self {
         match value {
             1 => Self::Native,
             2 => Self::LegacyOwnerV1,
@@ -226,11 +226,22 @@ pub trait AssignmentFence: Send + Sync {
     async fn lock_selected(
         &self,
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
-    ) -> Result<Box<dyn RealmAssignmentLease>, FenceError> {
-        self.lock_realm(&snapshot.wallet, &snapshot.session).await
-    }
+    ) -> Result<Box<dyn RealmAssignmentLease>, FenceError>;
     fn selected_reconciliation_targets(&self) -> Vec<(String, String)> {
         Vec::new()
+    }
+    async fn selected_reconciliation_batch(
+        &self,
+        limit: usize,
+        cold_limit: usize,
+    ) -> Vec<(String, String)> {
+        self.selected_reconciliation_targets()
+            .into_iter()
+            .take(limit.min(cold_limit))
+            .collect()
+    }
+    fn selected_maintenance_urgent(&self, _wallet: &str) -> bool {
+        false
     }
     fn observe_selected_hint(
         &self,
@@ -289,10 +300,11 @@ pub struct PgAssignmentFence {
     pool: PgPool,
     audience: String,
     selected: std::sync::Arc<
-        parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<SelectedWallet>>>,
+        parking_lot::Mutex<std::collections::BTreeMap<String, std::sync::Arc<SelectedWallet>>>,
     >,
     incarnation: String,
     selected_limit: usize,
+    selected_cursor: tokio::sync::Mutex<[Option<String>; 2]>,
     direct_credits: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
@@ -322,6 +334,7 @@ impl PgAssignmentFence {
             selected: Default::default(),
             incarnation: uuid::Uuid::new_v4().to_string(),
             selected_limit: limit.max(1),
+            selected_cursor: Default::default(),
             direct_credits: std::sync::Arc::new(tokio::sync::Semaphore::new(
                 super::subscriber::wallet_queue::MAX_TOTAL_WORK,
             )),
@@ -369,6 +382,115 @@ impl AssignmentFence for PgAssignmentFence {
         }
         targets
     }
+    async fn selected_reconciliation_batch(
+        &self,
+        limit: usize,
+        cold_limit: usize,
+    ) -> Vec<(String, String)> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let mut targets = Vec::new();
+        if limit == 0 {
+            return targets;
+        }
+        let mut cursors = self.selected_cursor.lock().await;
+        for (phase, cursor) in cursors.iter_mut().enumerate() {
+            let urgent_phase = phase == 0;
+            let phase_limit = if urgent_phase {
+                limit
+            } else {
+                limit.min(targets.len().saturating_add(cold_limit))
+            };
+            let mut remaining = self.selected.lock().len();
+            while remaining > 0 && targets.len() < phase_limit {
+                // Copy only a bounded page; no map/desired lock spans a yield or SQL await.
+                let page: Vec<_> = {
+                    let slots = self.selected.lock();
+                    let start = cursor
+                        .as_ref()
+                        .map_or(Unbounded, |key| Excluded(key.clone()));
+                    slots
+                        .range((start, Unbounded))
+                        .take(remaining.min(256))
+                        .map(|(wallet, slot)| (wallet.clone(), slot.clone()))
+                        .collect()
+                };
+                if page.is_empty() {
+                    if self.selected.lock().is_empty() {
+                        break;
+                    }
+                    *cursor = None;
+                    continue;
+                }
+                for (wallet, slot) in page {
+                    *cursor = Some(wallet.clone());
+                    remaining -= 1;
+                    let now = tokio::time::Instant::now();
+                    let mut retry_at = slot.retry_at.lock();
+                    if now < *retry_at {
+                        continue;
+                    }
+                    let Ok(state) = slot.state.try_lock() else {
+                        continue;
+                    };
+                    let urgent = state.owned.is_some() || state.attempt.is_some();
+                    if urgent != urgent_phase {
+                        continue;
+                    }
+                    let desired = slot.desired.lock();
+                    let healthy = state.attempt.is_none()
+                        && state
+                            .owned
+                            .as_ref()
+                            .is_some_and(|owned| owned.session == desired.session)
+                        && state.key.as_ref().is_some_and(|key| {
+                            key.session == desired.session
+                                && key.source == desired.source
+                                && key.version == desired.version
+                        })
+                        && state
+                            .renewed_at
+                            .is_some_and(|at| now.duration_since(at) < Duration::from_secs(30));
+                    if healthy {
+                        continue;
+                    }
+                    *retry_at = now + Duration::from_secs(5);
+                    let previous = state
+                        .owned
+                        .as_ref()
+                        .filter(|owned| owned.session != desired.session);
+                    let owned_first = previous.is_some()
+                        && slot
+                            .owned_first
+                            .fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                    if owned_first && let Some(owned) = previous {
+                        targets.push((wallet.clone(), owned.session.clone()));
+                    }
+                    if targets.len() < phase_limit && !desired.session.is_empty() {
+                        targets.push((wallet.clone(), desired.session.clone()));
+                    }
+                    if targets.len() < phase_limit
+                        && !owned_first
+                        && let Some(owned) = previous
+                    {
+                        targets.push((wallet, owned.session.clone()));
+                    }
+                    if targets.len() >= phase_limit {
+                        break;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+        targets
+    }
+    fn selected_maintenance_urgent(&self, wallet: &str) -> bool {
+        let Some(slot) = self.selected.lock().get(wallet).cloned() else {
+            return false;
+        };
+        slot.state.try_lock().map_or(true, |state| {
+            state.owned.is_some() || state.attempt.is_some()
+        })
+    }
     fn observe_selected_hint(
         &self,
         wallet: &str,
@@ -387,12 +509,18 @@ impl AssignmentFence for PgAssignmentFence {
             if desired.source != change.source_incarnation
                 || change.assignment_version >= desired.version
             {
+                let generation = desired.generation;
                 desired.observe(
                     &change.session,
                     &change.source_incarnation,
                     change.assignment_version,
                     None,
                 );
+                let changed = generation != desired.generation;
+                drop(desired);
+                if changed {
+                    *slot.retry_at.lock() = tokio::time::Instant::now();
+                }
             }
         }
     }
@@ -576,6 +704,8 @@ impl SelectedDesire {
     }
 }
 struct SelectedWallet {
+    owned_first: std::sync::atomic::AtomicBool,
+    retry_at: parking_lot::Mutex<tokio::time::Instant>,
     desired: parking_lot::Mutex<SelectedDesire>,
     state: tokio::sync::Mutex<SelectedBinding>,
 }
@@ -606,6 +736,7 @@ impl SelectedRetirementTarget {
 }
 #[derive(Default)]
 struct SelectedBinding {
+    renewed_at: Option<tokio::time::Instant>,
     allocator_below: Option<i64>,
     key: Option<SelectedKey>,
     owned: Option<RealmRow>,
@@ -655,9 +786,12 @@ impl PgAssignmentFence {
             return Ok(slot.clone());
         }
         if slots.len() >= self.selected_limit {
+            super::metrics::selected_slot_refused();
             return Err(FenceError::Unavailable);
         }
         let slot = std::sync::Arc::new(SelectedWallet {
+            owned_first: std::sync::atomic::AtomicBool::new(false),
+            retry_at: parking_lot::Mutex::new(tokio::time::Instant::now()),
             desired: parking_lot::Mutex::new(SelectedDesire {
                 session: session.into(),
                 ..Default::default()
@@ -665,6 +799,7 @@ impl PgAssignmentFence {
             state: tokio::sync::Mutex::new(SelectedBinding::default()),
         });
         slots.insert(wallet.into(), slot.clone());
+        super::metrics::selected_slot_occupancy(slots.len());
         Ok(slot)
     }
     async fn realm_row(
@@ -884,6 +1019,7 @@ impl PgAssignmentFence {
                 return Err(FenceError::Conflict);
             }
             tx.commit().await.map_err(|_| FenceError::Unavailable)?;
+            slot.renewed_at = Some(tokio::time::Instant::now());
             slot.owned = Some(after.compact());
             slot.attempt = None;
             slot.key = Some(key);
@@ -984,6 +1120,7 @@ impl PgAssignmentFence {
         // Only this map and this retirement operation still reference the slot.
         // Settled owned facts cease renewal; the existing finite SQL lease stays.
         slots.remove(&target.lookup.wallet);
+        super::metrics::selected_slot_occupancy(slots.len());
         Ok(())
     }
 }
@@ -1433,6 +1570,169 @@ mod tests {
         let state = slot.state.lock().await;
         assert!(state.owned.is_none());
         assert!(state.attempt.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn selected_replay_rotates_beyond_queue_capacity_without_a_global_tick_and_retains_old_sources()
+     {
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterChange;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
+            .unwrap();
+        let fence = PgAssignmentFence::with_limit(pool, "replay-test".into(), 1400).unwrap();
+        for index in 0..1400 {
+            fence.observe_selected_hint(
+                &format!("0x{index:040x}"),
+                &PeerClusterChange {
+                    session: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                    source_incarnation: "old-pulse".into(),
+                    assignment_version: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        let started = tokio::time::Instant::now();
+        let mut wallets = std::collections::BTreeSet::new();
+        loop {
+            let page = fence.selected_reconciliation_batch(128, 128).await;
+            assert!(page.len() <= 128);
+            if page.is_empty() {
+                break;
+            }
+            for (wallet, _) in page {
+                assert!(wallets.insert(wallet));
+            }
+        }
+        assert_eq!(wallets.len(), 1400);
+        assert_eq!(
+            tokio::time::Instant::now(),
+            started,
+            "refill cannot wait for a five-second sweep"
+        );
+        assert_eq!(
+            fence.selected.lock().len(),
+            1400,
+            "unknown old-source obligations never expire"
+        );
+        let positive = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            wallet: "0xffffffffffffffffffffffffffffffffffffffff".into(),
+            session: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            cluster_id: "selected".into(),
+            source_incarnation: "new-pulse".into(),
+            assignment_version: 1,
+            assignment_state: 1,
+            selected_origin: 1,
+            selected_identity: Some(1),
+            token_not_before: Some(0),
+            ..Default::default()
+        };
+        assert!(matches!(
+            fence.lock_selected(&positive).await,
+            Err(FenceError::Unavailable)
+        ));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert_eq!(
+            fence.selected_reconciliation_batch(128, 128).await.len(),
+            128
+        );
+        assert_eq!(
+            fence.selected_reconciliation_targets().len(),
+            1400,
+            "shutdown enumeration is never due-filtered"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn healthy_owned_replay_waits_for_renewal_but_a_new_desire_is_due_immediately() {
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterChange;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
+            .unwrap();
+        let fence = PgAssignmentFence::with_limit(pool, "due-test".into(), 2).unwrap();
+        let wallet = "0x1111111111111111111111111111111111111111";
+        let hint = PeerClusterChange {
+            session: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            source_incarnation: "pulse".into(),
+            assignment_version: 1,
+            ..Default::default()
+        };
+        fence.observe_selected_hint(wallet, &hint);
+        let slot = fence.selected.lock().get(wallet).unwrap().clone();
+        {
+            let mut state = slot.state.lock().await;
+            state.key = Some(SelectedKey {
+                session: hint.session.clone(),
+                source: "pulse".into(),
+                version: 1,
+                origin: 1,
+                identity: 1,
+            });
+            state.owned = Some(RealmRow {
+                session: hint.session.clone(),
+                epoch: 1,
+                revision: 1,
+                token: 1,
+                incarnation: "gatekeeper".into(),
+                assignment: None,
+                assignment_hash: None,
+                renewed: Some(chrono::Utc::now().naive_utc()),
+                lapsed: false,
+                renewal_due: false,
+            });
+            state.renewed_at = Some(tokio::time::Instant::now());
+        }
+        assert!(
+            fence
+                .selected_reconciliation_batch(128, 128)
+                .await
+                .is_empty()
+        );
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert!(
+            fence
+                .selected_reconciliation_batch(128, 128)
+                .await
+                .is_empty()
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(
+            fence.selected_reconciliation_batch(128, 128).await,
+            vec![(wallet.into(), hint.session.clone())]
+        );
+        fence.observe_selected_hint(
+            wallet,
+            &PeerClusterChange {
+                assignment_version: 2,
+                ..hint.clone()
+            },
+        );
+        assert_eq!(
+            fence.selected_reconciliation_batch(128, 128).await,
+            vec![(wallet.into(), hint.session.clone())]
+        );
+        let cold = "0x0000000000000000000000000000000000000000";
+        fence.observe_selected_hint(cold, &hint);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert!(fence.selected_maintenance_urgent(wallet));
+        assert!(!fence.selected_maintenance_urgent(cold));
+        assert_eq!(
+            fence.selected_reconciliation_batch(1, 1).await,
+            vec![(wallet.into(), hint.session.clone())],
+            "owned work precedes a lexically earlier cold target"
+        );
+        assert_eq!(
+            fence.selected_reconciliation_batch(1, 1).await,
+            vec![(cold.into(), hint.session.clone())]
+        );
+        {
+            let mut state = slot.state.lock().await;
+            state.owned = None;
+            state.key = None;
+        }
+        assert!(
+            !fence.selected_maintenance_urgent(wallet),
+            "settled ownership loss moves retry work into cold class"
+        );
     }
 
     #[test]

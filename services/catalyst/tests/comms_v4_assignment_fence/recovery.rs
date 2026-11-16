@@ -818,6 +818,11 @@ struct RetirementHarness {
 }
 impl RetirementHarness {
     fn new(pool: sqlx::PgPool, limit: usize) -> Self {
+        let harness = Self::new_unstarted(pool, limit);
+        harness.runtime.start(&harness.jobs);
+        harness
+    }
+    fn new_unstarted(pool: sqlx::PgPool, limit: usize) -> Self {
         use catalyst::comms::pulse::cluster::{
             ClusterOptions, ClusterTracker,
             feed::{ClusterFeedPublisher, RecordingClusterFeed},
@@ -889,7 +894,6 @@ impl RetirementHarness {
             fence: Some(fence.clone()),
         };
         let jobs = catalyst::jobs::Jobs::new();
-        runtime.start(&jobs);
         Self {
             bus,
             source,
@@ -1131,7 +1135,7 @@ async fn started_selected_retirement_retains_uncertain_attempt_credit_until_exac
         .await
         .expect("required disposable PostgreSQL");
     let proxy = super::LostCommitProxy::start(&fixture.pool).await;
-    let mut harness = RetirementHarness::new(proxy.pool.clone(), 1);
+    let mut harness = RetirementHarness::new_unstarted(proxy.pool.clone(), 1);
     harness
         .lookup_available
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1149,6 +1153,9 @@ async fn started_selected_retirement_retains_uncertain_attempt_credit_until_exac
         .fetch_one(&mut *held)
         .await
         .unwrap();
+    // Install the uncertainty observation and SQL blocker before periodic work can
+    // reconcile the attempt. All retirement below still comes from the started runtime.
+    harness.runtime.start(&harness.jobs);
     let before = periodic_native_owner_row(&fixture).await;
     let asked = harness.bus.inner.requested().len();
     harness.depart(true);
