@@ -464,6 +464,16 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
     pub ws_max_sockets_per_ip: u32,
 
+    /// Connected-wallet ban sweep cadence, ms; overlapping ticks are skipped.
+    #[arg(
+        long,
+        env = "BAN_SWEEP_INTERVAL_MS",
+        default_value = "30000",
+        value_parser = parse_ban_sweep_interval_ms,
+        allow_hyphen_values = true
+    )]
+    pub ban_sweep_interval_ms: u64,
+
     /// Handshake deadline, ms; 0 keeps the default.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
     pub handshake_timeout: u64,
@@ -570,6 +580,20 @@ pub struct WorldsFedConfig {
 /// signed infinity. Only ECMAScript whitespace is skipped; an absent value is defaulted
 /// by the caller, while an explicitly empty value is invalid.
 pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
+    parse_numeric_prefix(input, "ISLAND_CHANGED_DEDUP_MS")
+}
+
+/// Millisecond timer delay: truncate fractions; values outside 1..=2147483647 become 1 ms.
+pub fn parse_ban_sweep_interval_ms(input: &str) -> Result<u64, String> {
+    let ms = parse_numeric_prefix(input, "BAN_SWEEP_INTERVAL_MS")?;
+    Ok(if (1.0..=2_147_483_647.0).contains(&ms) {
+        ms as u64
+    } else {
+        1
+    })
+}
+
+fn parse_numeric_prefix(input: &str, name: &str) -> Result<f64, String> {
     let value = input.trim_start_matches(|c| {
         matches!(c,
         '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
@@ -598,7 +622,7 @@ pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
         }
     }
     if digits == 0 {
-        return Err("ISLAND_CHANGED_DEDUP_MS must start with a number".into());
+        return Err(format!("{name} must start with a number"));
     }
     if matches!(bytes.get(end), Some(b'e' | b'E')) {
         let mut exponent = end + 1;
@@ -615,7 +639,7 @@ pub fn parse_island_changed_dedup_ms(input: &str) -> Result<f64, String> {
     }
     value[..end]
         .parse::<f64>()
-        .map_err(|_| "ISLAND_CHANGED_DEDUP_MS must start with a number".into())
+        .map_err(|_| format!("{name} must start with a number"))
 }
 
 #[cfg(test)]
@@ -625,6 +649,74 @@ mod tests {
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
         Config::parse_for_tests(args)
     }
+
+    #[test]
+    fn ban_sweep_interval_defaults_to_thirty_seconds() {
+        let config = parse(&["catalyst", "--database-url", "postgres://localhost/test"]).unwrap();
+        assert_eq!(config.worlds.ban_sweep_interval_ms, 30_000);
+    }
+
+    #[test]
+    fn ban_sweep_interval_uses_numeric_prefixes_and_timer_delay_bounds() {
+        for (text, expected) in [
+            ("100", 100),
+            ("1250", 1250),
+            ("12.9ms", 12),
+            ("+1e2suffix", 100),
+            ("1e+", 1),
+            ("0x10", 1),
+            (".5", 1),
+            ("0", 1),
+            ("-0", 1),
+            ("-100", 1),
+            ("2147483647", 2_147_483_647),
+            ("2147483647.5", 1),
+            ("2147483648", 1),
+            ("1e9999", 1),
+            ("1e-9999", 1),
+            ("Infinity", 1),
+            ("-Infinity", 1),
+            ("\u{feff}\u{2028}1250ms", 1250),
+        ] {
+            let config = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--ban-sweep-interval-ms",
+                text,
+            ])
+            .unwrap_or_else(|error| panic!("{text:?}: {error}"));
+            assert_eq!(config.worlds.ban_sweep_interval_ms, expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn ban_sweep_interval_rejects_missing_numeric_prefix() {
+        for text in [
+            "",
+            " ",
+            "NaN",
+            "inf",
+            "infinity",
+            "+",
+            ".",
+            "\u{85}1",
+            "\u{180e}1",
+        ] {
+            let error = parse(&[
+                "catalyst",
+                "--database-url",
+                "postgres://localhost/test",
+                "--ban-sweep-interval-ms",
+                text,
+            ])
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("BAN_SWEEP_INTERVAL_MS"), "{text:?}: {error}");
+            assert!(!error.contains("ISLAND_CHANGED_DEDUP_MS"), "{error}");
+        }
+    }
+
     #[test]
     fn island_dedup_uses_ecmascript_numeric_prefixes() {
         for (text, expected) in [

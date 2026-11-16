@@ -14,6 +14,70 @@ guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 
 
+class AuthStressTests(unittest.TestCase):
+    def test_external_timeout_preserves_partial_diagnostics_and_failure(self):
+        for output in (b'RPC_WORKLOAD_latest\nFD count=42\n\xff',
+                       'RPC_WORKLOAD_latest\nFD count=42\n', None):
+            for show_output in (False, True):
+                with self.subTest(output=output, show_output=show_output):
+                    error = subprocess.TimeoutExpired(['fixture'], 210, output=output)
+                    with mock.patch.object(guard, 'external_inventory'), \
+                            mock.patch.object(guard.subprocess, 'run', side_effect=error) as execute, \
+                            mock.patch('builtins.print') as printed, \
+                            mock.patch.object(guard, 'verify_external_result') as verify, \
+                            self.assertRaises(subprocess.TimeoutExpired) as raised:
+                        guard.run_external('fixture', 'required', show_output=show_output)
+                    self.assertIs(raised.exception, error)
+                    expected = output.decode(errors='replace') if isinstance(output, bytes) else output or ''
+                    printed.assert_any_call(expected, flush=True)
+                    self.assertEqual(execute.call_args.kwargs['timeout'], 210)
+                    self.assertEqual(execute.call_args.kwargs['stderr'], subprocess.STDOUT)
+                    verify.assert_not_called()
+
+    def test_auth_stress_workflow_requires_one_prepared_run_per_platform(self):
+        workflow = (ROOT / '.github/workflows/development.yml').read_text()
+        guard.validate_auth_stress_workflow(workflow)
+        command = '          python3 tooling/dev-regressions.py --auth-stress\n'
+        for changed in [workflow.replace(command, ''), workflow.replace(command, command * 2),
+                        workflow.replace('      - name: Run provisioned auth stress\n',
+                                         '      - name: Run provisioned auth stress\n        if: false\n'),
+                        workflow.replace('          prepare_catalyst_test_resources\n', ''),
+                        workflow.replace('        if: matrix.shard == 2\n', ''),
+                        workflow.replace('        shard: [1, 2, 3]\n', '        shard: [1, 3]\n')]:
+            with self.subTest(changed=changed):
+                with self.assertRaises(ValueError):
+                    guard.validate_auth_stress_workflow(changed)
+
+    def test_auth_stress_compiles_same_graph_and_runs_exact_ignored_body_once(self):
+        with mock.patch.object(guard, 'compiled_targets', return_value={'dcl_auth': 'fixture'}) as compile, \
+                mock.patch.object(guard, 'run_external') as execute:
+            guard.check_auth_stress()
+        compile.assert_called_once_with(guard.SELECTION.split(), ROOT / 'services/catalyst',
+                                        selected={'dcl_auth'}, kind='lib')
+        execute.assert_called_once_with('fixture', guard.AUTH_STRESS, show_output=True)
+
+    def test_auth_stress_never_displaces_ordinary_controls(self):
+        name = 'rpc_validator::tests::controlled_rpc_workload_measures_latest_and_fallback_at_the_verification_envelope'
+        self.assertIn(name, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, guard.MANDATORY_ARCHIPELAGO[('dcl_auth', 'lib')])
+        self.assertNotIn(guard.AUTH_STRESS, [name for _, _, name in guard.EXTERNAL])
+        for script in ['tooling/dev-test.sh', 'tooling/catalyst-test.sh']:
+            self.assertNotIn('prepare_catalyst_test_resources', (ROOT / script).read_text())
+
+    def test_auth_stress_preserves_successful_workload_output_and_rejects_missing_target(self):
+        name = guard.AUTH_STRESS
+        output = f'test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 9 filtered out; finished in 0.01s\n'
+        with mock.patch.object(guard, 'run', side_effect=[f'{name}: test\n', f'{name}: test\n']), \
+                mock.patch.object(guard.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, output)) as execute:
+            guard.run_external('fixture', name, show_output=True)
+        self.assertIn('--show-output', execute.call_args.args[0])
+        with mock.patch.object(guard, 'compiled_targets', return_value={}), \
+                mock.patch.object(guard, 'run_external') as execute, \
+                self.assertRaisesRegex(ValueError, 'auth stress library target missing'):
+            guard.check_auth_stress()
+        execute.assert_not_called()
+
+
 class InventoryTests(unittest.TestCase):
     def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
         bodies = {
@@ -454,7 +518,8 @@ class InventoryTests(unittest.TestCase):
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
             mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
             mock.patch.dict(guard.os.environ, clear=True),
-            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
+            mock.patch.object(Path, "read_text", side_effect=["", manifest, "", ""]),
+            mock.patch.object(guard, "validate_auth_stress_workflow"),
             mock.patch.object(guard, "verify_resolution"),
             mock.patch.object(guard, "validate_runtime_script"),
             mock.patch.object(guard, "validate_test_script"),
@@ -747,21 +812,20 @@ export -f ulimit
                                     text=True, capture_output=True)
             return result, log.read_text() if log.exists() else ""
 
-    def test_macos_resource_probe_uses_controlled_tools_on_the_restricted_path(self):
+    def test_macos_ordinary_suite_does_not_probe_stress_resources(self):
         result, calls = self.run_fixture()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls.count("resource:sysctl -n kern.maxfilesperproc"), 1, calls)
-        self.assertIn("descriptors kern.maxfilesperproc=65536 required=65536", result.stdout)
+        self.assertNotIn("resource:sysctl", calls)
+        self.assertNotIn("descriptors", result.stdout)
         self.assertIn("verified-exports", calls)
         self.assertEqual(calls.count("foundation:down"), 1, calls)
 
-    def test_macos_inadequate_resource_stops_before_guards_and_cleans_up(self):
-        result, calls = self.run_fixture(kernel="10240")
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("kernel per-process limit 10240 is below 65536", result.stderr)
-        self.assertIn("resource:sysctl -n kern.maxfilesperproc", calls)
+    def test_macos_stock_kernel_runs_ordinary_suite_without_stress_floor(self):
+        result, calls = self.run_fixture(kernel="61440")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("resource:sysctl", calls)
         for command in ("python:", "cargo:", "make:"):
-            self.assertNotIn(command, calls)
+            self.assertIn(command, calls)
         self.assertEqual(calls.count("foundation:down"), 1, calls)
 
     def test_good_exports_cleanup_and_one_broad_run(self):
