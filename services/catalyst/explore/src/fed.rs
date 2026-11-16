@@ -437,7 +437,13 @@ fn published(action_type: &str, signer: String, payload: &Value) -> (Option<Stri
         "favorite" | "unfavorite" => (true, &["place_id", "action", "signed_at"]),
         "vote_up" | "vote_down" | "vote_withdraw" => (true, &["place_id", "score", "signed_at"]),
         "report" => (false, &["place_id", "signed_at"]),
-        _ => (false, &[]),
+        _ => {
+            tracing::warn!(
+                action_type,
+                "places feed action kind has no published fields; publishing no signer and an empty payload"
+            );
+            (false, &[])
+        }
     };
     let kept: serde_json::Map<String, Value> = fields
         .iter()
@@ -510,7 +516,9 @@ mod tests {
 
     /// Envelopes: a favorite and a vote logged once and applied, a replayed
     /// nonce refused, a foreign domain refused; a moderator's schedule and a
-    /// wallet's own settings; the places feeds page the log.
+    /// wallet's own settings; the places feeds page the log, publishing a
+    /// favorite's and a vote's signer and allowed fields but neither a
+    /// report's reporter nor its reason.
     #[tokio::test]
     async fn envelopes_are_logged_once_applied_and_fed() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -626,8 +634,10 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "outside the skew window");
 
+        let reporter = PrivateKeySigner::random();
+        let reporter_wallet = format!("{:#x}", reporter.address());
         let report = sign(
-            &key,
+            &reporter,
             catalyst_fed::domains::places(),
             PlaceReport {
                 place_id: place.clone(),
@@ -656,14 +666,61 @@ mod tests {
             None,
         )
         .await;
-        let types: Vec<&str> = page["actions"]
+        let ours: Vec<&Value> = page["actions"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|a| a["place_id"] == json!(place))
+            .collect();
+        let types: Vec<&str> = ours
+            .iter()
             .map(|a| a["action_type"].as_str().unwrap())
             .collect();
         assert_eq!(types, ["favorite", "vote_down", "report"]);
+        // Favorites and votes publish their signer and allowed fields; a
+        // report keeps its reporter and reason to the admin-only list.
+        let (favorite, voted, reported) = (ours[0], ours[1], ours[2]);
+        assert_eq!(
+            (
+                favorite["signer"].clone(),
+                favorite["signature_hash"].clone(),
+                favorite["payload"].clone(),
+            ),
+            (
+                json!(wallet),
+                json!(fav.signature_hash()),
+                json!({ "place_id": place, "action": "add", "signed_at": fav.message.signed_at }),
+            )
+        );
+        assert_eq!(
+            (voted["signer"].clone(), voted["payload"].clone()),
+            (
+                json!(wallet),
+                json!({ "place_id": place, "score": -1, "signed_at": vote.message.signed_at }),
+            )
+        );
+        assert_eq!(
+            (
+                reported["signature_hash"].clone(),
+                reported["signed_at"].clone(),
+            ),
+            (json!(report.signature_hash()), json!(report.signed_at))
+        );
+        assert!(reported["signer"].is_null(), "{reported}");
+        assert_eq!(
+            reported["payload"],
+            json!({ "place_id": place, "signed_at": report.message.signed_at }),
+            "{reported}"
+        );
+        let text = page.to_string();
+        assert!(
+            !text.contains(&reporter_wallet[2..]),
+            "the reporter is not published: {reported}"
+        );
+        assert!(
+            !text.contains("spam"),
+            "the reason is not published: {reported}"
+        );
         let (_, snap) = call(&app, "GET", "/federation/places/snapshot", None).await;
         assert_eq!(snap["latest_seq"], page["latest_seq"]);
         assert!(snap["log_hash"].as_str().unwrap().len() == 64);
@@ -811,123 +868,6 @@ mod tests {
         assert_eq!(events_actions, 2);
         let (_, feed) = call(&app, "GET", "/federation/v1/events/feed", None).await;
         assert_eq!(feed, json!({ "events": [], "partial": false }));
-    }
-
-    /// The anonymous places feed carries a report's place, kind and time but
-    /// neither its reporter nor its reason, as the admin-only reports list
-    /// keeps them; a favorite still carries its signer and payload.
-    #[tokio::test]
-    async fn the_places_feed_omits_the_reporter_and_reason_of_a_report() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
-            return;
-        };
-        let place = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '5,5', 'p', '{}')").bind(&place).execute(&pool).await.unwrap();
-        let fan = PrivateKeySigner::random();
-        let fan_wallet = format!("{:#x}", fan.address());
-        let reporter = PrivateKeySigner::random();
-        let reporter_wallet = format!("{:#x}", reporter.address());
-        let app = router(Arc::new(ExploreState::new(
-            pool.clone(),
-            Settings {
-                user_writes_enabled: true,
-                ..Settings::for_tests()
-            },
-            None,
-        )));
-        let (_, before) = call(&app, "GET", "/federation/places/snapshot", None).await;
-        let since = before["latest_seq"].as_i64().unwrap();
-
-        let fav = sign(
-            &fan,
-            catalyst_fed::domains::places(),
-            PlaceFavorite {
-                place_id: place.clone(),
-                action: PlaceFavoriteAction::Add,
-                signed_at: now(),
-            },
-            now(),
-        );
-        let (status, body) = call(
-            &app,
-            "PATCH",
-            &format!("/api/places/{place}/favorites"),
-            Some(serde_json::to_value(&fav).unwrap()),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let report = sign(
-            &reporter,
-            catalyst_fed::domains::places(),
-            PlaceReport {
-                place_id: place.clone(),
-                reason: PlaceReportReason::Harassment,
-                signed_at: now(),
-            },
-            now(),
-        );
-        let (status, body) = call(
-            &app,
-            "POST",
-            "/api/report",
-            Some(serde_json::to_value(&report).unwrap()),
-        )
-        .await;
-        assert_eq!(status, StatusCode::CREATED, "{body}");
-
-        let (status, page) = call(
-            &app,
-            "GET",
-            &format!("/federation/places/changes?since={since}"),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{page}");
-        let ours: Vec<&Value> = page["actions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|a| a["place_id"] == json!(place))
-            .collect();
-        assert_eq!(ours.len(), 2, "{page}");
-        let (favorite, reported) = (ours[0], ours[1]);
-        assert_eq!(
-            (
-                favorite["action_type"].clone(),
-                favorite["signer"].clone(),
-                favorite["signature_hash"].clone(),
-                favorite["payload"].clone(),
-            ),
-            (
-                json!("favorite"),
-                json!(fan_wallet),
-                json!(fav.signature_hash()),
-                json!({ "place_id": place, "action": "add", "signed_at": fav.message.signed_at }),
-            )
-        );
-        assert_eq!(
-            (
-                reported["action_type"].clone(),
-                reported["signature_hash"].clone(),
-                reported["signed_at"].clone(),
-            ),
-            (
-                json!("report"),
-                json!(report.signature_hash()),
-                json!(report.signed_at)
-            )
-        );
-        let text = page.to_string();
-        assert!(
-            !text.contains(&reporter_wallet[2..]),
-            "the reporter is not published: {reported}"
-        );
-        assert!(
-            !text.contains("harassment"),
-            "the reason is not published: {reported}"
-        );
-        let (_, snap) = call(&app, "GET", "/federation/places/snapshot", None).await;
-        assert_eq!(snap["latest_seq"], page["latest_seq"]);
     }
 
     #[tokio::test]
