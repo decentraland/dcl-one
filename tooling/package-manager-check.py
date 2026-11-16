@@ -13,13 +13,13 @@ SKIP_DIRS = {'.git', 'node_modules', 'target', 'dist', '.cache', '.agent-work'}
 LOCKFILES = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock'}
 # Test scenes that install as a creator's project does, with npm.
 CREATOR_SCENES = ('library/js-sdk-toolchain/test/snapshots/package-lock.json',)
-# pnpm 11 reads only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
+# pnpm 11 and 12 read only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
 NPMRC_READ = {'ca', 'cafile', 'cert', 'key', 'registry', '_auth', '_authToken', '_password', 'email', 'username',
               'https-proxy', 'proxy', 'no-proxy', 'http-proxy', 'local-address', 'strict-ssl'}
 NPMRC_KEY = re.compile(r'^\s*([^#;\s=][^=]*?)\s*=', re.M)
 WORKFLOWS = ('.github/workflows/', '.github/actions/')
 # The pnpm every project pins in packageManager and every workflow fetches.
-PNPM_VERSION = '11.28.12'
+PNPM_VERSION = '12.21.0'
 PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
 # Copies of projects the service test installs with the pnpm its machine carries.
 UNPINNED = ('infra/dev/service-test/fixture/',)
