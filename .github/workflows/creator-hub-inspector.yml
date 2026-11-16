@@ -152,11 +152,8 @@ jobs:
             # The asset-packs job published this version seconds ago and the registry serves a
             # CDN-cached packument for 300s, so resolution retries for longer than that.
             for ((i = 1; i <= 10; i++)); do
-              if pnpm add "@dcl/asset-packs@${{ inputs.asset_packs_version }}"; then
-                # pnpm saves the exact version; the published manifest carries the caret range.
-                npm pkg set "dependencies.@dcl/asset-packs=^${{ inputs.asset_packs_version }}"
-                exit 0
-              fi
+              # The caret range goes in the published manifest and in the lockfile alike, so the build's dependency check passes.
+              pnpm add "@dcl/asset-packs@^${{ inputs.asset_packs_version }}" && exit 0
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done

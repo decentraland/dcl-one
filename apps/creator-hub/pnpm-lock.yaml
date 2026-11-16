@@ -18,10 +18,6 @@ overrides:
   '@dcl/crypto@3.4.5>@dcl/schemas': 9.15.0
   '@dcl/crypto@3.4.5>ethereum-cryptography': 1.2.0
   electron-updater>semver: 7.6.3
-  glob@11.1.0>minimatch: 10.2.2
-  minimatch@10.2.2>brace-expansion: 5.0.2
-  brace-expansion@5.0.2>balanced-match: 4.0.3
-  path-scurry@2.0.2>lru-cache: 11.2.6
   '@types/glob>@types/node': 20.14.9
   '@types/node-fetch>@types/node': 20.14.9
 
