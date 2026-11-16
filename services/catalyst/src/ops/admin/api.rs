@@ -15,7 +15,7 @@ use super::{SharedState, audit};
 use crate::content::SyncState;
 use crate::content::sync::orchestrator::SyncControl;
 use crate::jobs::JobState;
-use crate::shared::writes::{Refusal, WRITES_DISABLED_MESSAGE, ops_refusal};
+use crate::shared::writes::WRITES_DISABLED_MESSAGE;
 
 const DOMAIN: &str = "content";
 
@@ -52,20 +52,18 @@ impl AdminEnvelope {
     }
 }
 
-/// The console's own writes under `OPS_WRITES_ENABLED` and the restore
-/// stamps behind it: `None` lets the write through.
+/// The console's own writes under `OPS_WRITES_ENABLED`: `None` lets the
+/// write through.
 pub(crate) fn ops_refused(writes_enabled: bool) -> Option<Response> {
-    ops_refusal(writes_enabled).map(|r| writes_refused(&r))
+    (!writes_enabled).then(writes_refused)
 }
 
-/// The 503 for `refusal`, in the envelope with a `Retry-After` (the social
-/// gate's shape): the switch's message while `OPS_WRITES_ENABLED` is off,
-/// the restore stamp that holds it and its age while it is on.
-fn writes_refused(refusal: &Refusal) -> Response {
-    let message = refusal.message("operator-plane", WRITES_DISABLED_MESSAGE);
+/// The 503 while `OPS_WRITES_ENABLED` is off, in the envelope with a
+/// `Retry-After` (the social gate's shape).
+fn writes_refused() -> Response {
     let mut resp = AdminEnvelope::error(
         StatusCode::SERVICE_UNAVAILABLE,
-        json!({ "error": "writes-disabled", "message": message }),
+        json!({ "error": "writes-disabled", "message": WRITES_DISABLED_MESSAGE }),
     );
     resp.headers_mut().insert(
         header::RETRY_AFTER,

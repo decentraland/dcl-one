@@ -12,12 +12,6 @@ than once. Check here before correcting something surprising.
   pass cheap. The repeated mistake is to assume the pass renders the full cubemap each frame
   and "optimise" by running it less often, which only starves the progressive update and
   makes the sky lag. The pass must run every frame.
-- **Repeatable cloud captures.** `/cloud_motion false` selects noise seed 1 and phase zero,
-  while retaining cloud coverage, color, scene time and authored speed settings. The Skybox
-  debug section exposes this toggle. The sky needs 64 rendered frames to refresh;
-  the E2E suite waits 128 CPU sky updates as a conservative refresh window, not a GPU fence. Repeating `false` resets the reported
-  `pinnedFrames` counter. `/cloud_motion true` restores the prior daily noise and live phase.
-  This affects cloud motion only; normal rendering starts enabled.
 - **Our bevy is not stock bevy.** The fork page has the detail; the differences a reader will
   trip over are: the engine runs on web workers with a multi-threaded task pool on web; the
   transparent pass has a second attachment (the focus target) when depth of field is on, and

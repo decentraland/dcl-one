@@ -102,60 +102,6 @@ fn resolve(
     }
 }
 
-/// The existing permission policy for one scene at the time of a read-only query.
-pub struct ScenePermission<'a> {
-    config: &'a AppConfig,
-    realm: &'a str,
-    hash: &'a str,
-    in_scene: bool,
-    is_portable: bool,
-    is_system: bool,
-    autopilot: bool,
-    legacy_declared: u8,
-}
-
-/// The legacy `PermissionItem`s the kernel reported without consulting policy: those declared
-/// in scene.json `requiredPermissions`, plus move-player and trigger-emote for a portable.
-/// A report only; actions still go through [`Permission::check`].
-#[derive(Clone, Copy, Debug)]
-pub struct LegacyDeclaredPermissions {
-    bits: u8,
-    is_portable: bool,
-}
-
-impl LegacyDeclaredPermissions {
-    pub fn new(bits: u8, is_portable: bool) -> Self {
-        Self { bits, is_portable }
-    }
-
-    pub fn contains(self, item: i32) -> bool {
-        match u8::try_from(item) {
-            Ok(0..=1) if self.is_portable => true,
-            Ok(item @ 0..=6) => self.bits & (1 << item) != 0,
-            _ => false,
-        }
-    }
-}
-
-impl ScenePermission<'_> {
-    pub fn legacy_declared(&self) -> LegacyDeclaredPermissions {
-        LegacyDeclaredPermissions::new(self.legacy_declared, self.is_portable)
-    }
-
-    pub fn is_allowed(&self, ty: PermissionType, allow_out_of_scene: bool) -> bool {
-        self.is_system
-            || resolve(
-                self.autopilot,
-                self.config,
-                ty,
-                self.realm,
-                self.hash,
-                self.is_portable,
-                !allow_out_of_scene && !self.in_scene,
-            ) == PermissionValue::Allow
-    }
-}
-
 impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
     // in scene, hash, title, is_portable
     fn get_scene_info(&self, scene: Entity) -> Option<(bool, &str, &str, bool)> {
@@ -174,22 +120,6 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
             ss.scenes
                 .iter()
                 .any(|scene| scene.hash.as_ref().is_some_and(|sh| sh == hash) && scene.super_user)
-        })
-    }
-
-    /// Resolve scene identity and presence once, without changing policy or opening a prompt.
-    pub fn for_scene(&self, scene: Entity) -> Option<ScenePermission<'_>> {
-        let (in_scene, hash, _, is_portable) = self.get_scene_info(scene)?;
-        let legacy_declared = self.scenes.get(scene).ok()?.legacy_declared_permissions;
-        Some(ScenePermission {
-            legacy_declared,
-            config: &self.config,
-            realm: &self.realm.about_url,
-            hash,
-            in_scene,
-            is_portable,
-            is_system: self.is_system_scene(hash),
-            autopilot: self.autopilot.is_some(),
         })
     }
 
