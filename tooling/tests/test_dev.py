@@ -189,6 +189,76 @@ class DevTest(unittest.TestCase):
         cli('wait', '--postgres-only', '--timeout', '30')
         self.assertEqual(dev.sql(config, 'SELECT value FROM preserved', 'scratch_fixture'), 'saved')
 
+    def postgres_argv(self, disposable_env):
+        """The PostgreSQL argv of a start with initdb and the version check stubbed."""
+        def fake_run(argv, **kwargs):
+            if argv[0] == 'initdb':
+                Path(argv[2]).mkdir(parents=True)
+                (Path(argv[2]) / 'PG_VERSION').write_text('18\n')
+            return subprocess.CompletedProcess(argv, 0, 'postgres (PostgreSQL) 18.6\n')
+        env = {k: v for k, v in os.environ.items() if k != 'FOUNDATION_DEV_DISPOSABLE_POSTGRES'}
+        if disposable_env is not None:
+            env['FOUNDATION_DEV_DISPOSABLE_POSTGRES'] = disposable_env
+        with patch.dict(os.environ, env, clear=True), patch.object(dev, 'run', side_effect=fake_run), \
+                patch.object(dev.os, 'execvpe') as execvpe:
+            dev.postgres(self.config)
+        program, argv, _ = execvpe.call_args.args
+        self.assertEqual(program, 'postgres')
+        return argv
+
+    def test_postgres_keeps_full_durability_by_default(self):
+        argv = self.postgres_argv(None)
+        for setting in ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off'):
+            self.assertNotIn(setting, argv)
+        self.assertEqual(list((self.state / 'postgres').iterdir()), [self.state / 'postgres/PG_VERSION'])
+
+    def test_disposable_test_cluster_runs_without_durability(self):
+        argv = self.postgres_argv('1')
+        settings = [argv[i + 1] for i, arg in enumerate(argv) if arg == '-c']
+        for setting in ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off',
+                        'max_locks_per_transaction=256'):
+            self.assertIn(setting, settings)
+        self.assertIn('fsync=off', self.postgres_argv('1'), 'a restart keeps the settings')
+
+    def test_existing_cluster_keeps_durability_when_the_disposable_flag_is_set(self):
+        self.postgres_argv(None)
+        argv = self.postgres_argv('1')
+        self.assertNotIn('fsync=off', argv, 'a cluster created without the flag may hold real data')
+
+    def test_disposable_flag_needs_an_exact_value(self):
+        for value in ('', '0', 'true', 'yes'):
+            with self.subTest(value=value):
+                shutil.rmtree(self.state / 'postgres', ignore_errors=True)
+                self.assertNotIn('fsync=off', self.postgres_argv(value))
+
+    @unittest.skipUnless(shutil.which('initdb') and shutil.which('postgres') and shutil.which('psql')
+                         and os.getuid() != 0, 'requires PostgreSQL')
+    def test_disposable_settings_start_a_real_cluster(self):
+        data = self.state / 'pg'
+        subprocess.run(['initdb', '-D', data, '-U', 'foundation', '--auth=trust'], check=True,
+                       capture_output=True)
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        argv = ['postgres', '-D', str(data), '-h', '127.0.0.1', '-p', str(port), '-k', '']
+        for setting in dev.DISPOSABLE_POSTGRES_SETTINGS:
+            argv += ['-c', setting]
+        server = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(server.wait, 30)
+        self.addCleanup(server.send_signal, signal.SIGINT)
+        query = ['psql', '-X', '-Atq', '-h', '127.0.0.1', '-p', str(port), '-U', 'foundation', '-d', 'postgres']
+        deadline = time.monotonic() + 30
+        while subprocess.run([*query, '-c', 'SELECT 1'], capture_output=True).returncode != 0:
+            self.assertIsNone(server.poll(), 'PostgreSQL exited at startup')
+            self.assertLess(time.monotonic(), deadline, 'PostgreSQL did not start')
+            time.sleep(0.2)
+        shown = subprocess.run([*query, '-c', 'SELECT name, setting FROM pg_settings WHERE name IN '
+                                "('fsync','synchronous_commit','full_page_writes','wal_level') ORDER BY name"],
+                               check=True, capture_output=True, text=True).stdout.split()
+        self.assertEqual(shown, ['fsync|off', 'full_page_writes|off', 'synchronous_commit|off', 'wal_level|minimal'])
+        subprocess.run([*query, '-c', 'CREATE DATABASE scratch'], check=True, capture_output=True)
+        subprocess.run([*query, '-c', 'DROP DATABASE scratch WITH (FORCE)'], check=True, capture_output=True)
+
     def test_livekit_gets_its_config_through_the_environment_not_argv(self):
         with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://production.invalid/db'}), \
                 patch.object(dev, 'started', return_value='start'), \
