@@ -1,4 +1,4 @@
-/* The gift picker (unity-explorer's gift selection popup): a header with the recipient and the search, the tabs, a
+/* The gift picker: a header with the recipient and the search, the tabs, a
    scrolling grid of item tiles, and a footer with the line and the two buttons. */
 .modal {
   display: flex;

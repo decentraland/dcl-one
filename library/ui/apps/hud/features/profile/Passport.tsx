@@ -119,7 +119,7 @@ export function Passport({
       onGift={
         canGift
           ? (a) => {
-              // the picker replaces the passport, as unity-explorer's does
+              // the picker replaces the passport
               onClose()
               openGiftPicker({ address: a, name: friendUser.name })
             }

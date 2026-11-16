@@ -1,4 +1,4 @@
-// The gift-received popup, as unity-explorer's GiftReceivedPopup: a `transfer_received` notification, clicked in the
+// The gift-received popup: a `transfer_received` notification, clicked in the
 // panel or its toast, opens it. It shows who sent the gift and the item (read from the notification's `tokenUri`) on
 // its rarity tile, with rays behind. GO TO BACKPACK opens the Backpack on the item's tab, Emotes for an emote; CLOSE,
 // or a click outside, only closes it.

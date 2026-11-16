@@ -1,9 +1,9 @@
-// The gift picker's rules, as unity-explorer's gifting grid and inventory service apply them:
+// The gift picker's rules:
 //  - a token sent as a gift is pending while the owned catalog still lists it with the `transferredAt` it had when
 //    it was sent; it no longer counts towards the item's copies;
 //  - an item with no copies left is not listed; an equipped one is listed, and can be picked only with a spare copy;
 //  - the token a gift sends is the newest-transferred copy that is neither equipped nor pending.
-// Only a Polygon collection item (collections-v2) can be sent, gaslessly; any other is refused with unity's message.
+// Only a Polygon collection item (collections-v2) can be sent, gaslessly; any other is refused with NOT_TRANSFERABLE.
 
 import type { GiftableItem, GiftableToken } from '../../engine/protocol'
 import type { PendingGift } from '../../hostContract'

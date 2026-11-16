@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 describe('a gift notification', () => {
-  it('reads as unity-explorer words it, naming the sender by their short address until their profile is known', () => {
+  it('reads "Gift received", naming the sender by their short address until their profile is known', () => {
     expect(summarize(gift())).toMatchObject({ title: 'Gift received', body: "0x1234…5678 sent you something! It's on its way to your Backpack." })
   })
 

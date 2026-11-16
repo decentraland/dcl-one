@@ -77,7 +77,7 @@ describe('the gift picker', () => {
     expect((screen.getByRole('button', { name: 'SEND GIFT' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("refuses an item that isn't a Polygon collection token with unity-explorer's message", async () => {
+  it("refuses an item that isn't a Polygon collection token", async () => {
     const { onClose } = show(page([item(ETH, 'Old Hat')]))
     fireEvent.click(await screen.findByRole('button', { name: 'Old Hat' }))
     fireEvent.click(screen.getByRole('button', { name: 'SEND GIFT' }))

@@ -234,8 +234,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
   owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
   Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
-  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
-  gifting flag). Chat is always offered in-world: unity-explorer greys it
+  to Community. Gift sits after Call, greyed for a blocked member (see the gifting entries below). Chat is
+  always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
@@ -447,6 +447,34 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Gifting is on `/play` only, for web3 and managed sign-ins, never a guest.** As with Donate, only
+  the Sites `/play` web shell holds a wallet that can sign the transfer, so the Explorer's own HUD
+  offers no Gift; it still shows the gift-received popup, which signs nothing. Both wallet kinds
+  sign the gasless meta-transaction, so both may gift; a guest can't, as in the Shop. See
+  [the ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md).
+- **Gift's picker is the confirmation; the shell checks the rest.** As in unity-explorer, SEND
+  GIFT starts the transfer and "Preparing Gift for" is a status, not a second confirmation. The
+  shell re-reads the token's owner on chain, checks the collection is the marketplace index's on
+  the build's chain and that the recipient is another account, and signs nothing else (the guard).
+- **"Gift Sent" shows once the relay takes it.** As in unity-explorer. A token moves only once,
+  so a gift can't be sent twice; an answer lost on the way is settled by the token's owner, and
+  TRY AGAIN after a refusal signs the same nonce. There is no fallback to a transaction from the
+  wallet.
+- **Ethereum items are listed, and refused on SEND.** unity-explorer lists every on-chain item
+  and its transfer of a `collections-v1` item can't succeed; here the picker lists them too and
+  SEND shows "Cannot send this item as a gift because it's not a transferable NFT.", since the
+  relay serves Polygon only.
+- **Pending gifts are kept by the shell, per account, for a week.** unity-explorer keeps them in
+  its player preferences. The app frame has no storage here, so the shell keeps them; the picker
+  hides a token only while the owned catalog still lists it with the `transferredAt` it had when
+  sent.
+- **The slow-transfer link opens `/shop`'s Activity page.** unity-explorer links the Marketplace's
+  activity; here the Shop's Activity page is that page.
+- **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
+  View Profile), the community member menu (after Call; greyed for a blocked member either way),
+  and another player's passport options (before Block; the picker replaces the passport). The
+  voice-stream panel's menu has none, as in unity-explorer. A picker error is a toast and the
+  picker stays open; unity-explorer closes its picker on SEND before it can show the error.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
   markers with a camera into a texture; here the atlas and every marker are elements of the HUD
   page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at

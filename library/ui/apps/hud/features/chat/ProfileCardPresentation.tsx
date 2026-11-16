@@ -191,7 +191,7 @@ export function ProfileCardPresentation({
   // unity-explorer's member menu offers Chat to every other member
   const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
-  // unity-explorer's member menu keeps Gift but greys it for a blocked member (either way); its other menus offer it
+  // the member menu keeps Gift but greys it for a blocked member (either way); the other menus offer it
   const showGift = other && context !== 'request' && context !== 'blocked' && !!onGift
   const giftBlocked = community && (relationship === 'blocked' || blockedBy === true)
   // offered for a blocked user too

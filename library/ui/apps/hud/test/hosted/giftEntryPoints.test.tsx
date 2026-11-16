@@ -1,4 +1,4 @@
-// Where Gift is offered (unity-explorer's user menus): the profile card of chat names, nametags and the friend row,
+// Where Gift is offered: the profile card of chat names, nametags and the friend row,
 // and the community card's member menu (greyed for a blocked member); not the friend-request or blocked lists' menus,
 // nor your own card. The passport's options menu offers it too.
 import { describe, it, expect, vi } from 'vitest'

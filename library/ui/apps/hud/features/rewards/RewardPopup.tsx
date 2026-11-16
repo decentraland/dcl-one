@@ -70,7 +70,7 @@ export function clearRewardPopups(): void {
   close?.()
 }
 
-/** The rays-behind-a-column layout reward and gift popups share (unity-explorer's BackgroundRaysAnimation): rays
+/** The rays-behind-a-column layout reward and gift popups share: rays
  *  in the rarity's colour turn behind the content, which bounces in. */
 export function RaysPopup({ rarity = 'base', labelledBy, children }: { rarity?: string; labelledBy: string; children: React.ReactNode }): React.JSX.Element {
   return (

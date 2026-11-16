@@ -1,11 +1,11 @@
-// The gift picker, as unity-explorer's gift selection popup: "Send a Gift to <name>" with the recipient's face and
+// The gift picker: "Send a Gift to <name>" with the recipient's face and
 // address, a search, WEARABLES and EMOTES tabs over the player's owned on-chain items (newest first, 16 a page, more
 // as the grid scrolls), and a footer that warns the gift can't be undone or names what is about to be sent. SEND GIFT
 // hands the chosen token to the host (`@hud-host`'s `gifting`), which checks it, signs it and shows its progress.
 //
 // Rules (explorer-core features/gifting/picker): pending gifts don't count as copies, an equipped item can be picked
 // only with a spare copy, and the token sent is the newest-transferred one neither equipped nor pending. An item that
-// isn't a Polygon collection item is refused with unity-explorer's message.
+// isn't a Polygon collection item is refused: a gift is a gasless Polygon meta-transaction.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gifting } from '@hud-host'
@@ -59,7 +59,7 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
     void refreshPendingGifts()
   }, [])
 
-  // The search applies half a second after the last keystroke, as unity-explorer's.
+  // The search applies half a second after the last keystroke.
   useEffect(() => {
     const t = setTimeout(() => setQuery(search), SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(t)

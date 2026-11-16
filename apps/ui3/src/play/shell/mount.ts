@@ -15,6 +15,7 @@ import { loadOnce } from '../lib/loadOnce'
 import { shellResponse } from '@explorer-core/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 import type { ShellDonate } from './donate/donation'
+import type { ShellGift } from './gift/gifting'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
 // own process, answers its identity/sign requests, and registers the service worker that gives the
@@ -92,9 +93,10 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
-  // Shop and Donate share the one dialog over the app: each refuses as busy while the other's is up.
+  // Shop, Donate and Gift share the one dialog over the app: each refuses as busy while another's is up.
   let loadedShop: ShellShop | null = null
   let loadedDonate: ShellDonate | null = null
+  let loadedGift: ShellGift | null = null
   const shopWallet = loadOnce(async () => (await options.shopWallet?.()) ?? null)
   const shellShop: () => Promise<ShellShop> = loadOnce(() =>
     Promise.all([import('./shop/purchase'), import('./shop/overlay'), shopWallet()]).then(([purchase, overlay, wallet]) => {
@@ -105,7 +107,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
         signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl))),
-        otherDialogOpen: () => loadedDonate?.dialogOpen() === true
+        otherDialogOpen: () => loadedDonate?.dialogOpen() === true || loadedGift?.dialogOpen() === true
       })
       return loadedShop
     })
@@ -119,9 +121,23 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         ui: overlay.createDonateOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        otherDialogOpen: () => loadedShop?.dialogOpen() === true
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true || loadedGift?.dialogOpen() === true
       })
       return loadedDonate
+    })
+  )
+  // Gift (shell/gift), loaded on the app's first gift.* request, with the same wallet as the Shop's.
+  const shellGift: () => Promise<ShellGift> = loadOnce(() =>
+    Promise.all([import('./gift/gifting'), import('./gift/overlay'), shopWallet()]).then(([gifting, overlay, wallet]) => {
+      loadedGift = gifting.createShellGift({
+        login: currentLogin,
+        wallet,
+        ui: overlay.createGiftOverlay(() => frame?.focus()),
+        post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
+        openExternal: (url) => void window.open(url, '_blank', 'noopener'),
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true || loadedDonate?.dialogOpen() === true
+      })
+      return loadedGift
     })
   )
 
@@ -154,7 +170,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
             ? (await shellShop()).request(method, m.params)
             : method.startsWith('donate.')
               ? (await shellDonate()).request(method, m.params)
-              : request(m.method, m.params)
+              : method.startsWith('gift.')
+                ? (await shellGift()).request(method, m.params)
+                : request(m.method, m.params)
         )
         f.contentWindow?.postMessage(response, location.origin)
         break

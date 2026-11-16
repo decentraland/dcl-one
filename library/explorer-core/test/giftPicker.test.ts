@@ -1,4 +1,4 @@
-// The gift picker's rules (features/gifting/picker), as unity-explorer's gifting grid and inventory service apply them.
+// The gift picker's rules (features/gifting/picker).
 import { describe, expect, it } from 'vitest'
 import type { GiftableItem } from '../engine/protocol'
 import { bestToken, giftRows, transferable } from '../features/gifting/picker'
