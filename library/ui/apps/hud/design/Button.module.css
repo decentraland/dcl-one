@@ -23,7 +23,7 @@
   transform: translateY(1px);
 }
 
-.btn:disabled {
+.btn:disabled:where(:not(.bare)) {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -195,6 +195,109 @@
 }
 .outline:hover:not(:disabled) {
   background: var(--fill-faint);
+}
+
+/* translucent fills, each with a hover and a pressed fill */
+.scrim {
+  background: var(--scrim-40);
+}
+.scrim:hover:not(:disabled),
+.scrim:focus-visible {
+  background: var(--tint-dark-hover);
+}
+.scrim:active:not(:disabled) {
+  background: var(--tint-dark-press);
+}
+.faint {
+  background: var(--tint-faint);
+}
+.faint:hover:not(:disabled),
+.faint:focus-visible {
+  background: var(--tint-faint-hover);
+}
+.faint:active:not(:disabled) {
+  background: var(--tint-faint);
+}
+.veil {
+  background: var(--tint-veil);
+}
+.veil:hover:not(:disabled),
+.veil:focus-visible {
+  background: var(--tint-veil-hover);
+}
+.veil:active:not(:disabled) {
+  background: var(--tint-veil);
+}
+.glass {
+  background: var(--tint-glass);
+}
+.glass:hover:not(:disabled),
+.glass:focus-visible {
+  background: var(--tint-faint-hover);
+}
+.glass:active:not(:disabled) {
+  background: var(--tint-glass);
+}
+.shade {
+  background: var(--tint-shade);
+}
+.shade:hover:not(:disabled),
+.shade:focus-visible {
+  background: var(--black-80);
+}
+.shade:active:not(:disabled) {
+  background: var(--tint-shade);
+}
+.clear {
+  background: transparent;
+}
+.clear:hover:not(:disabled),
+.clear:focus-visible {
+  background: var(--tint-clear-hover);
+}
+.clear:active:not(:disabled) {
+  background: var(--tint-clear-press);
+}
+
+/* bare: sized by the caller's class. Not dimmed when disabled: the caller shows that state. */
+.bare {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border-radius: var(--r-md);
+  font-family: var(--font-family);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background var(--dur-tap) linear;
+}
+.bare:active:not(:disabled) {
+  transform: none;
+}
+.bare:disabled {
+  cursor: default;
+  pointer-events: none;
+}
+.bare:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.bare.primary:hover:not(:disabled),
+.bare.primary:focus-visible {
+  background: var(--brand-hover);
+}
+.bare.primary:active:not(:disabled) {
+  background: var(--brand-pressed);
+}
+
+.radiusMd {
+  border-radius: var(--r-md);
+}
+.radiusButton {
+  border-radius: var(--r-button);
+}
+.radiusPill {
+  border-radius: var(--r-pill);
 }
 
 @keyframes pressBounce {

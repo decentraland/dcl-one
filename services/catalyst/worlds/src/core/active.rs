@@ -1,5 +1,6 @@
 //! `POST /entities/active` over worlds: the newest scene entity of each
-//! named world (the pointers are world names here), minus the DAO deny list.
+//! named world (the pointers are world names here), minus the DAO deny list
+//! and `BLOCKED_WORLD_NAMES`.
 
 use std::collections::HashSet;
 
@@ -7,6 +8,7 @@ use axum::Json;
 use axum::extract::State;
 use bytes::Bytes;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use crate::comms::world_identity::WorldName;
 
@@ -19,7 +21,7 @@ const MAX_POINTERS: usize = 50;
 pub async fn active_entities(
     State(state): State<SharedState>,
     body: Bytes,
-) -> Result<Json<Vec<Value>>, ApiError> {
+) -> Result<Json<Vec<Box<RawValue>>>, ApiError> {
     let parsed: Value = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("Invalid request. Request body is not valid"))?;
     let Some(Value::Array(items)) = parsed.get("pointers") else {

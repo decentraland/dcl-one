@@ -84,6 +84,28 @@ struct Publish {
     phase: Arc<AtomicU8>,
 }
 
+struct Retained {
+    payload: Box<[u8]>,
+    result: oneshot::Sender<PublishOutcome>,
+    phase: Arc<AtomicU8>,
+    deadline: Instant,
+}
+impl Retained {
+    fn pending(&self) -> bool {
+        !self.result.is_closed()
+            && self.phase.load(Ordering::SeqCst) == PENDING
+            && Instant::now() < self.deadline
+    }
+}
+struct CancelUnstarted(Arc<AtomicU8>);
+impl Drop for CancelUnstarted {
+    fn drop(&mut self) {
+        let _ = self
+            .0
+            .compare_exchange(PENDING, CANCELLED, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
 struct Request {
     subject: Box<str>,
     payload: Box<[u8]>,
@@ -96,6 +118,7 @@ struct Request {
 enum Outbound {
     Publish(Publish),
     Request(Request),
+    Retained(Retained),
 }
 
 impl Outbound {
@@ -106,6 +129,9 @@ impl Outbound {
             }
             Self::Request(request) => {
                 let _ = request.result.send(Err(RequestError::NoConnection));
+            }
+            Self::Retained(publish) => {
+                let _ = publish.result.send(PublishOutcome::NoConnection);
             }
         }
     }
@@ -301,6 +327,42 @@ impl BrokerBus {
             task: Mutex::new(None),
         }
     }
+
+    async fn exchange(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        let Some(link) = self.shared.link().filter(|link| link.ready()) else {
+            return Err(RequestError::NoConnection);
+        };
+        if subject.len().saturating_add(payload.len()) > MAX_PUBLISH_BYTES {
+            return Err(RequestError::Invalid);
+        }
+        let (result, receive) = oneshot::channel();
+        let deadline = Instant::now() + BROKER_DEADLINE;
+        let revision = link.revision.load(Ordering::SeqCst);
+        self.shared
+            .tx
+            .try_send(Outbound::Request(Request {
+                subject: subject.into(),
+                payload: payload.into_boxed_slice(),
+                link: Arc::downgrade(&link),
+                revision,
+                deadline,
+                result,
+            }))
+            .map_err(|_| RequestError::Overloaded)?;
+        let owner = Arc::downgrade(&link);
+        drop(link);
+        let result = timeout_at(deadline, receive)
+            .await
+            .map_err(|_| RequestError::TimedOut)?
+            .unwrap_or(Err(RequestError::NoConnection));
+        if !owner
+            .upgrade()
+            .is_some_and(|link| link.ready() && link.revision.load(Ordering::SeqCst) == revision)
+        {
+            return Err(RequestError::NoConnection);
+        }
+        result
+    }
 }
 
 impl Drop for BrokerBus {
@@ -402,40 +464,87 @@ impl NatsBus for BrokerBus {
         }
     }
 
-    async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
-        let Some(link) = self.shared.link().filter(|link| link.ready()) else {
-            return Err(RequestError::NoConnection);
-        };
-        if subject.len().saturating_add(payload.len()) > MAX_PUBLISH_BYTES {
-            return Err(RequestError::Invalid);
+    async fn publish_statistical_disconnect(
+        &self,
+        payload: Vec<u8>,
+        deadline: Instant,
+    ) -> PublishOutcome {
+        use crate::protocol::bus::statistics::{Event, Observation};
+        if !self.is_enabled() {
+            return PublishOutcome::NoConnection;
+        }
+        if Instant::now() >= deadline {
+            return PublishOutcome::Failed;
+        }
+        if payload
+            .len()
+            .saturating_add(crate::protocol::bus::statistics::OBSERVATIONS_SUBJECT.len())
+            > MAX_PUBLISH_BYTES
+            || !Observation::decode(&payload)
+                .is_some_and(|observation| matches!(observation.event, Event::Disconnect { .. }))
+        {
+            return PublishOutcome::Failed;
         }
         let (result, receive) = oneshot::channel();
-        let deadline = Instant::now() + BROKER_DEADLINE;
-        let revision = link.revision.load(Ordering::SeqCst);
-        self.shared
-            .tx
-            .try_send(Outbound::Request(Request {
-                subject: subject.into(),
-                payload: payload.into_boxed_slice(),
-                link: Arc::downgrade(&link),
-                revision,
-                deadline,
-                result,
-            }))
-            .map_err(|_| RequestError::Overloaded)?;
-        let owner = Arc::downgrade(&link);
-        drop(link);
-        let result = timeout_at(deadline, receive)
-            .await
-            .map_err(|_| RequestError::TimedOut)?
-            .unwrap_or(Err(RequestError::NoConnection));
-        if !owner
-            .upgrade()
-            .is_some_and(|link| link.ready() && link.revision.load(Ordering::SeqCst) == revision)
-        {
-            return Err(RequestError::NoConnection);
+        let phase = Arc::new(AtomicU8::new(PENDING));
+        let _cancel = CancelUnstarted(phase.clone());
+        let exchange = async {
+            if self
+                .shared
+                .tx
+                .send(Outbound::Retained(Retained {
+                    payload: payload.into_boxed_slice(),
+                    result,
+                    phase: phase.clone(),
+                    deadline,
+                }))
+                .await
+                .is_err()
+            {
+                return PublishOutcome::NoConnection;
+            }
+            receive.await.unwrap_or_else(|_| {
+                if phase.load(Ordering::SeqCst) == SUBMITTING {
+                    PublishOutcome::Unconfirmed
+                } else {
+                    PublishOutcome::NoConnection
+                }
+            })
+        };
+        match timeout_at(deadline, exchange).await {
+            Ok(outcome) => outcome,
+            Err(_)
+                if phase
+                    .compare_exchange(PENDING, CANCELLED, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok() =>
+            {
+                PublishOutcome::Failed
+            }
+            Err(_) => PublishOutcome::Unconfirmed,
         }
-        result
+    }
+
+    async fn flush(&self) -> bool {
+        let Some(link) = self.shared.link().filter(|link| link.ready()) else {
+            return false;
+        };
+        let revision = link.revision.load(Ordering::SeqCst);
+        let Some(client) = link.client.get() else {
+            return false;
+        };
+        matches!(timeout(BROKER_DEADLINE, client.flush()).await, Ok(Ok(())))
+            && link.ready()
+            && link.revision.load(Ordering::SeqCst) == revision
+    }
+
+    async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        use crate::protocol::bus::statistics::{PRODUCER_SUBJECT, ProducerRequest};
+        ProducerRequest::decode(&payload).ok_or(RequestError::Invalid)?;
+        self.exchange(PRODUCER_SUBJECT, payload).await
+    }
+
+    async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        self.exchange(subject, payload).await
     }
 }
 
@@ -514,6 +623,7 @@ fn options(shared: &Shared, link: &Arc<Link>) -> async_nats::ConnectOptions {
 
 async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
     let mut delay = RECONNECT_DELAY;
+    let mut retained = None;
     loop {
         let link = Arc::new(Link::default());
         *shared.link.lock().unwrap() = Some(link.clone());
@@ -526,7 +636,7 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
                 let _ = link.client.set(client);
                 tracing::info!("NATS link socket connected; awaiting broker round trip");
                 let connected = Instant::now();
-                run(&shared, &link, &mut rx).await;
+                run(&shared, &link, &mut rx, &mut retained).await;
                 // A socket the broker accepts and drops at once is a failure
                 // for the backoff: the delay resets after a link that held.
                 if connected.elapsed() >= PROBE_INTERVAL {
@@ -538,12 +648,59 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
         }
         drop(lifetime);
         drop(link);
-        while let Ok(outbound) = rx.try_recv() {
-            outbound.disconnected();
-        }
+        retain_head(&mut rx, &mut retained);
         tokio::time::sleep(delay.mul_f64(0.5 + rand::random::<f64>() * 0.5)).await;
         delay = delay.saturating_mul(2).min(Duration::from_secs(5));
     }
+}
+
+// Hold only one unsubmitted terminal head across link rebuilds. Remaining work
+// stays in the existing bounded channel; ordinary commands keep their own fences.
+fn retain_head(rx: &mut mpsc::Receiver<Outbound>, retained: &mut Option<Retained>) {
+    if retained.as_ref().is_some_and(|publish| !publish.pending()) {
+        *retained = None;
+    }
+    while retained.is_none() {
+        let Ok(outbound) = rx.try_recv() else {
+            break;
+        };
+        match outbound {
+            Outbound::Retained(publish) if publish.pending() => *retained = Some(publish),
+            other => other.disconnected(),
+        }
+    }
+}
+
+async fn submit_retained<F, Fut, E, C>(mut publish: Retained, submit: F, current: C)
+where
+    F: FnOnce(Box<[u8]>) -> Fut,
+    Fut: std::future::Future<Output = Result<(), E>>,
+    C: FnOnce() -> bool,
+{
+    if publish.result.is_closed()
+        || publish
+            .phase
+            .compare_exchange(PENDING, SUBMITTING, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+    {
+        return;
+    }
+    // Taking the head and marking SUBMITTING commits this single SDK attempt.
+    // Neither an SDK error nor cancellation can restore it for another link.
+    if Instant::now() >= publish.deadline {
+        let _ = publish.result.send(PublishOutcome::Failed);
+        return;
+    }
+    let sdk_deadline = publish.deadline.min(Instant::now() + BROKER_DEADLINE);
+    let submission = submit(publish.payload);
+    tokio::pin!(submission);
+    let outcome = tokio::select! {
+        biased;
+        _ = publish.result.closed() => return,
+        _ = tokio::time::sleep_until(sdk_deadline) => PublishOutcome::Unconfirmed,
+        result = &mut submission => if result.is_ok() && current() { PublishOutcome::Submitted } else { PublishOutcome::Unconfirmed },
+    };
+    let _ = publish.result.send(outcome);
 }
 
 async fn activate(shared: &Shared, link: &Arc<Link>) -> Result<(), ()> {
@@ -616,7 +773,12 @@ async fn restore(shared: &Shared, link: &Arc<Link>, fence: &mut Fence) -> Result
     Ok(())
 }
 
-async fn run(shared: &Shared, link: &Arc<Link>, rx: &mut mpsc::Receiver<Outbound>) {
+async fn run(
+    shared: &Shared,
+    link: &Arc<Link>,
+    rx: &mut mpsc::Receiver<Outbound>,
+    retained: &mut Option<Retained>,
+) {
     let client = link.client.get().unwrap();
     let Ok(Ok(mut fence)) = timeout(BROKER_DEADLINE, Fence::new(client)).await else {
         return;
@@ -631,6 +793,42 @@ async fn run(shared: &Shared, link: &Arc<Link>, rx: &mut mpsc::Receiver<Outbound
     loop {
         if link.broken.load(Ordering::SeqCst) {
             return;
+        }
+        if retained.is_some() {
+            let pending = retained.as_ref().unwrap();
+            if !pending.pending() {
+                *retained = None;
+                continue;
+            }
+            // Queue this client's existing SUB commands before its terminal PUB.
+            // This does not wait for or grant admission readiness.
+            if !matches!(
+                timeout(BROKER_DEADLINE, activate(shared, link)).await,
+                Ok(Ok(()))
+            ) {
+                return;
+            }
+            if link.broken.load(Ordering::SeqCst) {
+                return;
+            }
+            if !retained.as_ref().unwrap().pending() {
+                *retained = None;
+                continue;
+            }
+            let publish = retained.take().unwrap();
+            let revision = link.revision.load(Ordering::SeqCst);
+            submit_retained(
+                publish,
+                |payload| {
+                    client.publish(
+                        crate::protocol::bus::statistics::OBSERVATIONS_SUBJECT,
+                        payload.into_vec().into(),
+                    )
+                },
+                || link.connected() && link.revision.load(Ordering::SeqCst) == revision,
+            )
+            .await;
+            continue;
         }
         tokio::select! {
             _ = expiry.tick() => requests.expire(link),
@@ -655,6 +853,10 @@ async fn run(shared: &Shared, link: &Arc<Link>, rx: &mut mpsc::Receiver<Outbound
                         continue;
                     }
                     Outbound::Publish(publish) => publish,
+                    Outbound::Retained(publish) => {
+                        *retained = Some(publish);
+                        continue;
+                    }
                 };
                 if publish.result.is_closed() { continue; }
                 if !link.ready() || publish.revision != link.revision.load(Ordering::SeqCst)
@@ -689,6 +891,329 @@ async fn run(shared: &Shared, link: &Arc<Link>, rx: &mut mpsc::Receiver<Outbound
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn retained_sdk_deadline_and_link_changes_leave_submission_unconfirmed() {
+        for (blocked, changed, queued_for) in [
+            (true, false, Duration::ZERO),
+            (true, false, BROKER_DEADLINE / 2),
+            (false, true, Duration::ZERO),
+            (false, false, Duration::ZERO),
+        ] {
+            let (result, receipt) = oneshot::channel();
+            let phase = Arc::new(AtomicU8::new(PENDING));
+            let current = AtomicBool::new(true);
+            let deadline = Instant::now() + BROKER_DEADLINE;
+            tokio::time::advance(queued_for).await;
+            let started = Instant::now();
+            submit_retained(
+                Retained {
+                    payload: terminal_payload(1).into_boxed_slice(),
+                    result,
+                    phase: phase.clone(),
+                    deadline,
+                },
+                |_| async {
+                    if blocked {
+                        std::future::pending::<()>().await;
+                    }
+                    current.store(!changed, Ordering::SeqCst);
+                    Ok::<(), ()>(())
+                },
+                || current.load(Ordering::SeqCst),
+            )
+            .await;
+            assert_eq!(
+                started.elapsed(),
+                if blocked {
+                    BROKER_DEADLINE - queued_for
+                } else {
+                    Duration::ZERO
+                }
+            );
+            assert_eq!(
+                receipt.await.unwrap(),
+                if blocked || changed {
+                    PublishOutcome::Unconfirmed
+                } else {
+                    PublishOutcome::Submitted
+                }
+            );
+            assert_eq!(
+                phase.load(Ordering::SeqCst),
+                SUBMITTING,
+                "a timed-out or changed SDK attempt cannot be replayed"
+            );
+        }
+    }
+
+    fn terminal_payload(sequence: u64) -> Vec<u8> {
+        crate::protocol::bus::statistics::Observation {
+            version: 2,
+            incarnation: uuid::Uuid::nil(),
+            generation: 1,
+            producer: uuid::Uuid::nil(),
+            sequence,
+            event: crate::protocol::bus::statistics::Event::Disconnect {
+                address: "wallet".into(),
+            },
+        }
+        .encode()
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn retained_capability_rejects_every_non_disconnect_payload() {
+        let bus = BrokerBus::new(Some("nats://127.0.0.1:1".into()), "terminal-kind");
+        assert_eq!(
+            bus.statistics_control(vec![]).await,
+            Err(RequestError::Invalid)
+        );
+        assert_eq!(
+            bus.statistics_control(
+                crate::protocol::bus::statistics::ProducerRequest::Status
+                    .encode()
+                    .unwrap()
+            )
+            .await,
+            Err(RequestError::NoConnection)
+        );
+        let heartbeat = crate::protocol::bus::statistics::Observation {
+            version: 2,
+            incarnation: uuid::Uuid::nil(),
+            generation: 1,
+            producer: uuid::Uuid::nil(),
+            sequence: 1,
+            event: crate::protocol::bus::statistics::Event::Heartbeat {
+                address: "wallet".into(),
+                position: [0.; 3],
+            },
+        }
+        .encode()
+        .unwrap();
+        for payload in [heartbeat, vec![], vec![0; MAX_PUBLISH_BYTES + 1]] {
+            assert_eq!(
+                bus.publish_statistical_disconnect(payload, Instant::now() + BROKER_DEADLINE)
+                    .await,
+                PublishOutcome::Failed
+            );
+        }
+        assert!(bus.shared.rx.lock().unwrap().as_ref().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_submission_waits_for_capacity_without_admission_readiness() {
+        let bus = BrokerBus::new(Some("nats://127.0.0.1:1".into()), "terminal-capacity");
+        let mut rx = bus.shared.rx.lock().unwrap().take().unwrap();
+        let mut receipts = Vec::new();
+        for _ in 0..OUTBOUND_CAPACITY {
+            let (result, receipt) = oneshot::channel();
+            receipts.push(receipt);
+            bus.shared
+                .tx
+                .try_send(Outbound::Retained(Retained {
+                    payload: terminal_payload(1).into_boxed_slice(),
+                    deadline: Instant::now() + BROKER_DEADLINE,
+                    result,
+                    phase: Arc::new(AtomicU8::new(PENDING)),
+                }))
+                .unwrap_or_else(|_| panic!("queue capacity"));
+        }
+        {
+            let cancelled = bus.publish_statistical_disconnect(
+                terminal_payload(3),
+                Instant::now() + BROKER_DEADLINE,
+            );
+            tokio::pin!(cancelled);
+            assert!(futures::poll!(cancelled.as_mut()).is_pending());
+        }
+        let waiting = bus
+            .publish_statistical_disconnect(terminal_payload(2), Instant::now() + BROKER_DEADLINE);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        assert_eq!(rx.len(), OUTBOUND_CAPACITY);
+        assert_eq!(
+            bus.publish("test.ordinary", vec![1]).await,
+            PublishOutcome::NoConnection
+        );
+        rx.recv().await.unwrap().disconnected();
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        assert_eq!(rx.len(), OUTBOUND_CAPACITY);
+        for _ in 1..OUTBOUND_CAPACITY {
+            rx.recv().await.unwrap().disconnected();
+        }
+        let Outbound::Retained(terminal) = rx.recv().await.unwrap() else {
+            panic!("terminal queued")
+        };
+        assert_eq!(terminal.payload.as_ref(), terminal_payload(2));
+        terminal.result.send(PublishOutcome::Submitted).unwrap();
+        assert_eq!(waiting.await, PublishOutcome::Submitted);
+        assert!(
+            rx.is_empty(),
+            "cancelled capacity waiters must not enqueue later"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_terminal_heads_cannot_publish_after_a_link_rebuild() {
+        let bus = BrokerBus::new(Some("nats://127.0.0.1:1".into()), "terminal-cancel");
+        let mut rx = bus.shared.rx.lock().unwrap().take().unwrap();
+        {
+            let waiting = bus.publish_statistical_disconnect(
+                terminal_payload(1),
+                Instant::now() + BROKER_DEADLINE,
+            );
+            tokio::pin!(waiting);
+            assert!(futures::poll!(waiting.as_mut()).is_pending());
+        }
+        let mut retained = None;
+        retain_head(&mut rx, &mut retained);
+        assert!(
+            retained.is_none(),
+            "cancelled queued work must be discarded before submission"
+        );
+        assert!(rx.is_empty());
+        let waiting = bus
+            .publish_statistical_disconnect(terminal_payload(2), Instant::now() + BROKER_DEADLINE);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        retain_head(&mut rx, &mut retained);
+        assert!(retained.is_some());
+        for _ in 0..3 {
+            retain_head(&mut rx, &mut retained);
+        }
+        assert!(rx.is_empty());
+        let attempts = AtomicU64::new(0);
+        submit_retained(
+            retained.take().unwrap(),
+            |_| async {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                Err::<(), ()>(())
+            },
+            || true,
+        )
+        .await;
+        assert_eq!(waiting.await, PublishOutcome::Unconfirmed);
+        retain_head(&mut rx, &mut retained);
+        assert!(
+            retained.is_none(),
+            "an SDK attempt is never restored for another link"
+        );
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        let (result, receipt) = oneshot::channel();
+        let phase = Arc::new(AtomicU8::new(PENDING));
+        let started = phase.clone();
+        let submission = tokio::spawn(submit_retained(
+            Retained {
+                payload: terminal_payload(3).into_boxed_slice(),
+                deadline: Instant::now() + BROKER_DEADLINE,
+                result,
+                phase,
+            },
+            |_| std::future::pending::<Result<(), ()>>(),
+            || true,
+        ));
+        timeout(Duration::from_secs(1), async {
+            while started.load(Ordering::SeqCst) != SUBMITTING {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(receipt);
+        timeout(Duration::from_secs(1), submission)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            started.load(Ordering::SeqCst),
+            SUBMITTING,
+            "cancelled SDK attempts never return to pending"
+        );
+        let waiting = bus
+            .publish_statistical_disconnect(terminal_payload(4), Instant::now() + BROKER_DEADLINE);
+        tokio::pin!(waiting);
+        assert!(futures::poll!(waiting.as_mut()).is_pending());
+        let Outbound::Retained(uncertain) = rx.recv().await.unwrap() else {
+            panic!("terminal queued")
+        };
+        uncertain.phase.store(SUBMITTING, Ordering::SeqCst);
+        drop(uncertain);
+        assert_eq!(
+            waiting.await,
+            PublishOutcome::Unconfirmed,
+            "worker exit after SDK start cannot prove non-submission"
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_head_is_bounded_and_cancellation_before_sdk_start_prevents_publication() {
+        let (tx, mut rx) = mpsc::channel(OUTBOUND_CAPACITY);
+        let (result, receipt) = oneshot::channel();
+        let phase = Arc::new(AtomicU8::new(PENDING));
+        tx.send(Outbound::Retained(Retained {
+            payload: terminal_payload(1).into_boxed_slice(),
+            deadline: Instant::now() + BROKER_DEADLINE,
+            result,
+            phase: phase.clone(),
+        }))
+        .await
+        .unwrap_or_else(|_| panic!("queue capacity"));
+        let mut head = None;
+        retain_head(&mut rx, &mut head);
+        let mut others = Vec::new();
+        for _ in 0..OUTBOUND_CAPACITY {
+            let (result, receipt) = oneshot::channel();
+            others.push(receipt);
+            tx.try_send(Outbound::Retained(Retained {
+                payload: terminal_payload(2).into_boxed_slice(),
+                deadline: Instant::now() + BROKER_DEADLINE,
+                result,
+                phase: Arc::new(AtomicU8::new(PENDING)),
+            }))
+            .unwrap_or_else(|_| panic!("queue capacity"));
+        }
+        retain_head(&mut rx, &mut head);
+        assert_eq!(
+            rx.len(),
+            OUTBOUND_CAPACITY,
+            "only one unsubmitted head may leave the bounded queue"
+        );
+        phase.store(CANCELLED, Ordering::SeqCst);
+        let attempts = AtomicU64::new(0);
+        submit_retained(
+            head.take().unwrap(),
+            |_| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                std::future::ready(Ok::<(), ()>(()))
+            },
+            || true,
+        )
+        .await;
+        assert_eq!(attempts.load(Ordering::Relaxed), 0);
+        assert!(receipt.await.is_err());
+        let (result, receipt) = oneshot::channel();
+        submit_retained(
+            Retained {
+                payload: terminal_payload(3).into_boxed_slice(),
+                result,
+                phase: Arc::new(AtomicU8::new(PENDING)),
+                deadline: Instant::now(),
+            },
+            |_| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                std::future::ready(Ok::<(), ()>(()))
+            },
+            || true,
+        )
+        .await;
+        assert_eq!(
+            attempts.load(Ordering::Relaxed),
+            0,
+            "absolute expiry blocks late SDK entry independently of caller cancellation"
+        );
+        assert_eq!(receipt.await.unwrap(), PublishOutcome::Failed);
+    }
 
     #[tokio::test]
     #[ignore = "requires BUS_PUBLISH_TEST_URL pointing to an isolated test-owned broker"]

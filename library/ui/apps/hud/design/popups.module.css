@@ -30,6 +30,10 @@
   backdrop-filter: blur(2px);
   animation: fadeIn 0.2s ease;
 }
+.deep {
+  background: var(--modal-scrim-deep);
+  backdrop-filter: none;
+}
 .fixed {
   width: 100%;
   height: 100%;

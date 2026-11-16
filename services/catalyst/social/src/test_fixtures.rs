@@ -1,9 +1,9 @@
 //! The social family's captures (`tests/fixtures/conformance/social/`)
-//! replayed against an in-process router with the live replay's rules, the
-//! ones `tests/support/conformance/replay.rs` calls too
+//! replayed against an in-process router with the shared replay rules
 //! (`catalyst_testing::conformance::compare`): the query string, the status,
 //! the non-volatile headers the fixture records (`content-type` by media
 //! type), then the body, exact bytes or JSON after both sides' volatile paths.
+//! Other crates' tests reach it through the `test-support` feature.
 
 use std::path::PathBuf;
 
@@ -27,7 +27,7 @@ pub fn fixture(service: &str, name: &str) -> Fixture {
 }
 
 /// What `fx` differs in when its request, with its recorded headers but any
-/// auth chain (nothing here re-signs), is sent to `app` under `prefix` (the
+/// auth chain (nothing here re-signs) and its recorded JSON body, is sent to `app` under `prefix` (the
 /// Catalyst mount of the captured host): `status: ...` and `header ...` notes,
 /// then one entry per differing body field, `<path> missing|extra|value`
 /// with `[n]` folded to `[]` (what differs, not the seeded rows' own values),
@@ -60,7 +60,11 @@ pub async fn replay_signed(
     for (k, v) in auth {
         request = request.header(k, v);
     }
-    let request = request.body(Body::empty()).unwrap();
+    let body = match &fx.request.body {
+        Some(json) => Body::from(serde_json::to_vec(json).unwrap()),
+        None => Body::empty(),
+    };
+    let request = request.body(body).unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status().as_u16();
     let headers = response.headers().clone();

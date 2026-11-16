@@ -14,7 +14,7 @@ otherwise.
 
 | upstream | revision |
 | --- | --- |
-| `github.com/decentraland/worlds-content-server` | `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21) |
+| `github.com/decentraland/worlds-content-server` | `ebbf8d41d07973e317892067c765107d3512938e` (2026-11-12) |
 | this tree | the revision that contains this file |
 
 Upstream packages that decide rows were read from their published tarballs at the versions upstream's
@@ -38,27 +38,24 @@ Upstream's `src/controllers/routes.ts` registers 39 routes (`/reprocess-ab` and 
 
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [worlds-deploy.md](worlds-deploy.md) | `POST /entities` (single and `partial=true`), `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` | 4 | 0 | 0 | 4 | 0 | WD-01..27 |
-| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 9 | 1 | WR-01..34 |
-| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..39 |
-| [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 2 | 0 | 8 | 0 | WP-01..19 |
-| [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..27 |
-| **total** | | **40** | **3** | **0** | **36** | **1** | **146** |
+| [worlds-deploy.md](worlds-deploy.md) | `POST /entities` (single and `partial=true`), `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` | 4 | 0 | 0 | 4 | 0 | WD-01..28 |
+| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 10 | 0 | WR-01..37 |
+| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..42 |
+| [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 1 | 1 | 8 | 0 | WP-01..21 |
+| [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..28 |
+| **total** | | **40** | **2** | **1** | **37** | **0** | **156** |
 
-Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
-(WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
+Every upstream route has a route at the same method and path in this tree. At the root host, nine
+worlds handlers answer only under `/worlds-content-server`. At the root,
 `POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
-`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
-have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
+`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId`, `POST /gc` and
+`POST /reprocess-ab` have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
 worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1
 
-No item is P0. The P1 items:
-
-| id | endpoint | what differs |
-| --- | --- | --- |
-| WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
+No item is P0 or P1. `POST /reprocess-ab` (WR-22) hands scenes to the local abgen instead of SNS,
+an intended difference.
 
 ## Themes that cut across files
 
@@ -67,8 +64,13 @@ No item is P0. The P1 items:
   ADR-44 line. `PUT /settings` reads its multipart body only after the signed fetch (WW-24).
 - **Validator bodies** (WP-02, WW-15): the schema-validated routes answer upstream's
   `{ok:false,message,data}`, built with the content crate's validator (`content::validation`, CR-2).
-- **Absent vs `null`** (WP-03, WR-15, WR-18): several bodies write `null` where upstream
-  leaves the key out, or the reverse.
+- **Absent vs `null`** (WP-03, WR-15, WR-18): these bodies write `null` or leave the key out as
+  upstream does; no open item remains.
+- **Name deny list** (WD-28, WR-35, WP-11, WP-20, WC-28): one `NameDenyList` carries
+  `BLOCKED_WORLD_NAMES` and the DAO `banned-names` list to every consumer upstream has: deploy
+  validation, `/entities/active`, the world reads and listings, the permission routes and the comms
+  mints. After a failed list read the last list that read applies for five seconds here, while
+  upstream caches an empty list for an hour (WR-35, intended).
 - **Multipart limits and texts** (WD-04..11, WW-21..23): both multipart routes answer upstream's caps,
   duplicate-field rule, 413 and timeout texts, apart from the intended WD-08, WD-09 and WD-11.
 - **CORS** (WR-06, WW-37, WR-32): every worlds router carries the layer (WR-06; the mints, WC-02);

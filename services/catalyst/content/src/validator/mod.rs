@@ -42,7 +42,7 @@ pub(crate) mod fake_chain;
 mod helpers;
 pub mod image_metadata;
 mod item_hash;
-mod jsjson;
+pub(crate) mod jsjson;
 pub mod merkle;
 mod metadata_schema;
 pub(crate) mod onchain;
@@ -69,6 +69,7 @@ use crate::storage::{Storage, StorageError};
 
 pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
+pub use helpers::{is_relative_thumbnail_path, navmap_thumbnail_error};
 pub use metadata_schema::validate_scene_metadata;
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
@@ -366,6 +367,6 @@ pub fn into_deploy_failure(errors: Vec<ValidationError>) -> super::write_deploye
     } else if unverifiable {
         DeployFailure::Unverifiable(messages)
     } else {
-        DeployFailure::Rejected(messages)
+        DeployFailure::Rejected(super::write_deployer::RejectionKind::Validation, messages)
     }
 }
