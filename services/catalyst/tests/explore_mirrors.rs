@@ -721,7 +721,7 @@ async fn a_resumed_worlds_pass_after_a_skipped_page_is_incomplete_and_never_swee
     up.hold.notified().await;
     cancel.cancel();
     let out = run.await.unwrap().unwrap();
-    assert!(out.cancelled && out.failed_pages == 1);
+    assert!(out.cancelled && out.failed_pages == 1 && !out.fetched_all);
 
     let out = places_mirror::run_worlds_pass(
         &client(),
@@ -734,6 +734,7 @@ async fn a_resumed_worlds_pass_after_a_skipped_page_is_incomplete_and_never_swee
     .unwrap();
     assert_eq!(out.resumed_from, Some(100));
     assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(out.fetched_all, "it fetched every page it asked for");
     assert!(!out.complete);
     assert_eq!(out.swept, 0);
     assert_eq!(
@@ -2086,6 +2087,35 @@ async fn a_cancelled_events_pass_resumes_from_its_persisted_cursor() {
     db.teardown().await;
 }
 
+/// A resumed pass that stops at the offset ceiling fails no page or row, yet
+/// it did not reach the listing's end: `fetched_all` says so, and the job
+/// reports it as a failure rather than a clean resume.
+#[tokio::test]
+async fn a_resumed_worlds_pass_stopped_at_the_offset_ceiling_did_not_fetch_all() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let up = serve_upstream("/api/worlds", vec![], 100, false, vec![], None).await;
+    let source = up.source();
+    mirror_state::begin_pass(&pool, places_mirror::WORLDS_MIRROR, source.base())
+        .await
+        .unwrap();
+    mirror_state::advance(&pool, places_mirror::WORLDS_MIRROR, 100_000, 0)
+        .await
+        .unwrap();
+
+    let out =
+        places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &CancellationToken::new())
+            .await
+            .unwrap();
+    assert_eq!(out.resumed_from, Some(100_000));
+    assert_eq!((out.failed_pages, out.failed_rows), (0, 0));
+    assert!(!out.fetched_all && !out.complete && !out.cancelled);
+    assert!(up.offsets().is_empty(), "{:?}", up.offsets());
+    db.teardown().await;
+}
+
 /// The events leg of the skipped-page resume: the first page fails and is
 /// skipped, shutdown lands on the second, and the resumed run fetches the
 /// rest cleanly. The pass stays incomplete, so neither the unlisted check nor
@@ -2138,7 +2168,7 @@ async fn a_resumed_events_pass_after_a_skipped_page_is_incomplete_and_never_swee
     up.hold.notified().await;
     cancel.cancel();
     let out = run.await.unwrap().unwrap();
-    assert!(out.cancelled && out.failed_pages == 1);
+    assert!(out.cancelled && out.failed_pages == 1 && !out.fetched_all);
 
     let out = events_mirror::run_pass(
         &client(),
@@ -2151,6 +2181,7 @@ async fn a_resumed_events_pass_after_a_skipped_page_is_incomplete_and_never_swee
     .unwrap();
     assert_eq!(out.resumed_from, Some(500));
     assert_eq!(out.failed_pages, 0, "the resumed run itself saw no failure");
+    assert!(out.fetched_all, "it fetched every page it asked for");
     assert!(!out.complete);
     assert_eq!((out.swept, out.unlisted_gone), (0, 0));
     assert_eq!(

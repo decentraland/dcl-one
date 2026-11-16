@@ -252,6 +252,10 @@ pub struct PassOutcome {
     /// merely failed to see. A resumed events or worlds pass is never
     /// complete: what it skipped before the interruption is not persisted.
     pub complete: bool,
+    /// This run fetched every page it asked for and ended at the listing's
+    /// end, not at the offset ceiling; what it cannot know is whether an
+    /// interrupted run before it skipped a page.
+    pub fetched_all: bool,
     /// The catalogue was adopted as this node's ([`adopt_upstream`], on any
     /// replica): the pass fetched and wrote nothing.
     pub adopted: bool,
@@ -284,6 +288,7 @@ pub async fn run_pass(
         // The cursor does not record the pages or rows skipped before the
         // interruption, so a resumed pass never counts as complete.
         complete: !start.resumed,
+        fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -300,6 +305,7 @@ pub async fn run_pass(
         if offset >= MAX_OFFSET {
             tracing::warn!(offset, "event mirror: offset ceiling reached; ending pass");
             out.complete = false;
+            out.fetched_all = false;
             break;
         }
         let url = format!("{base}/api/events?list=all&limit={PAGE}&offset={offset}");
@@ -328,6 +334,7 @@ pub async fn run_pass(
             Err(e) => {
                 out.failed_pages += 1;
                 out.complete = false;
+                out.fetched_all = false;
                 consecutive_failures += 1;
                 tracing::warn!(error = %e, url = %url, "event mirror: page fetch failed; skipped");
                 let _ = mirror_state::record_error(pool, EVENTS_MIRROR, &format!("{e:#}")).await;
