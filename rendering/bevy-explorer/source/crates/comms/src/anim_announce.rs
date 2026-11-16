@@ -4,12 +4,13 @@
 //! told about. A clip change is announced by the hash pair (or, for the end of an animation, an
 //! empty scene hash). If the one packet that carries it is lost, the receiver keeps showing the old
 //! clip, and after a clear nothing more is sent to correct it. So a change is announced on the send
-//! that sees it and on the next [`ANNOUNCE_REPEATS`] sends, which tolerates up to
-//! two consecutive losses, so a single loss costs about one send interval. A clip that then stays active is re-announced every keepalive so late
-//! joiners learn it. Repeating the pair is safe for the receiver: it rebuilds the same clip URN, and
-//! seeks and sounds travel only on the send that latches them. The repeats carry the clip identity
-//! only: a seek or a sound trigger on a lost first packet is not repeated, so the clip then starts
-//! from its beginning and the sound does not play.
+//! that sees it and on the next [`ANNOUNCE_REPEATS`] sends, which tolerates up to two consecutive
+//! losses, so a single loss costs about one send interval. A clip that then stays active is
+//! re-announced every keepalive so late joiners learn it. Repeating the pair is safe for the
+//! receiver: it rebuilds the same clip URN, and seeks and sounds travel only on the send that
+//! latches them. The repeats carry the clip identity only: a seek or a sound trigger on a lost
+//! first packet is not repeated, so the clip then starts from its beginning and the sound does not
+//! play.
 //!
 //! A character at rest sends only once a second, so the repeats would be a second apart exactly
 //! when a clip changes at rest (stopping, landing). [`ClipAnnouncer::repeat_pending`] lets the
@@ -92,7 +93,8 @@ mod tests {
         (format!("scene-{name}"), format!("content-{name}"))
     }
 
-    /// Sends every 0.125 s (exact in binary, so the keepalive arithmetic has no rounding) from `start`, returning what each announced.
+    /// Sends every 0.125 s from `start`, returning what each announced. The step is exact in
+    /// binary, so the keepalive arithmetic has no rounding.
     fn sends(
         announcer: &mut ClipAnnouncer,
         start: f64,

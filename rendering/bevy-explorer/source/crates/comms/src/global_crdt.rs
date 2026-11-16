@@ -1695,8 +1695,9 @@ mod tests {
         let ride_along = resolve(anim_packet(sender, None, false));
 
         let announced = announced.expect("the announcement resolves");
-        // The same URN keeps the avatar's clip running (a different one restarts it), and a
-        // repeat carries no seek or sounds, so neither is applied twice.
+        // Checks that a repeated announcement resolves to a request equal to the first, with no
+        // seek or sounds. That the avatar then keeps the clip running rests on the animation
+        // system restarting a clip only when its URN differs; this test does not cover that.
         assert_eq!(repeated.as_ref(), Some(&announced));
         assert_eq!(ride_along.as_ref(), Some(&announced));
         assert_eq!(announced.seek, None);
