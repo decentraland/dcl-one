@@ -44,10 +44,8 @@ async fn reel_for(
     let Some(cr) = state.domains.camera_reel.clone() else {
         return Err(not_configured("camera-reel"));
     };
-    if crate::camera_reel::writes::is_gated(&method, path)
-        && let Some(r) = crate::shared::writes::refusal(cr.settings.writes_enabled)
-    {
-        return Err(refused(crate::camera_reel::writes::refused_response(&r)).await);
+    if !cr.settings.writes_enabled && crate::camera_reel::writes::is_gated(&method, path) {
+        return Err(refused(crate::camera_reel::writes::disabled_response()).await);
     }
     let Some(token) = configured(cr.settings.admin_token.as_deref()) else {
         return Err(token_missing("camera-reel"));
@@ -161,8 +159,8 @@ async fn builder_for(
     let Some(bs) = state.domains.builder.clone() else {
         return Err(not_configured("builder"));
     };
-    if let Some(r) = crate::shared::writes::refusal(bs.settings.writes_enabled) {
-        return Err(refused(crate::builder::writes::refused_response(&r)).await);
+    if !bs.settings.writes_enabled {
+        return Err(refused(crate::builder::writes::disabled_response()).await);
     }
     let Some(token) = configured(bs.settings.admin_token.as_deref()) else {
         return Err(token_missing("builder"));

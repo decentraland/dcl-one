@@ -186,14 +186,31 @@ fn replay_sources(ip: &str) -> Vec<String> {
     sources
 }
 
-struct ReplayJournal {
+/// One write to the replay journal, in the order the event loop issued it.
+enum JournalJob {
+    /// One record line.
+    Append(String),
+    /// The whole journal, replacing the file: the floor and every live pair.
+    Compact(String),
+}
+
+/// How far the journal writer has got: every job up to `durable_through` (counted from 1 in
+/// issue order) is on disk, and `failed` is set once a write failed, after which it writes
+/// nothing more.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JournalProgress {
+    pub durable_through: u64,
+    pub failed: bool,
+}
+
+/// The journal file, owned by the writer thread once the journal is open.
+struct ReplayJournalFile {
     path: std::path::PathBuf,
     file: std::fs::File,
     _lock: std::fs::File,
-    records: usize,
 }
 
-impl ReplayJournal {
+impl ReplayJournalFile {
     #[cfg(unix)]
     fn sync_parent(path: &std::path::Path) -> std::io::Result<()> {
         let parent = path
@@ -234,13 +251,11 @@ impl ReplayJournal {
         Self::sync_parent(&path)?;
         let mut seen = std::collections::HashMap::new();
         let mut forgotten_through_ms = i64::MIN;
-        let mut records = 0usize;
         for line in std::io::BufReader::new(&readable).lines() {
             let line = line?;
             if line.is_empty() {
                 continue;
             }
-            records = records.saturating_add(1);
             let fields: Vec<_> = line.split('\t').collect();
             match fields.as_slice() {
                 ["F", through] => {
@@ -295,37 +310,35 @@ impl ReplayJournal {
                 path,
                 file,
                 _lock: lock,
-                records,
             },
             seen,
             forgotten_through_ms,
         ))
     }
 
-    fn append_seen(
-        &mut self,
-        wallet: &str,
-        timestamp: &str,
-        signed_ms: i64,
-    ) -> std::io::Result<()> {
+    /// Writes one batch with a single sync. Appends issued before a compaction are already in
+    /// the compacted contents, so they are not written separately.
+    fn write_batch(&mut self, batch: Vec<JournalJob>) -> std::io::Result<()> {
         use std::io::Write as _;
 
-        writeln!(self.file, "S\t{signed_ms}\t{wallet}\t{timestamp}")?;
-        self.file.sync_data()?;
-        self.records = self.records.saturating_add(1);
+        let mut appended = String::new();
+        for job in batch {
+            match job {
+                JournalJob::Append(line) => appended.push_str(&line),
+                JournalJob::Compact(contents) => {
+                    appended.clear();
+                    self.compact(&contents)?;
+                }
+            }
+        }
+        if !appended.is_empty() {
+            self.file.write_all(appended.as_bytes())?;
+            self.file.sync_data()?;
+        }
         Ok(())
     }
 
-    fn append_floor(&mut self, through: i64) -> std::io::Result<()> {
-        use std::io::Write as _;
-
-        writeln!(self.file, "F\t{through}")?;
-        self.file.sync_data()?;
-        self.records = self.records.saturating_add(1);
-        Ok(())
-    }
-
-    fn compact(&mut self, seen: &ReplayEntries, forgotten_through_ms: i64) -> std::io::Result<()> {
+    fn compact(&mut self, contents: &str) -> std::io::Result<()> {
         use std::io::Write as _;
 
         let temporary = self.path.with_extension("replay-journal.tmp");
@@ -334,12 +347,7 @@ impl ReplayJournal {
             .truncate(true)
             .write(true)
             .open(&temporary)?;
-        writeln!(file, "F\t{forgotten_through_ms}")?;
-        let mut entries: Vec<_> = seen.iter().collect();
-        entries.sort_by(|left, right| left.0.cmp(right.0));
-        for ((wallet, timestamp), entry) in entries {
-            writeln!(file, "S\t{}\t{wallet}\t{timestamp}", entry.signed_ms)?;
-        }
+        file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&temporary, &self.path)?;
         Self::sync_parent(&self.path)?;
@@ -347,14 +355,167 @@ impl ReplayJournal {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        self.records = seen.len().saturating_add(1);
         Ok(())
+    }
+
+    /// The writer thread: waits for a job, takes every job queued behind it as one batch, and
+    /// writes the batch with one sync, so concurrent handshakes share a sync. `gate`, used by
+    /// tests only, must release each batch with a [`WriterStep`]; a closed gate stops the writer
+    /// as a crash would, before the batch is written.
+    fn write_jobs(
+        mut self,
+        jobs: std::sync::mpsc::Receiver<JournalJob>,
+        progress: tokio::sync::watch::Sender<JournalProgress>,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) {
+        let _panic = ReportPanic(&progress);
+        let mut durable_through = 0u64;
+        while let Ok(first) = jobs.recv() {
+            let gated = match gate.as_ref().map(std::sync::mpsc::Receiver::recv) {
+                None | Some(Ok(WriterStep::Write)) => Ok(()),
+                Some(Ok(WriterStep::Fail)) => {
+                    Err(std::io::Error::other("injected journal write failure"))
+                }
+                Some(Ok(WriterStep::Panic)) => panic!("injected journal writer panic"),
+                Some(Err(_)) => return,
+            };
+            let batch: Vec<_> = std::iter::once(first).chain(jobs.try_iter()).collect();
+            let issued = batch.len() as u64;
+            match gated.and_then(|()| self.write_batch(batch)) {
+                Ok(()) => {
+                    durable_through += issued;
+                    progress.send_replace(JournalProgress {
+                        durable_through,
+                        failed: false,
+                    });
+                }
+                Err(error) => {
+                    tracing::error!(%error, "Pulse replay journal write failed; admission is closed");
+                    progress.send_replace(JournalProgress {
+                        durable_through,
+                        failed: true,
+                    });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// What a test gate tells the journal writer to do with its next batch.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug)]
+pub(crate) enum WriterStep {
+    Write,
+    Fail,
+    Panic,
+}
+
+/// Reports the journal failed if the writer panics, so the event loop wakes and refuses the
+/// handshakes it holds instead of leaving them to the authentication timeout.
+struct ReportPanic<'a>(&'a tokio::sync::watch::Sender<JournalProgress>);
+
+impl Drop for ReportPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.send_modify(|progress| progress.failed = true);
+        }
+    }
+}
+
+fn journal_contents(seen: &ReplayEntries, forgotten_through_ms: i64) -> String {
+    use std::fmt::Write as _;
+
+    let mut contents = format!("F\t{forgotten_through_ms}\n");
+    let mut entries: Vec<_> = seen.iter().collect();
+    entries.sort_by(|left, right| left.0.cmp(right.0));
+    for ((wallet, timestamp), entry) in entries {
+        let _ = writeln!(contents, "S\t{}\t{wallet}\t{timestamp}", entry.signed_ms);
+    }
+    contents
+}
+
+/// The event loop's side of the journal: it issues jobs without waiting, and a dedicated
+/// thread writes them. Dropping it writes every job already issued before it returns.
+struct ReplayJournal {
+    jobs: Option<std::sync::mpsc::Sender<JournalJob>>,
+    progress: tokio::sync::watch::Receiver<JournalProgress>,
+    writer: Option<std::thread::JoinHandle<()>>,
+    issued: u64,
+    records: usize,
+}
+
+impl ReplayJournal {
+    fn start(
+        file: ReplayJournalFile,
+        records: usize,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) -> std::io::Result<Self> {
+        let (jobs, queued) = std::sync::mpsc::channel();
+        let (sender, progress) = tokio::sync::watch::channel(JournalProgress::default());
+        let writer = std::thread::Builder::new()
+            .name("pulse-replay-journal".into())
+            .spawn(move || file.write_jobs(queued, sender, gate))?;
+        Ok(Self {
+            jobs: Some(jobs),
+            progress,
+            writer: Some(writer),
+            issued: 0,
+            records,
+        })
+    }
+
+    fn issue(&mut self, job: JournalJob) {
+        // A send fails only once the writer has stopped, which `progress` reports as failed.
+        if let Some(jobs) = self.jobs.as_ref() {
+            let _ = jobs.send(job);
+        }
+        self.issued += 1;
+    }
+
+    fn append_seen(&mut self, wallet: &str, timestamp: &str, signed_ms: i64) {
+        self.issue(JournalJob::Append(format!(
+            "S\t{signed_ms}\t{wallet}\t{timestamp}\n"
+        )));
+        self.records = self.records.saturating_add(1);
+    }
+
+    fn append_floor(&mut self, through: i64) {
+        self.issue(JournalJob::Append(format!("F\t{through}\n")));
+        self.records = self.records.saturating_add(1);
+    }
+
+    fn compact(&mut self, seen: &ReplayEntries, forgotten_through_ms: i64) {
+        self.issue(JournalJob::Compact(journal_contents(
+            seen,
+            forgotten_through_ms,
+        )));
+        self.records = seen.len().saturating_add(1);
+    }
+
+    fn progress(&self) -> JournalProgress {
+        let mut progress = *self.progress.borrow();
+        // The writer stops only on a failed write or when this side is dropped.
+        progress.failed |= self.progress.has_changed().is_err();
+        progress
+    }
+}
+
+impl Drop for ReplayJournal {
+    fn drop(&mut self) {
+        self.jobs = None;
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
     }
 }
 
 /// Admits each `(wallet, signed timestamp)` at most once. The production constructor journals a
-/// valid pair before answering, including a clock-ahead pair that is refused for now, so restart
-/// cannot turn observed signed bytes into a first use. An entry is dropped only after the wall
+/// valid pair before it is answered, including a clock-ahead pair that is refused for now, so
+/// restart cannot turn observed signed bytes into a first use. Journal writes run on a dedicated
+/// thread and are group-committed: an admission issues its record and returns, and the caller
+/// holds the answer until [`Self::journal_progress`] covers [`Self::journal_issued`] as it was
+/// after the admission. A crash before that sync loses only pairs that were never answered. An entry is dropped only after the wall
 /// clock has left its freshness window, and every dropped timestamp raises
 /// `forgotten_through_ms`, at or below which nothing is admitted. A stepped-back wall clock
 /// therefore cannot make a dropped timestamp fresh again, and `forget_before` puts everything
@@ -372,7 +533,6 @@ pub struct HandshakeReplayPolicy {
     seen: ReplayEntries,
     entries_by_source: std::collections::HashMap<String, usize>,
     journal: Option<ReplayJournal>,
-    storage_failed: bool,
 }
 
 impl HandshakeReplayPolicy {
@@ -386,7 +546,6 @@ impl HandshakeReplayPolicy {
             seen: std::collections::HashMap::new(),
             entries_by_source: std::collections::HashMap::new(),
             journal: None,
-            storage_failed: false,
         }
     }
 
@@ -397,7 +556,18 @@ impl HandshakeReplayPolicy {
         path: impl AsRef<std::path::Path>,
         now_ms: i64,
     ) -> std::io::Result<Self> {
-        let (journal, seen, forgotten_through_ms) = ReplayJournal::open(path)?;
+        Self::durable_with_gate(enabled, skew_ms, max_entries, path, now_ms, None)
+    }
+
+    fn durable_with_gate(
+        enabled: bool,
+        skew_ms: i64,
+        max_entries: usize,
+        path: impl AsRef<std::path::Path>,
+        now_ms: i64,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) -> std::io::Result<Self> {
+        let (mut file, seen, forgotten_through_ms) = ReplayJournalFile::open(path)?;
         let mut policy = Self {
             enabled,
             skew_ms,
@@ -406,8 +576,7 @@ impl HandshakeReplayPolicy {
             forgotten_through_ms,
             seen,
             entries_by_source: std::collections::HashMap::new(),
-            journal: Some(journal),
-            storage_failed: false,
+            journal: None,
         };
         policy.sweep_expired_in_memory(now_ms);
         if policy.seen.len() > max_entries {
@@ -416,8 +585,30 @@ impl HandshakeReplayPolicy {
                 "replay journal exceeds configured capacity",
             ));
         }
-        policy.compact_journal()?;
+        file.compact(&journal_contents(&policy.seen, policy.forgotten_through_ms))?;
+        policy.journal = Some(ReplayJournal::start(
+            file,
+            policy.seen.len().saturating_add(1),
+            gate,
+        )?);
         Ok(policy)
+    }
+
+    /// [`Self::durable`] whose writer waits for one message from the returned gate before each
+    /// batch (see [`WriterStep`]), and dropping the gate stops the writer before the batch
+    /// reaches the file, as a crash would.
+    #[cfg(test)]
+    pub(crate) fn durable_gated(
+        skew_ms: i64,
+        max_entries: usize,
+        path: impl AsRef<std::path::Path>,
+        now_ms: i64,
+    ) -> (Self, std::sync::mpsc::Sender<WriterStep>) {
+        let (gate, released) = std::sync::mpsc::channel();
+        let policy =
+            Self::durable_with_gate(true, skew_ms, max_entries, path, now_ms, Some(released))
+                .expect("open the gated replay journal");
+        (policy, gate)
     }
 
     /// [`Self::durable`] as a restart inside one test process: the previous
@@ -457,16 +648,39 @@ impl HandshakeReplayPolicy {
             return;
         }
         self.forgotten_through_ms = next;
-        if let Some(journal) = self.journal.as_mut()
-            && journal.append_floor(next).is_err()
-        {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
+        if let Some(journal) = self.journal.as_mut() {
+            journal.append_floor(next);
         }
     }
 
-    /// Records a fresh pair from the peer address `ip` before it is answered; `None` is not
-    /// counted per source.
+    /// Journal jobs issued so far; 0 without a journal.
+    pub fn journal_issued(&self) -> u64 {
+        self.journal.as_ref().map_or(0, |journal| journal.issued)
+    }
+
+    /// How far the journal writer has got. Without a journal nothing is ever pending.
+    pub fn journal_progress(&self) -> JournalProgress {
+        self.journal
+            .as_ref()
+            .map_or_else(JournalProgress::default, ReplayJournal::progress)
+    }
+
+    /// Resolves when the journal writer reports progress, including its last report after it
+    /// stopped; never once that report has been seen, nor without a journal.
+    pub async fn journal_progressed(&mut self) {
+        match self.journal.as_mut() {
+            // `changed` yields an unseen value before it reports the writer gone.
+            Some(journal) => {
+                if journal.progress.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Records a fresh pair from the peer address `ip` (`None` is not counted per source) and
+    /// issues its journal record; see the type's documentation for when it may be answered.
     pub fn try_admit(
         &mut self,
         now_ms: i64,
@@ -477,7 +691,7 @@ impl HandshakeReplayPolicy {
         if !self.enabled {
             return Ok(());
         }
-        if self.storage_failed {
+        if self.journal_progress().failed {
             return Err(ReplayRejection::Storage);
         }
         let signed_ms = match timestamp.parse::<i64>() {
@@ -500,7 +714,7 @@ impl HandshakeReplayPolicy {
             })
         };
         if self.seen.len() >= self.max_entries / 2 || source_full(self) {
-            self.sweep_expired(now_ms)?;
+            self.sweep_expired(now_ms);
         }
 
         if source_full(self) {
@@ -510,26 +724,18 @@ impl HandshakeReplayPolicy {
             return Err(ReplayRejection::Capacity);
         }
 
-        if let Some(journal) = self.journal.as_mut()
-            && journal.append_seen(&key.0, &key.1, signed_ms).is_err()
-        {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+        if let Some(journal) = self.journal.as_mut() {
+            journal.append_seen(&key.0, &key.1, signed_ms);
         }
         for source in &sources {
             *self.entries_by_source.entry(source.clone()).or_default() += 1;
         }
         self.seen.insert(key, ReplayEntry { signed_ms, sources });
-        if self
-            .journal
-            .as_ref()
-            .is_some_and(|journal| journal.records > self.max_entries.saturating_mul(4).max(4))
-            && self.compact_journal().is_err()
+        let compaction_due = self.max_entries.saturating_mul(4).max(4);
+        if let Some(journal) = self.journal.as_mut()
+            && journal.records > compaction_due
         {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal compaction failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+            journal.compact(&self.seen, self.forgotten_through_ms);
         }
         if signed_ms > now_ms {
             Err(ReplayRejection::FutureDated)
@@ -538,18 +744,14 @@ impl HandshakeReplayPolicy {
         }
     }
 
-    fn sweep_expired(&mut self, now_ms: i64) -> Result<(), ReplayRejection> {
+    fn sweep_expired(&mut self, now_ms: i64) {
         let old_floor = self.forgotten_through_ms;
         self.sweep_expired_in_memory(now_ms);
         if self.forgotten_through_ms != old_floor
             && let Some(journal) = self.journal.as_mut()
-            && journal.append_floor(self.forgotten_through_ms).is_err()
         {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+            journal.append_floor(self.forgotten_through_ms);
         }
-        Ok(())
     }
 
     fn sweep_expired_in_memory(&mut self, now_ms: i64) {
@@ -572,13 +774,6 @@ impl HandshakeReplayPolicy {
             false
         });
         self.forgotten_through_ms = forgotten_through_ms;
-    }
-
-    fn compact_journal(&mut self) -> std::io::Result<()> {
-        if let Some(journal) = self.journal.as_mut() {
-            journal.compact(&self.seen, self.forgotten_through_ms)?;
-        }
-        Ok(())
     }
 }
 
@@ -1273,28 +1468,142 @@ mod tests {
         );
     }
 
-    #[test]
-    fn baseline_input_boundaries_durable_storage_failure_latches_closed() {
+    async fn settle(
+        policy: &mut HandshakeReplayPolicy,
+        done: impl Fn(JournalProgress) -> bool,
+    ) -> JournalProgress {
+        tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+            loop {
+                let progress = policy.journal_progress();
+                if done(progress) {
+                    return progress;
+                }
+                policy.journal_progressed().await;
+            }
+        })
+        .await
+        .expect("the journal writer reports progress")
+    }
+
+    #[tokio::test]
+    async fn baseline_input_boundaries_durable_storage_failure_latches_closed() {
         let path = ReplayPath::new("storage-failure");
-        let mut policy = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
-        // A real write error, without relying on platform-dependent chmod or disk exhaustion.
-        policy.journal.as_mut().unwrap().file = std::fs::File::open(&path.0).unwrap();
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 4, &path.0, SIGNED);
         assert_eq!(
             policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
-            Err(ReplayRejection::Storage)
+            Ok(())
         );
+        let issued = policy.journal_issued();
+        gate.send(WriterStep::Fail).unwrap();
+        let progress = settle(&mut policy, |progress| progress.failed).await;
         assert!(
-            policy.seen.is_empty(),
+            progress.durable_through < issued,
             "failed persistence cannot grant admission"
         );
-        // Repairing the file handle cannot reopen admission inside the failed process.
-        policy.journal.as_mut().unwrap().file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path.0)
-            .unwrap();
+        // The failure is latched: nothing reopens admission inside the failed process.
+        let _ = gate.send(WriterStep::Write);
         assert_eq!(
             policy.try_admit(SIGNED + 1, None, "other", &(SIGNED + 1).to_string()),
             Err(ReplayRejection::Storage)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_writer_that_failed_and_stopped_still_wakes_the_event_loop() {
+        let path = ReplayPath::new("failed-wakes");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 4, &path.0, SIGNED);
+        assert_eq!(
+            policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
+            Ok(())
+        );
+        gate.send(WriterStep::Fail).unwrap();
+        // The writer reports the failure and exits before the event loop looks.
+        assert!(
+            crate::shared::test_wait::until(async || {
+                policy
+                    .journal
+                    .as_ref()
+                    .is_some_and(|journal| journal.progress.has_changed().is_err())
+            })
+            .await
+        );
+        tokio::time::timeout(
+            crate::shared::test_wait::HANG_GUARD,
+            policy.journal_progressed(),
+        )
+        .await
+        .expect("the failure wakes the event loop so held handshakes are refused");
+        assert!(policy.journal_progress().failed);
+    }
+
+    #[tokio::test]
+    async fn journal_group_commits_every_record_queued_behind_one_sync() {
+        let path = ReplayPath::new("group-commit");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        let ts = SIGNED.to_string();
+        for wallet in ["0x1", "0x2", "0x3"] {
+            assert_eq!(policy.try_admit(SIGNED, None, wallet, &ts), Ok(()));
+        }
+        let issued = policy.journal_issued();
+        assert_eq!(issued, 3);
+        assert_eq!(
+            policy.journal_progress(),
+            JournalProgress::default(),
+            "nothing is durable before the sync"
+        );
+        // The writer needs one release per batch: one release makes all three durable.
+        gate.send(WriterStep::Write).unwrap();
+        let progress = settle(&mut policy, |progress| progress.durable_through >= issued).await;
+        assert_eq!(
+            progress,
+            JournalProgress {
+                durable_through: issued,
+                failed: false
+            }
+        );
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        for wallet in ["0x1", "0x2", "0x3"] {
+            assert!(
+                journal.contains(&format!("\t{wallet}\t{ts}\n")),
+                "{journal}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_crash_before_the_sync_loses_only_unanswered_pairs() {
+        let path = ReplayPath::new("crash");
+        let ts = SIGNED.to_string();
+        {
+            let (mut policy, gate) =
+                HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+            assert_eq!(policy.try_admit(SIGNED, None, "0xanswered", &ts), Ok(()));
+            let answerable = policy.journal_issued();
+            gate.send(WriterStep::Write).unwrap();
+            settle(&mut policy, |progress| {
+                progress.durable_through >= answerable
+            })
+            .await;
+
+            assert_eq!(policy.try_admit(SIGNED, None, "0xunanswered", &ts), Ok(()));
+            assert!(
+                policy.journal_progress().durable_through < policy.journal_issued(),
+                "its answer is still held"
+            );
+            // Crash: the writer stops before the batch reaches the file.
+            drop(gate);
+        }
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 16, &path.0, SIGNED).unwrap();
+        assert_eq!(
+            restarted.try_admit(SIGNED, None, "0xanswered", &ts),
+            Err(ReplayRejection::Duplicate),
+            "a pair that could have been answered is never admitted again"
+        );
+        assert_eq!(
+            restarted.try_admit(SIGNED, None, "0xunanswered", &ts),
+            Ok(()),
+            "a pair that was never answered may be lost"
         );
     }
 

@@ -1,0 +1,14 @@
+.root {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-login);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--loading-vignette);
+}
+/* 124px on the 1080 reference canvas */
+.logo {
+  width: calc(124px * var(--ui-scale, 1));
+  height: calc(124px * var(--ui-scale, 1));
+}

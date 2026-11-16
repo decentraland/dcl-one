@@ -67,7 +67,7 @@ jobs:
       # No caches in this job. An `issue_comment` run saves caches in main's scope, after running
       # the PR's own code, and main's release jobs restore them. So the media is pulled directly
       # (not through the local creator-hub-lfs action, which this PR checkout could change) and
-      # setup-node gets no npm cache.
+      # setup-node gets no package cache.
       - name: check out the packs' media
         working-directory: .
         run: git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/**'
@@ -80,7 +80,7 @@ jobs:
           node-version: 24
 
       - name: install
-        run: npm ci --silent && make install-asset-packs
+        run: corepack enable && make install-asset-packs
 
       - name: build
         run: make build-asset-packs

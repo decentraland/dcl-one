@@ -240,7 +240,10 @@ pub async fn token_record(
     let now = chrono::Utc::now();
     match role {
         Lookup::Found(ContractRole::Land) | Lookup::Found(ContractRole::Estate) => {
-            let Some(mut land) = crate::market::nft_reads::land_snapshot(pool).await else {
+            let Some(net) = chain.land_network() else {
+                return Ok(Lookup::Unknown);
+            };
+            let Some(mut land) = crate::market::nft_reads::land_snapshot(pool, net).await else {
                 return Ok(Lookup::Unknown);
             };
             let owner: Option<Option<String>> = sqlx::query_scalar("SELECT owner FROM land_authz.token_right WHERE token_address = $1 AND token_id = $2::numeric")

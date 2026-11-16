@@ -63,7 +63,7 @@
 //! (with `CREDITS_USAGE_INDEX_ENABLED`, `RPC_ENDPOINT_POLYGON` and
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
 //! reconciler did, so it is local authority too: it runs in `serve` and
-//! folds only with `OPS_WRITES_ENABLED` and fresh restore stamps, indexing
+//! folds only with `OPS_WRITES_ENABLED`, indexing
 //! the log either way). Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
@@ -787,8 +787,7 @@ impl State {
     /// escrow release worker (only with one), the settlement job, the
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
-    /// ledger, so it runs beside the other credits writers, under the
-    /// restore stamps `serve` installs before its jobs start.
+    /// ledger, so it runs beside the other credits writers.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
@@ -828,11 +827,9 @@ impl State {
     /// RPC and the contract are set: one pass per interval with a 5 s
     /// first-fire jitter, a failing pass backing off to ten minutes at most
     /// (the authorize lane closes once the fold is 10 minutes old). The fold
-    /// debits wallets, so with `OPS_WRITES_ENABLED` off, or a pass the
-    /// restore stamps hold, the job indexes the log (regenerable from the
-    /// chain) and publishes nothing: the lane stays closed. Private: only
-    /// [`Self::spawn_jobs`] starts it, in a process whose restore stamps are
-    /// installed.
+    /// debits wallets, so with `OPS_WRITES_ENABLED` off the job indexes the
+    /// log (regenerable from the chain) and publishes nothing: the lane stays
+    /// closed. Private: only [`Self::spawn_jobs`] starts it.
     fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
         let settings = &self.settings.usage;
         if !settings.enabled {
@@ -846,10 +843,7 @@ impl State {
         }
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
-        let gate = Arc::new(crate::shared::writes::PassGate::new(
-            usage::JOB_NAME,
-            crate::shared::writes::ops_refusal,
-        ));
+        let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(

@@ -1,3 +1,7 @@
+# No package runs code at install time: esbuild's binary ships as an optional dependency.
+ignoreScripts: true
+# New dependencies are saved with exact versions, so regenerating the lockfile never picks up a newer release.
+saveExact: true
 allowBuilds:
   esbuild: false
   msw: false
