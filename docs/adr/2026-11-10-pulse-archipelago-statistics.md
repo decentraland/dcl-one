@@ -169,8 +169,11 @@ existing public HTTP paths to stay on the shared API process. Moving credentials
 or content SQL into Pulse would expand its responsibilities without helping the
 statistics contract.
 
-Compatibility is assessed against pinned contracts for both the statistics and
-connector surfaces, including methods, headers, errors and socket lifecycle.
+Compatibility evidence for Stats pins `decentraland/archipelago-workers` at
+`64dc515987175c679e4009fe557ea60fdf50bc6c` in
+`services/catalyst/comms/src/stats/source-runtime-lock.json`. Connector evidence
+records its own source revision. Comparisons cover methods, headers, errors and
+socket lifecycle.
 Unknown or divergent behavior must remain visible in review evidence. Source
 inspection and this ownership decision do not establish a compatibility or release
 verdict. Rollout requires matching producer and reader protocols and NATS subject
