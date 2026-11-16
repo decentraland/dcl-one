@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the node test binaries concurrently; tests create their own scratch databases.
-# The socket binaries (archipelago_*, pulse_*) keep wall-clock budgets, so they run with at
-# most one test thread per core: after the others when the pool would oversubscribe the cores.
+# The node's integration tests link as a few grouped binaries (services/catalyst/Cargo.toml), so
+# the node_* groups run with twice the test threads of a crate's binary. The socket groups
+# (sockets_*) keep wall-clock budgets: they run after the others, sharing one test thread per core.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,17 +52,25 @@ LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" 'NR 
 cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)
 jobs="${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}"
 [ "$jobs" -ge 1 ] || { echo "catalyst-test: CATALYST_TEST_JOBS must be at least 1" >&2; exit 1; }
-# jobs * RUST_TEST_THREADS tests run at once, each with up to 10 of the cluster's 400 connections.
+# Up to jobs * RUST_TEST_THREADS tests run at once (a node_* group counting twice), each with up
+# to 10 of the cluster's 400 connections.
 export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
-socket_jobs=$(( cores / RUST_TEST_THREADS ))
+group_threads=$(( RUST_TEST_THREADS * 2 ))
+grep -E '/sockets_[^/]*$' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]
+grep -v -E '/sockets_[^/]*$' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]
+socket_jobs=$(( $(wc -l < "$logs/sockets") ))
 [ "$socket_jobs" -ge 1 ] || socket_jobs=1
 [ "$socket_jobs" -le "$jobs" ] || socket_jobs="$jobs"
-grep -E '/(archipelago|pulse)_[^/]*$' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]
-grep -v -E '/(archipelago|pulse)_[^/]*$' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]
+socket_threads=$(( cores / socket_jobs ))
+[ "$socket_threads" -ge 1 ] || socket_threads=1
 run() {
   xargs -P "$1" -I{} sh -c '
 name=$(basename "$1")
 log="$2/$name.log"
+case "$name" in
+  node_*) RUST_TEST_THREADS="$4"; export RUST_TEST_THREADS ;;
+  sockets_*) RUST_TEST_THREADS="$5"; export RUST_TEST_THREADS ;;
+esac
 status=0
 "$1" > "$log" 2>&1 || status=$?
 if [ "$status" -ne 0 ]; then
@@ -78,16 +87,11 @@ case "$name" in
     sed -n "/^STATS_ENGINE_RECEIPT /p" "$log" > "$3/stats-engine-receipt.log" || exit 1
     cat "$3/stats-engine-receipt.log" ;;
 esac
-' _ {} "$logs" "$receipts"
+' _ {} "$logs" "$receipts" "$group_threads" "$socket_threads"
 }
-if [ "$socket_jobs" -eq "$jobs" ]; then
-  phase="running the test binaries"
-  run "$jobs" < "$logs/shard"
-else
-  phase="running the test binaries"
-  run "$jobs" < "$logs/others"
-  phase="running the socket test binaries"
-  run "$socket_jobs" < "$logs/sockets"
-fi
+phase="running the test binaries"
+run "$jobs" < "$logs/others"
+phase="running the socket test binaries"
+run "$socket_jobs" < "$logs/sockets"
 phase="running the doc-tests"
 cargo test --locked "$@" --doc
