@@ -275,7 +275,11 @@ fn broadcast_position(
     let is_glide = anim_src_lower
         .as_deref()
         .is_some_and(|s| s.contains("glide"));
-    let jump_count = if is_double_jump || is_glide { 2 } else { 0 };
+    let jump_count = jump_count(
+        is_double_jump || is_glide,
+        dynamics.ground_height < 0.2,
+        dynamics.jump_time,
+    );
     let glide_state = if is_glide {
         rfc4::movement::GlideState::Gliding as i32
     } else {
@@ -393,4 +397,49 @@ fn broadcast_position(
     *last_head_sync = head_sync;
     *last_point_at = point_at;
     *last_sent = time;
+}
+
+/// The `jump_count` a movement packet carries: 2 for a double jump or glide, 1 while airborne
+/// after a jump, 0 otherwise. `jump_time` is the local player's take-off time, cleared (`<= 0.0`)
+/// on landing.
+fn jump_count(double_jump_or_glide: bool, grounded: bool, jump_time: f64) -> i32 {
+    if double_jump_or_glide {
+        2
+    } else if !grounded && jump_time > 0.0 {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `jump_time` of a player who has not jumped since landing, or never has.
+    const NO_JUMP: f64 = -1.0;
+
+    #[test]
+    fn a_first_jump_counts_one_while_airborne() {
+        assert_eq!(jump_count(false, false, 12.5), 1);
+    }
+
+    #[test]
+    fn the_count_resets_on_landing() {
+        assert_eq!(jump_count(false, true, 12.5), 0);
+        assert_eq!(jump_count(false, true, NO_JUMP), 0);
+    }
+
+    #[test]
+    fn falling_without_a_jump_counts_zero() {
+        // walking off a ledge, or the default state of a player who never jumped
+        assert_eq!(jump_count(false, false, NO_JUMP), 0);
+        assert_eq!(jump_count(false, false, 0.0), 0);
+    }
+
+    #[test]
+    fn a_double_jump_or_glide_counts_two() {
+        assert_eq!(jump_count(true, false, 12.5), 2);
+        assert_eq!(jump_count(true, false, NO_JUMP), 2);
+    }
 }
