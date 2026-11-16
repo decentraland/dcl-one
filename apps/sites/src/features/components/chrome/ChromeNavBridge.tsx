@@ -4,6 +4,8 @@ import { Link, useNavigate } from "react-router";
 
 import { ChromeNavContext, isSameDocumentHref, type ChromeNavigate } from "@ui/web/frames/chrome-nav";
 
+import SitesTopBar from "./SitesTopBar";
+
 import { legacyShopTarget } from "@/core/lib/shop/redirects";
 
 const SERVED_OUTSIDE_THE_APP = ["/docs", "/play", "/social"] as const;
@@ -72,6 +74,6 @@ export default function ChromeNavBridge({ children }: { children: ReactNode }) {
     },
     [navigate],
   );
-  const value = useMemo(() => ({ navigate: go, Link: SiteLink }), [go]);
+  const value = useMemo(() => ({ navigate: go, Link: SiteLink, TopBar: SitesTopBar, headerLayout: "native" as const }), [go]);
   return <ChromeNavContext.Provider value={value}>{children}</ChromeNavContext.Provider>;
 }

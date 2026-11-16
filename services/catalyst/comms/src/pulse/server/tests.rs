@@ -1113,7 +1113,7 @@ async fn replay_memory_exhaustion_is_transient_capacity_without_eviction() {
     assert_eq!(
         server
             .replay_policy
-            .try_admit(timestamp, "other-wallet", &other),
+            .try_admit(timestamp, None, "other-wallet", &other),
         Ok(())
     );
     server
@@ -1129,9 +1129,69 @@ async fn replay_memory_exhaustion_is_transient_capacity_without_eviction() {
     assert_eq!(
         server
             .replay_policy
-            .try_admit(timestamp + 2, "other-wallet", &other),
+            .try_admit(timestamp + 2, None, "other-wallet", &other),
         Err(ReplayRejection::Duplicate)
     );
+}
+
+#[tokio::test]
+async fn replay_table_is_bounded_per_source() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_source(2);
+    let signed = timestamp.to_string();
+    for other in ["0x1", "0x2"] {
+        assert_eq!(
+            server
+                .replay_policy
+                .try_admit(timestamp, Some("192.0.2.1"), other, &signed),
+            Ok(())
+        );
+    }
+    for (peer, ip) in [(1, "192.0.2.1"), (2, "192.0.2.2")] {
+        let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+        state.ip = Some(ip.into());
+        server.peers.insert(peer, state);
+    }
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Reject { reply, reason } => {
+            assert_eq!(reason, DisconnectReason::PreAuthIpLimitExhausted);
+            assert!(reply.is_none());
+        }
+        other => panic!("expected the source's quota to refuse, got {other:?}"),
+    }
+    // The refused pair was not consumed: the same signed bytes from another source are admitted.
+    match server.dispatch(2, channel::RELIABLE, &bytes, timestamp, 2) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("another source should authenticate, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn whitelisted_source_is_not_held_to_the_replay_quota() {
+    let (bytes, wallet, timestamp) = signed_handshake_request().await;
+    let mut server = PulseServer::new();
+    server.replay_policy.set_max_entries_per_source(1);
+    server.ip_limiter_options.whitelist =
+        crate::pulse::hardening::IpWhitelist::parse("192.0.2.1").unwrap();
+    assert_eq!(
+        server.replay_policy.try_admit(
+            timestamp,
+            Some("192.0.2.1"),
+            "0x1",
+            &timestamp.to_string()
+        ),
+        Ok(())
+    );
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.1".into());
+    server.peers.insert(1, state);
+
+    match server.dispatch(1, channel::RELIABLE, &bytes, timestamp, 1) {
+        Action::Authenticated { wallet: w, .. } => assert_eq!(w, wallet),
+        other => panic!("a whitelisted source should authenticate, got {other:?}"),
+    }
 }
 
 #[test]

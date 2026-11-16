@@ -86,12 +86,12 @@ fn shader(path: &std::path::Path) -> ShaderRef {
     ShaderRef::Path(format!("embedded://{}", path.display()).into())
 }
 
-type CliffMaterial = ExtendedMaterial<CliffExtension>;
+pub(crate) type CliffMaterial = ExtendedMaterial<CliffExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-struct CliffExtension {
+pub(crate) struct CliffExtension {
     #[uniform(100)]
-    bounds: Vec4,
+    pub(crate) bounds: Vec4,
 }
 
 impl MaterialExtension for CliffExtension {
@@ -102,15 +102,15 @@ impl MaterialExtension for CliffExtension {
     }
 }
 
-type WaterMaterial = ExtendedMaterial<WaterExtension>;
+pub(crate) type WaterMaterial = ExtendedMaterial<WaterExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-struct WaterExtension {
+pub(crate) struct WaterExtension {
     #[uniform(100)]
-    bounds: Vec4,
+    pub(crate) bounds: Vec4,
     #[texture(101)]
     #[sampler(102)]
-    ripples: Handle<Image>,
+    pub(crate) ripples: Handle<Image>,
 }
 
 impl MaterialExtension for WaterExtension {

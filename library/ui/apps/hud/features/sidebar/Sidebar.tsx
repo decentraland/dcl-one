@@ -5,9 +5,8 @@
 // migrated to React.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
-import { useDebugPanel } from '../debug/useDebugPanel'
+import { toggleDebugPanel, useDebugPanelState, useDevelopmentBuild } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '@explorer-core/engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
@@ -41,6 +40,7 @@ import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
+import { PortablesPopover, portablesTooltip, showPortables } from '../portables/PortablesPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '@explorer-core/lib/utm'
 import { IN_WORLD_SHOP, siteUrl } from '@hud-host'
@@ -59,9 +59,10 @@ type Item =
   | { kind: 'backpack'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'communities'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'places'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'events'; icon: IconName; label: string }
+  | { kind: 'events'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
+  | { kind: 'portables'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'shop'; icon: IconName; label: string }
   | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
@@ -99,7 +100,7 @@ const TOP: Item[] = [
   { kind: 'profile', icon: 'profile', label: 'Profile' },
   { kind: 'notifications', icon: 'notifications', label: 'Notifications' },
   { kind: 'divider' },
-  { kind: 'events', icon: 'events', label: 'Events' },
+  { kind: 'events', icon: 'events', label: 'Events', hotkey: 'Events' },
   { kind: 'places', icon: 'places', label: 'Places', hotkey: 'Places' },
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
@@ -117,6 +118,7 @@ const BOTTOM: Item[] = [
   { kind: 'mic', icon: 'mic', label: 'Voice chat' },
   { kind: 'skybox', icon: 'skybox', label: 'Skybox' },
   { kind: 'permissions', icon: 'permissions', label: 'Scene permissions' },
+  { kind: 'portables', icon: 'portables', label: 'Portable experiences' },
   { kind: 'divider' },
   { kind: 'emotes', icon: 'emotes', label: 'Emotes', hotkey: 'Emote' },
   { kind: 'divider' },
@@ -125,9 +127,10 @@ const BOTTOM: Item[] = [
 ]
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
-type PermissionsProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type Popovers = { permissions: PopoverProps; portables: PopoverProps }
 
-function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, permissions: PermissionsProps, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
+function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, popovers: Popovers, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
   if (item.kind === 'divider') return <div key={`d${i}`} className={styles.divider} />
   const shortcut = 'hotkey' in item && item.hotkey != null ? keyHintFor(snap, item.hotkey) : undefined
   if (item.kind === 'chat')
@@ -258,15 +261,15 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       />
     )
   if (item.kind === 'mic') {
-    const state = !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
+    const state = voice.blocked ? 'blocked' : !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
     return (
       <RailButton
         key="mic"
-        icon={`voice-${state}`}
+        icon={state === 'blocked' ? 'voice-off' : `voice-${state}`}
         size={34}
         label="Nearby Voice"
         data-voice={state}
-        indicator={state !== 'off'}
+        indicator={state !== 'off' && state !== 'blocked'}
         onClick={(e) => voice.onOpen(e.currentTarget)}
       >
         {state === 'speaking' && (
@@ -291,8 +294,22 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         icon={item.icon}
         label={item.label}
         badge={session.permissions.unseenDenied}
-        active={permissions.open}
-        onClick={(e) => permissions.onOpen(e.currentTarget)}
+        active={popovers.permissions.open}
+        onClick={(e) => popovers.permissions.onOpen(e.currentTarget)}
+      />
+    )
+  }
+  if (item.kind === 'portables') {
+    // only while the engine lists a portable (a smart wearable, or one a scene spawned)
+    if (!showPortables(session.portables.list)) return null
+    return (
+      <RailButton
+        key="portables"
+        icon={item.icon}
+        label={item.label}
+        tooltip={portablesTooltip(session.portables.list)}
+        active={popovers.portables.open}
+        onClick={(e) => popovers.portables.onOpen(e.currentTarget)}
       />
     )
   }
@@ -302,10 +319,11 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         key="events"
         icon={item.icon}
         label={item.label}
+        shortcut={shortcut}
         badge={liveEvents}
         badgeTone="lavender"
         active={session.events.open}
-        onClick={session.events.toggle}
+        onClick={() => session.events.toggle('sidebar')}
       />
     )
   if (item.kind === 'link')
@@ -350,22 +368,36 @@ export function Sidebar({
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
-  const debugPanel = useDebugPanel(session)
+  const debugPanelOpen = useDebugPanelState() != null
+  const developmentBuild = useDevelopmentBuild(session.runDebugCommand)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
-  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
+  const [portablesAnchor, setPortablesAnchor] = useState<HTMLElement | null>(null)
+  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || portablesAnchor != null)
   const nearby = useNearbyVoice(session)
   const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
-  const permissions: PermissionsProps = {
-    open: permissionsAnchor != null,
-    onOpen: (button) => {
-      session.permissions.markSeen()
-      session.permissions.loadRules()
-      setPermissionsAnchor((a) => (a == null ? button : null))
+  const popovers: Popovers = {
+    permissions: {
+      open: permissionsAnchor != null,
+      onOpen: (button) => {
+        session.permissions.markSeen()
+        session.permissions.loadRules()
+        setPermissionsAnchor((a) => (a == null ? button : null))
+      }
+    },
+    portables: {
+      open: portablesAnchor != null,
+      onOpen: (button) => setPortablesAnchor((a) => (a == null ? button : null))
     }
   }
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
+  const closePortables = useCallback(() => setPortablesAnchor(null), [])
+  // The button leaves the rail once the engine lists no portable; its popover goes with it.
+  const portablesShown = showPortables(session.portables.list)
+  useEffect(() => {
+    if (!portablesShown) setPortablesAnchor(null)
+  }, [portablesShown])
   // The "..." panel closes on an outside click or Cancel, like the other popovers.
   useEffect(() => {
     if (!configOpen) return
@@ -380,16 +412,15 @@ export function Sidebar({
       off()
     }
   }, [configOpen])
-  const launcher = debugPanel.developmentBuild && (
+  const launcher = developmentBuild && (
     <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
-      title="Toggle debug panel" active={debugPanel.launcherLayer != null} onClick={() => debugPanel.toggle()}>
+      title="Toggle debug panel" active={debugPanelOpen} onClick={() => toggleDebugPanel()}>
       <img src={debugIcon} width={28} height={28} alt="" draggable={false} />
     </ControlButton>
   )
   return (
     <>
-      {/* Keep the toggle clickable and inside the popup's focus trap while the panel is open. */}
-      {debugPanel.launcherLayer ? createPortal(launcher, debugPanel.launcherLayer) : launcher}
+      {launcher}
       {autoHide.hidden && <div className={styles.reveal} data-testid="sidebar-reveal" onPointerEnter={autoHide.onPointerEnter} />}
       <nav
         ref={hudInsetRef}
@@ -412,9 +443,9 @@ export function Sidebar({
           >
             <DotsGlyph />
           </ControlButton>
-          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}
+          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}
         </div>
-        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}</div>
+        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}</div>
       </nav>
       {voiceAnchor != null && (
         <NearbyVoiceWidget
@@ -429,6 +460,7 @@ export function Sidebar({
           speaking={nearby.speaking}
           talking={nearby.talking}
           micAvailable={nearby.micAvailable}
+          blocked={nearby.blocked}
           onSpeakToggle={nearby.toggleSpeak}
           talkKey={keyHintFor(snap, 'Microphone')}
           onClose={closeVoice}
@@ -447,13 +479,22 @@ export function Sidebar({
           onClose={closePermissions}
         />
       )}
+      {portablesAnchor != null && (
+        <PortablesPopover
+          anchor={portablesAnchor}
+          list={session.portables.list}
+          onStop={session.portables.stop}
+          onRestart={session.portables.restart}
+          onClose={closePortables}
+        />
+      )}
       {configOpen && (
         <Panel className={styles.config} role="dialog" aria-label="Sidebar settings">
           <span>Auto-hide sidebar</span>
           <Toggle checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Auto-hide sidebar" />
           <Button size="sm" variant="secondary" onClick={() => {
             setConfigOpen(false)
-            debugPanel.toggle()
+            toggleDebugPanel()
           }}>Debug panel</Button>
         </Panel>
       )}

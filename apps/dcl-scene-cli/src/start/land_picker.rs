@@ -445,12 +445,12 @@ fn row(prefix: &str, tok: &str, a: &Area, footprint: usize, now: i64, known: boo
         None => bits.push(format!("too small for this {footprint}-parcel scene")),
     }
     let action = if a.holds_scene {
-        r#"<span class="tgt__badge">Scene is here</span>"#.to_string()
+        r#"<span class="u-pill u-pill--default">Scene is here</span>"#.to_string()
     } else if a.fit.is_none() {
-        r#"<span class="tgt__badge">Footprint does not fit</span>"#.to_string()
+        r#"<span class="u-pill u-pill--default">Footprint does not fit</span>"#.to_string()
     } else {
         format!(
-            r#"<form method="post" action="{}/target/base"><input type="hidden" name="token" value="{}"><input type="hidden" name="destination" value="land"><input type="hidden" name="base" value="{x},{y}"><button class="deep__copy" type="submit">Move here</button></form>"#,
+            r#"<form method="post" action="{}/target/base"><input type="hidden" name="token" value="{}"><input type="hidden" name="destination" value="land"><input type="hidden" name="base" value="{x},{y}"><button class="btn btn--secondary btn--sm" type="submit">Move here</button></form>"#,
             esc(prefix),
             esc(tok),
             x = anchor.0,
@@ -508,7 +508,7 @@ fn parcel_inventory(
                 } else if *p != anchor {
                     format!("Move from {},{}", anchor.0, anchor.1)
                 } else {
-                    return format!(r#"<td><form method="post" action="{}/target/base"><input type="hidden" name="token" value="{}"><input type="hidden" name="destination" value="land"><input type="hidden" name="base" value="{},{}"><button class="deep__copy" type="submit">Move here</button></form></td>"#, esc(prefix), esc(tok), anchor.0, anchor.1);
+                    return format!(r#"<td><form method="post" action="{}/target/base"><input type="hidden" name="token" value="{}"><input type="hidden" name="destination" value="land"><input type="hidden" name="base" value="{},{}"><button class="btn btn--secondary btn--sm" type="submit">Move here</button></form></td>"#, esc(prefix), esc(tok), anchor.0, anchor.1);
                 };
                 format!("<td>{label}</td>")
             }).unwrap_or_default();
@@ -811,7 +811,9 @@ mod tests {
             "pinned once, ranked nowhere: {html}"
         );
         assert!(
-            html.contains("Hexabricks</span><span class=\"tgt__badge\">Scene is here</span>"),
+            html.contains(
+                "Hexabricks</span><span class=\"u-pill u-pill--default\">Scene is here</span>"
+            ),
             "{html}"
         );
         assert!(

@@ -68,8 +68,7 @@ pub const MAX_NUMERIC_NUMBER: &str =
 
 /// 2^216: a collection token id is `item_id << 216 | issued_id`, the rule
 /// that gives an nft-order leg its item without an nft table.
-pub const ITEM_ID_SHIFT: &str =
-    "105312291668557186697918027683670432318895095400549111254310977536";
+pub use crate::shared::collections::ITEM_SHIFT as ITEM_ID_SHIFT;
 
 /// The off-chain marketplace contracts (v2 and v3, both mainnets and
 /// testnets): a collection listing one of them as a minter is what the squid
@@ -507,6 +506,55 @@ impl Builder {
     }
 }
 
+/// The chains this node's trade readers serve, installed once by the binary.
+static SERVED: std::sync::OnceLock<(i64, i64)> = std::sync::OnceLock::new();
+
+/// Installs the served chains (`MARKETPLACE_INDEX_CHAIN_ID_*`) for the
+/// process; the first call wins. Without it the readers serve mainnet (1, 137).
+pub fn install_served_chains(indexes: &super::chain_walk::IndexSettings) {
+    use super::chain_walk::ChainNet;
+    let _ = SERVED.set((
+        indexes.chain_id(ChainNet::Ethereum),
+        indexes.chain_id(ChainNet::Matic),
+    ));
+}
+
+/// `(ethereum, matic)`.
+pub fn served_chains() -> (i64, i64) {
+    SERVED.get().copied().unwrap_or((1, 137))
+}
+
+/// `alias`'s trade is on the chain this node serves for its network.
+pub fn served_chain_sql(alias: &str) -> String {
+    let (eth, matic) = served_chains();
+    format!(
+        "{alias}.chain_id = CASE lower({alias}.network) WHEN 'ethereum' THEN {eth} ELSE {matic} END"
+    )
+}
+
+/// `alias`'s trade is one this node serves: on its chain for the network, and
+/// an item order only when the item's creator signed it.
+pub fn served_trade_sql(alias: &str) -> String {
+    format!(
+        "{served} AND ({alias}.type <> 'public_item_order' OR EXISTS ( \
+           SELECT 1 FROM shop.trade_assets sa \
+           JOIN shop.trade_assets_item si ON si.asset_id = sa.id \
+           JOIN shop.items ci ON ci.network = lower({alias}.network) \
+             AND ci.contract_address = lower(sa.contract_address) AND ci.item_id = {item_num} \
+           WHERE sa.trade_id = {alias}.id AND sa.direction = 'sent' AND lower(ci.creator) = lower({alias}.signer)))",
+        served = served_chain_sql(alias),
+        item_num = uint_or_null("si.item_id"),
+    )
+}
+
+/// `expr` (a stored token or item id, text) as numeric, NULL when it is not
+/// a canonical decimal (`listings::is_canonical_uint`). The CASE keeps one
+/// malformed row from failing the whole read with a cast error, whatever
+/// order the planner evaluates the predicates in.
+pub fn uint_or_null(expr: &str) -> String {
+    format!("(CASE WHEN {expr} ~ '^(0|[1-9][0-9]{{0,77}})$' THEN {expr}::numeric END)")
+}
+
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount. Open = effective, not expired at
@@ -519,8 +567,7 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
                   sent.contract_address AS contract_address_sent, \
-                  COALESCE(sent_item.item_id::numeric, \
-                           CASE WHEN sent_erc721.token_id IS NOT NULL THEN div(sent_erc721.token_id::numeric, {shift}::numeric) END) AS item_id, \
+                  COALESCE({item_num}, div({token_num}, {shift}::numeric)) AS item_id, \
                   sent_erc721.token_id AS token_id, \
                   recv.asset_type::int4 AS received_asset_type, \
                   recv_erc20.amount AS amount_received, \
@@ -536,7 +583,17 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
              AND NOT {closed} \
              AND {counted} \
+             AND {served} \
+             AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
+             AND (sent_erc721.asset_id IS NULL OR {token_num} IS NOT NULL) \
+             AND (t.type <> 'public_item_order' OR EXISTS ( \
+                   SELECT 1 FROM shop.items ci \
+                   WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
+                     AND ci.item_id = {item_num} AND lower(ci.creator) = lower(t.signer))) \
          )",
+        served = served_chain_sql("t"),
+        item_num = uint_or_null("sent_item.item_id"),
+        token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
         closed = super::trade_events::closed_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)
@@ -562,8 +619,8 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters) {
                   MIN(amount_received) FILTER (WHERE type = 'public_nft_order') AS min_order_amount_received, \
                   MAX(amount_received) FILTER (WHERE type = 'public_nft_order') AS max_order_amount_received, \
                   MAX(created_at) AS max_created_at, \
-                  MAX(id::text) FILTER (WHERE type = 'public_item_order') AS open_item_trade_id, \
-                  MAX(amount_received) FILTER (WHERE type = 'public_item_order') AS open_item_trade_price, \
+                  (array_agg(id::text ORDER BY amount_received, created_at DESC, id) FILTER (WHERE type = 'public_item_order'))[1] AS open_item_trade_id, \
+                  MIN(amount_received) FILTER (WHERE type = 'public_item_order') AS open_item_trade_price, \
                   MIN(created_at) FILTER (WHERE type = 'public_item_order') AS item_first_listed_at \
            FROM unified_trades WHERE item_id IS NOT NULL",
     );
@@ -1492,5 +1549,95 @@ mod tests {
         ]);
         assert!(out.contains(&"urn:decentraland:mainnet:collections-v1:0xabc:0".to_string()));
         assert_eq!(escape_like("50%_off\\"), "50\\%\\_off\\\\");
+    }
+
+    /// Two open item orders for one item: the catalogue names the cheapest
+    /// and its own price, never one order's id with another's price.
+    #[tokio::test]
+    async fn the_open_item_trade_id_and_price_come_from_one_order() {
+        use crate::market::listings::{self, test_support};
+        let Some(state) =
+            crate::market::tests::support::state_with_db(super::super::Settings::for_tests()).await
+        else {
+            return;
+        };
+        let pool = &state.pool;
+        let contract = format!("0xc0ffee00{}", uuid::Uuid::new_v4().simple());
+        let signer = test_support::signer().address().to_checksum(None);
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 1, 137, 'wearable_v2', $2, lower($3), 'common', 0, 10, 10, 0, '', 'Item', 'hat', 0, 0, 0, now())",
+        )
+        .bind(&contract)
+        .bind(format!("urn:decentraland:matic:collections-v2:{contract}:1"))
+        .bind(&signer)
+        .execute(pool)
+        .await
+        .unwrap();
+        let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+        let mut ids = Vec::new();
+        for salt in ["0x21", "0x22"] {
+            let mut order = test_support::parse(
+                &test_support::trade_json_on(&signer, "0x00", 137)
+                    .replace(
+                        r#""type": "public_nft_order""#,
+                        r#""type": "public_item_order""#,
+                    )
+                    .replace(r#""assetType": 3"#, r#""assetType": 4"#)
+                    .replace(r#""tokenId": "42""#, r#""itemId": "1""#)
+                    .replace(r#""salt": "0x1234""#, &format!(r#""salt": "{salt}""#)),
+            );
+            order.sent[0].contract_address = contract.clone();
+            test_support::sign(&mut order, &marketplace);
+            ids.push(
+                listings::insert_trade(pool, &order, "MATIC", marketplace.address)
+                    .await
+                    .unwrap(),
+            );
+        }
+        // The greater id gets the lower price, so neither MAX pairs them.
+        ids.sort();
+        let (cheap, dear) = (ids[1].clone(), ids[0].clone());
+        for (id, price) in [(&cheap, "5"), (&dear, "9")] {
+            sqlx::query(
+                "UPDATE shop.trade_assets_erc20 e SET amount = $2::numeric FROM shop.trade_assets a \
+                 WHERE e.asset_id = a.id AND a.trade_id = $1::uuid",
+            )
+            .bind(id)
+            .bind(price)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        let mut b = Builder::new();
+        let now_p = b.bind_time(chrono::Utc::now().naive_utc());
+        let since_p = b.bind_opt_time(None);
+        b.push("WITH ");
+        b.push(&unified_trades_cte(&now_p, &since_p));
+        build_offchain_orders_cte(&mut b, &CatalogFilters::default());
+        let contract_p = b.bind_string(contract.clone());
+        b.push(&format!(
+            " SELECT open_item_trade_id, open_item_trade_price::text FROM offchain_orders \
+              WHERE contract_address_sent = {contract_p}"
+        ));
+        let row: (String, String) = sqlx::query_as_with(sqlx::AssertSqlSafe(b.sql), b.args)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(row, (cheap, "5".to_string()));
+
+        for id in &ids {
+            sqlx::query("DELETE FROM shop.trades WHERE id = $1::uuid")
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
+            .bind(&contract)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 }

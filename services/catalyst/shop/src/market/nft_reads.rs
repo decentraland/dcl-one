@@ -38,7 +38,9 @@ use super::orders::Order;
 use super::wire::{ApiError, Histogram, Network, NftCategory, consolidate, fix_urn};
 use super::{MarketplaceState, Source, unavailable};
 use crate::land_authz::indexer::ReadySnapshot;
-use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
+use crate::land_authz::{
+    ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET, LandNetwork,
+};
 
 /// The deepest window the index serves (`first + skip`); the total is an
 /// exact count up to this bound and the bound past it.
@@ -106,15 +108,14 @@ fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
 }
 
 /// The land_authz index is the LAND/estate source: published, recent, and
-/// indexed from the mainnet registries these reads name. A yes/no for the
-/// gates only: a read of the index runs on [`land_snapshot`].
-pub async fn land_ready(pool: &PgPool) -> bool {
-    use crate::land_authz::NETWORK_MAINNET;
+/// indexed from `net`'s registries. A yes/no for the gates only: a read of
+/// the index runs on [`land_snapshot`].
+pub async fn land_ready(pool: &PgPool, net: LandNetwork) -> bool {
     crate::land_authz::indexer::ready_cursor(
         pool,
-        NETWORK_MAINNET,
-        LAND_REGISTRY_MAINNET,
-        ESTATE_REGISTRY_MAINNET,
+        net.network,
+        net.land_registry,
+        net.estate_registry,
     )
     .await
     .is_some()
@@ -123,15 +124,14 @@ pub async fn land_ready(pool: &PgPool) -> bool {
 /// [`land_ready`] as the snapshot the LAND/estate reads run on: the check
 /// and every read see one state
 /// ([`crate::land_authz::indexer::ReadySnapshot`]), so a rebind of the
-/// cursor between them cannot join these registries' rights to another
-/// registry's estate links. A database error reads as not ready.
-pub async fn land_snapshot(pool: &PgPool) -> Option<ReadySnapshot> {
-    use crate::land_authz::NETWORK_MAINNET;
+/// cursor between them cannot join `net`'s rights to another registry's
+/// estate links. A database error reads as not ready.
+pub async fn land_snapshot(pool: &PgPool, net: LandNetwork) -> Option<ReadySnapshot> {
     match crate::land_authz::indexer::ready_snapshot(
         pool,
-        NETWORK_MAINNET,
-        LAND_REGISTRY_MAINNET,
-        ESTATE_REGISTRY_MAINNET,
+        net.network,
+        net.land_registry,
+        net.estate_registry,
     )
     .await
     {
@@ -187,7 +187,7 @@ enum ReadConnError {
 /// reads LAND, else a pool connection.
 async fn open_read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, ReadConnError> {
     if sources.land {
-        return land_snapshot(pool)
+        return land_snapshot(pool, LAND_MAINNET)
             .await
             .map(ReadConn::Land)
             .ok_or(ReadConnError::LandUnavailable);
@@ -241,7 +241,7 @@ pub async fn require_ready(
             ));
         }
     }
-    if sources.land && !land_ready(pool).await {
+    if sources.land && !land_ready(pool, LAND_MAINNET).await {
         return Err(land_unavailable());
     }
     Ok(())
@@ -801,6 +801,7 @@ fn row_to_result(
         chain_id: network.chain_id(),
         issued_id: r.get("issued_text"),
         trade_id: Some(String::new()),
+        payee: None,
     });
     let nft = Nft {
         active_order_id: order.as_ref().map(|o| o.id.clone()),

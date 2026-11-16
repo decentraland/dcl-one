@@ -2,7 +2,8 @@ import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type Co
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { EngineHost } from './features/engine/EngineHost'
 import type { LoginDriver } from '@explorer-core/engine/driver'
-import { startMockBridge } from '@explorer-core/engine/mockBridge'
+import { mockPublicReelPage, startMockBridge } from '@explorer-core/engine/mockBridge'
+import { setPublicReelFetcher } from './features/gallery/publicReels'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
@@ -23,6 +24,7 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
+import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
@@ -37,6 +39,7 @@ import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
+import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
 import { LoadingAndLogin } from './features/login/LoadingAndLogin'
 import { GuestStartPage } from './features/login/GuestStartPage'
@@ -57,10 +60,12 @@ import { ErrorBoundary } from './features/error/ErrorBoundary'
 import { SurfaceBoundary } from './features/error/SurfaceBoundary'
 import { CrashModal } from './features/error/CrashModal'
 import { openRealmError } from './features/error/RealmErrorModal'
+import { ConnectivityFeedback } from './features/error/ConnectivityFeedback'
 import { DIALOG_TITLE, isDialogSource } from '@explorer-core/features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { EDITOR_BUILD, editorOffered, FEATURES_PARAM } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from './features/editorHost/EditorOffered'
+import { useTipEmote } from './features/donate/useDonate'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
@@ -228,6 +233,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   } => {
     if (MODE === 'mock') {
       startMockBridge()
+      setPublicReelFetcher(mockPublicReelPage)
       return { rpc: null, createDriver: () => host.createBridgeClient() }
     }
     if (MODE === 'native') {
@@ -242,6 +248,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The tip emote once the host says a tip was sent (Donate, where the host can sign one).
+  useTipEmote(session.emotes.play)
   // The signed-in account the places discovery reads for its favourites, once the profile names it.
   const discoveryAccount = session.profile.data?.address
   // mounted for good once wanted: `?editor`, or Create opened
@@ -373,7 +381,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     else if (page === 'communities') session.communities.toggle()
     else if (page === 'map') session.map.toggle()
     else if (page === 'places') session.places.toggle()
-    else if (page === 'events') session.events.toggle()
+    else if (page === 'events') session.events.toggle(session.events.open ? undefined : 'start_menu')
     else if (page === 'shop') session.shop.toggle()
     else if (page === 'gallery') session.gallery.toggle()
     else if (page === 'create') session.create.toggle()
@@ -447,6 +455,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          {/* Not gated by `chrome`: mounted while a menu page, photo mode or the editor is open. */}
+          <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {chrome && (
@@ -522,13 +532,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
-            <EventsPage
-              events={session.events}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
+            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
           </SurfaceBoundary>
           <SurfaceBoundary
             name="Shop"
@@ -569,8 +573,10 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />
+      <NearbyVoiceRefusals />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

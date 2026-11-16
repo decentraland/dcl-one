@@ -867,7 +867,7 @@ fn item_order_json(signer: &str, contract: &str, item_id: &str) -> String {
         r#"{{ "signer": "{signer}", "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137,
              "checks": {{ "uses": 1, "expiration": 4102444800000, "effective": 0, "salt": "0x1234", "contractSignatureIndex": 0, "signerSignatureIndex": 0, "allowedRoot": "0x", "externalChecks": [] }},
              "sent": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "{item_id}", "extra": "0x"}} ],
-             "received": [ {{"assetType": 1, "contractAddress": "0x2222222222222222222222222222222222222222", "amount": "5000000000000000000", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
+             "received": [ {{"assetType": 1, "contractAddress": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", "amount": "5000000000000000000", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
     )
 }
 

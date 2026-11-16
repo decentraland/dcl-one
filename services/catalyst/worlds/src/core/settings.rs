@@ -23,6 +23,7 @@ use crate::shared::signed_fetch::SignedPath;
 
 use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
+use super::deploy_validate::{MAX_PARCEL_COORDINATE, MIN_PARCEL_COORDINATE};
 use super::http::ApiError;
 use super::permissions::parse_world;
 use super::settings_policy::{
@@ -32,9 +33,8 @@ use super::settings_policy::{
 use super::store::{self, WorldSettingsRow, WorldSettingsUpdate};
 use super::upload_limits::{self, too_large};
 
-const MIN_PARCEL_COORDINATE: i32 = -150;
-const MAX_PARCEL_COORDINATE: i32 = 150;
-const MAX_THUMBNAIL_BYTES: usize = 1024 * 1024;
+/// A world thumbnail is at most 1 MiB, uploaded or mirrored.
+pub(crate) const MAX_THUMBNAIL_BYTES: usize = 1024 * 1024;
 const REALM_NAME_MAX_LENGTH: usize = 64;
 const MAX_PREVIEW_WEARABLES: usize = 8;
 
@@ -231,10 +231,17 @@ pub async fn update_world_settings(
 
     let timeout_ms = limits.deployment_processing_timeout_ms;
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-        let authorized = match state.policy.is_owner(&world, &signer).await {
-            PermissionDecision::Allowed => true,
+        // `holder`: who the edit is recorded for, the signer when it holds the name, else (a
+        // collaborator with world-wide deployment) the holder this node knows, if any.
+        let (authorized, holder) = match state.policy.is_owner(&world, &signer).await {
+            PermissionDecision::Allowed => (true, Some(signer.clone())),
             PermissionDecision::Refused(crate::shared::identity::AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
-                state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await.map_err(ApiError::from)?
+                let allowed = state.policy.has_world_wide_permission(&world, Permission::Deployment, &signer).await.map_err(ApiError::from)?;
+                let holder = match allowed {
+                    true => state.policy.current_owner(&world).await.ok().flatten(),
+                    false => None,
+                };
+                (allowed, holder)
             }
             PermissionDecision::Refused(undetermined) => return Err(ApiError::from(undetermined).into()),
         };
@@ -251,7 +258,7 @@ pub async fn update_world_settings(
             input.thumbnail_hash = Some(hash);
         }
         // The two spawn refusals are the store's only 400s: upstream's `ValidationError`s.
-        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, &input)
+        let (settings, _old_spawn) = store::update_world_settings(&state.pool, &world, &signer, holder.as_ref(), &input)
             .await
             .map_err(|e| match e.is_bad_request() {
                 true => SettingsError::invalid(e.public_message()),
@@ -661,8 +668,8 @@ fn first_nonempty(fields: &HashMap<String, Vec<String>>, key: &str) -> Option<St
 
 fn parse_coordinate(s: &str) -> Option<(i32, i32)> {
     let p = Parcel::parse(s).ok()?;
-    if !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&p.x)
-        || !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&p.y)
+    if !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&i64::from(p.x))
+        || !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&i64::from(p.y))
     {
         return None;
     }

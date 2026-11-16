@@ -128,7 +128,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 
 5. **Compose the page** with the resolved components and the shared `--dcl-*` tokens, following `docs/ui-standards.md` (CSS Modules, where app-specific UI lives, reuse before duplication). Import only the public entry: `import { X } from '<importSpecifier>'`, never a deep path; the library exports its components from `library/ui/index.ts` and offers no component deep imports (`library/ui/README.md`). Routing, data, auth and tracking stay in the application.
 6. **Report limits.** Repeat every warning and any accepted limit the result names, verbatim. Do not claim parity on those aspects.
-7. **Verify.** Run the application's own checks. Then compare the rendered result with `get_screenshot` of the node and say what differs. The comparison is reported, not a gate. The library is generated from the pinned capture named by `resolved.provenance.capture.revision`, so attribute a difference to capture age before calling it a bug. Your verification is self-reported: say what you ran, and never claim visual fidelity from a successful build.
+7. **Verify.** Run the application's own checks. Then compare the rendered result with `get_screenshot` of the node and say what differs. The comparison is reported, not a gate. Mappings follow the pinned capture named by `resolved.provenance.capture.revision`, so attribute a difference to capture age before calling it a bug. Your verification is self-reported: say what you ran, and never claim visual fidelity from a successful build.
 
 ## The MCP server (optional)
 

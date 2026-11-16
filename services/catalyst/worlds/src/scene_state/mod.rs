@@ -79,6 +79,7 @@ mod tests {
 }
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -107,6 +108,11 @@ pub use loader::{LOCAL_SCENE_NAME, load_or_reload};
 pub const ROUTE_PREFIX: &str = "/scene-state";
 
 pub const DEFAULT_REALM_NAME: &str = "dcl-one";
+
+/// How long after a join reloaded a scene whose runtime had stopped another
+/// join may reload it again; joins in between are refused, so a scene that
+/// stops whenever a client is present does not reload on every reconnect.
+pub(crate) const STOPPED_RELOAD_COOLDOWN: Duration = Duration::from_secs(10);
 
 /// Which scene a `/ws/{scene}` (or admin) path names.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +148,8 @@ impl SceneKey {
     }
 
     /// The name a hosted scene is registered under (one per world, one per
-    /// Genesis scene id, one per parcel).
+    /// Genesis scene id; a parcel names its own key until
+    /// [`SceneHostState::canonical_key`] resolves it to the scene id).
     pub fn room_key(&self) -> String {
         match self {
             Self::Local => LOCAL_SCENE_NAME.to_string(),
@@ -202,6 +209,19 @@ pub struct RawSettings {
     pub crdt_max_components: usize,
     /// `WS_MAX_FRAME_BYTES` (2 MiB).
     pub ws_max_frame_bytes: usize,
+    /// `CRDT_MAX_VALUE_BYTES` (256 KiB): largest single component payload a scene's state keeps.
+    pub crdt_max_value_bytes: usize,
+    /// `CRDT_MAX_BYTES` (32 MiB): payload bytes one scene's state keeps.
+    pub crdt_max_bytes: usize,
+    /// `CLIENT_INBOUND_MAX_BYTES` (8 MiB): unread client bytes queued toward the scene, per client.
+    pub client_inbound_max_bytes: usize,
+    /// `SCENE_INBOUND_MAX_BYTES` (32 MiB): unread client bytes queued toward
+    /// one scene, a quarter of it for frames held before the observer registers.
+    pub scene_inbound_max_bytes: usize,
+    /// `CLIENT_OUTBOUND_MAX_BYTES` (8 MiB): scene bytes queued to one client.
+    pub client_outbound_max_bytes: usize,
+    /// `JS_ARRAY_BUFFER_LIMIT_MB` (128): ArrayBuffer memory one isolate holds outside its JS heap.
+    pub js_array_buffer_limit_mb: usize,
     /// `SCENE_HOST_STORAGE_URL`: the world-storage origin, the ONLY origin
     /// `~system/SignedFetch` may reach; unset disables scene storage.
     pub storage_url: Option<String>,
@@ -230,12 +250,17 @@ pub struct RawSettings {
     /// `SCENE_HOST_MAX_SCENES` (64): hosted scenes at once (one isolate,
     /// two threads and up to `JS_HEAP_LIMIT_MB` each).
     pub max_scenes: usize,
-    /// `SCENE_HOST_AUTOLOAD` (true): `/ws/{scene}` loads an unhosted scene
-    /// that has a local active deployment.
+    /// `SCENE_HOST_AUTOLOAD` (true): `/ws/{scene}` loads, for an admitted
+    /// client, an unhosted scene that has a local active deployment with
+    /// `authoritativeMultiplayer` set.
     pub autoload: bool,
     /// `SCENE_HOST_SWEEP_INTERVAL_SECS` (30; 0 disables): the re-admission and
     /// redeploy sweep.
     pub sweep_interval_secs: u64,
+    /// `SCENE_HOST_IDLE_UNLOAD_SECS` (300; 0 disables): the sweep unloads a
+    /// scene that has had no client for this long, including one loaded by
+    /// the admin or reload routes.
+    pub idle_unload_secs: u64,
 }
 
 /// Masks the key, the tokens and the pre-minted delegation.
@@ -258,6 +283,12 @@ impl std::fmt::Debug for RawSettings {
             .field("client_inbound_max", &self.client_inbound_max)
             .field("crdt_max_components", &self.crdt_max_components)
             .field("ws_max_frame_bytes", &self.ws_max_frame_bytes)
+            .field("crdt_max_value_bytes", &self.crdt_max_value_bytes)
+            .field("crdt_max_bytes", &self.crdt_max_bytes)
+            .field("client_inbound_max_bytes", &self.client_inbound_max_bytes)
+            .field("scene_inbound_max_bytes", &self.scene_inbound_max_bytes)
+            .field("client_outbound_max_bytes", &self.client_outbound_max_bytes)
+            .field("js_array_buffer_limit_mb", &self.js_array_buffer_limit_mb)
             .field("storage_url", &self.storage_url)
             .field("storage_allow_http", &self.storage_allow_http)
             .field("authoritative_key", &set(&self.authoritative_key))
@@ -284,6 +315,7 @@ impl std::fmt::Debug for RawSettings {
             .field("max_scenes", &self.max_scenes)
             .field("autoload", &self.autoload)
             .field("sweep_interval_secs", &self.sweep_interval_secs)
+            .field("idle_unload_secs", &self.idle_unload_secs)
             .finish()
     }
 }
@@ -306,6 +338,12 @@ impl Default for RawSettings {
             client_inbound_max: 1024,
             crdt_max_components: 100_000,
             ws_max_frame_bytes: 2 * 1024 * 1024,
+            crdt_max_value_bytes: 256 * 1024,
+            crdt_max_bytes: 32 * 1024 * 1024,
+            client_inbound_max_bytes: 8 * 1024 * 1024,
+            scene_inbound_max_bytes: 32 * 1024 * 1024,
+            client_outbound_max_bytes: 8 * 1024 * 1024,
+            js_array_buffer_limit_mb: 128,
             storage_url: None,
             storage_allow_http: false,
             authoritative_key: None,
@@ -320,6 +358,7 @@ impl Default for RawSettings {
             max_scenes: 64,
             autoload: true,
             sweep_interval_secs: 30,
+            idle_unload_secs: 300,
         }
     }
 }
@@ -358,6 +397,7 @@ pub struct Settings {
     pub max_scenes: usize,
     pub autoload: bool,
     pub sweep_interval: Option<Duration>,
+    pub idle_unload: Option<Duration>,
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -417,6 +457,43 @@ impl Settings {
                  SCENE_HOST_STORAGE_DELEGATION; scene storage requests fail closed"
             );
         }
+        for (name, value) in [
+            ("CRDT_MAX_VALUE_BYTES", raw.crdt_max_value_bytes),
+            ("CRDT_MAX_BYTES", raw.crdt_max_bytes),
+            ("CLIENT_INBOUND_MAX_BYTES", raw.client_inbound_max_bytes),
+            ("SCENE_INBOUND_MAX_BYTES", raw.scene_inbound_max_bytes),
+            ("CLIENT_OUTBOUND_MAX_BYTES", raw.client_outbound_max_bytes),
+            ("JS_ARRAY_BUFFER_LIMIT_MB", raw.js_array_buffer_limit_mb),
+        ] {
+            if value == 0 {
+                return Err(anyhow!("{name} must be at least 1"));
+            }
+        }
+        // getMessages copies a client's whole queue, crdtGetState the whole snapshot.
+        if raw.js_array_buffer_limit_mb.saturating_mul(1024 * 1024)
+            < raw.client_inbound_max_bytes.max(raw.crdt_max_bytes)
+        {
+            return Err(anyhow!(
+                "JS_ARRAY_BUFFER_LIMIT_MB is below CLIENT_INBOUND_MAX_BYTES or CRDT_MAX_BYTES"
+            ));
+        }
+        if raw.crdt_max_value_bytes > raw.crdt_max_bytes {
+            return Err(anyhow!("CRDT_MAX_VALUE_BYTES exceeds CRDT_MAX_BYTES"));
+        }
+        // A client must be able to queue at least one frame of the largest size.
+        if raw.client_inbound_max_bytes < raw.ws_max_frame_bytes {
+            return Err(anyhow!(
+                "CLIENT_INBOUND_MAX_BYTES is below WS_MAX_FRAME_BYTES"
+            ));
+        }
+        // A quarter of the scene bound is for frames held before registration.
+        let readable = raw.scene_inbound_max_bytes
+            - runtime::InboundBudget::held_share(raw.scene_inbound_max_bytes);
+        if readable < raw.client_inbound_max_bytes {
+            return Err(anyhow!(
+                "three quarters of SCENE_INBOUND_MAX_BYTES are below CLIENT_INBOUND_MAX_BYTES"
+            ));
+        }
         if admin_token.is_none() {
             tracing::warn!(
                 "SCENE_HOST_ADMIN_TOKEN / SCENE_HOST_DEBUGGING_SECRET unset; the scene admin and reload routes refuse every caller"
@@ -442,6 +519,12 @@ impl Settings {
                 fetch_max_body_bytes: raw.signed_fetch_max_body_bytes,
                 fetch_max_in_flight: raw.signed_fetch_max_in_flight,
                 fetch_timeout_ms: raw.signed_fetch_timeout_ms,
+                crdt_max_value_bytes: raw.crdt_max_value_bytes,
+                crdt_max_bytes: raw.crdt_max_bytes,
+                client_inbound_max_bytes: raw.client_inbound_max_bytes,
+                scene_inbound_max_bytes: raw.scene_inbound_max_bytes,
+                client_outbound_max_bytes: raw.client_outbound_max_bytes,
+                js_array_buffer_limit_mb: raw.js_array_buffer_limit_mb,
             },
             ws_max_frame_bytes: raw.ws_max_frame_bytes,
             storage,
@@ -450,6 +533,8 @@ impl Settings {
             autoload: raw.autoload,
             sweep_interval: (raw.sweep_interval_secs > 0)
                 .then(|| Duration::from_secs(raw.sweep_interval_secs)),
+            idle_unload: (raw.idle_unload_secs > 0)
+                .then(|| Duration::from_secs(raw.idle_unload_secs)),
         })
     }
 
@@ -473,15 +558,54 @@ pub struct SceneHostState {
     /// for an operator-allowed `http://` storage origin.
     pub(crate) fetch_http: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// Loads are rare and disk-bound; one at a time keeps two sockets from
-    /// loading the same scene twice.
-    loads: tokio::sync::Mutex<()>,
+    /// Joins and unloads exclude each other briefly; loads of one key run
+    /// one at a time without holding up other keys.
+    loads: SceneLocks,
     /// The jobs' root token once `spawn_jobs` ran: every per-scene delegation
     /// renewal loop stops with it, not only when its scene is dropped.
     shutdown: std::sync::OnceLock<tokio_util::sync::CancellationToken>,
+    /// What a V8 OOM parked since start: refused until restart.
+    parked: parking_lot::Mutex<ParkedScenes>,
+    /// When a join last reloaded each room key whose runtime had stopped
+    /// ([`STOPPED_RELOAD_COOLDOWN`]); entries older than that are dropped.
+    stopped_reloads: parking_lot::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+}
+
+/// Scenes this host retired after a V8 OOM parked their isolate.
+#[derive(Default)]
+struct ParkedScenes {
+    /// Room keys refused from then on.
+    keys: std::collections::HashSet<String>,
+    /// Genesis parcels refused from then on, so a redeploy under a new id
+    /// cannot take the slot again.
+    parcels: std::collections::HashSet<String>,
+    /// Isolates still held; each keeps a slot.
+    isolates: usize,
 }
 
 pub type SharedState = Arc<SceneHostState>;
+
+/// How loads and joins exclude each other.
+#[derive(Default)]
+struct SceneLocks {
+    /// Held, never across an await, while a scene is looked up and a client
+    /// added, or a scene removed.
+    membership: parking_lot::Mutex<()>,
+    /// One lock per key: loads of the same key run one at a time.
+    per_key: parking_lot::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Loads in flight, counted against the scene cap.
+    loading: std::sync::atomic::AtomicUsize,
+}
+
+struct SlotReservation<'a>(Option<&'a std::sync::atomic::AtomicUsize>);
+
+impl Drop for SlotReservation<'_> {
+    fn drop(&mut self) {
+        if let Some(loading) = self.0 {
+            loading.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
 
 impl SceneHostState {
     pub fn with_secret_max_attempts(mut self, max: u32) -> Self {
@@ -519,8 +643,10 @@ impl SceneHostState {
             scenes: SceneManager::new(),
             fetch_http,
             eip1654,
-            loads: tokio::sync::Mutex::new(()),
+            loads: SceneLocks::default(),
             shutdown: std::sync::OnceLock::new(),
+            parked: parking_lot::Mutex::new(ParkedScenes::default()),
+            stopped_reloads: parking_lot::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -537,25 +663,233 @@ impl SceneHostState {
         self.eip1654.as_deref()
     }
 
-    /// Loads (or reloads) `key` under the load lock and the scene cap. A
-    /// reload of an already hosted scene never counts against the cap.
+    /// The key a scene is hosted under: a Genesis parcel names the scene
+    /// standing on it, so every parcel of a scene shares one host.
+    pub async fn canonical_key(&self, key: &SceneKey) -> SceneKey {
+        if let SceneKey::GenesisParcel(_) = key
+            && let Ok(Some(id)) = loader::current_scene_id(self, key).await
+        {
+            return SceneKey::Genesis(id);
+        }
+        key.clone()
+    }
+
+    /// The scene hosted for `key`, parcel aliases included.
+    pub async fn hosted(&self, key: &SceneKey) -> Option<Arc<scene::Scene>> {
+        self.scenes.get(&self.canonical_key(key).await.room_key())
+    }
+
+    /// Loads (or reloads) `key` under its key's load lock and the scene cap.
+    /// A reload reserves a slot too, for the time its old scene is down.
     pub async fn load(&self, key: &SceneKey) -> anyhow::Result<()> {
-        let _guard = self.loads.lock().await;
-        let hosted = self.scenes.get(&key.room_key()).is_some();
-        if !hosted && self.scenes.len() >= self.settings.max_scenes {
+        let key = self.canonical_key(key).await;
+        let lock = self.load_lock(&key);
+        let _guard = lock.lock().await;
+        self.retire_parked();
+        let _slot = self.reserve_slot(&key)?;
+        load_or_reload(self, &key).await
+    }
+
+    /// The lock loads of `key` take; loads of other keys never wait on it.
+    pub(crate) fn load_lock(&self, key: &SceneKey) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.loads.per_key.lock();
+        locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+        Arc::clone(locks.entry(key.room_key()).or_default())
+    }
+
+    /// Holds a place under the scene cap for a load of `key` until the
+    /// returned guard drops; a reload of a hosted `key` is never refused.
+    fn reserve_slot(&self, key: &SceneKey) -> anyhow::Result<SlotReservation<'_>> {
+        let _membership = self.loads.membership.lock();
+        let loading = &self.loads.loading;
+        // A reload keeps its slot while the old scene is down.
+        if self.scenes.get(&key.room_key()).is_some() {
+            loading.fetch_add(1, Ordering::SeqCst);
+            return Ok(SlotReservation(Some(loading)));
+        }
+        // Isolates parked by an OOM keep their memory, so they hold a slot.
+        let held = self.scenes.len() + loading.load(Ordering::SeqCst) + self.parked_count();
+        if held >= self.settings.max_scenes {
             anyhow::bail!(
                 "scene host is full ({} scenes hosted, SCENE_HOST_MAX_SCENES)",
                 self.settings.max_scenes
             );
         }
-        load_or_reload(self, key).await
+        loading.fetch_add(1, Ordering::SeqCst);
+        Ok(SlotReservation(Some(loading)))
+    }
+
+    /// Removes and kicks the scene hosted under `name`, atomically with joins.
+    /// Every removal goes through here or [`Self::unload_idle`], which both
+    /// record an OOM-parked scene ([`Self::note_removed`]).
+    pub(crate) fn remove_hosted(&self, name: &str) -> Option<(Arc<scene::Scene>, usize)> {
+        let _membership = self.loads.membership.lock();
+        let scene = self.scenes.remove(name)?;
+        self.note_removed(&scene);
+        let kicked = scene.kick_all();
+        Some((scene, kicked))
+    }
+
+    /// Adds an admitted client to the scene hosting `identity`'s deployment.
+    /// The lookup and the add happen under the membership lock unloads take,
+    /// so a client never lands in an unloaded scene; only a missing scene
+    /// waits, on its own key's load lock. A scene that is no longer hosted is
+    /// loaded again only if it sets `authoritativeMultiplayer`, as is one
+    /// whose runtime stopped (at most once per [`STOPPED_RELOAD_COOLDOWN`]
+    /// per key; joins in between are refused); a different
+    /// deployment now hosted under the key refuses the join (the client was
+    /// admitted for the old one).
+    pub async fn join<R>(
+        &self,
+        identity: &scene::SceneIdentity,
+        add: impl FnOnce(&Arc<scene::Scene>) -> R,
+    ) -> anyhow::Result<(Arc<scene::Scene>, R)> {
+        let key = &identity.key;
+        let mut add = Some(add);
+        for _ in 0..2 {
+            if let Some(joined) = self.try_join(identity, &mut add)? {
+                return Ok(joined);
+            }
+            let lock = self.load_lock(key);
+            let _guard = lock.lock().await;
+            if let Some(joined) = self.try_join(identity, &mut add)? {
+                return Ok(joined);
+            }
+            self.allow_stopped_reload(key)?;
+            let _slot = self.reserve_slot(key)?;
+            loader::load_scene(self, key, true).await?;
+        }
+        Err(anyhow!("{key} was not hosted after loading"))
+    }
+
+    /// Under `key`'s load lock: when the scene hosted under `key` has a
+    /// stopped runtime, refuses the reload if a join reloaded that key less
+    /// than [`STOPPED_RELOAD_COOLDOWN`] ago, and otherwise records this one.
+    fn allow_stopped_reload(&self, key: &SceneKey) -> anyhow::Result<()> {
+        let name = key.room_key();
+        let stopped = self
+            .scenes
+            .get(&name)
+            .is_some_and(|scene| !scene.runtime.is_running());
+        if !stopped {
+            return Ok(());
+        }
+        let now = std::time::Instant::now();
+        let mut reloads = self.stopped_reloads.lock();
+        reloads.retain(|_, at| now.duration_since(*at) < STOPPED_RELOAD_COOLDOWN);
+        if reloads.contains_key(&name) {
+            anyhow::bail!("{key} stopped again right after a reload; it is not reloaded again yet");
+        }
+        reloads.insert(name, now);
+        Ok(())
+    }
+
+    fn try_join<R, F: FnOnce(&Arc<scene::Scene>) -> R>(
+        &self,
+        identity: &scene::SceneIdentity,
+        add: &mut Option<F>,
+    ) -> anyhow::Result<Option<(Arc<scene::Scene>, R)>> {
+        let _membership = self.loads.membership.lock();
+        match self.scenes.get(&identity.key.room_key()) {
+            // A stopped runtime is not joined: the load that follows replaces
+            // it, kicking whoever is left through `remove_hosted`.
+            Some(scene) if !scene.runtime.is_running() => Ok(None),
+            Some(scene) if scene.identity.scene_id() == identity.scene_id() => {
+                let add = add.take().ok_or_else(|| anyhow!("client already added"))?;
+                let added = add(&scene);
+                Ok(Some((scene, added)))
+            }
+            Some(_) => Err(anyhow!(
+                "{} was redeployed while the client was admitted",
+                identity.key
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Unloads every scene other than the local one that has had no client
+    /// for the idle timeout; each check and removal is atomic with joins.
+    pub async fn unload_idle(&self) -> usize {
+        let Some(timeout) = self.settings.idle_unload else {
+            return 0;
+        };
+        let mut unloaded = 0;
+        for scene in self.scenes.all() {
+            let key = scene.identity.key.clone();
+            let _membership = self.loads.membership.lock();
+            let still_hosted = self
+                .scenes
+                .get(&key.room_key())
+                .is_some_and(|hosted| Arc::ptr_eq(&hosted, &scene));
+            if still_hosted
+                && key != SceneKey::Local
+                && scene.idle_for().is_some_and(|idle| idle >= timeout)
+            {
+                tracing::info!(scene = %key, "no clients for the idle timeout; unloading");
+                self.scenes.remove(&key.room_key());
+                self.note_removed(&scene);
+                scene.kick_all();
+                unloaded += 1;
+            }
+        }
+        unloaded
+    }
+
+    /// Unloads every scene an OOM parked; [`Self::note_removed`] records it.
+    pub fn retire_parked(&self) -> usize {
+        if jsruntime::parked_isolates() == 0 {
+            return 0;
+        }
+        let mut retired = 0;
+        for scene in self.scenes.all() {
+            if scene.runtime.parked()
+                && self.remove_hosted(&scene.identity.key.room_key()).is_some()
+            {
+                retired += 1;
+            }
+        }
+        retired
+    }
+
+    /// For a removed scene an OOM parked: its key (and a Genesis scene's
+    /// parcels) are refused until restart and its isolate keeps a slot.
+    /// Per runtime: a Genesis scene hosted under two keys is two runtimes.
+    fn note_removed(&self, scene: &scene::Scene) {
+        if !scene.runtime.parked() {
+            return;
+        }
+        let key = &scene.identity.key;
+        tracing::error!(scene = %key, "scene ran out of memory; unloaded and not loaded again until restart");
+        let mut parked = self.parked.lock();
+        parked.keys.insert(key.room_key());
+        if matches!(key, SceneKey::Genesis(_) | SceneKey::GenesisParcel(_))
+            && let Some(deployment) = &scene.identity.deployment
+        {
+            parked.parcels.extend(deployment.parcels.canonical());
+        }
+        parked.isolates += 1;
+    }
+
+    /// Whether an OOM parked the scene under `room_key` since start.
+    pub fn is_key_parked(&self, room_key: &str) -> bool {
+        self.parked.lock().keys.contains(room_key)
+    }
+
+    /// Whether a scene on any of `parcels` was parked by an OOM since start.
+    pub fn covers_parked_parcel(&self, parcels: &[String]) -> bool {
+        let parked = self.parked.lock();
+        parcels.iter().any(|p| parked.parcels.contains(p))
+    }
+
+    /// Isolates this host retired after an OOM; each keeps a slot.
+    pub fn parked_count(&self) -> usize {
+        self.parked.lock().isolates
     }
 
     /// Stops hosting `key`: every client is kicked and the runtime dropped.
     pub fn unload(&self, key: &SceneKey) -> usize {
-        match self.scenes.remove(&key.room_key()) {
-            Some(scene) => {
-                let kicked = scene.kick_all();
+        match self.remove_hosted(&key.room_key()) {
+            Some((_, kicked)) => {
                 tracing::info!(scene = %key, kicked, "scene unloaded");
                 kicked
             }
@@ -608,14 +942,17 @@ impl SceneHostState {
                 let prior = client
                     .grant
                     .filter(|g| !void_secrets || *g != AccessGrant::SharedSecret);
-                if let Err(reason) = ws::admit(self, &scene, &address, None, prior, now).await {
+                if let Err(reason) =
+                    ws::admit(self, &scene.identity, &address, None, prior, now).await
+                {
                     if let ws::AdmissionRefused::Undetermined(why) = &reason {
                         tracing::warn!(scene = %scene.identity.key, %address, %why, "admission undetermined; client kept");
                         continue;
                     }
                     tracing::info!(scene = %scene.identity.key, %address, %reason, "admission revoked; closing the socket");
-                    scene.remove_client(client.index);
-                    kicked += 1;
+                    if scene.remove_connection(client.index, client.id) {
+                        kicked += 1;
+                    }
                 }
             }
         }
@@ -626,7 +963,10 @@ impl SceneHostState {
     /// (or unload one that lost it), then re-run admission for every
     /// connected client and kick the refused.
     pub async fn sweep(&self) -> SweepSummary {
-        let mut summary = SweepSummary::default();
+        let mut summary = SweepSummary {
+            unloaded: self.retire_parked() + self.unload_idle().await,
+            ..SweepSummary::default()
+        };
         for scene in self.scenes.all() {
             let key = scene.identity.key.clone();
             match loader::current_scene_id(self, &key).await {
@@ -661,7 +1001,7 @@ impl SceneHostState {
                 let Ok(address) = crate::shared::identity::Address::parse(&client.address) else {
                     continue;
                 };
-                match ws::admit(self, &scene, &address, None, client.grant, now).await {
+                match ws::admit(self, &scene.identity, &address, None, client.grant, now).await {
                     Ok(_) => {}
                     // An authority or store fault keeps the client, as the comms re-admit does.
                     Err(ws::AdmissionRefused::Undetermined(why)) => {
@@ -670,8 +1010,9 @@ impl SceneHostState {
                     }
                     Err(reason) => {
                         tracing::info!(scene = %key, %address, %reason, "admission revoked; closing the socket");
-                        scene.remove_client(client.index);
-                        summary.kicked += 1;
+                        if scene.remove_connection(client.index, client.id) {
+                            summary.kicked += 1;
+                        }
                     }
                 }
             }
@@ -813,6 +1154,38 @@ mod key_tests {
         );
         raw.authoritative_key = Some("nope".into());
         assert!(Settings::resolve(raw, &http).is_err());
+    }
+
+    #[test]
+    fn byte_limits_are_validated() {
+        let http = Outbound::for_tests();
+        let ok = |tune: fn(&mut RawSettings)| {
+            let mut raw = RawSettings::default();
+            tune(&mut raw);
+            Settings::resolve(raw, &http).is_ok()
+        };
+        assert!(ok(|_| {}));
+        assert!(!ok(|r| r.client_outbound_max_bytes = 0));
+        assert!(!ok(|r| r.js_array_buffer_limit_mb = 0));
+        assert!(!ok(
+            |r| r.js_array_buffer_limit_mb = r.crdt_max_bytes / (1024 * 1024) - 1
+        ));
+        assert!(!ok(|r| r.crdt_max_value_bytes = r.crdt_max_bytes + 1));
+        assert!(!ok(
+            |r| r.client_inbound_max_bytes = r.ws_max_frame_bytes - 1
+        ));
+        assert!(!ok(
+            |r| r.scene_inbound_max_bytes = r.client_inbound_max_bytes
+        ));
+        // The boundary: three quarters of the scene bound hold exactly one client.
+        assert!(ok(|r| {
+            r.client_inbound_max_bytes = 3 << 20;
+            r.scene_inbound_max_bytes = 4 << 20;
+        }));
+        assert!(!ok(|r| {
+            r.client_inbound_max_bytes = 3 << 20;
+            r.scene_inbound_max_bytes = (4 << 20) - 4;
+        }));
     }
 
     #[test]

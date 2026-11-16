@@ -1,5 +1,5 @@
 .ui2 {
-  --site-header-h: 72px;
+  --site-header-h: var(--native-site-header-h, 72px);
   --site-nav-h: 56px;
   --site-nav-pad: 24px;
   --site-nav-bg: #101014;
@@ -9,5 +9,5 @@
 }
 
 @media (max-width: 991px) {
-  .ui2 { --site-header-h: 64px; --site-nav-pad: 16px; }
+  .ui2 { --site-header-h: var(--native-site-header-h, 64px); --site-nav-pad: 16px; }
 }

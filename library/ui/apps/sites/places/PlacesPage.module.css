@@ -1,0 +1,26 @@
+.page {
+  min-height: 100vh;
+  overflow-x: clip;
+  background: var(--dcl-gradient-radial-background), var(--dcl-bg-page);
+  background-attachment: fixed;
+  color: var(--dcl-text-primary);
+}
+
+.top {
+  padding: var(--dcl-space-32) var(--dcl-space-32) 0;
+}
+
+@media (max-width: 767px) {
+  .top {
+    padding: var(--dcl-space-32) var(--dcl-space-16) 0;
+  }
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

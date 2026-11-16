@@ -1,3 +1,4 @@
+import { createElement, createRef } from 'react'
 import type { NavBarProps, NavBarSection } from '@dcl/one-ui'
 
 const sections: NavBarSection[] = [
@@ -15,6 +16,34 @@ const signedIn: NavBarProps = {
     { label: 'Profile', href: '/profile' },
     { label: 'Sign out', onSelect: () => {} }
   ]
+}
+// App-owned controls retain their own native semantics through the public props type.
+const composition: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  balanceAction: createElement('a', { href: '/credits' }, 'Get credits'),
+  accountControl: createElement('button', { type: 'button' }, 'Connect wallet'),
+  mobileSecondaryNavigation: ({ closeDrawer }) =>
+    createElement('a', { href: '/profile', onClick: closeDrawer }, 'Profile')
+}
+const callbackSlot: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  // @ts-expect-error Controls are React nodes, not render callbacks.
+  balanceAction: () => 'Credits'
+}
+// @ts-expect-error The generic balance action does not introduce a credits-only alias.
+const creditsAlias: NavBarProps = { sections, signIn: { href: '/sign-in' }, creditsAction: null }
+const overlayNavigation: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  surface: 'overlay'
+}
+const invalidSurface: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  // @ts-expect-error Only the documented solid and overlay surfaces are supported.
+  surface: 'transparent'
 }
 // @ts-expect-error Sections are required: the library holds no navigation data of its own.
 const missingSections: NavBarProps = { signIn: { href: '/sign-in' } }
@@ -44,6 +73,11 @@ const inertAction: NavBarProps = {
 }
 
 void [
+  overlayNavigation,
+  invalidSurface,
+  composition,
+  callbackSlot,
+  creditsAlias,
   signedOut,
   signedOutLink,
   signedIn,
@@ -69,3 +103,67 @@ export { NavBar as DeepNavBar } from '@dcl/one-ui/components/NavBar/NavBar'
 export { ShopCart, theme as foundationTheme } from '@dcl/one-ui/foundations'
 // @ts-expect-error Components are not exported by the foundations entry.
 export { NavBar as FoundationNavBar } from '@dcl/one-ui/foundations'
+
+const button: import('@dcl/one-ui').ButtonProps = {
+  variant: 'tertiary',
+  size: 'md',
+  children: 'Jump',
+  leadingIcon: null,
+  'aria-pressed': true,
+  'aria-disabled': true,
+  onClick: (event) => {
+    event.preventDefault()
+    event.currentTarget.disabled = true
+  }
+}
+const link: import('@dcl/one-ui').ButtonProps = {
+  variant: 'inverse',
+  href: '/jump',
+  children: 'Jump',
+  target: '_blank',
+  disabled: true,
+  onClick: (event) => {
+    event.preventDefault()
+    event.currentTarget.href = '/next'
+  }
+}
+// @ts-expect-error A navigation link cannot have a native button submit type.
+const invalidLink: import('@dcl/one-ui').ButtonProps = { href: '/jump', type: 'submit' }
+// @ts-expect-error Only supported button variants are public.
+const invalidVariant: import('@dcl/one-ui').ButtonProps = { variant: 'unknown' }
+void [button, link, invalidLink, invalidVariant]
+
+const nativeButtonRef: import('@dcl/one-ui').ButtonProps = {
+  children: 'Save',
+  ref: createRef<HTMLButtonElement>()
+}
+const nativeLinkRef: import('@dcl/one-ui').ButtonProps = {
+  href: '/save',
+  children: 'Save',
+  ref: createRef<HTMLAnchorElement>()
+}
+// @ts-expect-error Icon-only variants require an explicit accessible name.
+const unnamedIcon: import('@dcl/one-ui').ButtonProps = { variant: 'iconOnly', children: null }
+// @ts-expect-error The iconOnly flag also requires an explicit accessible name.
+const unnamedFlag: import('@dcl/one-ui').ButtonProps = { iconOnly: true, children: null }
+// @ts-expect-error A public control needs explicit content or an accessible name.
+const unnamedControl: import('@dcl/one-ui').ButtonProps = { variant: 'primary' }
+// @ts-expect-error A native button cannot receive an anchor ref.
+const invalidRef: import('@dcl/one-ui').ButtonProps = {
+  children: 'Save',
+  ref: createRef<HTMLAnchorElement>()
+}
+void [nativeButtonRef, nativeLinkRef, unnamedIcon, unnamedFlag, unnamedControl, invalidRef]
+
+// @ts-expect-error An absent content value needs an explicit accessible name.
+const unnamedUndefinedButton: import('@dcl/one-ui').ButtonProps = { children: undefined }
+// @ts-expect-error Decorative null content needs an explicit accessible name.
+const unnamedNullButton: import('@dcl/one-ui').ButtonProps = { children: null }
+void [unnamedUndefinedButton, unnamedNullButton]
+
+const rendererAppearanceButton: import('@dcl/one-ui').ButtonProps = {
+  children: 'Join',
+  // @ts-expect-error Appearance is controlled through the public variant, not renderer internals.
+  appearance: 'inverse'
+}
+void rendererAppearanceButton

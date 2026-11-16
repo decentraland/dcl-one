@@ -1,21 +1,23 @@
 use bevy::{
-    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
-    pbr::RenderMeshInstances,
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass, NormalPrepass},
+    pbr::{CascadeShadowConfig, DirectionalLightShadowMap, RenderMeshInstances},
     prelude::*,
     render::{
         batching::gpu_preprocessing::GpuPreprocessingSupport,
         experimental::occlusion_culling::OcclusionCulling, view::NoIndirectDrawing, RenderApp,
     },
+    window::PrimaryWindow,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{AppConfig, PrimaryCamera, SceneLoadDistance, SessionGraphics, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
-    CloudCover,
+    upscale::{Compositor, SceneTarget},
+    CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
 const fn toggle(
@@ -47,94 +49,203 @@ const fn slider(
     }
 }
 
-pub(super) fn register(app: &mut App) {
-    app.insert_resource(LandscapeLayers {
-        ground: true,
-        trees: true,
-        grass: true,
-    })
-    .add_console_command::<LandscapeCommand, _>(landscape_command)
-    .add_console_command::<SkyState, _>(sky_state)
-    .add_console_command::<RenderView, _>(render_view)
-    .add_preview_debug_inputs(DebugSection {
-        title: "Landscape",
-        query: "/landscape",
-        fields: &[
-            ("Scene load distance (m)", "loadDistance"),
-            ("Loaded trees", "treeCount"),
-            ("Grass parcels", "grassParcels"),
-        ],
-        actions: &[],
-        inputs: &[
-            toggle("Ground", "ground", "/landscape ground {value}"),
-            toggle("Trees", "trees", "/landscape trees {value}"),
-            toggle("Parcel grass", "grass", "/landscape grass {value}"),
-        ],
-    })
-    .add_debug_section(DebugSection {
-        title: "Skybox",
-        query: "/sky_state",
-        fields: &[],
-        actions: &[("Resume sky clock", "/time --resume")],
-        inputs: &[
-            slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
-            slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
-            slider(
-                "Cloud density",
-                "density",
-                "/clouddensity {value}",
-                0.01,
-                3.0,
-                0.01,
-            ),
-            slider(
-                "Cloud shadows",
-                "shadow",
-                "/cloudshadow {value}",
-                0.0,
-                1.0,
-                0.01,
-            ),
-            slider(
-                "Cloud scale",
+pub(super) struct VisualsDebugPanelPlugin;
+
+impl Plugin for VisualsDebugPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(LandscapeLayers {
+            ground: true,
+            trees: true,
+            grass: true,
+        })
+        .add_console_command::<LandscapeCommand, _>(landscape_command)
+        .add_console_command::<SkyState, _>(sky_state)
+        .add_console_command::<RenderView, _>(render_view)
+        .add_console_command::<RenderScaleState, _>(render_scale_state)
+        .add_debug_section(DebugSection {
+            title: "Render scale",
+            query: "/render_scale_state",
+            fields: &[
+                ("Scene resolution (width / height)", "scene"),
+                ("Window resolution (width / height)", "window"),
+                ("FSR compositor", "compositor"),
+                ("Depth prepass", "depth_prepass"),
+                ("Normal prepass", "normal_prepass"),
+            ],
+            actions: &[(
+                "Back to the player's setting",
+                "/session_graphics render_scale",
+            )],
+            inputs: &[slider(
+                "Render scale (this session)",
                 "scale",
-                "/cloudscale {value}",
-                0.01,
-                10.0,
-                0.01,
-            ),
-            slider(
-                "Cloud march steps",
-                "steps",
-                "/cloudsteps {value}",
+                "/session_graphics render_scale {value}",
+                SessionGraphics::MIN_RENDER_SCALE as f64,
                 1.0,
-                128.0,
-                1.0,
+                0.05,
+            )],
+        })
+        .add_console_command::<SunShadows, _>(sun_shadows)
+        .add_console_command::<SunShadowMap, _>(sun_shadow_map)
+        .add_preview_debug_inputs(DebugSection {
+            title: "Landscape",
+            query: "/landscape",
+            fields: &[
+                ("Scene load distance (m)", "loadDistance"),
+                ("Loaded trees", "treeCount"),
+                ("Grass parcels", "grassParcels"),
+            ],
+            actions: &[],
+            inputs: &[
+                toggle("Ground", "ground", "/landscape ground {value}"),
+                toggle("Trees", "trees", "/landscape trees {value}"),
+                toggle("Parcel grass", "grass", "/landscape grass {value}"),
+            ],
+        })
+        .add_debug_section(DebugSection {
+            title: "Sun shadows",
+            query: "/sun_shadows",
+            fields: &[
+                ("Shadow quality", "quality"),
+                ("Shadow distance (m)", "distance"),
+                ("Cascade far bounds (m)", "cascades"),
+                ("Bias overridden", "overridden"),
+                ("Default bias (depth m / normal texels)", "presetBias"),
+            ],
+            actions: &[("Restore default bias", "/shadowbias --reset")],
+            inputs: &[
+                DebugInput {
+                    label: "Shadow map size (texels)",
+                    field: "mapSize",
+                    command: "/shadow_map {value}",
+                    kind: DebugInputKind::Select(&[
+                        ("512", "512"),
+                        ("1024", "1024"),
+                        ("2048", "2048"),
+                        ("4096 (default)", "4096"),
+                    ]),
+                },
+                slider(
+                    "Depth bias (m)",
+                    "depthBias",
+                    "/shadowbias --depth {value}",
+                    0.0,
+                    1.0,
+                    0.005,
+                ),
+                slider(
+                    "Normal bias (texels)",
+                    "normalBias",
+                    "/shadowbias --normal {value}",
+                    0.0,
+                    10.0,
+                    0.05,
+                ),
+            ],
+        })
+        .add_debug_section(DebugSection {
+            title: "Skybox",
+            query: "/sky_state",
+            fields: &[],
+            actions: &[("Resume sky clock", "/time --resume")],
+            inputs: &[
+                slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
+                slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
+                slider(
+                    "Cloud density",
+                    "density",
+                    "/clouddensity {value}",
+                    0.01,
+                    3.0,
+                    0.01,
+                ),
+                slider(
+                    "Cloud shadows",
+                    "shadow",
+                    "/cloudshadow {value}",
+                    0.0,
+                    1.0,
+                    0.01,
+                ),
+                slider(
+                    "Cloud scale",
+                    "scale",
+                    "/cloudscale {value}",
+                    0.01,
+                    10.0,
+                    0.01,
+                ),
+                slider(
+                    "Cloud march steps",
+                    "steps",
+                    "/cloudsteps {value}",
+                    1.0,
+                    128.0,
+                    1.0,
+                ),
+                slider(
+                    "Cloud octave frequency",
+                    "lacunarity",
+                    "/cloudlacunarity {value}",
+                    1.0,
+                    5.0,
+                    0.01,
+                ),
+                slider(
+                    "Cloud edge sharpness",
+                    "sharpness",
+                    "/cloudsharp {value}",
+                    0.0,
+                    100.0,
+                    1.0,
+                ),
+            ],
+        });
+        if app
+            .world()
+            .get_resource::<common::structs::PreviewMode>()
+            .is_some_and(|p| p.is_preview)
+        {
+            app.add_systems(Update, apply_landscape_visibility);
+        }
+    }
+
+    fn finish(&self, app: &mut App) {
+        let render = app.sub_app(RenderApp).world();
+        let gpu_instances = matches!(
+            render.get_resource::<RenderMeshInstances>(),
+            Some(RenderMeshInstances::GpuBuilding(_))
+        );
+        let culling = gpu_instances
+            && render
+                .get_resource::<GpuPreprocessingSupport>()
+                .is_some_and(|s| s.is_culling_supported());
+        app.insert_resource(RenderCapabilities {
+            gpu_instances,
+            culling,
+        });
+        let inputs = [
+            toggle(
+                "Indirect drawing",
+                "indirect",
+                "/render_view indirect {value}",
             ),
-            slider(
-                "Cloud octave frequency",
-                "lacunarity",
-                "/cloudlacunarity {value}",
-                1.0,
-                5.0,
-                0.01,
+            toggle(
+                "GPU occlusion culling",
+                "occlusion",
+                "/render_view occlusion {value}",
             ),
-            slider(
-                "Cloud edge sharpness",
-                "sharpness",
-                "/cloudsharp {value}",
-                0.0,
-                100.0,
-                1.0,
-            ),
-        ],
-    });
-    if app
-        .world()
-        .get_resource::<common::structs::PreviewMode>()
-        .is_some_and(|p| p.is_preview)
-    {
-        app.add_systems(Update, apply_landscape_visibility);
+        ];
+        app.add_preview_debug_inputs(DebugSection {
+            title: "GPU rendering",
+            query: "/render_view",
+            fields: &[
+                ("GPU-built mesh instances", "gpuInstances"),
+                ("GPU culling supported", "supported"),
+            ],
+            actions: &[],
+            inputs: if culling { &inputs } else { &[] },
+        });
     }
 }
 
@@ -224,48 +335,94 @@ fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Re
     }
 }
 
+/// Read the render scale in effect, the resolution the world is drawn at, and whether the FSR
+/// compositor and the prepasses run.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/render_scale_state")]
+struct RenderScaleState;
+
+fn render_scale_state(
+    mut cmd: ConsoleCommand<RenderScaleState>,
+    scene_target: Res<SceneTarget>,
+    images: Res<Assets<Image>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    compositor: Query<&Camera, With<Compositor>>,
+    camera: Query<(Has<DepthPrepass>, Has<NormalPrepass>), With<PrimaryCamera>>,
+) {
+    let Some(Ok(_)) = cmd.take() else { return };
+    let window = window.single().ok().map(|w| w.physical_size().to_array());
+    let compositor = compositor.single().is_ok_and(|c| c.is_active);
+    // at scale 1 the world draws to the window itself
+    let scene = if compositor {
+        images.get(&scene_target.image).map(|i| i.size().to_array())
+    } else {
+        window
+    };
+    let (depth, normal) = camera.single().ok().unzip();
+    cmd.reply_ok(
+        json!({"scale": scene_target.scale, "scene": scene, "window": window,
+            "compositor": compositor, "depth_prepass": depth, "normal_prepass": normal})
+        .to_string(),
+    );
+}
+
+/// Read the sun's effective shadow quality, cascades and biases.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/sun_shadows")]
+struct SunShadows;
+
+fn sun_shadows(
+    mut cmd: ConsoleCommand<SunShadows>,
+    config: Res<AppConfig>,
+    bias: Res<ShadowBiasOverride>,
+    map: Res<DirectionalLightShadowMap>,
+    sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+) {
+    if let Some(Ok(_)) = cmd.take() {
+        let preset = SUN_SHADOW_BIAS;
+        let (depth, normal) = bias.0.unwrap_or(preset);
+        // every sun layer shares one config; read the first that casts shadows
+        let cascades = sun
+            .iter()
+            .find(|(light, _)| light.shadows_enabled)
+            .map(|(_, cascades)| cascades.bounds.clone());
+        cmd.reply_ok(
+            json!({"quality":format!("{:?}", config.graphics.shadow_settings),
+            "distance":config.graphics.shadow_distance, "mapSize":map.size.to_string(),
+            "cascades":cascades, "overridden":bias.0.is_some(), "presetBias":[preset.0, preset.1],
+            "depthBias":depth, "normalBias":normal})
+            .to_string(),
+        );
+    }
+}
+
+/// Set the sun's shadow map size in texels per cascade until restart, to compare biases at
+/// another resolution. The normal bias is in texels, so the same value offsets further on a
+/// smaller map.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadow_map")]
+struct SunShadowMap {
+    size: usize,
+}
+
+fn sun_shadow_map(
+    mut cmd: ConsoleCommand<SunShadowMap>,
+    mut map: ResMut<DirectionalLightShadowMap>,
+) {
+    if let Some(Ok(SunShadowMap { size })) = cmd.take() {
+        if !(256..=8192).contains(&size) || !size.is_power_of_two() {
+            cmd.reply_failed("shadow map size must be a power of two from 256 to 8192");
+            return;
+        }
+        map.size = size;
+        cmd.reply_ok(format!("sun shadow map {size} texels"));
+    }
+}
+
 #[derive(Resource)]
 struct RenderCapabilities {
     gpu_instances: bool,
     culling: bool,
-}
-
-pub(super) fn register_gpu(app: &mut App) {
-    let render = app.sub_app(RenderApp).world();
-    let gpu_instances = matches!(
-        render.get_resource::<RenderMeshInstances>(),
-        Some(RenderMeshInstances::GpuBuilding(_))
-    );
-    let culling = gpu_instances
-        && render
-            .get_resource::<GpuPreprocessingSupport>()
-            .is_some_and(|s| s.is_culling_supported());
-    app.insert_resource(RenderCapabilities {
-        gpu_instances,
-        culling,
-    });
-    let inputs = [
-        toggle(
-            "Indirect drawing",
-            "indirect",
-            "/render_view indirect {value}",
-        ),
-        toggle(
-            "GPU occlusion culling",
-            "occlusion",
-            "/render_view occlusion {value}",
-        ),
-    ];
-    app.add_preview_debug_inputs(DebugSection {
-        title: "GPU rendering",
-        query: "/render_view",
-        fields: &[
-            ("GPU-built mesh instances", "gpuInstances"),
-            ("GPU culling supported", "supported"),
-        ],
-        actions: &[],
-        inputs: if culling { &inputs } else { &[] },
-    });
 }
 
 /// Inspect main camera GPU drawing or set its indirect draw and occlusion mode.

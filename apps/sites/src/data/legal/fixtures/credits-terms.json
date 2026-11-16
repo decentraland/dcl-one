@@ -1,0 +1,805 @@
+{
+  "source": "decentraland/sites@cfdfa1a51216f9dc90c5b148686a95e7ee9c2862",
+  "path": "/credits-terms",
+  "oracleA": {
+    "renderedFrom": "git archive cfdfa1a5, vite build and preview",
+    "capturedAt": "2026-11-04T02:33:12.566Z"
+  },
+  "oracleB": {
+    "url": "https://decentraland.org/credits-terms",
+    "bundle": "@dcl/sites/0.76.0",
+    "capturedAt": "2026-11-04T02:32:14.129Z"
+  },
+  "canonical": [
+    {
+      "tag": "a",
+      "href": "/brand",
+      "children": [
+        {
+          "text": "Logo and Name"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/content",
+      "children": [
+        {
+          "text": "Content Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/ethics",
+      "children": [
+        {
+          "text": "Code of Ethics"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/rewards-terms",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/credits-terms",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/security",
+      "children": [
+        {
+          "text": "Security"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/privacy",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/referral-terms",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/terms",
+      "children": [
+        {
+          "text": "Terms of Use"
+        }
+      ]
+    },
+    {
+      "tag": "h1",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#general-provisions",
+              "children": [
+                {
+                  "text": "1. General Provisions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#credits",
+              "children": [
+                {
+                  "text": "2. Credits"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#eligibility",
+              "children": [
+                {
+                  "text": "3. Eligibility"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#purchase-of-credits",
+              "children": [
+                {
+                  "text": "4. Purchase of Credits"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#use-of-credits",
+              "children": [
+                {
+                  "text": "5. Use of Credits"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#validity",
+              "children": [
+                {
+                  "text": "6. Validity"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#non-transferability",
+              "children": [
+                {
+                  "text": "7. Non-Transferability and Restrictions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#refunds",
+              "children": [
+                {
+                  "text": "8. Refunds"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#miscellaneous",
+              "children": [
+                {
+                  "text": "9. Miscellaneous"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#modifications",
+              "children": [
+                {
+                  "text": "10. Modifications to These Terms"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Terms and Conditions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Last Updated: August 4, 2026"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Previous Update: June 18, 2026"
+        }
+      ]
+    },
+    {
+      "anchor": "general-provisions"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "1. General Provisions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.1. These Terms and Conditions (the \"Credits Terms\") govern the purchase and use of Decentraland Credits (\"Credits\") within the Decentraland iOS mobile application, the Decentraland platform and any future mobile or web application, if applicable."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.2. Credits are offered by the Decentraland Foundation (\"Foundation\", \"we\", \"us\", or \"our\")."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.3. Purchasing Credits constitutes acceptance of these Terms, as well as the Decentraland Terms of Use, Privacy Policy, and Content Policy."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.4. The Foundation reserves the right to modify, suspend, or terminate the availability of Credits, or the functionality through which Credits may be acquired or used at its sole discretion, subject to the notice provisions set out in Section 10."
+        }
+      ]
+    },
+    {
+      "anchor": "credits"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "2. Credits"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.1. Credits are a limited digital in-app utility purchased with real money via Apple In-App Purchase (\"IAP\") on the Decentraland iOS mobile application, via Stripe on the Decentraland platform or any other online payment service provider and/or app to be connected to Decentraland apps or platform in the future."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.2. Credits are available solely for use within Decentraland. Credits do not constitute money, stored value, cryptocurrency, electronic money, a payment instrument, or any form of financial asset. Credits are not redeemable, refundable, exchangeable, or transferable for real currency or MANA, except as expressly provided in these Terms."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.3. Credits are licensed, not sold. Users obtain a limited, revocable, non-exclusive, non-transferable right to use Credits solely within the Decentraland ecosystem in accordance with these Terms."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.4. Where Credits are purchased via IAP, these Credits are licensed content provided by the Foundation and are not sold by Apple. Apple has no obligation to provide maintenance, support, refunds, or warranties relating to Credits except as required under Apple's applicable policies."
+        }
+      ]
+    },
+    {
+      "anchor": "eligibility"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "3. Eligibility"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.1. To purchase Credits, you must:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "hold a fully registered Decentraland account;"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "be at least 18 years of age (or the age of majority in your jurisdiction, whichever is higher); and"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "not to be located in, ordinarily resident in, or otherwise subject to the laws of any jurisdiction where the offering, purchase, or use of Credits is prohibited, including, without limitation, the United Kingdom."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.2. The Foundation reserves the right to restrict access to Credits in additional jurisdictions at its sole discretion."
+        }
+      ]
+    },
+    {
+      "anchor": "purchase-of-credits"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "4. Purchase of Credits"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.1. Credits may only be purchased through (a) IAP on iOS devices, (b) Stripe on the Decentraland platform, or (c) any other online payment service provider and/or app to be connected to Decentraland apps or platform in the future. The purchase of Credits is processed through Apple's, Stripe's or any other online service providers checkout flow, as applicable, which constitutes explicit consent to the transaction."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.2. All purchases are subject to the daily purchase cap and holding cap limits set by the Foundation from time to time and to Apple's applicable App Store policies or, where applicable, Stripe's or other online payment service providers, applicable terms of service. The Foundation may modify such limits at any time."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.3. When you use Credits to acquire a Wearable, Emote, or any other item of digital content, you expressly request immediate delivery and performance of that digital content at the moment of transaction. By confirming the acquisition, you consent, acknowledge and agree that:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "the digital content is delivered to your self-custodial wallet immediately upon confirmation;"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "because performance of the digital content supply has begun at your express request before the expiry of any applicable withdrawal period, you waive your right of withdrawal in respect of that acquisition, to the fullest extent permitted by applicable law; and"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Credits used to complete the acquisition are consumed, final, and non-refundable by the Foundation."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.4. The price of Credits is displayed in the application at the time of purchase. The Foundation reserves the right to change Credit pricing at any time."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.5. All payments are processed by Apple, Stripe or any future online payment service provider, as applicable. The Foundation does not store or process your payment information directly."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.6. You accept that any applicable taxes in connection with the purchase of Credits shall be paid by you directly. You are solely responsible for any taxes, duties, or any charges arising from the acquisition, use, or disposition of Credits and any digital content acquired with Credits."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.7. The Foundation reserves the right to correct pricing, display, or technical errors relating to Credits purchases and may cancel or adjust transactions affected by such errors."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.8. The Foundation may restrict, suspend, or prohibit purchases of Credits where required to comply with sanctions laws, anti-money laundering obligations, fraud prevention measures, or other legal requirements."
+        }
+      ]
+    },
+    {
+      "anchor": "use-of-credits"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "5. Use of Credits"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.1. Credits may only be used on primary sales of Polygon Wearables & Emotes. The Foundation may expand, restrict or modify the permitted uses of Credits at any time, subject to the applicable notice requirements."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.2. Credits may also be used for scene and content submission fees within the Decentraland Builder, where applicable."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.3. Credits do not represent voting power (VP)."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.4. Credits cannot be exchanged for cash, MANA, or any other monetary or alternative benefit."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.5. Credits cannot be used to publish a collection, used on Ethereum mainnet, or transferred between users."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.6. The availability, pricing, and eligibility of Wearables, Emotes, and other digital content purchasable with Credits may change at any time."
+        }
+      ]
+    },
+    {
+      "anchor": "validity"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "6. Validity"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.1. Credits currently do not expire. However, the Foundation reserves the right to set expiration dates or discontinue the Credits in the future providing at least 30 days prior notice through any of the available communication channels, including, but not limited to email addresses associated with your account and/or by in-app notification, etc."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.2. The Foundation shall have no obligation to provide compensation, refunds or cash equivalents in connection with any expiration or discontinuation of Credits."
+        }
+      ]
+    },
+    {
+      "anchor": "non-transferability"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "7. Non-Transferability and Restrictions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.1. Credits are non-transferable and may only be used by the account holder."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.2. Credits must be held by a specific account (linked to a valid EVM address) and can only be utilized by that account."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.3. The Foundation reserves the right to revoke or cancel Credits if they are misused or if a participant is found to be in violation of these Terms or the Decentraland Terms of Use. If your account is suspended, terminated, or otherwise modified, or if your right to access the Decentraland platform is terminated for any reason, you may lose access to some or all of your Credits. The Foundation has no obligation to restore Credits lost as a result of account suspension or termination."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.4. Acquisition of a Wearable, Emote, or other digital content using Credits does not transfer any intellectual property rights except for the limited rights expressly granted under the applicable Decentraland Terms of Use."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.5. The Foundation is not responsible for any loss of Credits, Wearables, Emotes, or other digital content resulting from loss of access to a wallet, compromise of credentials, blockchain events, or actions taken by third-party wallet providers."
+        }
+      ]
+    },
+    {
+      "anchor": "refunds"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "8. Refunds"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "8.1. All purchases of Credits through IAP are subject to Apple's refund policies. Refund requests for the IAP purchase must be directed to Apple. Purchases of Credits made via Stripe or any future online payment service provider, are final and non-refundable, except as required by applicable law. The Foundation does not process refunds for Credit purchases directly."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "8.2. When you use Credits to acquire a Wearable, Emote, or any other digital content, the Credits are immediately deducted from your balance and the transaction is final, non-refundable, and non-reversible. This applies regardless of any refund, chargeback, or reversal decision on the original purchase whether made via IAP, Stripe or any future online payment service provider."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "8.3. If Apple, Stripe or any online payment service provider grants a refund, chargeback, reversal, or other payment recovery after Credits have been used, the Foundation may deduct Credits, revoke access to associated digital content, suspend access to certain features, or take any other reasonable action necessary to address the resulting negative balance."
+        }
+      ]
+    },
+    {
+      "anchor": "miscellaneous"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "9. Miscellaneous"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.1. The Foundation is not responsible for any technical malfunctions, errors, or issues that may affect the availability of Credits, to the maximum extent permitted by applicable law. Credits are provided on an \"as is\" and \"as available\" basis without warranties of any kind."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.2. The Foundation may investigate any suspected fraudulent, abusive, or unlawful activity relating to the acquisition or use of Credits and may suspend, limit, revoke, or cancel Credits pending such investigation. The Foundation may request additional information or documentation from users in connection with such investigations."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.3. If Credits are discontinued, the Foundation may provide a reasonable redemption period during which Users may use their remaining Credits before they are cancelled."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.4. Any disputes regarding these Credits Terms shall be resolved in accordance with the dispute resolution provisions of the Decentraland Terms of Use."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.5. Apple and Apple's subsidiaries are third-party beneficiaries of these Credits Terms and may enforce these Credits Terms and, upon your acceptance of these Terms, shall have the right (and shall be deemed to have accepted the right) to enforce these Terms against you as third party beneficiary thereof."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.6. Credits do not represent any ownership interest, equity, or claim against the Foundation or the Decentraland DAO."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "For further inquiries, please contact "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:legal@decentraland.org",
+          "children": [
+            {
+              "text": "legal@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "anchor": "modifications"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "10. Modifications to These Terms"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "10.1. The Foundation may update these Credits Terms at any time. For changes that materially affect your rights, the Foundation will provide no less than 30 days prior written notice through any of the available communication channels, including, but not limited to: email address associated with your account and/or by in-app notification, etc."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "10.2. By purchasing Credits, you consent to receive transactional and service-related communications regarding your Credits balance and purchases."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "10.3. Your continued use of Credits following the effective date of any update constitutes your acceptance of the revised Credits Terms."
+        }
+      ]
+    }
+  ]
+}
