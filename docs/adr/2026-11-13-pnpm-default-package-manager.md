@@ -28,6 +28,9 @@ decisions; the rest of both stands.
   (`corepack enable`, or `corepack pnpm@11.28.12`, the `PNPM` default of the SDK and protocol
   Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
   Nix builds run the Nix package set's pnpm and ignore the pin.
+- `library/ui` keeps pnpm 10.19.0: its `package.json` is an input of the generated components, so
+  its pin moves with a component regeneration. 10.19.0 has advisories fixed in 10.34.5, which makes
+  that move the next one.
 - pnpm does not read `package-lock.json`. A project moves with `pnpm import`, which writes
   `pnpm-lock.yaml` from it, and then deletes `package-lock.json`. The import resolves again
   where npm had settled a dist-tag or a peer on its own, so the two version sets are compared
@@ -56,7 +59,8 @@ Where the layout differs from pnpm's default:
   sibling package by relative path, and the Creator Hub's packaging and tests read one flat
   `node_modules`. In these projects an import of an undeclared package is not caught at install.
 - `library/js-sdk-toolchain` is one pnpm workspace with a single lockfile, `library/hashing`
-  included.
+  included, and keeps its workspace packages out of the root `node_modules`
+  (`hoistWorkspacePackages: false`), where 11.28 started placing them.
 - `apps/creator-hub` holds, through overrides, the versions its packaged app shipped under npm
   where pnpm would deduplicate them to another locked version, each until its dependent's next
   upgrade, and keeps `@dcl/quests-client`'s
