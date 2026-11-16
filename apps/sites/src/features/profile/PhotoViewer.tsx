@@ -184,50 +184,52 @@ function ViewerDialog({ imageUrl, alt, label, details, download, onPrevious, onN
           </div>
           {detailsVisible ? (
             <section className={styles.details} aria-labelledby={titleId}>
-              <div className={styles.header}>
-                <h2 id={titleId} className={styles.sectionTitle}>
-                  information
-                </h2>
-                {details.date ? <p className={styles.date}>{details.date}</p> : null}
-                {details.takenBy ? (
-                  <p className={styles.takenBy}>
-                    Photo taken by{" "}
-                    <Link to={details.takenBy.href} prefetch="intent" className={styles.link}>
-                      {details.takenBy.name}
-                    </Link>
-                  </p>
+              <div className={styles.detailsScroll}>
+                <div className={styles.header}>
+                  <h2 id={titleId} className={styles.sectionTitle}>
+                    information
+                  </h2>
+                  {details.date ? <p className={styles.date}>{details.date}</p> : null}
+                  {details.takenBy ? (
+                    <p className={styles.takenBy}>
+                      Photo taken by{" "}
+                      <Link to={details.takenBy.href} prefetch="intent" className={styles.link}>
+                        {details.takenBy.name}
+                      </Link>
+                    </p>
+                  ) : null}
+                </div>
+                <h3 className={`${styles.sectionTitle} ${styles.padded}`}>place</h3>
+                <div className={styles.place}>
+                  <span className={styles.placeLabel}>
+                    <GeneralMapPin size={20} aria-hidden="true" />
+                    <span>{details.place.label}</span>
+                  </span>
+                  {details.place.jumpInHref ? (
+                    <JumpInCTA href={details.place.jumpInHref} size="sm" aria-label={`Jump in to ${details.place.label}`} />
+                  ) : null}
+                </div>
+                {details.people.length > 0 ? (
+                  <>
+                    <h3 className={`${styles.sectionTitle} ${styles.padded}`}>people</h3>
+                    <ul className={styles.people}>
+                      {details.people.map((person, index) => (
+                        <li key={`${person.href ?? person.name}-${index}`} className={styles.person}>
+                          <PersonFace name={person.name} faceUrl={person.faceUrl} />
+                          {person.href ? (
+                            <Link to={person.href} prefetch="intent" className={styles.personName}>
+                              {person.name}
+                            </Link>
+                          ) : (
+                            <span className={styles.personName}>{person.name}</span>
+                          )}
+                          {person.isGuest ? <span className={styles.guest}>guest</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : null}
               </div>
-              <h3 className={`${styles.sectionTitle} ${styles.padded}`}>place</h3>
-              <div className={styles.place}>
-                <span className={styles.placeLabel}>
-                  <GeneralMapPin size={20} aria-hidden="true" />
-                  <span>{details.place.label}</span>
-                </span>
-                {details.place.jumpInHref ? (
-                  <JumpInCTA href={details.place.jumpInHref} size="sm" aria-label={`Jump in to ${details.place.label}`} />
-                ) : null}
-              </div>
-              {details.people.length > 0 ? (
-                <>
-                  <h3 className={`${styles.sectionTitle} ${styles.padded}`}>people</h3>
-                  <ul className={styles.people}>
-                    {details.people.map((person, index) => (
-                      <li key={`${person.href ?? person.name}-${index}`} className={styles.person}>
-                        <PersonFace name={person.name} faceUrl={person.faceUrl} />
-                        {person.href ? (
-                          <Link to={person.href} prefetch="intent" className={styles.personName}>
-                            {person.name}
-                          </Link>
-                        ) : (
-                          <span className={styles.personName}>{person.name}</span>
-                        )}
-                        {person.isGuest ? <span className={styles.guest}>guest</span> : null}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
             </section>
           ) : null}
         </div>

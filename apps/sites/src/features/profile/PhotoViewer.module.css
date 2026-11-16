@@ -48,11 +48,13 @@
   background: var(--dcl-transparencies-white-20);
 }
 
+/* Close sits on the photo's top-left corner, as on decentraland.org: fixed to the dialog shell, so
+ * it never covers the information panel or moves when the panel scrolls. */
 .close {
   position: absolute;
   z-index: 2;
-  top: var(--dcl-space-8);
-  right: var(--dcl-space-8);
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
 }
 
 .body {
@@ -87,8 +89,8 @@
 .toolbar {
   position: absolute;
   z-index: 1;
-  top: var(--dcl-space-8);
-  left: var(--dcl-space-8);
+  top: var(--dcl-space-16);
+  right: var(--dcl-space-16);
   display: flex;
   gap: var(--dcl-space-8);
 }
@@ -107,20 +109,48 @@
   right: var(--dcl-space-8);
 }
 
+/* The panel is a clipped shell; only its content area scrolls, inset from the dialog's edge so the
+ * track never touches the rounded border. */
 .details {
   display: flex;
-  overflow: hidden auto;
+  overflow: hidden;
   flex-direction: column;
-  gap: var(--dcl-space-16);
   box-sizing: border-box;
+  min-height: 0;
   max-height: 55vh;
-  padding: var(--dcl-space-24) 0;
+  padding: var(--dcl-space-8) var(--dcl-space-4) var(--dcl-space-8) 0;
   background: radial-gradient(
     123.58% 82% at 9.01% 25.79%,
     var(--dcl-brand-purple) 0%,
     var(--dcl-brand-purple-dark) 37.11%,
     var(--dcl-neutrals-black) 100%
   );
+}
+
+.detailsScroll {
+  display: flex;
+  overflow: hidden auto;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  min-height: 0;
+  padding: var(--dcl-space-16) 0;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--dcl-transparencies-white-20) transparent;
+  scrollbar-width: thin;
+}
+
+.detailsScroll::-webkit-scrollbar {
+  width: var(--dcl-space-4);
+}
+
+.detailsScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detailsScroll::-webkit-scrollbar-thumb {
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-20);
 }
 
 .header {
@@ -270,7 +300,8 @@
 
   .withDetails {
     grid-template-rows: minmax(0, 1fr);
-    grid-template-columns: minmax(0, 1fr) 571px;
+    /* The source's 571px rail, narrowed on smaller desktops so the photo keeps most of the width. */
+    grid-template-columns: minmax(0, 1fr) min(571px, 40%);
   }
 
   .details {
