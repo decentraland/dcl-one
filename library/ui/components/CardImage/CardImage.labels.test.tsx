@@ -28,8 +28,6 @@ describe('when card image names are missing or malformed', () => {
       'Poster artwork'
     )
   })
-<<<<<<< HEAD
-=======
   it('should keep caller fallback content exposed when the name is blank', () => {
     const { container } = render(<CardImage alt=" " fallback={<span>No artwork</span>} />)
     expect(container.firstElementChild).not.toHaveAttribute('aria-hidden')
@@ -61,7 +59,6 @@ describe('when card image names are missing or malformed', () => {
     render(<CardImage alt="Artwork" fallback={<span>No artwork</span>} />)
     expect(screen.getByRole('img', { name: 'Artwork' })).not.toHaveAttribute('aria-hidden')
   })
->>>>>>> origin/main
   it.each([' ', '\t', '\u00a0'])('should server-render decorative fallback for %j', (alt) => {
     const html = renderToString(<CardImage alt={alt} />)
     expect(html).toContain('aria-hidden="true"')
