@@ -9,13 +9,13 @@ use std::env;
 /// Connected-wallet moderation cadence; statistics have no peer expiry.
 #[derive(Clone, Debug)]
 pub struct ClusterConfig {
-    pub ban_sweep_interval_secs: u64,
+    pub ban_sweep_interval_ms: u64,
 }
 
 impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
-            ban_sweep_interval_secs: 30,
+            ban_sweep_interval_ms: 30_000,
         }
     }
 }
@@ -104,6 +104,8 @@ pub struct Settings {
 /// [`Settings::resolve`] checks them.
 #[derive(Clone, Debug)]
 pub struct RawSettings {
+    /// `BAN_SWEEP_INTERVAL_MS`, normalized to a positive millisecond timer delay by `Config`.
+    pub ban_sweep_interval_ms: u64,
     /// WS_MAX_SOCKETS; zero is not an unlimited mode.
     pub max_sockets: u32,
     /// `WS_MAX_SOCKETS_PER_IP`; zero is unlimited.
@@ -153,7 +155,9 @@ impl Settings {
             island_changed_dedup_ms: raw.island_changed_dedup_ms,
         };
         Self {
-            cluster: ClusterConfig::default(),
+            cluster: ClusterConfig {
+                ban_sweep_interval_ms: raw.ban_sweep_interval_ms,
+            },
             server,
             auth,
             commit_hash: raw.commit_hash.unwrap_or_default(),
@@ -172,9 +176,14 @@ impl Settings {
 
     /// The connector environment names: `HANDSHAKE_TIMEOUT`, `CHALLENGE_REQUEST_TIMEOUT`,
     /// `WS_MAX_SOCKETS`, `WS_MAX_PENDING_HANDSHAKES`, `WS_MAX_PENDING_HANDSHAKES_PER_IP`,
-    /// `DENY_LIST_URL`, `ISLAND_CHANGED_DEDUP_MS` and `COMMIT_HASH`; LiveKit and the broker
-    /// (`NATS_URL`) are the gatekeeper's.
+    /// `DENY_LIST_URL`, `BAN_SWEEP_INTERVAL_MS`, `ISLAND_CHANGED_DEDUP_MS` and `COMMIT_HASH`;
+    /// LiveKit and the broker (`NATS_URL`) are the gatekeeper's.
     pub fn from_env() -> anyhow::Result<Self> {
+        let mut cluster = ClusterConfig::default();
+        if let Ok(value) = env::var("BAN_SWEEP_INTERVAL_MS") {
+            cluster.ban_sweep_interval_ms =
+                catalyst_config::parse_ban_sweep_interval_ms(&value).map_err(anyhow::Error::msg)?;
+        }
         let mut auth = AuthConfig::default();
         if let Ok(v) = env::var("HANDSHAKE_TIMEOUT") {
             match v.trim().parse::<u64>() {
@@ -213,7 +222,7 @@ impl Settings {
                 catalyst_config::parse_island_changed_dedup_ms(&v).map_err(anyhow::Error::msg)?;
         }
         Ok(Self {
-            cluster: ClusterConfig::default(),
+            cluster,
             server,
             auth,
             commit_hash: env::var("COMMIT_HASH").unwrap_or_default(),
@@ -249,6 +258,7 @@ mod tests {
             max_sockets_per_ip: 64,
             max_pending_handshakes,
             max_pending_handshakes_per_ip: 3,
+            ban_sweep_interval_ms: 30_000,
             trusted_proxy_cidrs: Vec::new(),
             handshake_timeout_ms: 0,
             challenge_request_timeout_ms,
@@ -274,5 +284,71 @@ mod tests {
             Settings::resolve(raw(500, 0)).server.max_pending_handshakes,
             100
         );
+    }
+
+    #[test]
+    fn ban_sweep_resolve_keeps_milliseconds_from_process_config() {
+        let process = catalyst_config::config::Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres://localhost/test"),
+            ("BAN_SWEEP_INTERVAL_MS", "1250ms"),
+        ])
+        .unwrap();
+        let settings = Settings::resolve(RawSettings {
+            ban_sweep_interval_ms: process.worlds.ban_sweep_interval_ms,
+            max_sockets: process.worlds.ws_max_sockets,
+            max_sockets_per_ip: process.worlds.ws_max_sockets_per_ip,
+            max_pending_handshakes: process.worlds.ws_max_pending_handshakes,
+            max_pending_handshakes_per_ip: process.worlds.ws_max_pending_handshakes_per_ip,
+            trusted_proxy_cidrs: process.node.http_trusted_proxy_cidrs,
+            handshake_timeout_ms: process.worlds.handshake_timeout,
+            challenge_request_timeout_ms: process.worlds.challenge_request_timeout,
+            deny_list_url: process.worlds.deny_list(),
+            island_changed_dedup_ms: process.worlds.island_changed_dedup_ms,
+            commit_hash: process.node.commit_hash,
+        });
+        assert_eq!(settings.cluster.ban_sweep_interval_ms, 1250);
+    }
+
+    #[test]
+    fn ban_sweep_environment_parser_keeps_defaults_delays_and_errors() {
+        const CHILD: &str = "CATALYST_TEST_BAN_SWEEP_ENV";
+        if let Ok(expected) = env::var(CHILD) {
+            let result = Settings::from_env();
+            if expected == "error" {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("BAN_SWEEP_INTERVAL_MS"), "{error}");
+            } else {
+                assert_eq!(
+                    result.unwrap().cluster.ban_sweep_interval_ms,
+                    expected.parse::<u64>().unwrap()
+                );
+            }
+            return;
+        }
+        for (value, expected) in [
+            (None, "30000"),
+            (Some("1250ms"), "1250"),
+            (Some("12.9"), "12"),
+            (Some("-1"), "1"),
+            (Some("Infinity"), "1"),
+            (Some(""), "error"),
+            (Some("NaN"), "error"),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([
+                "--exact", "archipelago::config::tests::ban_sweep_environment_parser_keeps_defaults_delays_and_errors",
+                "--nocapture",
+            ]).env_clear().env(CHILD, expected);
+            if let Some(value) = value {
+                child.env("BAN_SWEEP_INTERVAL_MS", value);
+            }
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{value:?}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+        }
     }
 }
