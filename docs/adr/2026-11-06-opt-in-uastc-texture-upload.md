@@ -65,9 +65,13 @@ is byte-for-byte what it was.
   reload; offering that reload in the explorer needs an explorer change that is not part of this
   decision.
 - **Deploy.** With the setting on, `deploy` runs over the release payload after the build, encoding
-  in the foreground, with a progress line, whatever the cache lacks. A warm cache costs nothing. It
-  holds the process's import lock until the payload is read, so no background swap lands in
-  between, then puts the preview's overlay back.
+  in the foreground, with a progress line, whatever the cache lacks; `pack` and `export-static` do
+  the same, so every payload agrees. A warm cache costs nothing. The command reads its payload
+  through its own run's overlay, kept apart from the preview's, so a deploy from the preview page
+  doesn't change what the preview serves. It holds the stage lock until the payload is read.
+- **Edited models.** A rewritten model whose file moved since the run that staged it is served
+  from its source, with the originals left in, until the next run swaps its new staged copy in: the
+  first reload after an edit shows the edit.
 
 - **Format.** UASTC LDR 4x4 in a Zstandard-supercompressed KTX2, one level with no mipmaps (the
   Bevy Explorer keeps a single level for every texture, its own PNG path included, so mipmaps
@@ -114,7 +118,15 @@ is byte-for-byte what it was.
 - **Staging.** Rewritten models, KTX2 files, the background import's `manifest.json`, the last
   deploy's `deploy-manifest.json` and a cache live in `.dcl-one/optimized-textures/`. The cache is keyed by the source's sha256, the encoder identity
   (module sha256 and arguments), the colour mode and the size cap, so an unchanged texture is never
-  encoded again.
+  encoded again. A texture that can't gain (too small, undecodable, refused by the encoder) is
+  recorded as kept, so it is not retried. A file's hash and a GLB's image plan are kept in memory
+  per size and modification time, and a source's bytes are read only while it is encoded, so a
+  save that changes no image or model re-reads nothing. After each background swap, KTX2 files and
+  cache entries the run neither read nor publishes are deleted, as are staged models the overlay
+  no longer names. One process at a time writes, prunes or reads a payload from the stage: an
+  exclusive lock on `.dcl-one/optimized-textures/.lock` is held by a background run until its
+  sweep and by a deploy until its payload is read. Two `start`s on one project still share the
+  stage; each sweep keeps only its own run's files.
 - **Preview equals upload.** The overlay (staged sources, added KTX2 files, left-out originals) is
   applied where the payload is decided: `deploy`'s file list and `payload_path`, and the preview's
   scene entity and `/content/contents`. Once an import finishes, the preview serves the bytes a

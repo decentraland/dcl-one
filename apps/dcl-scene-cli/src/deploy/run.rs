@@ -78,17 +78,6 @@ async fn build_unless_skipped(opts: &DeployOptions) -> Result<()> {
     Ok(())
 }
 
-/// The texture setting, after the build and before `prepare` reads the
-/// payload: the release bundle the ignore rule searches is the one uploaded.
-/// The stage it returns must outlive `prepare`. A failure stops the deploy
-/// rather than publishing a half-optimized scene.
-async fn optimize_textures(
-    opts: &DeployOptions,
-    project: &Project,
-) -> Result<crate::textures::DeployStage> {
-    crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await
-}
-
 /// Eight leading and six trailing characters tell two CIDs apart by eye.
 fn short_hash(h: &str) -> String {
     match h.len() > 15 {
@@ -211,7 +200,8 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
 
     if opts.dry_run {
         build_unless_skipped(opts).await?;
-        let textures = optimize_textures(opts, &project).await?;
+        let textures =
+            crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await?;
         let prepared = super::prepare_checked(&project, validate)?;
         drop(textures);
         let packed = pack(opts, &prepared, 1)?;
@@ -239,7 +229,8 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
     };
 
     build_unless_skipped(opts).await?;
-    let textures = optimize_textures(opts, &project).await?;
+    let textures =
+        crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await?;
     let prepared = {
         let project = project.clone();
         tokio::task::spawn_blocking(move || super::prepare_checked(&project, validate))
