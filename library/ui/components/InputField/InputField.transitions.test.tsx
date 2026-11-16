@@ -57,9 +57,8 @@ describe('when password reveal eligibility changes', () => {
       />
     )
     expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
-    expect(screen.getByRole('button', { name: 'Show password' })).toHaveAttribute(
-      'aria-pressed',
-      'false'
+    expect(screen.getByRole('button', { name: 'Show password' })).not.toHaveAttribute(
+      'aria-pressed'
     )
   })
   it('should mask while disabled and require a fresh explicit reveal after re-enabling', async () => {

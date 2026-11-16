@@ -102,6 +102,10 @@
           "kind": "regular"
         },
         {
+          "name": "nameColor.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "nameColor.ts",
           "kind": "regular"
         },
@@ -5070,7 +5074,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "711b06413b90e8c31cfb6af352899df72fa30e915ae27b8ded9cc1419aa496ee"
+      "sha256": "222ba1da9efd0e3e14c4eab79f185be1573147033dd5f5c8dd923cb9be2a6a59"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -5081,12 +5085,16 @@
       "sha256": "f7bd876f153075954844844d8ba045510c9d77179928430847a6e772a6425ac3"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
+      "sha256": "af8999e43664c5ebfdfa193fbb27edf7c71873f71d07846e87bd83fa0fa71f49"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
       "sha256": "d3728031ffad6b1dcfa5756f041027865cb5dfb5de655af1e067a614a869cf64"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "da029814a9fca28f4b41cbf34a46ba3eb91dcafef06b3357d6a67a5ba1c192b1"
+      "sha256": "1ac20e352d3935761c25cc4a4a35c20fd45d6d6a46d9e5aa0ca14208dccb28cc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -5118,7 +5126,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/nearbyMutes.ts",
-      "sha256": "2fe29d2a5b191e19faae5a07059dcd6c6e2f794593ce144cdf1abd8088be4bd4"
+      "sha256": "0c9428fa69132963f410abe4e9920d4a835ad241cdc9ef1991f82b9d8fddf3d3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/notifications.ts",
@@ -5146,7 +5154,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voice.ts",
-      "sha256": "a75ee931882da6f8d025d10c3f526bf8baa830a7a9288e451333e55e6ecc3b64"
+      "sha256": "3ba482dcd2d7cd251c36413e20f6f7f25fb86d15370bb0cb96186fb3a312c5bb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
@@ -5170,7 +5178,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/system-helpers.ts",
-      "sha256": "7c7db2b91fdf7f05597c8b64a6bb2c9c73a0f9a582d880906094782d12e867ad"
+      "sha256": "1b798876ca727661f0164e84110ecfe03b31231d478212e45f9a14eb3d43f14d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/tsconfig.json",
@@ -5285,8 +5293,12 @@
       "sha256": "02d834ceb539309241f6758b3ec4f0b9b525572606e18172a4eae5015e5fb5d9"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
+      "sha256": "e31f966beb16b6792037354c990e48c8847bdc934a84b5ccb14cc6a9fd7286f0"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "73a13e5fb2c48bf8c062b946b4f0dc3951a5808f3a1865c21b240f8748f0dfce"
+      "sha256": "bbd2c735a2fdff85c397c7cb2f9b5529a29f4700c74c8e6d6eddcc910cff7f4b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -5318,7 +5330,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
-      "sha256": "5842da84ee0219899dadd96c5c8b663a1ea908d17d1daa0809adbf8b1eebe8c2"
+      "sha256": "a9ed65f189907d37250eb611c61332c8b3cdd92fcf452d9889a9862ffb8a88c4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
@@ -5466,7 +5478,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "15d12055b1a7bbc28bf9f26bf509902711f41f3d7d39cc32d836d6ed9b4a972f"
+      "sha256": "19b21e460db62317beb80b39c89876f3981f87351a4a2fd37abbc6e7be3cdf3e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -5506,6 +5518,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -5614,8 +5627,12 @@
       "sha256": "a3f38f1044e58f526ddca4014e0eb97c466f73d5bfcebb3132040f80d1eb4f80"
     },
     {
+      "path": "library/explorer-core/engine/nameColor.test.ts",
+      "sha256": "011f0cad848253212a8c71a8d5df60e0ccf109d95e51c2d96454b37e05c020dc"
+    },
+    {
       "path": "library/explorer-core/engine/nameColor.ts",
-      "sha256": "1382008f12ea5a57b6e7c0976e1c6044d1e9b007d1451805131106a57a572492"
+      "sha256": "8996b0ac88bff33488af2ac886dcc86443e16604765d4a81682f7da5a4448525"
     },
     {
       "path": "library/explorer-core/engine/outfitRandomizer.ts",
@@ -5635,7 +5652,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "5789aad35041f3f64b1f1cdadfb078f001ab46915dd9b8c36609a3aa78ecad7b"
+      "sha256": "ab132782ee066ba4ea8f284fa8bffca027ca2c755fb855a5bffc26f17ff78b27"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -9151,7 +9168,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nametags.test.tsx",
-      "sha256": "3c63d8ba564b845ed31d6f2cf97099024a7f7016a8b663849bab402844e182ab"
+      "sha256": "c19749852b3d7cc2615840d2cc9f39027bcd9a153531a7f23f6e209671e6e69f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyMutes.test.tsx",
@@ -9778,6 +9795,21 @@
     {
       "from": "library/explorer-core/engine/mockBridge.ts",
       "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/nameColor.test.ts",
+      "to": "library/explorer-core/engine/nameColor.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/nameColor.test.ts",
+      "to": "library/explorer-core/engine/nameColor.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/nameColor.test.ts",
+      "to": "library/explorer-core/engine/nameColor.ts",
       "kind": "test:runtime"
     },
     {
@@ -37428,6 +37460,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/mockMap.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/nameColor.test.ts",
       "kind": "type"
     },
     {

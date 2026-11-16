@@ -71,6 +71,6 @@ for (const control of ['#allow', '#field-type', '#disabled'])
     expect(await evaluate('document.querySelector("input").type')).toBe('password')
     expect(await evaluate('document.querySelector("input").value')).toBe('secret')
     expect(
-      await evaluate('document.querySelector("button[aria-pressed]").getAttribute("aria-pressed")')
-    ).toBe('false')
+      await evaluate('document.querySelector("button[aria-label]")?.hasAttribute("aria-pressed")')
+    ).toBe(false)
   })
