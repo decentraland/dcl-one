@@ -3,18 +3,45 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc};
 use alloy_rpc_client::{ClientBuilder, RpcClient, WsConnect};
 use anyhow::anyhow;
 use bevy::log::debug;
-use common::rpc::{RPCSendableMessage, RpcCall, RpcResultSender};
+use common::rpc::{RPCSendableMessage, RpcCall, RpcResultSender, MAX_LEGACY_SIGN_MESSAGE_BYTES};
 use tokio::sync::Mutex;
 
-use dcl_types::RpcCalls;
-
-use super::State;
+use super::{runtime::send_immediate_rpc, State};
 
 fn provider_url() -> String {
     common::base_domain::url(
         common::base_domain::Service::EthereumRpc,
         "/mainnet?project=kernel-local",
     )
+}
+
+pub async fn op_get_user_account(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Option<String>, anyhow::Error> {
+    let (response, receiver) = RpcResultSender::channel();
+    send_immediate_rpc(
+        &mut *state.borrow_mut(),
+        RpcCall::GetUserAccount { response },
+    )?;
+    receiver.await.map_err(|error| anyhow!(error))
+}
+
+pub async fn op_sign_legacy_message(
+    state: Rc<RefCell<impl State>>,
+    message: String,
+) -> Result<serde_json::Value, anyhow::Error> {
+    if message.len() > MAX_LEGACY_SIGN_MESSAGE_BYTES {
+        anyhow::bail!("legacy signing message exceeds {MAX_LEGACY_SIGN_MESSAGE_BYTES} UTF-8 bytes");
+    }
+    let (response, receiver) = RpcResultSender::channel();
+    send_immediate_rpc(
+        &mut *state.borrow_mut(),
+        RpcCall::SignLegacyMessage { message, response },
+    )?;
+    receiver
+        .await
+        .map_err(|error| anyhow!(error))?
+        .map_err(|error| anyhow!(error))
 }
 
 pub async fn op_send_async(
@@ -29,13 +56,13 @@ pub async fn op_send_async(
         signing if RPCSendableMessage::SIGNING_METHODS.contains(&signing) => {
             let (sx, rx) = RpcResultSender::<Result<serde_json::Value, String>>::channel();
 
-            state
-                .borrow_mut()
-                .borrow_mut::<RpcCalls>()
-                .push(RpcCall::SendAsync {
+            send_immediate_rpc(
+                &mut *state.borrow_mut(),
+                RpcCall::SendAsync {
                     body: RPCSendableMessage { method, params },
                     response: sx,
-                })?;
+                },
+            )?;
 
             rx.await.map_err(|e| anyhow!(e))?.map_err(|e| anyhow!(e))
         }

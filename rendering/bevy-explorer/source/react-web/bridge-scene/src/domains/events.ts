@@ -1,5 +1,5 @@
-// Events: the lists the Events page shows, the user's reminder on an event, and the places
-// events are held at.
+// Events: the lists the Events page and the map show, the user's reminder on an event, and the
+// places events are held at.
 //   from: the events service via BevyApi.kernelFetch. The reads are signed so each event says
 //         whether the signed-in user asked to be reminded (`attending`), and carry who is at
 //         the event now (`with_connected_users`).
@@ -37,7 +37,8 @@ function mapEvent(e: EventRaw): EventData {
     recurrent_dates: Array.isArray(e.recurrent_dates) ? e.recurrent_dates : [],
     connected_addresses: Array.isArray(e.connected_addresses) ? e.connected_addresses : [],
     community_id: e.community_id ?? null,
-    place_id: e.place_id ?? null
+    place_id: e.place_id ?? null,
+    coordinates: Array.isArray(e.coordinates) && e.coordinates.length === 2 ? e.coordinates : null
   }
 }
 
@@ -46,6 +47,7 @@ function listUrl(base: string, msg: GetEventsRequest): string {
   if (msg.limit != null) params.push(`limit=${msg.limit}`)
   if (msg.offset != null) params.push(`offset=${msg.offset}`)
   if (msg.list != null) params.push(`list=${msg.list}`)
+  for (const p of msg.positions ?? []) params.push(`positions[]=${p.x},${p.y}`)
   if (msg.from != null) params.push(`from=${encodeURIComponent(msg.from)}`)
   if (msg.to != null) params.push(`to=${encodeURIComponent(msg.to)}`)
   params.push('with_connected_users=true')

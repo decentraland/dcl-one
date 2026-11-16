@@ -7,7 +7,7 @@
 //! - [`extract_auth_chain`] reads the chain and checks its shape;
 //! - [`check_timestamp_window`] bounds the timestamp to a window around now
 //!   (the future side capped at [`MAX_FUTURE_SKEW_SECS`]),
-//!   [`check_past_window`] only how old it may be;
+//!   [`check_past_window`] how old it may be, with the same future cap;
 //! - [`parse_metadata`] reads the metadata object, over which
 //!   [`field_is_canonical`] and [`is_refused_signer`] are upstream's `signer`
 //!   gates and [`names_scene_signer`] the scene check alone;
@@ -161,12 +161,16 @@ pub fn check_timestamp_window(
 
 /// dcl-crypto-middleware-rs's expiration: `timestamp` is an unsigned
 /// integer count of milliseconds, stale once more than `max_age_ms` before
-/// `now_ms`; a timestamp ahead of now is never stale.
+/// `now_ms`. Unlike the middleware, which never refuses a future timestamp,
+/// one more than [`MAX_FUTURE_SKEW_SECS`] ahead of `now_ms` is refused too.
 pub fn check_past_window(timestamp: &str, now_ms: u128, max_age_ms: u128) -> Result<(), SkewError> {
     let signed_at = timestamp
         .parse::<u128>()
         .map_err(|_| SkewError::InvalidTimestamp(timestamp.to_string()))?;
-    if signed_at.saturating_add(max_age_ms) < now_ms {
+    let max_ahead_ms = MAX_FUTURE_SKEW_SECS as u128 * 1000;
+    if signed_at.saturating_add(max_age_ms) < now_ms
+        || signed_at > now_ms.saturating_add(max_ahead_ms)
+    {
         let secs = |ms: u128| i64::try_from(ms / 1000).unwrap_or(i64::MAX);
         return Err(SkewError::Expired {
             signed_at: secs(signed_at),
@@ -534,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn the_past_window_bounds_only_the_age() {
+    fn the_past_window_bounds_the_age_and_caps_the_future() {
         assert_eq!(check_past_window("100000", 160_000, 60_000), Ok(()));
         assert!(matches!(
             check_past_window("100000", 160_001, 60_000),
@@ -544,7 +548,23 @@ mod tests {
                 window_secs: 60
             })
         ));
-        assert_eq!(check_past_window("999999999999999", 1, 60_000), Ok(()));
+        assert_eq!(check_past_window("160000", 100_000, 60_000), Ok(()));
+        assert!(matches!(
+            check_past_window("160001", 100_000, 60_000),
+            Err(SkewError::Expired {
+                signed_at: 160,
+                now: 100,
+                window_secs: 60
+            })
+        ));
+        assert!(matches!(
+            check_past_window("999999999999999", 1, 60_000),
+            Err(SkewError::Expired { .. })
+        ));
+        assert!(matches!(
+            check_past_window(&u128::MAX.to_string(), u128::MAX - 1, 60_000),
+            Ok(())
+        ));
         for garbage in ["", "-1", "1.5", "soon"] {
             assert_eq!(
                 check_past_window(garbage, 1, 60_000),

@@ -1,7 +1,6 @@
 /* Full-bleed band: the page gradient darkened by a 20% black overlay, as the Figma's Explore section. */
 .band {
   width: 100%;
-  margin-top: var(--dcl-space-48);
   padding: var(--dcl-space-48) 0 var(--dcl-space-64);
   background: var(--dcl-transparencies-black-20);
   scroll-margin-top: 72px;

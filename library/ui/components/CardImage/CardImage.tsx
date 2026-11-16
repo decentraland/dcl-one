@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { GeneralImage } from '@dcl/one-ui/foundations'
+import { GeneralImage } from '../../foundations/icons/general'
 import styles from './CardImage.module.css'
 import { hasUnsafeURLCharacters } from '../../link.helpers'
-import { contentLabel } from '../../content.helpers'
+import { contentLabel, hasRenderableContent } from '../../content.helpers'
 
 export type CardImageProps = {
   src?: string | null
@@ -48,6 +48,8 @@ function ImageAttempt({
     )
   ]
   const actual = candidates.find((candidate) => !failed.includes(candidate))
+  // Caller content stays exposed; only the default icon is decorative under a blank name.
+  const callerFallback = hasRenderableContent(fallback) ? fallback : undefined
   const state = !candidates.length
     ? 'empty'
     : !actual
@@ -68,7 +70,7 @@ function ImageAttempt({
       data-state={state}
       role={!actual && alt ? 'img' : undefined}
       aria-label={!actual && alt ? alt : undefined}
-      aria-hidden={!actual && !alt ? true : undefined}
+      aria-hidden={!actual && !alt && callerFallback === undefined ? true : undefined}
     >
       {actual ? (
         <img
@@ -84,7 +86,7 @@ function ImageAttempt({
           onError={() => setFailed((previous) => [...new Set([...previous, actual])])}
         />
       ) : (
-        (fallback ?? <GeneralImage size={32} aria-hidden="true" />)
+        (callerFallback ?? <GeneralImage size={32} aria-hidden="true" />)
       )}
     </span>
   )

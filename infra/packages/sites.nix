@@ -16,7 +16,7 @@ let
   version = (builtins.fromJSON (builtins.readFile (sites + /package.json))).version;
   depsSrc = lib.fileset.toSource {
     root = sites;
-    fileset = lib.fileset.unions (map (p: sites + p) [ /package.json /pnpm-lock.yaml /.npmrc /pnpm-workspace.yaml ]);
+    fileset = lib.fileset.unions (map (p: sites + p) [ /package.json /pnpm-lock.yaml /pnpm-workspace.yaml ]);
   };
   pnpmDeps = fetchPnpmDeps {
     pname = "foundation-sites";
@@ -53,7 +53,7 @@ let
     inherit root;
     fileset = lib.fileset.unions [
       (sites + /src) (sites + /scripts)
-      (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /.npmrc) (sites + /pnpm-workspace.yaml)
+      (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /pnpm-workspace.yaml)
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)

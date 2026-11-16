@@ -66,7 +66,10 @@ pub async fn world_is_valid(
     Ok(!crate::comms::access::world_blocked(disabled, quota, now))
 }
 
-pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
+pub async fn is_world_disabled<'e>(
+    pool: impl sqlx::PgExecutor<'e>,
+    world: &WorldName,
+) -> Result<bool, ApiError> {
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM worlds.worlds WHERE name = $1 AND blocked_since IS NOT NULL)",
     )
