@@ -135,7 +135,8 @@ impl ClusterLookup {
 /// the lookup put on the wire (lower-cased), a cluster, a source incarnation of at most 256
 /// bytes, and a pass that has run. Anything else is read as no answer.
 pub fn valid_reply(lookup: &ClusterLookup, reply: &PeerClusterSnapshot) -> bool {
-    reply.wallet == lookup.wallet.to_ascii_lowercase()
+    selected_evidence(reply)
+        && reply.wallet == lookup.wallet.to_ascii_lowercase()
         && reply.session == lookup.session.to_ascii_lowercase()
         && !reply.cluster_id.is_empty()
         && !reply.source_incarnation.is_empty()
@@ -165,6 +166,23 @@ pub fn valid_reply(lookup: &ClusterLookup, reply: &PeerClusterSnapshot) -> bool 
             })
 }
 
+/// Structural provenance alone does not establish freshness or mint readiness.
+pub fn selected_evidence(reply: &PeerClusterSnapshot) -> bool {
+    matches!(reply.assignment_state, 1 | 2)
+        && reply.selected_identity.is_some_and(|identity| {
+            identity > 0
+                && match reply.selected_origin {
+                    1 | 2 => true,
+                    3 => identity <= i64::MAX as u64,
+                    _ => false,
+                }
+        })
+}
+
+pub fn active_selection(reply: &PeerClusterSnapshot) -> bool {
+    selected_evidence(reply) && reply.assignment_state == 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +190,58 @@ mod tests {
 
     const WALLET: &str = "0xAbCdEf0123456789abcdef0123456789ABCDEF01";
     const WALLET_LOWER: &str = "0xabcdef0123456789abcdef0123456789abcdef01";
+
+    #[test]
+    fn complete_selected_reply_boundaries_match_canonical_bytes_without_truncating_pending() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/pulse_selected_recovery.json"
+        )))
+        .unwrap();
+        for vector in fixture["encoded_reply_boundaries"].as_array().unwrap() {
+            let reply = PeerClusterSnapshot {
+                wallet: format!("0x{}", "01".repeat(20)),
+                session: format!("0x{}", "02".repeat(20)),
+                cluster_id: "c1".into(),
+                realm: "r".into(),
+                pass: 7,
+                source_incarnation: "pulse-fixture".into(),
+                token_not_before: Some(0),
+                assignment_version: 11,
+                selected_origin: 3,
+                selected_identity: Some(9),
+                assignment_state: 2,
+                pending_takeovers: vec![
+                    crate::protocol::pulse::decentraland::pulse::PendingTakeover {
+                        takeover_id: "T".into(),
+                        displaced_session: format!("0x{}", "03".repeat(20)),
+                        displaced_cluster_id: "x".repeat(
+                            vector["construction"]["displaced_cluster_repeat"]
+                                .as_u64()
+                                .unwrap() as usize,
+                        ),
+                        displaced_realm: "r".into(),
+                    },
+                ],
+            };
+            let expected = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+            assert_eq!(reply.encode_to_vec(), expected);
+            assert_eq!(
+                expected.len(),
+                vector["length_bytes"].as_u64().unwrap() as usize
+            );
+            let lookup = ClusterLookup {
+                wallet: reply.wallet.clone(),
+                session: reply.session.clone(),
+            };
+            assert_eq!(
+                valid_reply(&lookup, &reply),
+                expected.len() == MAX_REPLY_BYTES
+            );
+            assert_eq!(reply.pending_takeovers.len(), 1);
+            assert!(!active_selection(&reply));
+        }
+    }
 
     #[test]
     fn retained_recovery_fixture_pins_additive_schema_and_completion_bounds() {
@@ -190,6 +260,7 @@ mod tests {
             token_not_before: Some(0),
             assignment_version: 1,
             pending_takeovers: vec![],
+            ..Default::default()
         };
         assert_eq!(
             hex::encode(snapshot.encode_to_vec()),
@@ -308,6 +379,9 @@ mod tests {
             "307830323032303230323032303230323032303230323032303230323032303230323032303230323032"
         );
         let reply = PeerClusterSnapshot {
+            selected_origin: 0,
+            selected_identity: None,
+            assignment_state: 0,
             wallet: WALLET_LOWER.into(),
             session: address("02"),
             cluster_id: "c1".into(),
@@ -330,7 +404,10 @@ mod tests {
         );
         assert!(bytes.len() <= MAX_REPLY_BYTES);
         let decoded = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
-        assert!(valid_reply(&lookup, &decoded));
+        assert!(
+            !valid_reply(&lookup, &decoded),
+            "old reply cannot grant selection authority"
+        );
     }
 
     #[test]
@@ -340,6 +417,9 @@ mod tests {
             session: address("02"),
         };
         let reply = PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: lookup.wallet.clone(),
             session: lookup.session.clone(),
             cluster_id: "c1".into(),
@@ -397,6 +477,9 @@ mod tests {
         };
         assert_eq!(lookup.encode(), address("ab").into_bytes());
         let reply = PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: WALLET_LOWER.into(),
             session: address("ab"),
             cluster_id: "c1".into(),

@@ -7,13 +7,18 @@
 > running a tier; a package script alone does not prove its suite is present.
 > Report unavailable tiers as **not run** and keep their evidence in the task report.
 
-The standalone scene Fetch regression runs with `npm run test:scene-fetch` from
+The standalone scene Fetch regression runs with `pnpm run test:scene-fetch` from
 `react-web/`. It starts local HTTP fixtures and Chromium workers with the
 production sandbox scripts. Two client scenes and two hosted scenes each fetch 40
 URLs. The test checks that each worker dispatches five at a time in FIFO order,
 that a blocked scene leaves its neighbour free to finish, and that queued and
-active calls respect caller abort signals. Install Chromium with `npx playwright install chromium`
+active calls respect caller abort signals. Install Chromium with `pnpm exec playwright install chromium`
 or set `CHROME_BIN` to an installed Chromium executable.
+
+The scene request routing test runs with `node --test react-web/e2e/scene-routes.test.mjs`
+from the Explorer source directory and needs no browser. It checks how the page
+reads the node's routing map and how a worker re-addresses a request to a listed
+host.
 
 Per-domain tests that drive the **live** app — the React HUD, the bevy engine (in a
 same-origin iframe), and the super-user bridge scene — and assert each API call
@@ -22,7 +27,7 @@ round-trips over the bridge. The player is driven with **bevy console commands**
 clicks; the bridge is observed via a `BroadcastChannel` spy.
 
 This complements the deterministic **tier 1** suite (`src/test/*.test.tsx`, run with
-`npm test`), which covers *every* API call per domain — including the ones a fresh
+`pnpm test`), which covers *every* API call per domain — including the ones a fresh
 guest can't reach (accepting a friend request, leaving a community, marking
 notifications read). Tier 2 proves the guest-reachable calls actually work end to end.
 
@@ -34,7 +39,7 @@ Playwright configs, specs and baselines. They cannot run from this public checko
 - **A real GPU.** The engine uses WebGPU + `SharedArrayBuffer`; it cannot run headless.
   Tests run headed (`headless: false`).
 - A local engine build in `../deploy/web` (the `pkg/` wasm).
-- Chromium for Playwright: `npx playwright install chromium`.
+- Chromium for Playwright: `pnpm exec playwright install chromium`.
 
 ## Run
 
@@ -43,8 +48,8 @@ the engine specs. Check the supplied config at its pin for the server and URL se
 
 ```bash
 # from react-web/
-npx playwright install chromium      # once
-npm run test:e2e
+pnpm exec playwright install chromium      # once
+pnpm run test:e2e
 ```
 
 In that test workspace, the supplied `playwright.config.ts` must start both servers automatically (Vite dev on :5173 + the
@@ -55,7 +60,7 @@ own) and reuses them if already running. To point at an already-running app, set
 List the tests without launching the engine:
 
 ```bash
-npm run test:e2e -- --list
+pnpm run test:e2e --list
 ```
 
 ## What it covers
@@ -91,11 +96,11 @@ When supplied, `visual.spec.ts` (separate config: `../playwright.visual.config.t
 domain** in mock mode (`?mock=1`) — headless, no GPU, deterministic — and diffs against committed
 baselines in `visual.spec.ts-snapshots/`. This is the fast "did the UI change?" gate; the engine
 suite is the slow "does it round-trip?" gate. The supplied `playwright.config.ts` must exclude
-`visual.spec.ts` so `npm run test:e2e` selects only the engine tests. Neither config is in this checkout.
+`visual.spec.ts` so `pnpm run test:e2e` selects only the engine tests. Neither config is in this checkout.
 
 ```bash
-npm run test:visual            # check
-npm run test:visual:update     # refresh baselines (then eyeball the PNGs before committing)
+pnpm run test:visual            # check
+pnpm run test:visual:update     # refresh baselines (then eyeball the PNGs before committing)
 ```
 
 ## Preview-realm gate (real engine, own config)
@@ -109,14 +114,14 @@ evidence, printed at the end of the run.
 
 ```bash
 # a dcl-editor checkout, after `npm run build -w @dcl-editor/scene-compiler`
-WEB_EDITOR_DIR=/path/to/dcl-editor npx playwright test --config playwright.gate.config.ts preview-realm
+WEB_EDITOR_DIR=/path/to/dcl-editor pnpm exec playwright test --config playwright.gate.config.ts preview-realm
 ```
 
 It starts its own Vite server on `GATE_PORT` (`e2e/vite.gate.config.ts`: the app's config plus the
 scene-compiler files under `/scene-compiler/`) and a bridge scene of its own on `GATE_BRIDGE_PORT` (never
 reused, so a dev server's :8100 is left alone); every spec loads the page with `?bridgePort=`
 pointing at it (`e2e/gate.ts`).
-`npm run test:e2e` skips it.
+`pnpm run test:e2e` skips it.
 
 ## Editor gates (real engine, same config)
 
@@ -129,7 +134,7 @@ engine in `deploy/web/engine/pkg` (`just wasm`), the TS bindings (`just ts-bindi
 npm run export-static -w @dcl-editor/scene
 npm run build -w @dcl-editor/web
 # here: every gate, or one by name (preview-realm, editor)
-WEB_EDITOR_DIR=/path/to/dcl-editor npx playwright test --config playwright.gate.config.ts [name]
+WEB_EDITOR_DIR=/path/to/dcl-editor pnpm exec playwright test --config playwright.gate.config.ts [name]
 ```
 
 `editor.gate.spec.ts` also runs against a production build: `GATE_ENTRY=/bevy-web` loads the
@@ -158,9 +163,9 @@ cache, project data and `test-results/gate-<page port>/`, but build the same `br
 so start the second once the first's bridge scene is up, or use another checkout:
 
 ```bash
-WEB_EDITOR_DIR=/path/to/dcl-editor npx playwright test --config playwright.gate.config.ts e2e/editor.gate
+WEB_EDITOR_DIR=/path/to/dcl-editor pnpm exec playwright test --config playwright.gate.config.ts e2e/editor.gate
 WEB_EDITOR_DIR=/path/to/dcl-editor GATE_PORT=5330 GATE_BRIDGE_PORT=8210 GATE_SERVICE_PORT=8887 \
-  npx playwright test --config playwright.gate.config.ts e2e/editor.gate
+  pnpm exec playwright test --config playwright.gate.config.ts e2e/editor.gate
 ```
 
 A name filter is matched against the whole path, so in a checkout whose path contains `editor`,

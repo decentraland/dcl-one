@@ -93,6 +93,27 @@ pub fn config(
     }
 }
 
+/// The resources and events the scene runtime needs where no render or UI plugin adds them.
+pub fn scene_runtime_resources(app: &mut App) {
+    app.insert_resource(PrimaryPlayerRes(Entity::PLACEHOLDER))
+        .insert_resource(PrimaryCameraRes(Entity::PLACEHOLDER))
+        .init_resource::<ProfileCache>()
+        .init_resource::<PermissionManager>()
+        .init_resource::<InputMap>()
+        .init_resource::<InputPriorities>()
+        .init_resource::<CumulativeAxisData>()
+        .init_resource::<ToolTips>()
+        .init_resource::<SceneGlobalLight>()
+        .init_resource::<CursorLocks>()
+        .init_resource::<EngineMovementControl>()
+        .init_resource::<AvatarMovementInfo>()
+        .init_asset::<Nft>()
+        .init_resource::<StorageDelegations>()
+        .add_event::<RpcCallEvent>()
+        .add_event::<SystemAudio>()
+        .add_event::<PermissionUsed>();
+}
+
 /// Adds everything but the log, task pool and runner. `wallet` is finalized (a guest);
 /// `server_mode` is whether this run serves its scenes (`common::structs::server_mode`,
 /// latched by the caller).
@@ -140,6 +161,7 @@ pub fn assemble(
         })
         .add_plugins(WalletPlugin)
         .add_plugins(CommsPlugin)
+        .add_plugins(ban_block::BanBlockPlugin)
         // emote metadata (the loop flag scenes are told) resolves through the collectible
         // manager; no clip or sound is ever loaded here
         .add_plugins(EmoteMetadataPlugin)
@@ -178,22 +200,9 @@ pub fn assemble(
     // --tick-hz)
     crate::launch::apply(app, launch, &config, &map_realm_name(realm));
 
-    // ---- resources & events the scene runtime needs (no render/UI plugins) ----
+    scene_runtime_resources(app);
     app.insert_resource(config)
-        .insert_resource(PrimaryPlayerRes(Entity::PLACEHOLDER))
-        .insert_resource(PrimaryCameraRes(Entity::PLACEHOLDER))
         .insert_resource(wallet)
-        .init_resource::<ProfileCache>()
-        .init_resource::<PermissionManager>()
-        .init_resource::<InputMap>()
-        .init_resource::<InputPriorities>()
-        .init_resource::<CumulativeAxisData>()
-        .init_resource::<ToolTips>()
-        .init_resource::<SceneGlobalLight>()
-        .init_resource::<CursorLocks>()
-        .init_resource::<EngineMovementControl>()
-        .init_resource::<AvatarMovementInfo>()
-        .init_asset::<Nft>()
         .insert_resource(TimeOfDay {
             time: 10.0 * 3600.0,
         })
@@ -206,11 +215,7 @@ pub fn assemble(
         // show up as a ghost participant. A non-server headless follows its realm about's
         // fixed_adapter like any client (offline about ⇒ no comms), so it can act as a
         // synthetic client. Scene rooms are a separate, authoritative-presence concern.
-        .insert_resource(comms::DisableRealmComms(server_mode))
-        .init_resource::<StorageDelegations>()
-        .add_event::<RpcCallEvent>()
-        .add_event::<SystemAudio>()
-        .add_event::<PermissionUsed>();
+        .insert_resource(comms::DisableRealmComms(server_mode));
 
     app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
     app.add_systems(Startup, setup.in_set(SetupSets::Init));
@@ -324,8 +329,9 @@ fn setup(
             HeadSync::default(),
             PointAtSync::default(),
             GroundCollider::default(),
-            // movePlayerTo-with-duration / walkTo park their response here; without it
-            // (inserted by the omitted user_input plugin) the scene promise never settles
+            // movePlayerTo-with-duration / walkTo park their response here; without it the
+            // scene promise never settles. A client's AvatarMovementPlugin inserts it too; a
+            // server runs without that plugin, so this is its only source
             ActivePlayerComponent::<AvatarMovement>::from_config(&config),
         ))
         .id();

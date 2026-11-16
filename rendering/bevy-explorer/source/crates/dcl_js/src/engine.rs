@@ -188,6 +188,7 @@ pub fn crdt_send_to_renderer(op_state: Rc<RefCell<impl State>>, messages: &[u8])
     if let Some(budget) = op_state.try_borrow_mut::<super::comms::CommsSendBudget>() {
         budget.sent = 0;
     }
+    super::comms_api::drain_topic_inbox(&mut *op_state);
 
     let sender = op_state.borrow_mut::<SceneResponseSender>();
     sender

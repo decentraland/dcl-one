@@ -4,7 +4,7 @@
 // separate processes. The signed-in identity's key stays here: the app asks for the public
 // identity and for signatures, and never reads the origin's localStorage itself.
 import { exitUrl } from '../host'
-import { authLoginUrl, authReturnUrl } from '@explorer-core/features/auth/sso'
+import { authLoginUrl, isLoginMethod, authReturnUrl } from '@explorer-core/features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import { migratePrefs } from '@explorer-core/lib/prefs'
@@ -14,6 +14,7 @@ import { PAGE_DIR } from '../lib/publicUrl'
 import { loadOnce } from '../lib/loadOnce'
 import { shellResponse } from '@explorer-core/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
+import type { ShellDonate } from './donate/donation'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
 // own process, answers its identity/sign requests, and registers the service worker that gives the
@@ -91,21 +92,37 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
+  // Shop and Donate share the one dialog over the app: each refuses as busy while the other's is up.
+  let loadedShop: ShellShop | null = null
+  let loadedDonate: ShellDonate | null = null
+  const shopWallet = loadOnce(async () => (await options.shopWallet?.()) ?? null)
   const shellShop: () => Promise<ShellShop> = loadOnce(() =>
-    Promise.all([
-      import('./shop/purchase'),
-      import('./shop/overlay'),
-      options.shopWallet?.() ?? null
-    ]).then(([purchase, overlay, wallet]) =>
-      purchase.createShellShop({
+    Promise.all([import('./shop/purchase'), import('./shop/overlay'), shopWallet()]).then(([purchase, overlay, wallet]) => {
+      loadedShop = purchase.createShellShop({
         login: currentLogin,
         wallet,
         ui: overlay.createShopOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl))),
+        otherDialogOpen: () => loadedDonate?.dialogOpen() === true
       })
-    )
+      return loadedShop
+    })
+  )
+  // Donate (shell/donate), loaded on the app's first donate.* request, with the same wallet as the Shop's.
+  const shellDonate: () => Promise<ShellDonate> = loadOnce(() =>
+    Promise.all([import('./donate/donation'), import('./donate/overlay'), shopWallet()]).then(([donation, overlay, wallet]) => {
+      loadedDonate = donation.createShellDonate({
+        login: currentLogin,
+        wallet,
+        ui: overlay.createDonateOverlay(() => frame?.focus()),
+        post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
+        openExternal: (url) => void window.open(url, '_blank', 'noopener'),
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true
+      })
+      return loadedDonate
+    })
   )
 
   // Shown instead of the app when the app would share this page's process.
@@ -131,8 +148,14 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     if (!m || typeof m !== 'object') return
     switch (m.type) {
       case 'bevy-shell:request': {
-        const shopRequest = typeof m.method === 'string' && m.method.startsWith('shop.')
-        const response = await shellResponse(m.id, async () => (shopRequest ? (await shellShop()).request(m.method as string, m.params) : request(m.method, m.params)))
+        const method = typeof m.method === 'string' ? m.method : ''
+        const response = await shellResponse(m.id, async () =>
+          method.startsWith('shop.')
+            ? (await shellShop()).request(method, m.params)
+            : method.startsWith('donate.')
+              ? (await shellDonate()).request(method, m.params)
+              : request(m.method, m.params)
+        )
         f.contentWindow?.postMessage(response, location.origin)
         break
       }
@@ -145,7 +168,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       // sign-in: the same-origin auth site, returning here
       case 'bevy-shell:auth-login':
         if (typeof m.session === 'string') sessionStorage.setItem(ANALYTICS_SESSION_KEY, m.session)
-        location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+        location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
         break
       // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
       // back to the app for Segment
@@ -162,10 +185,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   })
 
   // The service worker gives app.html its isolation header and strips the host's COEP from this
-  // page (deploy/web/service_worker.js), and the engine's IPFS cache depends on it. A first visit or
-  // a hard reload bypasses it, and an earlier version's worker isolates this page, so reload ONCE
-  // when the current one is active; the flag stops a broken worker from reload-looping. Until then
-  // the app is not mounted.
+  // page (deploy/web/service_worker.js). A first visit or a hard reload bypasses it, and an earlier
+  // version's worker isolates this page, so reload ONCE when the current one is active; the flag
+  // stops a broken worker from reload-looping. Until then the app is not mounted.
   const FLAG = 'coi_sw_reloaded'
   if (outOfScope) {
     // leaving for the in-scope url

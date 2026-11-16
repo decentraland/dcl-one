@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/teleport.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Teleport.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"world\":{\"type\":\"string\",\"optional\":true,\"value\":\"\",\"tooltip\":\"Name of the world to teleport to (e.g. myname.dcl.eth). Leave empty to teleport to coordinates instead.\"},\"x\":{\"type\":\"number\",\"optional\":true,\"value\":0,\"tooltip\":\"Scene X coordinate to teleport to when no world is set.\"},\"y\":{\"type\":\"number\",\"optional\":true,\"value\":0,\"tooltip\":\"Scene Y coordinate to teleport to when no world is set.\"},\"hoverText\":{\"type\":\"string\",\"optional\":true,\"value\":\"Teleport\",\"tooltip\":\"Text shown when the player points at the item.\"}},\"actions\":[{\"methodName\":\"teleport\",\"description\":\"Teleports the player to the configured world or coordinates\",\"params\":{}}]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core::Animator",
+      "data": {
+        "0": {
+          "json": {
+            "states": [
+              {
+                "clip": "ArmatureAction",
+                "playing": true,
+                "loop": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "type": "call_script_method",
+                "name": "Teleport",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Teleport.ts\",\"methodName\":\"teleport\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -31,6 +31,9 @@ pub mod protocol;
 pub mod pulse;
 pub mod rooms;
 pub mod signed_fetch;
+pub mod stats;
+#[cfg(test)]
+mod test_logs;
 pub mod topology;
 pub mod world_identity;
 pub mod worlds_envelope;

@@ -2,6 +2,10 @@
    ShopCreditsBalanceButton) with the dark navbar scheme's control text. */
 .chip {
   all: unset;
+  box-sizing: border-box;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 8px;
   position: relative;
   display: flex;
   align-items: center;

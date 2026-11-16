@@ -1,5 +1,5 @@
 //! Property-based encodings of the CRDT theorems that were machine-checked in
-//! a (since-retired) Rocq development. These must PASS, forever. If one of them
+//! a (since-retired) formal proof development. These must PASS, forever. If one of them
 //! ever fails, the Rust has drifted out from under a proof; this file is the
 //! durable form of that proof.
 //!

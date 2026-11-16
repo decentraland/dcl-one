@@ -25,10 +25,12 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
+use ban_block::BanBlockPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
+    core_pipeline::prepass::DepthPrepass,
     log::LogPlugin,
     prelude::*,
     render::view::RenderLayers,
@@ -77,12 +79,9 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use system_api_types::{
-    launch_options::{
-        help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
-        ClientOptions, LaunchOptions,
-    },
-    web_params::DEFAULT_PORTABLES,
+use system_api_types::launch_options::{
+    help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
+    ClientOptions, LaunchOptions,
 };
 use system_bridge::{settings::NewCameraEvent, NativeUi, SystemBridgePlugin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -119,8 +118,46 @@ pub const DISTRIBUTION: &str = "web";
 pub const CONFIG_READ_ATTEMPTS: u32 = 3;
 pub const CONFIG_READ_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The settings file of the Explorer's config directory, or the defaults where there is none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn serialized_app_config() -> AppConfig {
+    let config_file = platform::project_directories()
+        .unwrap()
+        .config_dir()
+        .join("config.json");
+    let mut base_config = read_config_file(&config_file)
+        .map(|f| {
+            info!("config file loaded from {config_file:?}");
+            AppConfig::from_json(&f)
+        })
+        .unwrap_or_else(|| {
+            warn!("config file not read from {config_file:?}, generating default");
+            Default::default()
+        });
+    base_config.reset_outdated_settings();
+
+    base_config
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_config_file(config_file: &std::path::Path) -> Option<Vec<u8>> {
+    for _ in 0..CONFIG_READ_ATTEMPTS {
+        match std::fs::read(config_file) {
+            Ok(f) => return Some(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                warn!("failed to read config.json: {e}");
+                std::thread::sleep(CONFIG_READ_RETRY_PAUSE);
+            }
+        }
+    }
+    None
+}
+
 pub mod headless;
 pub mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline_app;
 
 pub struct DecentralandApp(App);
 
@@ -286,6 +323,17 @@ pub struct DecentralandArguments {
     /// the performance harness parses
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub csv: Option<std::path::PathBuf>,
+    /// Benchmark walk-in (`--autopilot` with `--csv`): once measuring starts, walk from where the
+    /// run arrived to the centre of this parcel at 6 m/s, then stand there; the scenes on the way
+    /// load during play, with no loading screen. Without it the run stands at spawn
+    #[arg(
+        long,
+        value_name = "x,y",
+        allow_hyphen_values = true,
+        value_parser = |value: &str| value.parse::<IVec2Arg>().map(|parcel| parcel.0),
+        help_heading = DEBUG
+    )]
+    pub autopilot_walk_to: Option<IVec2>,
     /// Write the whole session log here, in the performance harness's line format; the
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
@@ -348,11 +396,8 @@ impl DecentralandArguments {
 
     /// `--portables` / `?portables=`, else the default set.
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
-        self.client
-            .portables
-            .as_deref()
-            .unwrap_or(DEFAULT_PORTABLES)
-            .split(';')
+        self.launch
+            .portable_sources()
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,
@@ -487,27 +532,27 @@ impl DecentralandApp {
                         .app_config
                         .scene_unload_extra_distance
                 },
-                load_imposter: decentraland_app_config
-                    .app_config
-                    .scene_imposter_distances
-                    .last()
-                    .map(|last| {
-                        // actual distance we need is last + diagonal of the largest mip size
-                        let mip_size = (1
-                            << (decentraland_app_config
-                                .app_config
-                                .scene_imposter_distances
-                                .len()
-                                - 1)) as f32
-                            * 16.0;
-                        last + (2.0 * mip_size * mip_size).sqrt()
-                    })
-                    .unwrap_or(0.0)
-                    * if decentraland_app_config.arguments.launch.preview {
-                        0.0
-                    } else {
-                        1.0
-                    },
+                load_imposter: if decentraland_app_config.arguments.launch.preview {
+                    // preview renders no imposters; a far distance keeps the fog off the scene
+                    99999.0
+                } else {
+                    decentraland_app_config
+                        .app_config
+                        .scene_imposter_distances
+                        .last()
+                        .map(|last| {
+                            // actual distance we need is last + diagonal of the largest mip size
+                            let mip_size = (1
+                                << (decentraland_app_config
+                                    .app_config
+                                    .scene_imposter_distances
+                                    .len()
+                                    - 1)) as f32
+                                * 16.0;
+                            last + (2.0 * mip_size * mip_size).sqrt()
+                        })
+                        .unwrap_or(0.0)
+                },
             })
             // the host page's analytics session (web), else one per engine run
             .insert_resource(SegmentConfig::new(
@@ -607,12 +652,20 @@ impl DecentralandApp {
         );
         if decentraland_app_config.arguments.client.autopilot {
             let arguments = &decentraland_app_config.arguments;
-            app.insert_resource(common::autopilot::Autopilot {
-                measure: arguments.csv.is_some()
-                    || (arguments.perf_stream.is_some() && arguments.perf_csv),
-            })
-            .init_resource::<common::autopilot::AutopilotPhase>()
-            .add_plugins(autopilot::AutopilotPlugin);
+            let measure =
+                arguments.csv.is_some() || (arguments.perf_stream.is_some() && arguments.perf_csv);
+            app.insert_resource(common::autopilot::Autopilot { measure })
+                .init_resource::<common::autopilot::AutopilotPhase>()
+                .add_plugins(autopilot::AutopilotPlugin);
+            match arguments.autopilot_walk_to {
+                Some(to) if measure => {
+                    app.insert_resource(autopilot::walk::AutopilotWalk { to });
+                }
+                Some(_) => warn!(
+                    "--autopilot-walk-to has no effect without --csv: the run ends once it arrives"
+                ),
+                None => (),
+            }
             // the autopilot's CSV (perf_output follows its phase): `--csv`, or on the web the
             // page's `csv` stream, which `perfCsv` asks for
             #[cfg(not(target_arch = "wasm32"))]
@@ -623,8 +676,17 @@ impl DecentralandApp {
             if let Some(destination) = destination {
                 app.add_plugins(CsvPlugin { destination });
             }
-        } else if decentraland_app_config.arguments.csv.is_some() {
-            warn!("--csv has no effect without --autopilot: no CSV is written");
+        } else {
+            if decentraland_app_config.arguments.csv.is_some() {
+                warn!("--csv has no effect without --autopilot: no CSV is written");
+            }
+            if decentraland_app_config
+                .arguments
+                .autopilot_walk_to
+                .is_some()
+            {
+                warn!("--autopilot-walk-to has no effect without --autopilot: nothing walks");
+            }
         }
 
         // add AppConfig as a resource
@@ -653,10 +715,7 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
-            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
-            // without an extension to the last image loader registered, which must stay
-            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
-            // registered before it, then only ever sees `.ktx2` paths.
+            .add_plugins(BanBlockPlugin)
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
@@ -728,7 +787,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        debug_panel::register(&mut app);
+        app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
         app
     }
@@ -783,6 +842,9 @@ fn setup(
                 ..Default::default()
             },
             default_camera_components(),
+            // the jump marker projects onto the depth prepass; the graphics settings add the
+            // normal prepass while the avatar outline is on
+            DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,
                 ..Default::default()

@@ -1,3 +1,9 @@
+import {
+  sitesNavigationLinks,
+  sitesNavigationOrder,
+  type SitesNavigationId,
+  type SitesNavigationLink,
+} from "../../../../../library/ui/apps/sites/chrome/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
@@ -12,7 +18,7 @@ import {
   type Notification,
 } from "../../data/catalyst/notificationsView";
 import { useChromeAuth } from "./chrome-auth";
-import type { ChromeNavigate } from "./chrome-nav";
+import { useChromeNav, type ChromeNavigate } from "./chrome-nav";
 import ChromeLink from "./ChromeLink";
 import AccountMenu from "./AccountMenu";
 import { docsUrl } from "../../data/docs";
@@ -22,30 +28,9 @@ import { useSiteLayout } from "./SiteLayout";
 
 type DclTopBarVariant = "default" | "sites";
 
-type NavMenuItem = { label: string; href: string };
-type NavLink = { id: string; label: string; href: string; caret?: boolean; menu?: NavMenuItem[] };
-
-const LEARN_MENU: NavMenuItem[] = [
-  { label: "Docs", href: docsUrl() },
-  { label: "Blog", href: "/blog" },
-];
-
-const PLAY_MENU: NavMenuItem[] = [
-  { label: "Jump in", href: "/play/" },
-  { label: "What's on", href: "/whats-on" },
-];
-
-const LINK_DEFS = {
-  explore: { id: "explore", label: "Explore", href: "/" },
-  whatson: { id: "whatson", label: "Play", href: "/play/", caret: true, menu: PLAY_MENU },
-  social: { id: "social", label: "Social", href: "/social/" },
-  shop: { id: "shop", label: "Shop", href: "/shop" },
-  create: { id: "create", label: "Create", href: "/create" },
-  learn: { id: "learn", label: "Learn", href: "/blog", caret: true, menu: LEARN_MENU },
-  events: { id: "events", label: "Events", href: "/whats-on" },
-} satisfies Record<string, NavLink>;
-
-export type DclTopBarNavId = keyof typeof LINK_DEFS;
+type NavLink = SitesNavigationLink;
+const LINK_DEFS = sitesNavigationLinks(docsUrl());
+export type DclTopBarNavId = SitesNavigationId;
 
 // from: decentraland-ui2@3.23.8:dist/components/Navbar/icons.js (BellIcon): the filled bell of DCL's navbar.
 const BellMark = ({ size = 24 }: { size?: number }) => (
@@ -57,7 +42,7 @@ const BellMark = ({ size = 24 }: { size?: number }) => (
   </svg>
 );
 
-const DCL_LINKS: NavLink[] = (["whatson", "shop", "create", "social", "learn"] as const)
+const DCL_LINKS: NavLink[] = sitesNavigationOrder
   .map((id) => LINK_DEFS[id]);
 
 type NotifState =
@@ -65,7 +50,7 @@ type NotifState =
   | { phase: "error" }
   | { phase: "ready"; rows: Notification[] };
 
-type DclTopBarProps = {
+export type DclTopBarProps = {
   variant?: DclTopBarVariant;
   active?: DclTopBarNavId | "";
   signedIn?: boolean;
@@ -74,7 +59,7 @@ type DclTopBarProps = {
   onSignIn?: () => void;
   onSignOut?: () => void;
   signInHref?: string;
-  fetchNotifications?: () => Promise<unknown>;
+  fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
   onNavigate?: ChromeNavigate;
   mobileNavigation?: (closeMenu: () => void) => ReactNode;
   accountControl?: ReactNode;
@@ -87,7 +72,7 @@ const accountLinks = (account: string) => [
   { label: "My assets", href: "/shop/my-items" },
 ];
 
-export default function DclTopBar({
+function LegacyDclTopBar({
   active = "shop",
   signedIn = undefined,
   account = undefined,
@@ -429,4 +414,9 @@ export default function DclTopBar({
       </div>
     </header>
   );
+}
+
+export default function DclTopBar(props: DclTopBarProps) {
+  const { TopBar } = useChromeNav();
+  return TopBar && TopBar !== DclTopBar ? <TopBar {...props} /> : <LegacyDclTopBar {...props} />;
 }

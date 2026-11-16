@@ -435,6 +435,14 @@ impl Announcement {
 }
 
 impl PulseSession {
+    /// Watchdog input: authenticated multiplayer health and intentional/terminal suspension.
+    pub(crate) fn connectivity(&self) -> (bool, bool) {
+        (
+            matches!(self.state, Connection::Established),
+            matches!(self.state, Connection::Paused | Connection::Dead),
+        )
+    }
+
     fn connection_enabled(&self, no_render: bool) -> Result<bool, &'static str> {
         if no_render || common::structs::server_mode() {
             return Err("Only a graphical player client can control the Pulse connection");
@@ -543,7 +551,7 @@ pub struct PulsePlugin;
 
 impl Plugin for PulsePlugin {
     fn build(&self, app: &mut App) {
-        debug::register(app);
+        app.add_plugins(debug::PulseDebugPlugin);
         app.add_event::<PlayerTeleported>();
         app.add_systems(Startup, configure_pulse);
         app.add_systems(

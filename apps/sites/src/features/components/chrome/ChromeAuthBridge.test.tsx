@@ -6,20 +6,41 @@ import { useChromeAuth, type ChromeAuth } from "@ui/web/frames/chrome-auth";
 
 import ChromeAuthBridge from "./ChromeAuthBridge";
 
-const signedFetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{"notifications":[]}'));
+const signedFetch = vi.fn<
+  (url: string, init?: RequestInit) => Promise<Response>
+>(async () => new Response('{"notifications":[]}'));
 
 vi.mock("react-router", async (original) => ({
   ...(await original<typeof import("react-router")>()),
-  useRouteLoaderData: () => ({ wallet: "0x0000000000000000000000000000000000000001" }),
+  useRouteLoaderData: () => ({
+    wallet: "0x0000000000000000000000000000000000000001",
+  }),
 }));
 vi.mock("@/data/lib/auth/index", () => ({
-  useAuth: () => ({ isConnected: true, address: "0x0000000000000000000000000000000000000001", fetch: signedFetch, disconnect: vi.fn() }),
+  useAuth: () => ({
+    isConnected: true,
+    address: "0x0000000000000000000000000000000000000001",
+    fetch: signedFetch,
+    disconnect: vi.fn(),
+  }),
 }));
-vi.mock("@/data/lib/auth/use-profile-name", () => ({ useProfileIdentity: () => ({ name: "", avatarUrl: "" }) }));
+vi.mock("@/data/lib/auth/use-profile-name", () => ({
+  useProfileIdentity: () => ({ name: "", avatarUrl: "" }),
+}));
 
 // The node mounts the inbox at /notifications (services/catalyst/social/src/lib.rs);
 // the bare /notifications route is only nginx's alias for upstream clients.
 it("reads the bell's inbox from the node's /notifications mount", async () => {
+  const auth = readBridgeAuth();
+  await expect(auth?.fetchNotifications?.()).resolves.toEqual({
+    notifications: [],
+  });
+  const url = new URL(signedFetch.mock.calls[0][0]);
+  expect(url.pathname).toBe("/notifications/notifications");
+  expect(url.searchParams.get("limit")).toBe("50");
+});
+
+function readBridgeAuth() {
   let auth: ChromeAuth | undefined;
   function Probe() {
     auth = useChromeAuth();
@@ -32,8 +53,26 @@ it("reads the bell's inbox from the node's /notifications mount", async () => {
       </ChromeAuthBridge>
     </QueryClientProvider>,
   );
-  await expect(auth?.fetchNotifications?.()).resolves.toEqual({ notifications: [] });
-  const url = new URL(signedFetch.mock.calls[0][0]);
-  expect(url.pathname).toBe("/notifications/notifications");
-  expect(url.searchParams.get("limit")).toBe("50");
+  return auth;
+}
+
+it("forwards cancellation while keeping no-signal callers valid", async () => {
+  const auth = readBridgeAuth();
+  const controller = new AbortController();
+  await auth?.fetchNotifications?.(controller.signal);
+  expect(signedFetch.mock.calls.at(-1)?.[1]?.signal).toBe(controller.signal);
+  await expect(auth?.fetchNotifications?.()).resolves.toEqual({
+    notifications: [],
+  });
+});
+
+it("cancels an unread error response body", async () => {
+  const auth = readBridgeAuth();
+  const response = new Response("upstream unavailable", { status: 503 });
+  const cancel = vi.spyOn(response.body!, "cancel");
+  signedFetch.mockResolvedValueOnce(response);
+  await expect(auth?.fetchNotifications?.()).rejects.toThrow(
+    "Notifications returned 503",
+  );
+  expect(cancel).toHaveBeenCalledOnce();
 });
