@@ -105,7 +105,7 @@ async fn a_bounded_live_pass_mirrors_the_first_catalogue_worlds_with_their_blobs
     let ctx = rx.await.unwrap();
 
     let started = std::time::Instant::now();
-    let first = run_pass(&client, &scratch.pool, &storage, &settings, &ctx)
+    let first = run_pass(&client, &scratch.pool, &storage, &settings, None, &ctx)
         .await
         .expect("first pass");
     eprintln!("first pass in {:?}: {first:?}", started.elapsed());
@@ -156,7 +156,7 @@ async fn a_bounded_live_pass_mirrors_the_first_catalogue_worlds_with_their_blobs
         tmp.display()
     );
 
-    let second = run_pass(&client, &scratch.pool, &storage, &settings, &ctx)
+    let second = run_pass(&client, &scratch.pool, &storage, &settings, None, &ctx)
         .await
         .expect("second pass");
     eprintln!("second pass: {second:?}");

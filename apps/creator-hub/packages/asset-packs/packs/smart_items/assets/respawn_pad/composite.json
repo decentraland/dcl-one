@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/respawn_pad.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/RespawnPad.tsx",
+                "priority": 0,
+                "layout": "{\"params\":{\"sound\":{\"type\":\"string\",\"optional\":true,\"value\":\"spawn.mp3\"}},\"events\":[\"spawn\"]}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

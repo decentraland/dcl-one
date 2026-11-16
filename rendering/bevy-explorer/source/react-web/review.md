@@ -89,6 +89,14 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the Events page (`library/ui/apps/hud/features/events`: the calendar, a day's
+grid, the event detail). Mock mode serves it a week of events around now
+(`library/explorer-core/engine/mockEvents.ts`; `?mock=1&mockEvents=error` fails every read), so a
+baseline needs the frozen clock. Its contract is tier-1, in `library/ui/apps/hud/test/hosted`:
+`events.test.tsx` (the reads sent, the loading, error, empty and loaded states, the day
+navigation, the reminder, the detail, share and jump), `eventsStore.test.ts` and
+`eventFormat.test.ts`; the bridge's requests are in `src/test/bridgeEvents.test.ts`.
+
 Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
 lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
 it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.tsx`, `library/explorer-core/lib/integratedGpu.test.ts`.
@@ -176,6 +184,11 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       community chat by a player standing nearby shows as their bubble with the community's name on
       a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
       your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
+- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
+      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
+      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
+      The same player talking in a private call or community stream with you, which the mute leaves
+      audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
@@ -318,6 +331,8 @@ back as `analyticsSession`). Expectations:
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
 - **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
+- **Nearby voice**: `nearby_voice_user_mute` {wallet_id, is_muted} on the profile menu's Hush or
+  Hear; not for the mutes read from the saved list, nor for a Hush or Hear the list already has.
 - **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
   relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
   flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,

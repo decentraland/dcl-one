@@ -1,0 +1,12 @@
+{
+  "name": "path-to-regexp",
+  "version": "6.3.0",
+  "archive": "https://registry.yarnpkg.com/path-to-regexp/-/path-to-regexp-6.3.0.tgz",
+  "archive_sha256": "da302284390341278d3dad1014f2043cf844f6a2163aa8dc5686d321d82742e6",
+  "members": {
+    "package/dist/index.js": "890a1832ab3d692c0ddbdcbe54fbdeaa5ff60ac85be91c427a4819dcc0eaef2f",
+    "package/LICENSE": "4eeb3271453a891df609e5a9f4ee79a68307f730c13417a3bfeffa604ac8cf25"
+  },
+  "v8_crate": "152.2.0",
+  "engine": "15.2.124.1-rusty"
+}

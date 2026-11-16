@@ -92,3 +92,28 @@ test('exact-session recovery snapshot retains source, ordering and cleanup autho
   const absent = PeerClusterSnapshot.fromPartial({ ...input, tokenNotBefore: undefined })
   assert.equal(PeerClusterSnapshot.decode(PeerClusterSnapshot.encode(absent).finish()).tokenNotBefore, undefined)
 })
+
+test('selected origin, optional identity and assignment state retain exact safe-number evidence', () => {
+  for (const selectedOrigin of [1, 2, 3]) {
+    for (const selectedIdentity of [1, Number.MAX_SAFE_INTEGER]) {
+      for (const assignmentState of [1, 2]) {
+        const input = PeerClusterSnapshot.fromPartial({ selectedOrigin, selectedIdentity, assignmentState })
+        assert.deepEqual(PeerClusterSnapshot.decode(PeerClusterSnapshot.encode(input).finish()), input)
+        assert.deepEqual(PeerClusterSnapshot.fromJSON(PeerClusterSnapshot.toJSON(input)), input)
+      }
+    }
+  }
+  const old = PeerClusterSnapshot.decode(new Uint8Array())
+  assert.equal(old.selectedOrigin, 0)
+  assert.equal(old.selectedIdentity, undefined)
+  assert.equal(old.assignmentState, 0)
+  const zero = PeerClusterSnapshot.fromPartial({ selectedIdentity: 0 })
+  assert.equal(PeerClusterSnapshot.decode(PeerClusterSnapshot.encode(zero).finish()).selectedIdentity, 0)
+})
+
+test('selected identity rejects unsafe uint64 decoding instead of rounding to Number', () => {
+  for (const value of ['9007199254740993', '9223372036854775807', '18446744073709551615']) {
+    const bytes = protobuf.Writer.create().uint32(88).uint64(value).finish()
+    assert.throws(() => PeerClusterSnapshot.decode(bytes), /larger than Number.MAX_SAFE_INTEGER/)
+  }
+})

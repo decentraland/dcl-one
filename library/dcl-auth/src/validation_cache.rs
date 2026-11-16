@@ -169,6 +169,10 @@ impl ValidationCache {
 
 #[async_trait]
 impl Eip1654Validator for ValidationCache {
+    fn fresh_validator(&self) -> Option<&dyn Eip1654Validator> {
+        self.inner.fresh_validator()
+    }
+
     async fn validate_signature(
         &self,
         contract_address: &str,
@@ -276,6 +280,59 @@ impl Drop for Lead<'_> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn fresh_validation_bypasses_nested_caches_after_revocation_without_changing_cached_calls()
+     {
+        struct Revocable(std::sync::atomic::AtomicBool);
+        #[async_trait]
+        impl Eip1654Validator for Revocable {
+            fn fresh_validator(&self) -> Option<&dyn Eip1654Validator> {
+                Some(self)
+            }
+            async fn validate_signature(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+            ) -> Result<bool, AuthError> {
+                Ok(self.0.load(Ordering::SeqCst))
+            }
+        }
+        let inner = Arc::new(Revocable(std::sync::atomic::AtomicBool::new(true)));
+        let cache = ValidationCache::new(Arc::new(ValidationCache::new(inner.clone())));
+        assert!(
+            cache
+                .validate_signature("contract", b"delegation", b"signature")
+                .await
+                .unwrap()
+        );
+        inner.0.store(false, Ordering::SeqCst);
+        assert!(
+            !cache
+                .fresh_validator()
+                .unwrap()
+                .validate_signature("contract", b"delegation", b"signature")
+                .await
+                .unwrap()
+        );
+        assert!(
+            cache
+                .validate_signature("contract", b"delegation", b"signature")
+                .await
+                .unwrap()
+        );
+        assert!(
+            ValidationCache::new(Arc::new(super::super::eip1654::PeerValidated))
+                .fresh_validator()
+                .is_none()
+        );
+        assert!(
+            ValidationCache::new(Arc::new(CountingValidator::new()))
+                .fresh_validator()
+                .is_none()
+        );
+    }
 
     struct CountingValidator {
         calls: AtomicUsize,

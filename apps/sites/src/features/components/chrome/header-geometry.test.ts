@@ -16,20 +16,28 @@ const css = [
   .map((file) => readFileSync(fileURLToPath(new URL(file, root)), "utf8"))
   .join("\n");
 let session: Awaited<ReturnType<typeof openSession>>;
+let startup: ReturnType<typeof openSession> | undefined;
+const startupController = new AbortController();
+// Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  session = await openSession(
-    await findBrowser([
-      process.env.BROWSER_PATH,
-      process.env.CHROME_PATH,
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      "/usr/bin/google-chrome",
-      "/usr/bin/chromium",
-    ]),
-  );
-});
+  startup = (async () =>
+    openSession(
+      await findBrowser([
+        process.env.BROWSER_PATH,
+        process.env.CHROME_PATH,
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+      ]),
+      { signal: startupController.signal },
+    ))();
+  session = await startup;
+}, 40_000);
 afterAll(async () => {
-  await session?.close();
-});
+  startupController.abort(new Error("Header geometry fixture disposed"));
+  const opened = await startup?.catch(() => undefined);
+  await opened?.close();
+}, 30_000);
 
 describe("when native and legacy chrome hosts resolve their header offsets", () => {
   for (const width of [390, 992, 1024, 1440]) {

@@ -55,6 +55,8 @@ import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
+import { eventAnalytics } from '../events/eventFormat'
+import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
 import type { DonatePlace } from '@explorer-core/hostContract'
 import type {
@@ -432,10 +434,22 @@ export interface PlacesState {
   toggle: () => void
 }
 
-// Events browses the public events API over HTTP, like Places.
+/** What opened the Events page: its key, the menu's top bar, or the sidebar. */
+export type EventsOpenSource = 'shortcut' | 'start_menu' | 'sidebar'
+
+export interface EventCommunity {
+  id: string
+  name: string
+  thumbnail: string
+}
+
+// Events reads the events service through the bridge, signed, so each event carries the user's
+// reminder.
 export interface EventsState {
   open: boolean
-  toggle: () => void
+  toggle: (source?: EventsOpenSource) => void
+  data: EventsData
+  memberOf: EventCommunity[]
 }
 
 // The Shop browses the public marketplace catalog over HTTP, like Places and Events.
@@ -1018,6 +1032,8 @@ export interface EngineSession {
   portables: PortablesState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Saved mutes for nearby voice: lowercased addresses the user hushed, kept per account by the engine. */
+  nearbyMutes: { muted: ReadonlySet<string>; set: (address: string, muted: boolean) => void }
   /** Private calls and community streams. */
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
@@ -1239,6 +1255,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   closedCommunitiesRef.current = closedCommunities
   const [members, setMembers] = useState<NearbyMember[]>([])
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
+  const [nearbyMuted, setNearbyMuted] = useState<ReadonlySet<string>>(() => new Set())
+  // `nearbyMuted`, readable before the next render
+  const nearbyMutedRef = useRef<ReadonlySet<string>>(nearbyMuted)
+  const applyNearbyMuted = useCallback((next: ReadonlySet<string>) => {
+    nearbyMutedRef.current = next
+    setNearbyMuted(next)
+  }, [])
   // Mirror cursor-lock into a ref so the run-once message handler reads it without a stale closure —
   // avatarClick uses it to centre the card while the camera has the pointer locked.
   const cursorLockedRef = useRef(false)
@@ -1435,6 +1458,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
+  const eventsOpenSource = useRef<EventsOpenSource | null>(null)
+  const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
   const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
   const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
@@ -1928,6 +1953,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'mic':
           setMic({ enabled: msg.enabled, available: msg.available })
           break
+        case 'nearbyMutes':
+          applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
+          break
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
@@ -2089,6 +2117,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           // the members' names and faces, for the member menu and the passport they open
           seedProfiles(memberProfiles(msg.members))
           setCommunityDetail(msg)
+          break
+        case 'events':
+        case 'eventAttending':
+        case 'eventPlaces':
+          eventsData.onMessage(msg)
           break
         case 'communityChannels': {
           // the user's communities, in the order they already have (new ones last)
@@ -2825,7 +2858,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
-  const toggleEvents = useCallback(() => exclusive(setEventsOpen), [exclusive])
+  const toggleEvents = useCallback(
+    (source?: EventsOpenSource) => {
+      // a click handler may pass its event here
+      eventsOpenSource.current = typeof source === 'string' ? source : null
+      exclusive(setEventsOpen)
+    },
+    [exclusive]
+  )
+  const clearEvents = eventsData.clear
+  useEffect(() => {
+    if (!eventsOpen) {
+      // nothing is kept between visits: the page reads again each time it opens
+      clearEvents()
+      return
+    }
+    if (eventsOpenSource.current != null) track('events_section_opened', { source: eventsOpenSource.current })
+    eventsOpenSource.current = null
+  }, [eventsOpen, clearEvents])
+  const eventCommunities = useMemo(() => communityConvos.map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail })), [communityConvos])
   // The in-world Shop's try-on dresses the current look, so opening it asks for the look the way the
   // Backpack does (where this host runs that Shop).
   const toggleShop = useCallback(
@@ -3631,6 +3682,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return { ...m, enabled: !m.enabled } // optimistic; relay confirms
     })
   }, [])
+  const setNearbyMute = useCallback((address: string, muted: boolean) => {
+    const wallet_id = address.toLowerCase()
+    if (nearbyMutedRef.current.has(wallet_id) === muted) return
+    // optimistic; the engine's list confirms or puts it back
+    const next = new Set(nearbyMutedRef.current)
+    if (muted) next.add(wallet_id)
+    else next.delete(wallet_id)
+    applyNearbyMuted(next)
+    track('nearby_voice_user_mute', { wallet_id, is_muted: muted })
+    driverRef.current?.send({ kind: 'setNearbyMute', address: wallet_id, muted })
+  }, [])
   const markNotificationsRead = useCallback(() => {
     const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id)
     if (unreadIds.length === 0) return
@@ -4384,6 +4446,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     : mapOpen ? 'Map'
     : placesOpen ? 'Places'
     : galleryOpen ? 'Gallery'
+    : eventsOpen ? 'Events'
     : null
   useEffect(() => {
     if (phase !== 'world' && phase !== 'entering' && phase !== 'lobby' && phase !== 'welcome') return
@@ -4460,6 +4523,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
+      case 'Events': toggleEvents('shortcut'); break
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
@@ -4612,7 +4676,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
-    events: { open: eventsOpen, toggle: toggleEvents },
+    events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {
@@ -4650,6 +4714,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,

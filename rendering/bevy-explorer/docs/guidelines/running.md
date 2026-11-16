@@ -23,7 +23,8 @@ just native-debug --realm <about-url> --position x,y
 a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
 then `cargo build`. This loop is verified on macOS, the only platform where the client falls back
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
-`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
+`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
+`CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
 ### Gateway routing
 
@@ -78,7 +79,8 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 ```sh
 sh scripts/gen-ts-bindings.sh
 npm --prefix react-web ci
-npm --prefix react-web/bridge-scene ci
+corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
 npm --prefix react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
@@ -144,7 +146,8 @@ guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it d
 arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
 holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
 slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
-spawner and glTF processing take.
+spawner and glTF processing take, what primitives and materials charged the last frame and how
+many of them wait.
 
 ## Headless
 
@@ -220,6 +223,10 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
+  `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
+  `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
+  menu's Hush and Hear do, and saves it on the social service.
 - `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
   (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
   adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new

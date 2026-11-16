@@ -78,8 +78,22 @@ fn stage_entity(dir: &Path, entity_id: &str, entity_bytes: &[u8]) -> std::io::Re
 /// whoever draws it: the signing page polls this while the wallet's
 /// signature travels, so a 20 MB scene is not a bare "Uploading…" for a
 /// minute. Cheap to clone; every clone reads the same state.
-#[derive(Clone, Default)]
-pub struct UploadProgress(Arc<Mutex<ProgressState>>);
+#[derive(Clone)]
+pub struct UploadProgress {
+    state: Arc<Mutex<ProgressState>>,
+    /// Bumped on every change, so a follower (the deploy API's event stream)
+    /// waits instead of polling.
+    changed: tokio::sync::watch::Sender<u64>,
+}
+
+impl Default for UploadProgress {
+    fn default() -> Self {
+        UploadProgress {
+            state: Arc::default(),
+            changed: tokio::sync::watch::Sender::new(0),
+        }
+    }
+}
 
 /// One snapshot of an upload. `total` and `sent` count body bytes on the
 /// wire (the multipart framing included, which is why `total` can exceed the
@@ -129,14 +143,25 @@ fn payload_len(entity_len: usize, files: &Files) -> u64 {
 
 impl UploadProgress {
     pub fn snapshot(&self) -> ProgressState {
-        self.0
+        self.state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
+    /// Resolves on every change after it is taken.
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    /// Wake the followers for a change outside the upload itself.
+    pub(crate) fn touch(&self) {
+        self.changed.send_modify(|v| *v += 1);
+    }
+
     fn update(&self, f: impl FnOnce(&mut ProgressState)) {
-        f(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner));
+        f(&mut self.state.lock().unwrap_or_else(PoisonError::into_inner));
+        self.touch();
     }
 
     /// The look at what the server holds, before anything travels: the
@@ -392,6 +417,7 @@ async fn node_upload(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn();
     let mut child = match child {
         Ok(c) => c,
@@ -554,6 +580,7 @@ async fn curl_upload(
         )
     };
     let mut cmd = tokio::process::Command::new("curl");
+    cmd.kill_on_drop(true);
     cmd.args([
         "-sS",
         "-X",
@@ -1279,9 +1306,10 @@ pub(super) async fn confirm_world_overwrite(
     Ok(true)
 }
 
+/// The question goes to stderr: stdout is the result's (`--json`, a pipe).
 fn prompt_continue() -> Result<bool> {
-    print!("Continue? (y/N) ");
-    std::io::stdout().flush().ok();
+    eprint!("Continue? (y/N) ");
+    std::io::stderr().flush().ok();
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)
@@ -1540,7 +1568,7 @@ impl Reuse {
 /// unanswered counts as not held — a missed skip costs bandwidth, a wrong
 /// one the deploy. `DCL_SCENE_CLI_UPLOAD_ALL=1` sends everything regardless.
 pub(crate) async fn stored_cids(base: &str, cids: &[&str]) -> HashSet<String> {
-    if upload_all_from(std::env::var_os("DCL_SCENE_CLI_UPLOAD_ALL")) {
+    if force_upload() || upload_all_from(std::env::var_os("DCL_SCENE_CLI_UPLOAD_ALL")) {
         return HashSet::new();
     }
     let mut cids = cids.to_vec();
@@ -1566,6 +1594,17 @@ pub(crate) async fn stored_cids(base: &str, cids: &[&str]) -> HashSet<String> {
 
 fn upload_all_from(raw: Option<std::ffi::OsString>) -> bool {
     raw.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+static FORCE_UPLOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `deploy --force-upload`: the look-ahead is skipped and every file goes out.
+pub(crate) fn set_force_upload(on: bool) {
+    FORCE_UPLOAD.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn force_upload() -> bool {
+    FORCE_UPLOAD.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The cids an `available-content` answer marks available; a body that is

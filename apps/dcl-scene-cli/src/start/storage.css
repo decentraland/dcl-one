@@ -2,16 +2,7 @@
 .sto__head h2, .sto__head h3 { margin: 0; }
 .sto__head .note { flex: 1 1 320px; }
 .sto__who { font-family: var(--font-mono); font-size: var(--fs-14); overflow-wrap: anywhere; }
-.sto__tabs {
-  display: flex; gap: 3px; padding: 3px; align-self: flex-start;
-  border: 1px solid var(--line-ctl); border-radius: var(--r-pill); background: var(--fill-1);
-}
-.sto__tab {
-  display: inline-flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-5);
-  border-radius: var(--r-pill); color: var(--ink-6); font-weight: var(--fw-semibold); text-decoration: none;
-}
-.sto__tab:hover { color: var(--text); text-decoration: none; }
-.sto__tab[aria-current="page"] { background: var(--brand-cta); color: var(--on-brand); }
+.sto__tabs { display: flex; flex-wrap: wrap; gap: var(--s-1); align-self: flex-start; }
 .sto__n { font-size: var(--fs-13); opacity: .8; font-variant-numeric: tabular-nums; }
 .sto__target, .sto__panel { display: flex; flex-direction: column; gap: var(--s-4); }
 .sto__target form { display: flex; flex-direction: column; gap: var(--s-3); align-items: flex-start; }
@@ -37,13 +28,6 @@
 }
 .sto__meta { grid-column: 2; font-size: var(--fs-13); color: var(--ink-45); }
 .sto__acts { display: flex; gap: var(--s-2); flex-wrap: wrap; justify-content: flex-end; }
-.sto__btn {
-  font: inherit; font-size: var(--fs-13); font-weight: var(--fw-semibold); padding: var(--s-1) var(--s-3);
-  border: 1px solid var(--line-ctl); border-radius: var(--r-control); background: var(--fill-3); color: var(--text); cursor: pointer;
-}
-.sto__btn:hover { background: var(--fill-5); }
-.sto__btn:disabled { opacity: .5; cursor: default; }
-.sto__btn--danger { color: var(--error); border-color: var(--err-line); }
 .sto__edit {
   width: 100%; min-height: 72px; font-family: var(--font-mono); font-size: var(--fs-13); line-height: var(--lh-code);
   padding: var(--s-2); border: 1px solid var(--line-ctl); border-radius: var(--r-control); background: var(--fill-1); color: var(--text); resize: vertical;
@@ -57,13 +41,10 @@
 .sto__players { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
 .sto__players:empty { display: none; }
 .sto__addr { flex: 1 1 320px; font-family: var(--font-mono); }
-.sto__players .chip { text-decoration: none; display: inline-flex; gap: var(--s-1-5); align-items: baseline; }
-.sto__players .chip[aria-current="true"] { background: var(--brand-cta); color: var(--on-brand); border-color: transparent; }
 .sto__empty { color: var(--ink-6); line-height: var(--lh-body); max-width: var(--measure); }
 .sto__problem { color: var(--warning); }
 .sto__src { color: var(--ink-45); }
 .sto__tools { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; margin-top: var(--s-3); }
-.sto__tools .bar__cta { margin-left: 0; }
 .sto__file { width: auto; }
 .sto__merge { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--fs-13); color: var(--ink-7); }
 .sto__activity .reqs { margin: 0; }

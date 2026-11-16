@@ -36,15 +36,15 @@ This project's goals are to:
 Common to every target:
 
 - [rust](https://www.rust-lang.org/tools/install) (stable; the wasm build needs nightly — see below)
-- [protoc](https://github.com/protocolbuffers/protobuf/releases) — `brew install protobuf`
+- [protoc](https://github.com/protocolbuffers/protobuf/releases) — `brew install protobuf`; on windows, the `protoc-<version>-win64.zip` that `apps/bevy-explorer/install-protoc.py` pins, with its `bin` on `PATH` (or `PROTOC` set)
 - node 20+ (24 in CI) for the React HUD and bridge scene
-- optionally [just](https://github.com/casey/just) — `just --list` for the dev entry points used below
+- optionally [just](https://github.com/casey/just) — `just --list` for the dev entry points used below; on windows its recipes need Git for Windows: run `just` from Git Bash (from PowerShell it finds no `sh`)
 
 Platform libraries (needed by the native and headless builds):
 
 - **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev` plus ffmpeg dev packages (`libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev`)
 - **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
-- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio)
+- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio); keep `CARGO_TARGET_DIR` short, free of spaces and on the drive of `CARGO_HOME` ([why](../docs/guidelines/platforms.md#native))
 
 ## Web client
 
@@ -59,7 +59,9 @@ cargo install wasm-pack
 just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-web and opens a browser
 ```
 
-`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
+With Nix, `nix develop .#wasm` from the repository root replaces the two installs: the shell carries the pinned nightly with the wasm target, `just`, `wasm-pack`, `wasm-bindgen` at the `Cargo.lock` version, `wasm-opt`, node, pnpm and protoc.
+
+`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web`, a frozen pnpm install in `react-web/bridge-scene`, then `npm run dev`.
 
 Useful URLs once the dev server is up:
 
@@ -107,14 +109,17 @@ just native-release --places http://localhost:5000 --realm-provider http://local
 Doing it by hand instead of via `just`:
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && npm ci && (cd bridge-scene && npm ci) && npm run bundle:native && cd ..
+cd react-web && npm ci
+(cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.27.0 --filter @dcl/hashing build)
+npm run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release
 ```
 
-To build without CEF at all (the engine's own bevy-ui HUD instead of React):
+To build without CEF at all (the engine's own bevy-ui HUD instead of React), after the same `materialise`:
 
 ```bash
 cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
@@ -131,6 +136,7 @@ npx @dcl-regenesislabs/bevy-headless-server --realm http://localhost:8000
 From source (the binary is feature-gated out of default builds, and execs the sidecar from its own directory, so both land in `target/release`):
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo build --release -p dcl_deno_ipc
 cargo build --release --bin headless --no-default-features --features headless,livekit
 ./target/release/headless --realm <url> --location 0,0 --server-mode
@@ -212,6 +218,7 @@ Console commands:
 ## Testing
 
 ```bash
+python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo test --all                      # engine
 npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
@@ -238,7 +245,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
-  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
@@ -247,7 +254,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),
   `/ban_block_state [address]` (platform ban, current scene admission, social blocks and
-  scene moderation lists; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
+  scene moderation lists; Nearby chat and reactions from an address the scene room bans are
+  dropped; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -265,6 +273,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
   queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
   section shows the call and binds these actions.
+- Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
+  profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
+  panel's "Nearby voice mutes" section shows it and binds both.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
@@ -314,7 +325,9 @@ and `DCL_AUTOMATION_PORT` stand in for the flags). Two methods, none of Bevy's o
 (`{"command": "/teleport 10 20", "token"}` answers `{"id"}`) and `dcl/console_result` (`{"id",
 "token"}` answers `{"done": false}` until the command has answered, then `done`, `ok`, `output`).
 Both need the token. The headless client registers `/world_state`, `/chat_history` and
-`/voice_state`; the HUD, input and screen-position commands do not apply there.
+`/voice_state`, and runs the startup portables (`--portables`, the movement scene by default), so
+`/walk_player_to` walks it through the movement scene, as on the desktop client; the HUD, input
+and screen-position commands do not apply there.
 
 **Trusted input on the web: a stable contract.** A DevTools client that drives the page (the runner
 in `local-harness/web-driver`, or a Playwright or Puppeteer script through `exposeBinding` and its

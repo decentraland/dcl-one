@@ -157,3 +157,30 @@ fn unknown_oneof_field_decodes_to_none() {
     let pkt = ServerPacket::decode(bytes.as_slice()).unwrap();
     assert!(pkt.message.is_none());
 }
+
+#[test]
+fn pinned_javascript_protocol_packets_roundtrip_without_wire_changes() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/comms/src/stats/source-fixtures.json"
+    )))
+    .unwrap();
+    for packet in fixture["wire"].as_array().unwrap() {
+        let bytes: Vec<u8> = packet["bytes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap() as u8)
+            .collect();
+        let encoded = if packet["type"] == "ClientPacket" {
+            ClientPacket::decode(bytes.as_slice())
+                .unwrap()
+                .encode_to_vec()
+        } else {
+            ServerPacket::decode(bytes.as_slice())
+                .unwrap()
+                .encode_to_vec()
+        };
+        assert_eq!(encoded, bytes, "{}", packet["label"]);
+    }
+}

@@ -724,6 +724,9 @@ mod tests {
             let store = SafetyStore::new(pool.clone());
             let safety = store.snapshot(&owner.address).await.unwrap();
             let plan = PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: owner.address.clone(),
                 session: owner.session.clone(),
                 cluster_id: "current".into(),

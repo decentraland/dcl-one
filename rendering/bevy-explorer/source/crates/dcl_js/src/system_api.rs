@@ -964,6 +964,43 @@ pub async fn op_read_voice_stream(
     Ok(read_stream(state, rid).await)
 }
 
+pub async fn op_set_nearby_muted(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    muted: bool,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetNearbyMuted(address, muted, sx))?;
+
+    rx.await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_nearby_mute_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetNearbyMuteStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_nearby_mute_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<String>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_get_hover_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);

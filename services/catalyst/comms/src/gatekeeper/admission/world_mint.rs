@@ -196,7 +196,7 @@ fn invalid_world(world_name: &str, adapter: bool) -> ApiError {
 
 /// `logic/comms/errors.ts` texts.
 const PLATFORM_BANNED: &str = "Access denied, platform-banned user.";
-const DENY_LISTED: &str = "Access denied, deny-listed wallet.";
+pub(crate) const DENY_LISTED: &str = "Access denied, deny-listed wallet.";
 
 fn not_allowed(world_name: &str) -> String {
     format!("You are not allowed to access world \"{world_name}\".")

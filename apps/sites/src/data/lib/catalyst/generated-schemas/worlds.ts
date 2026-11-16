@@ -245,7 +245,7 @@ export const IndexSceneSummarySchema = z.object({
   description: z.string(),
   thumbnail: z.string().optional(),
   pointers: z.array(z.string()),
-  runtimeVersion: z.string().optional(),
+  runtimeVersion: z.string().nullable().optional(),
   timestamp: z.number(),
 });
 

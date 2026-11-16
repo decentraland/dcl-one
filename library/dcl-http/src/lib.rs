@@ -336,7 +336,12 @@ pub async fn resolve_and_pin(url: &reqwest::Url) -> Option<SocketAddr> {
     Some(addrs[0])
 }
 
-fn is_blocked_ip(ip: IpAddr) -> bool {
+/// Whether `ip` is outside the public internet: loopback, RFC 1918, link-local,
+/// unspecified, broadcast, multicast, documentation, shared (`100.64.0.0/10`),
+/// `0.0.0.0/8`, benchmarking and reserved IPv4; loopback, unspecified,
+/// multicast, unique-local, link-local, site-local and local-use NAT64 IPv6.
+/// An IPv6 address that embeds an IPv4 one is judged by the embedded address.
+pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()
@@ -349,19 +354,45 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 0
                 || {
                     let o = v4.octets();
-                    o[0] == 100 && (o[1] & 0xc0) == 0x40
+                    (o[0] == 100 && (o[1] & 0xc0) == 0x40)
+                        // Benchmarking 198.18.0.0/15 and reserved 240.0.0.0/4.
+                        || (o[0] == 198 && (o[1] & 0xfe) == 18)
+                        || o[0] >= 240
                 }
         }
         IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_blocked_ip(IpAddr::V4(mapped));
+            if let Some(embedded) = embedded_ipv4(v6) {
+                return is_blocked_ip(IpAddr::V4(embedded));
             }
+            let s = v6.segments();
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                // Deprecated site-local fec0::/10.
+                || (s[0] & 0xffc0) == 0xfec0
+                // Local-use NAT64 64:ff9b:1::/48, whose embedding is operator-chosen.
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1)
         }
+    }
+}
+
+/// The IPv4 address an IPv6 one reaches: IPv4-mapped `::ffff:a.b.c.d`,
+/// IPv4-compatible `::a.b.c.d`, NAT64 `64:ff9b::a.b.c.d` and 6to4 `2002:aabb:ccdd::/48`.
+fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    if let Some(mapped) = v6.to_ipv4_mapped() {
+        return Some(mapped);
+    }
+    let s = v6.segments();
+    let low = || std::net::Ipv4Addr::from((u32::from(s[6]) << 16) | u32::from(s[7]));
+    match s {
+        [0, 0, 0, 0, 0, 0, _, _] if !v6.is_loopback() && !v6.is_unspecified() => Some(low()),
+        [0x64, 0xff9b, 0, 0, 0, 0, _, _] => Some(low()),
+        [0x2002, hi, lo, ..] => Some(std::net::Ipv4Addr::from(
+            (u32::from(hi) << 16) | u32::from(lo),
+        )),
+        _ => None,
     }
 }
 
@@ -1134,6 +1165,19 @@ mod tests {
             "fc00::1",
             "[::1]",
             "[::ffff:127.0.0.1]",
+            "64:ff9b::a9fe:a9fe",
+            "[64:ff9b::7f00:1]",
+            "64:ff9b:1::808:808",
+            "2002:a9fe:a9fe::1",
+            "2002:7f00:1::",
+            "::a9fe:a9fe",
+            "::10.0.0.1",
+            "fec0::1",
+            "feff::1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "240.0.0.1",
+            "250.1.2.3",
             "localhost",
             "router",
             "svc.internal",
@@ -1169,6 +1213,12 @@ mod tests {
             "events.decentraland.org",
             "2600::1",
             "[2600::1]",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::8.8.8.8",
+            "198.17.0.1",
+            "198.20.0.1",
+            "223.1.1.1",
         ] {
             assert!(
                 !is_private_or_internal_host(host),

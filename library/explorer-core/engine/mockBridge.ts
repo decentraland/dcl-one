@@ -34,6 +34,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
+import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '@hud-host'
@@ -355,6 +356,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PointerRight' }, ['GamepadRight Right']],
   ...Array.from({ length: 10 }, (_, slot): BindingEntry => [{ System: `QuickEmote${slot}` }, [`Numpad${slot}`]]),
   [{ System: 'Places' }, ['KeyZ']],
+  [{ System: 'Events' }, ['KeyX']],
   [{ System: 'Communities' }, ['KeyO']],
   [{ System: 'Backpack' }, ['KeyI']],
   [{ System: 'Gallery' }, ['KeyG']],
@@ -400,6 +402,7 @@ let running: (() => void) | null = null
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
@@ -639,6 +642,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+    // One nearby player is already hushed, so both Hush and Hear show in ?mock=1.
+    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] }), 1500)
 
     // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
@@ -1088,6 +1093,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
       return
     }
+    if (msg.kind === 'setNearbyMute') {
+      if (msg.muted) mockNearbyMuted.add(msg.address)
+      else mockNearbyMuted.delete(msg.address)
+      reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] })
+      return
+    }
     if (msg.kind === 'setMic') {
       reply({ kind: 'mic', enabled: msg.enabled, available: true })
       return
@@ -1144,6 +1155,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         realm: 'https://realm-provider.decentraland.org/main',
         rules: { scene: [{ ty: 'MovePlayer', allow: 'Allow' }], realm: [], global: [{ ty: 'OpenUrl', allow: 'Deny' }] }
       })
+      return
+    }
+    if (msg.kind === 'getEvents') {
+      // `?mockEvents=error` fails every read, to show the error state and its Retry
+      const failed = new URLSearchParams(location.search).get('mockEvents') === 'error'
+      setTimeout(() => {
+        if (failed) reply({ kind: 'events', request: msg.request, events: [], failed: true })
+        else reply({ kind: 'events', request: msg.request, events: mockEventList(msg) })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'setEventAttending') {
+      setMockReminder(msg.eventId, msg.attending)
+      setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getEventPlaces') {
+      reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return
     }
     if (msg.kind === 'getCommunities') {

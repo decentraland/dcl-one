@@ -12,6 +12,7 @@ import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { AuthIdentity } from '@explorer-core/features/auth/sso'
 import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
+import { emptyEventsStore } from '../features/events/eventsStore'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
 
 export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {
@@ -229,7 +230,7 @@ export function fakeSession(): EngineSession {
     map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(), changeRealm: vi.fn(), teleportToPlace: vi.fn() },
     minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', donatePlace: null, setConfig: vi.fn() },
     places: { open: false, toggle: vi.fn() },
-    events: { open: false, toggle: vi.fn() },
+    events: { open: false, toggle: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), setAttending: vi.fn(), clear: vi.fn() }, memberOf: [] },
     shop: { open: false, toggle: vi.fn() },
     gallery: { list: [], current: 0, max: 0, loaded: false, open: false, toggle: vi.fn(), metas: {}, loadPhoto: vi.fn(), remove: vi.fn() },
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
@@ -239,6 +240,7 @@ export function fakeSession(): EngineSession {
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },
     mic: { enabled: false, available: true, toggle: vi.fn() },
+    nearbyMutes: { muted: new Set(), set: vi.fn() },
     voiceChat: {
       // the engine's first snapshot: idle (null would mean a build without voice chat)
       state: { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false, errorSeq: 0 },
