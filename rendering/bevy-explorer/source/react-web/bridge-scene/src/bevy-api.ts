@@ -16,6 +16,7 @@ import type {
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  ListenedCommunity,
   VoiceChatAction,
   VoiceChatState,
   VoiceMessage,
@@ -76,8 +77,8 @@ export type SocialApi = {
   /** Community members coming online or going offline (never away); the local user's own
    *  updates say which communities they are in. */
   getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
-  /** The community channels the local user listens to, as community ids; replaces the set. */
-  setCommunityChannels: (ids: string[]) => void
+  /** The communities whose chat channels the local user listens to; replaces the set. */
+  setCommunityChannels: (communities: ListenedCommunity[]) => void
 }
 
 /** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
@@ -174,6 +175,9 @@ export type BevyApiInterface = {
    *  UiCanvasInformation.interactable_area. */
   setInteractableArea: (area: { left: number; top: number; right: number; bottom: number }) => void
   sendChat: (message: string, channel: string) => void
+  /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
+   *  original back); a message no bubble shows is ignored. */
+  setChatBubbleText: (messageId: string, message: string) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void

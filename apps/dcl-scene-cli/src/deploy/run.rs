@@ -200,7 +200,11 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
 
     if opts.dry_run {
         build_unless_skipped(opts).await?;
-        let packed = pack(opts, &super::prepare_checked(&project, validate)?, 1)?;
+        let textures =
+            crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await?;
+        let prepared = super::prepare_checked(&project, validate)?;
+        drop(textures);
+        let packed = pack(opts, &prepared, 1)?;
         tracing::info!("dry run — not uploading");
         ux::note("dry run \u{2014} entity not uploaded");
         return Ok(Published {
@@ -225,12 +229,16 @@ async fn publish(opts: &DeployOptions) -> Result<Published> {
     };
 
     build_unless_skipped(opts).await?;
+    let textures =
+        crate::textures::stage_for_deploy(&project.root, opts.textures, opts.quiet).await?;
     let prepared = {
         let project = project.clone();
         tokio::task::spawn_blocking(move || super::prepare_checked(&project, validate))
             .await
             .context("preparing the payload")??
     };
+    // the payload's bytes are read: the preview's overlay goes back
+    drop(textures);
 
     if headless {
         deploy_headless(opts, prepared, &target, world.as_deref(), needs_delete).await
