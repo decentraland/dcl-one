@@ -100,7 +100,9 @@ const EditorTab: React.FC<EditorTabProps> = ({
                   {editor.isDefault && <CheckIcon className="default-icon menu-only" />}
                   <IconButton
                     size="small"
-                    aria-label={`${t('editor.ai.attach.remove')} ${editor.name}`}
+                    aria-label={t('modal.app_settings.fields.code_editor.remove', {
+                      name: editor.name,
+                    })}
                     onClick={e => {
                       e.stopPropagation();
                       onRemoveEditor(editor.path);

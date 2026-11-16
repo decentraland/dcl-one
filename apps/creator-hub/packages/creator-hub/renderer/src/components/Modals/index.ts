@@ -15,6 +15,8 @@ export type ModalProps = {
   /** Names a dialog that has no `title`. */
   'aria-label'?: string;
   'aria-labelledby'?: string;
+  /** Goes on the dialog element. */
+  'data-testid'?: string;
   header?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
@@ -67,6 +69,7 @@ export function Modal({
   onBack,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy,
+  'data-testid': testId,
 }: ModalProps) {
   return createElement(
     Dialog,
@@ -85,6 +88,7 @@ export function Modal({
       closeIcon,
       'aria-label': ariaLabel,
       'aria-labelledby': ariaLabelledBy,
+      'data-testid': testId,
       className: classes(styles.paper, size === 'large' && styles.large),
       backdropClassName: classes(styles.root, onBack === onBackNoop && styles.noBack, className),
     },

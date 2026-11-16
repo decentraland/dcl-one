@@ -15,8 +15,6 @@ import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
-import { Modal } from '../Modals';
-
 import { ContactInfoForm, type ContactInfoFormProps, type ContactValues } from './ContactInfoForm';
 import { CheckingSpinner } from './Spinner';
 import { TermsModal } from './TermsModal';
@@ -53,40 +51,46 @@ const reasonLines = (reasons: string[]) => [
 ];
 
 /**
- * The frame of a status step, with the glow behind the content.
- * @param props.bare - the Dialog around the shell has the role and the name, so the shell gives
- * neither; Escape still calls `onDismiss`.
+ * A status step: one dialog, named by its title, with the glow behind the content. Escape calls
+ * `onDismiss` wherever focus is; a press on the backdrop does nothing.
  */
 function StatusShell({
   labelledBy,
   describedBy,
   role = 'dialog',
-  bare,
   busy,
   onDismiss,
   children,
 }: {
+  labelledBy: string;
+  describedBy?: string;
+  role?: 'dialog' | 'alertdialog';
   busy?: boolean;
   onDismiss: () => void;
   children: React.ReactNode;
-} & (
-  | { bare: true; labelledBy?: never; describedBy?: never; role?: never }
-  | { bare?: false; labelledBy: string; describedBy?: string; role?: 'dialog' | 'alertdialog' }
-)) {
-  const dialog = bare
-    ? {}
-    : {
-        role,
-        'aria-modal': true,
-        'aria-labelledby': labelledBy,
-        'aria-describedby': describedBy,
-      };
+}) {
+  return (
+    <Dialog
+      open
+      bare
+      role={role}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      onClose={onDismiss}
+      closeOnBackdrop={false}
+      backdropClassName={modal.statusModal}
+    >
+      <StatusFrame busy={busy}>{children}</StatusFrame>
+    </Dialog>
+  );
+}
+
+/** The padding and the glow of a status step, inside its dialog. */
+function StatusFrame({ busy, children }: { busy?: boolean; children: React.ReactNode }) {
   return (
     <div
       className={modal.statusDialog}
-      {...dialog}
       aria-busy={busy || undefined}
-      onKeyDown={event => event.key === 'Escape' && onDismiss()}
     >
       <div
         className={modal.glowLayer}
@@ -119,49 +123,44 @@ export function IneligibleModal({ reasons, onClose }: { reasons: string[]; onClo
   const titleId = useId();
   const reasonId = useId();
   return (
-    <Modal
-      className={modal.statusModal}
-      open
+    <StatusShell
+      role="alertdialog"
+      labelledBy={titleId}
+      describedBy={reasonId}
+      onDismiss={onClose}
     >
-      <StatusShell
-        role="alertdialog"
-        labelledBy={titleId}
-        describedBy={reasonId}
-        onDismiss={onClose}
-      >
-        <Close onClick={onClose} />
-        <div className={cx(modal.statusBody, styles.resultBody)}>
-          <h2
-            className={modal.modalTitle}
-            id={titleId}
-          >
-            {t('earn.not_eligible.title')}
-          </h2>
-          <p
-            className={modal.modalText}
-            id={reasonId}
-          >
-            {reasonLines(reasons).map(line => (
-              <span
-                className={styles.reasonLine}
-                key={line}
-              >
-                {line}
-              </span>
-            ))}
-          </p>
-          <Button
-            className={modal.modalCta}
-            variant="primary"
-            size="lg"
-            autoFocus
-            onClick={onClose}
-          >
-            {t('earn.not_eligible.got_it')}
-          </Button>
-        </div>
-      </StatusShell>
-    </Modal>
+      <Close onClick={onClose} />
+      <div className={cx(modal.statusBody, styles.resultBody)}>
+        <h2
+          className={modal.modalTitle}
+          id={titleId}
+        >
+          {t('earn.not_eligible.title')}
+        </h2>
+        <p
+          className={modal.modalText}
+          id={reasonId}
+        >
+          {reasonLines(reasons).map(line => (
+            <span
+              className={styles.reasonLine}
+              key={line}
+            >
+              {line}
+            </span>
+          ))}
+        </p>
+        <Button
+          className={modal.modalCta}
+          variant="primary"
+          size="lg"
+          autoFocus
+          onClick={onClose}
+        >
+          {t('earn.not_eligible.got_it')}
+        </Button>
+      </div>
+    </StatusShell>
   );
 }
 
@@ -169,72 +168,67 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
   const titleId = useId();
   const bodyId = useId();
   return (
-    <Modal
-      className={modal.statusModal}
-      open
+    <StatusShell
+      role="alertdialog"
+      labelledBy={titleId}
+      describedBy={bodyId}
+      onDismiss={onClose}
     >
-      <StatusShell
-        role="alertdialog"
-        labelledBy={titleId}
-        describedBy={bodyId}
-        onDismiss={onClose}
-      >
-        <Close onClick={onClose} />
-        <div className={cx(modal.statusBody, styles.resultBody)}>
-          <h2
-            className={modal.modalTitle}
-            id={titleId}
+      <Close onClick={onClose} />
+      <div className={cx(modal.statusBody, styles.resultBody)}>
+        <h2
+          className={modal.modalTitle}
+          id={titleId}
+        >
+          {t('earn.check_failed.title')}
+        </h2>
+        <p
+          className={modal.modalText}
+          id={bodyId}
+        >
+          {getCurrentLocale().formatMessage(
+            { id: 'earn.check_failed.body' },
+            {
+              email: (
+                <a
+                  className={styles.supportEmail}
+                  key="email"
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  onClick={event => {
+                    event.preventDefault();
+                    void analytics.track('Creator Fund Contact Support', {
+                      source: 'check_failed',
+                    });
+                    void misc.openExternal(`mailto:${SUPPORT_EMAIL}`);
+                  }}
+                >
+                  {SUPPORT_EMAIL}
+                </a>
+              ),
+            },
+          )}
+        </p>
+        <div className={cx(modal.actions, styles.ctaPair)}>
+          <Button
+            className={modal.modalCta}
+            variant="secondary"
+            size="lg"
+            onClick={onClose}
           >
-            {t('earn.check_failed.title')}
-          </h2>
-          <p
-            className={modal.modalText}
-            id={bodyId}
+            {t('earn.close')}
+          </Button>
+          <Button
+            className={modal.modalCta}
+            variant="primary"
+            size="lg"
+            autoFocus
+            onClick={onRetry}
           >
-            {getCurrentLocale().formatMessage(
-              { id: 'earn.check_failed.body' },
-              {
-                email: (
-                  <a
-                    className={styles.supportEmail}
-                    key="email"
-                    href={`mailto:${SUPPORT_EMAIL}`}
-                    onClick={event => {
-                      event.preventDefault();
-                      void analytics.track('Creator Fund Contact Support', {
-                        source: 'check_failed',
-                      });
-                      void misc.openExternal(`mailto:${SUPPORT_EMAIL}`);
-                    }}
-                  >
-                    {SUPPORT_EMAIL}
-                  </a>
-                ),
-              },
-            )}
-          </p>
-          <div className={cx(modal.actions, styles.ctaPair)}>
-            <Button
-              className={modal.modalCta}
-              variant="secondary"
-              size="lg"
-              onClick={onClose}
-            >
-              {t('earn.close')}
-            </Button>
-            <Button
-              className={modal.modalCta}
-              variant="primary"
-              size="lg"
-              autoFocus
-              onClick={onRetry}
-            >
-              {t('earn.errors.retry')}
-            </Button>
-          </div>
+            {t('earn.errors.retry')}
+          </Button>
         </div>
-      </StatusShell>
-    </Modal>
+      </div>
+    </StatusShell>
   );
 }
 
@@ -348,32 +342,27 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
   switch (step.name) {
     case 'checking':
       return (
-        <Modal
-          className={modal.statusModal}
-          open
+        <StatusShell
+          labelledBy={titleId}
+          busy
+          onDismiss={cancel}
         >
-          <StatusShell
-            labelledBy={titleId}
-            busy
-            onDismiss={cancel}
-          >
-            <Close onClick={cancel} />
-            <div className={cx(modal.statusBody, styles.checkingBody)}>
-              <CheckingSpinner label={t('earn.checking.progress_label')} />
-              <h2
-                className={modal.modalTitle}
-                id={titleId}
-              >
-                {t('earn.checking.title')}
-              </h2>
-              <p className={modal.modalText}>
-                {t('earn.checking.body_1')}
-                <br />
-                {t('earn.checking.body_2')}
-              </p>
-            </div>
-          </StatusShell>
-        </Modal>
+          <Close onClick={cancel} />
+          <div className={cx(modal.statusBody, styles.checkingBody)}>
+            <CheckingSpinner label={t('earn.checking.progress_label')} />
+            <h2
+              className={modal.modalTitle}
+              id={titleId}
+            >
+              {t('earn.checking.title')}
+            </h2>
+            <p className={modal.modalText}>
+              {t('earn.checking.body_1')}
+              <br />
+              {t('earn.checking.body_2')}
+            </p>
+          </div>
+        </StatusShell>
       );
     case 'check_failed':
       return (
@@ -399,24 +388,19 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
       );
     case 'contact':
       return (
-        <Modal
-          className={modal.statusModal}
-          open
+        <StatusShell
+          labelledBy={titleId}
+          onDismiss={cancel}
         >
-          <StatusShell
-            labelledBy={titleId}
-            onDismiss={cancel}
-          >
-            <Close onClick={cancel} />
-            <ContactInfoForm
-              titleId={titleId}
-              initialValues={draft}
-              onSubmit={submit}
-              onCancel={cancel}
-              {...submission}
-            />
-          </StatusShell>
-        </Modal>
+          <Close onClick={cancel} />
+          <ContactInfoForm
+            titleId={titleId}
+            initialValues={draft}
+            onSubmit={submit}
+            onCancel={cancel}
+            {...submission}
+          />
+        </StatusShell>
       );
     case 'welcome':
       return (
@@ -424,6 +408,8 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
           bare
           open
           aria-labelledby={titleId}
+          onClose={finish}
+          closeOnBackdrop={false}
           className={modal.welcomeFrame}
           backdropClassName={modal.welcomeRoot}
         >
@@ -434,10 +420,7 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
             aria-hidden
           />
           <div className={modal.welcomePaper}>
-            <StatusShell
-              bare
-              onDismiss={finish}
-            >
+            <StatusFrame>
               <Close onClick={finish} />
               <div className={cx(modal.statusBody, styles.resultBody)}>
                 <h2
@@ -457,7 +440,7 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
                   {t('earn.welcome.lets_go')}
                 </Button>
               </div>
-            </StatusShell>
+            </StatusFrame>
           </div>
         </Dialog>
       );

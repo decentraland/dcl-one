@@ -21,7 +21,8 @@ function Dropdown(props: Props) {
     e.stopPropagation();
     e.currentTarget.focus();
     resetArrowKeyed();
-    setAnchorEl(e.currentTarget);
+    const target = e.currentTarget;
+    setAnchorEl(current => (current ? null : target));
   }, []);
 
   const handleSelect = useCallback((e: MouseEvent<HTMLElement>, option: Option) => {
@@ -52,6 +53,9 @@ function Dropdown(props: Props) {
         placement="bottom-end"
         offset={MENU_GAP}
         aria-label={label}
+        // The press that closes the menu does not reach the card or the row under it. The page keeps its scrollbar.
+        modal
+        lockScroll={false}
       >
         {options.flatMap(option => [
           <MenuItem

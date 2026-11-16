@@ -615,6 +615,7 @@
         "code_editor": {
           "label": "Editor de código preferido",
           "choose_device": "Elegir desde tu dispositivo...",
+          "remove": "Quitar {name}",
           "errors": {
             "load": "Error al cargar los editores de código",
             "set": "Error al establecer el editor por defecto",

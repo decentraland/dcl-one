@@ -44,6 +44,8 @@ export type DialogProps = {
   "aria-label"?: string;
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
+  /** Goes on the dialog element, for tests. */
+  "data-testid"?: string;
   children?: ReactNode;
 };
 
@@ -66,7 +68,7 @@ export default function Dialog({
   closeIcon = cross, backIcon = chevron, closeLabel = "close", backLabel = "back",
   closeOnBackdrop = true, closeOnEscape = true, initialFocus, lockScroll = true, role = "dialog", bare = false,
   className, backdropClassName, children,
-  "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy,
+  "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, "aria-describedby": ariaDescribedBy, "data-testid": testId,
 }: DialogProps) {
   const paper = useRef<HTMLDivElement | null>(null);
   const pressedBackdrop = useRef(false);
@@ -127,7 +129,7 @@ export default function Dialog({
       <div
         ref={paper} role={role} aria-modal="true" tabIndex={-1}
         aria-label={ariaLabel} aria-labelledby={ariaLabelledBy ?? (title !== undefined && !bare && !ariaLabel ? titleId : undefined)}
-        aria-describedby={ariaDescribedBy}
+        aria-describedby={ariaDescribedBy} data-testid={testId}
         className={styles.paper + (className ? " " + className : "")} style={style}
         data-size={size} data-bare={bare || undefined}
         onKeyDown={onKeyDown}

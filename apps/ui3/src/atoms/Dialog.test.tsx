@@ -45,6 +45,12 @@ async function openDialog(props: HarnessProps = {}) {
 }
 
 describe("Dialog", () => {
+  test("the test id of the caller is on the dialog", async () => {
+    await openDialog({ "data-testid": "settings-dialog" });
+
+    expect(screen.getByTestId("settings-dialog")).toBe(dialog());
+  });
+
   test("a closed dialog renders nothing", () => {
     render(<Harness />);
 

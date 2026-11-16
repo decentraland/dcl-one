@@ -69,6 +69,22 @@ describe('CreateButton', () => {
     });
   });
 
+  describe('when the menu half is clicked twice', () => {
+    it('should open the menu, then close it', () => {
+      stubNarrow(false);
+      renderButton();
+      const menuHalf = screen.getByRole('button', { name: 'Create options' });
+
+      fireEvent.click(menuHalf);
+      expect(screen.getByRole('menu')).toBeTruthy();
+      expect(menuHalf.getAttribute('aria-expanded')).toBe('true');
+
+      fireEvent.click(menuHalf);
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(menuHalf.getAttribute('aria-expanded')).toBeNull();
+    });
+  });
+
   describe('when the window is wide', () => {
     it('should show no tooltip on the label half', async () => {
       stubNarrow(false);

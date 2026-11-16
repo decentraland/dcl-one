@@ -51,6 +51,35 @@ vi.mock('../Modals', async importOriginal => ({
     className?: string;
   }) => (open ? <div className={className}>{children}</div> : null),
 }));
+// The dialogs of the join steps render in the page, as the modals above, so the page queries reach them.
+vi.mock('@ui/atoms/Dialog', () => ({
+  default: ({
+    open,
+    children,
+    role = 'dialog',
+    onClose,
+    'aria-labelledby': labelledBy,
+    'aria-describedby': describedBy,
+  }: {
+    open: boolean;
+    children: React.ReactNode;
+    role?: string;
+    onClose?: (reason: 'escape') => void;
+    'aria-labelledby'?: string;
+    'aria-describedby'?: string;
+  }) =>
+    open ? (
+      <div
+        role={role}
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        onKeyDown={event => event.key === 'Escape' && onClose?.('escape')}
+      >
+        {children}
+      </div>
+    ) : null,
+}));
 
 const TERMS = {
   version: 2,

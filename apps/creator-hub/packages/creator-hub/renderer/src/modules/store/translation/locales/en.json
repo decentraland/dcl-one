@@ -615,6 +615,7 @@
         "code_editor": {
           "label": "Code editor of choice",
           "choose_device": "Choose from your device...",
+          "remove": "Remove {name}",
           "errors": {
             "load": "Failed to load code editors",
             "set": "Failed to set default editor",

@@ -21,7 +21,7 @@ export function CreateButton() {
   const [newProject, setNewProject] = useState<NewProjectPayload | undefined>();
   const iconOnly = useMatchMedia(ICON_ONLY_QUERY);
 
-  const handleOpenMenu = useCallback(() => setOpen(true), []);
+  const handleToggleMenu = useCallback(() => setOpen(current => !current), []);
   const handleCloseMenu = useCallback(() => setOpen(false), []);
 
   const handleClickNewScene = useCallback(async () => {
@@ -77,7 +77,7 @@ export function CreateButton() {
           aria-label={t('navbar.create.options')}
           aria-haspopup="menu"
           aria-expanded={open ? 'true' : undefined}
-          onClick={handleOpenMenu}
+          onClick={handleToggleMenu}
         >
           <img
             src={arrowDown}

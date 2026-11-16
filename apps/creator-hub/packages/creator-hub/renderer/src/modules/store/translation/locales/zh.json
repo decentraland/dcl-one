@@ -615,6 +615,7 @@
         "code_editor": {
           "label": "首选代码编辑器",
           "choose_device": "从设备中选择...",
+          "remove": "移除 {name}",
           "errors": {
             "load": "加载代码编辑器失败",
             "set": "设置默认编辑器失败",

@@ -189,6 +189,10 @@ export function ParcelPickerMap({
     keepInView(at);
   };
 
+  // A short drag can end a rectangle and still count as a click. That click is not a toggle: it would
+  // start from the selection before the rectangle and remove the rectangle.
+  const rectangleDone = useRef(false);
+
   const handleMouseUp = () => {
     if (drag.isSelectingParcels && drag.from && drag.to) {
       const { from, to } = drag;
@@ -200,6 +204,7 @@ export function ParcelPickerMap({
           }
         }
         onChange(next);
+        rectangleDone.current = true;
       }
     }
     setDrag({ isSelectingParcels: false, from: null, to: null });
@@ -218,7 +223,10 @@ export function ParcelPickerMap({
       onChange={({ nw, se }: Viewport) => {
         viewport.current = { nw, se };
       }}
-      onClick={(x: number, y: number) => void toggle(x, y)}
+      onClick={(x: number, y: number) => {
+        if (rectangleDone.current) rectangleDone.current = false;
+        else toggle(x, y);
+      }}
       onHover={(x: number, y: number) => {
         if (!drag.isSelectingParcels || !drag.from || !isAllowed(x, y)) return;
         // The map keeps the pointer during a drag and reports parcels beyond its edge too. The
@@ -231,9 +239,10 @@ export function ParcelPickerMap({
           setDrag(previous => ({ ...previous, isSelectingParcels: true }));
         }
       }}
-      onMouseDown={(x: number, y: number) =>
-        setDrag(previous => ({ ...previous, from: { x, y }, to: { x, y } }))
-      }
+      onMouseDown={(x: number, y: number) => {
+        rectangleDone.current = false;
+        setDrag(previous => ({ ...previous, from: { x, y }, to: { x, y } }));
+      }}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     />

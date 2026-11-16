@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TestProviders } from '../../../tests/utils/TestProviders';
 import { Dropdown } from '.';
@@ -198,6 +198,46 @@ describe('Dropdown', () => {
       expect(getComputedStyle(screen.getByRole('menuitem', { name: 'Copy URL' })).color).not.toBe(
         error,
       );
+    });
+  });
+
+  describe('when the menu is open over a card that opens on a click', () => {
+    let openCard: ReturnType<typeof vi.fn<() => void>>;
+
+    beforeEach(() => {
+      openCard = vi.fn<() => void>();
+      render(
+        <TestProviders>
+          <div onClick={openCard}>
+            <Dropdown
+              label="Options for Plaza"
+              options={[{ text: 'Duplicate', handler: () => {} }]}
+            />
+          </div>
+        </TestProviders>,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
+    });
+
+    it('should close the menu on a press outside it and keep that press from the card', () => {
+      // The layer with no paint over the page, before the surface of the menu.
+      const backdrop = screen.getByRole('menu').parentElement
+        ?.previousElementSibling as HTMLElement;
+      expect(backdrop.getAttribute('aria-hidden')).toBe('true');
+
+      fireEvent.pointerDown(backdrop);
+      fireEvent.mouseDown(backdrop);
+      fireEvent.click(backdrop);
+
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(openCard).not.toHaveBeenCalled();
+    });
+
+    it('should close the menu on a second click of the trigger', () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
+
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(openCard).not.toHaveBeenCalled();
     });
   });
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import Button from '@ui/atoms/HubButton';
 import Checkbox from '@ui/atoms/Checkbox';
+import Dialog from '@ui/atoms/Dialog';
 import IconButton from '@ui/atoms/IconButton';
 
 import { analytics } from '#preload';
@@ -9,7 +10,6 @@ import { actions } from '/@/modules/store/creatorFund';
 import { t } from '/@/modules/store/translation/utils';
 
 import MarkdownRenderer from '../Modals/AppSettings/MarkdownRenderer/MarkdownRenderer';
-import { Modal } from '../Modals';
 
 import { openMarkdownLink } from './markdownLinks';
 import { Spinner } from './Spinner';
@@ -109,12 +109,8 @@ export function TermsModal(props: TermsModalProps) {
     [variant, terms.data, onClose],
   );
 
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      if (event.key === 'Escape' && variant !== 'reaccept') decline('escape');
-    },
-    [variant, decline],
-  );
+  // Escape declines wherever focus is, as the X does; the terms to accept again stay until accepted.
+  const handleEscape = useCallback(() => decline('escape'), [decline]);
 
   const handleAccept = useCallback(() => {
     if (props.variant === 'read' || !terms.data) return;
@@ -139,17 +135,15 @@ export function TermsModal(props: TermsModalProps) {
         });
 
   return (
-    <Modal
-      className={modal.termsShell}
+    <Dialog
       open
+      bare
+      aria-labelledby={titleId}
+      onClose={variant === 'reaccept' ? undefined : handleEscape}
+      closeOnBackdrop={false}
+      backdropClassName={modal.termsShell}
     >
-      <div
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onKeyDown={handleKeyDown}
-      >
+      <div className={styles.dialog}>
         <div className={styles.titleBar}>
           <div className={styles.titleText}>
             <h2
@@ -292,6 +286,6 @@ export function TermsModal(props: TermsModalProps) {
           </div>
         </div>
       </div>
-    </Modal>
+    </Dialog>
   );
 }

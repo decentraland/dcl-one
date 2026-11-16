@@ -1,8 +1,10 @@
 .statusModal.statusModal {
   --dialog-scrim: var(--black-80);
+  animation: none;
 }
 
-.statusModal.statusModal > [role="dialog"] {
+/* The dialog itself, a dialog or an alert dialog. */
+.statusModal.statusModal > [aria-modal="true"] {
   position: relative;
   box-sizing: border-box;
   background-color: var(--modal);
@@ -15,10 +17,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-
-.statusModal.statusModal.statusModal.statusModal > [role="dialog"] > div {
-  padding: 0;
 }
 
 /* As today: the overlay colour fades in and the dialog is there at once. */
@@ -101,7 +99,9 @@
   background: var(--primary);
 }
 
-.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(.btn--primary):hover {
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .btn--primary
+  ):hover {
   background: var(--primary-hover);
 }
 
@@ -109,7 +109,9 @@
   background: var(--palette-whiteTransparent-subtle);
 }
 
-.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(.btn--secondary):hover {
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .btn--secondary
+  ):hover {
   background: var(--palette-whiteTransparent-soft);
 }
 
@@ -204,9 +206,10 @@
 
 .termsShell.termsShell {
   --dialog-scrim: var(--black-80);
+  animation: none;
 }
 
-.termsShell.termsShell > [role="dialog"] {
+.termsShell.termsShell > [aria-modal="true"] {
   position: relative;
   box-sizing: border-box;
   background-color: var(--modal);
@@ -218,14 +221,6 @@
   height: 700px;
   max-height: 90vh;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.termsShell.termsShell.termsShell.termsShell > [role="dialog"] > div {
-  padding: 0;
-  flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }

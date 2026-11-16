@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import LandMap from '@ui/shop/land/LandMap';
 import type { MapLayer, MapViewport } from '@ui/shop/land/mapView';
 import type { Tiles } from '@ui/shop/land/tiles';
@@ -86,47 +86,66 @@ export function Atlas({
   // Parcel 0,0 is the middle of the map when the caller gives no place, as in the former Atlas.
   const center = useMemo(() => ({ x: x ?? 0, y: y ?? 0 }), [x, y]);
 
-  const zoomOf = (parcelPx: number) => (parcelPx * GRID_PARCELS) / height;
+  // The map reads its first zoom once: it opens after the width of the frame is known.
+  const frame = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = frame.current;
+    if (!el) return;
+    const measure = () => setWidth(el.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // A frame with no width yet (no layout) uses the height.
+  const side = width ? Math.min(width, height) : height;
+
+  const zoomOf = (parcelPx: number) => (parcelPx * GRID_PARCELS) / side;
 
   // One press changes a parcel by a tenth of its start size, in each direction.
   const zoomStep = useCallback(
     (zoom: number, direction: 1 | -1) =>
-      zoom + (direction * ((PARCEL_PX * GRID_PARCELS) / height)) / 10,
-    [height],
+      zoom + (direction * ((PARCEL_PX * GRID_PARCELS) / side)) / 10,
+    [side],
   );
 
   const pointer = isDraggable ? '' : onClick ? styles.clickable : styles.fixed;
 
   return (
     <div
+      ref={frame}
       className={styles.frame}
       style={{ height }}
     >
-      <LandMap
-        className={`${styles.map} ${pointer}`}
-        tiles={mapTiles}
-        surface="tiles"
-        paintLayers={paintLayers}
-        center={center}
-        initialZoom={zoomOf(PARCEL_PX)}
-        minZoom={zoomOf(MIN_PARCEL_PX)}
-        maxZoom={zoomOf(MAX_PARCEL_PX)}
-        draggable={isDraggable}
-        dragWithAnyButton
-        wheelZoom="always"
-        withZoomControls={withZoomControls}
-        zoomButtons={ZOOM_BUTTONS}
-        zoomStep={zoomStep}
-        paintInTask
-        overscan={1}
-        withPopup={false}
-        label={label}
-        onParcelHover={onHover}
-        onParcelClick={onClick}
-        onParcelDown={onMouseDown}
-        onParcelUp={onMouseUp}
-        onViewChange={onChange}
-      />
+      {width === null ? null : (
+        <LandMap
+          className={`${styles.map} ${pointer}`}
+          tiles={mapTiles}
+          surface="tiles"
+          paintLayers={paintLayers}
+          center={center}
+          initialZoom={zoomOf(PARCEL_PX)}
+          minZoom={zoomOf(MIN_PARCEL_PX)}
+          maxZoom={zoomOf(MAX_PARCEL_PX)}
+          draggable={isDraggable}
+          dragWithAnyButton
+          wheelZoom="always"
+          withZoomControls={withZoomControls}
+          zoomButtons={ZOOM_BUTTONS}
+          zoomStep={zoomStep}
+          paintInTask
+          overscan={1}
+          withPopup={false}
+          label={label}
+          onParcelHover={onHover}
+          onParcelClick={onClick}
+          onParcelDown={onMouseDown}
+          onParcelUp={onMouseUp}
+          onViewChange={onChange}
+        />
+      )}
     </div>
   );
 }

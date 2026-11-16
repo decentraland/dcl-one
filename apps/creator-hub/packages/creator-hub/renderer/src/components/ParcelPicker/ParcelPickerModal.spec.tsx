@@ -213,6 +213,35 @@ describe('ParcelPickerModal', () => {
       expect(confirmed(onConfirm)).toEqual(['0,0', '1,0', '3,0']);
     });
 
+    it('should keep a rectangle of a short drag, which the map also reports as a click', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -5, y: 6 }, se: { x: 4, y: -5 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(1, 0));
+      // The map reports the release and the click in the same task.
+      act(() => {
+        atlas.onMouseUp(1, 0);
+        atlas.onClick(1, 0);
+      });
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0']);
+    });
+
+    it('should toggle on the next click after a rectangle', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -5, y: 6 }, se: { x: 4, y: -5 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(1, 0));
+      act(() => atlas.onMouseUp(1, 0));
+      dragFrom(3, 0);
+      act(() => {
+        atlas.onMouseUp(3, 0);
+        atlas.onClick(3, 0);
+      });
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0', '3,0']);
+    });
+
     it('should end the rectangle at the last parcel in view when the pointer leaves the map', () => {
       const { onConfirm } = renderModal();
       act(() => atlas.onChange({ nw: { x: -1, y: 1 }, se: { x: 1, y: -1 } }));

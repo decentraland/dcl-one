@@ -15,18 +15,6 @@ import { createTestStore } from '../../../tests/utils/testStore';
 import { TermsModal } from './TermsModal';
 
 vi.mock('/@/lib/creatorFundApi', () => ({ getTerms: vi.fn() }));
-vi.mock('../Modals', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Modal: ({
-    open,
-    children,
-    className,
-  }: {
-    open: boolean;
-    children: React.ReactNode;
-    className?: string;
-  }) => (open ? <div className={className}>{children}</div> : null),
-}));
 
 const TERMS = {
   version: 1,
@@ -189,6 +177,36 @@ describe('TermsModal', () => {
       fireEvent.keyDown(region, { key: 'Escape' });
 
       expect(onClose).toHaveBeenCalled();
+    });
+
+    it('should close on Escape before focus moves into it', async () => {
+      const onClose = vi.fn();
+      renderModal(
+        <TermsModal
+          variant="read"
+          onClose={onClose}
+        />,
+      );
+      await screen.findByRole('region', { name: 'Program Terms' });
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('should be one modal dialog, named by its title', async () => {
+      renderModal(
+        <TermsModal
+          variant="read"
+          onClose={vi.fn()}
+        />,
+      );
+      await screen.findByRole('heading', { name: TERMS.title });
+
+      const dialogs = screen.getAllByRole('dialog');
+      expect(dialogs).toHaveLength(1);
+      expect(screen.getByRole('dialog', { name: TERMS.title })).toBe(dialogs[0]);
+      expect(dialogs[0].getAttribute('aria-modal')).toBe('true');
     });
   });
 

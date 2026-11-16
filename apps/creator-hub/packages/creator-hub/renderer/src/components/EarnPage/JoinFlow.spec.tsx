@@ -17,18 +17,6 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getEligibility: vi.fn(),
   putEnrollment: vi.fn(),
 }));
-vi.mock('../Modals', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Modal: ({
-    open,
-    children,
-    className,
-  }: {
-    open: boolean;
-    children: React.ReactNode;
-    className?: string;
-  }) => (open ? <div className={className}>{children}</div> : null),
-}));
 
 const TERMS = {
   version: 1,
@@ -162,6 +150,15 @@ describe('JoinFlow', () => {
       expect(api.getEligibility).toHaveBeenCalledTimes(2);
     });
 
+    it('should be one alert dialog, named by its title, with no other dialog around it', async () => {
+      renderFlow();
+      const dialog = await screen.findByRole('alertdialog', { name: CHECK_FAILED });
+
+      expect(screen.getAllByRole('alertdialog')).toEqual([dialog]);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+    });
+
     it('should open the terms when the retried check passes', async () => {
       renderFlow();
       await screen.findByRole('alertdialog', { name: CHECK_FAILED });
@@ -176,6 +173,7 @@ describe('JoinFlow', () => {
       ['CLOSE', () => fireEvent.click(screen.getByText('Close'))],
       ['the X', () => fireEvent.click(screen.getByLabelText('Close'))],
       ['Escape', () => fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' })],
+      ['Escape before focus moves in', () => fireEvent.keyDown(document.body, { key: 'Escape' })],
     ])('should exit as cancelled from %s', async (_, dismiss) => {
       const { onExit } = renderFlow();
       await screen.findByRole('alertdialog', { name: CHECK_FAILED });
