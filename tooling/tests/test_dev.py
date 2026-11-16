@@ -189,8 +189,8 @@ class DevTest(unittest.TestCase):
         cli('wait', '--postgres-only', '--timeout', '30')
         self.assertEqual(dev.sql(config, 'SELECT value FROM preserved', 'scratch_fixture'), 'saved')
 
-    def postgres_argv(self, disposable_env):
-        """The PostgreSQL argv of a start with initdb and the version check stubbed."""
+    def postgres_argv(self, disposable_env, stderr=None):
+        """The PostgreSQL argv of a start with initdb and the version check stubbed; output goes to stderr if given."""
         def fake_run(argv, **kwargs):
             if argv[0] == 'initdb':
                 Path(argv[2]).mkdir(parents=True)
@@ -200,7 +200,8 @@ class DevTest(unittest.TestCase):
         if disposable_env is not None:
             env['FOUNDATION_DEV_DISPOSABLE_POSTGRES'] = disposable_env
         with patch.dict(os.environ, env, clear=True), patch.object(dev, 'run', side_effect=fake_run), \
-                patch.object(dev.os, 'execvpe') as execvpe:
+                patch.object(dev.os, 'execvpe') as execvpe, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr or io.StringIO()):
             dev.postgres(self.config)
         program, argv, _ = execvpe.call_args.args
         self.assertEqual(program, 'postgres')
@@ -222,8 +223,10 @@ class DevTest(unittest.TestCase):
 
     def test_existing_cluster_keeps_durability_when_the_disposable_flag_is_set(self):
         self.postgres_argv(None)
-        argv = self.postgres_argv('1')
+        stderr = io.StringIO()
+        argv = self.postgres_argv('1', stderr)
         self.assertNotIn('fsync=off', argv, 'a cluster created without the flag may hold real data')
+        self.assertIn('FOUNDATION_DEV_DISPOSABLE_POSTGRES ignored', stderr.getvalue())
 
     def test_disposable_flag_needs_an_exact_value(self):
         for value in ('', '0', 'true', 'yes'):
@@ -237,21 +240,29 @@ class DevTest(unittest.TestCase):
         data = self.state / 'pg'
         subprocess.run(['initdb', '-D', data, '-U', 'foundation', '--auth=trust'], check=True,
                        capture_output=True)
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            port = sock.getsockname()[1]
-        argv = ['postgres', '-D', str(data), '-h', '127.0.0.1', '-p', str(port), '-k', '']
-        for setting in dev.DISPOSABLE_POSTGRES_SETTINGS:
-            argv += ['-c', setting]
-        server = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        self.addCleanup(server.wait, 30)
-        self.addCleanup(server.send_signal, signal.SIGINT)
-        query = ['psql', '-X', '-Atq', '-h', '127.0.0.1', '-p', str(port), '-U', 'foundation', '-d', 'postgres']
-        deadline = time.monotonic() + 30
-        while subprocess.run([*query, '-c', 'SELECT 1'], capture_output=True).returncode != 0:
-            self.assertIsNone(server.poll(), 'PostgreSQL exited at startup')
-            self.assertLess(time.monotonic(), deadline, 'PostgreSQL did not start')
-            time.sleep(0.2)
+        log = self.state / 'pg.log'
+        # The free port is released before PostgreSQL binds it, so another process can take it in between;
+        # one retry on a new port covers that race.
+        for attempt in range(2):
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1', 0))
+                port = sock.getsockname()[1]
+            argv = ['postgres', '-D', str(data), '-h', '127.0.0.1', '-p', str(port), '-k', '']
+            for setting in dev.DISPOSABLE_POSTGRES_SETTINGS:
+                argv += ['-c', setting]
+            with log.open('w') as stderr:
+                server = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=stderr)
+            self.addCleanup(server.wait, 30)
+            self.addCleanup(server.send_signal, signal.SIGINT)
+            query = ['psql', '-X', '-Atq', '-h', '127.0.0.1', '-p', str(port), '-U', 'foundation', '-d', 'postgres']
+            deadline = time.monotonic() + 30
+            while server.poll() is None and subprocess.run([*query, '-c', 'SELECT 1'], capture_output=True).returncode != 0:
+                self.assertLess(time.monotonic(), deadline, 'PostgreSQL did not start:\n' + log.read_text())
+                time.sleep(0.2)
+            if server.poll() is None:
+                break
+            if attempt or 'already in use' not in log.read_text():
+                self.fail('PostgreSQL exited at startup:\n' + log.read_text())
         shown = subprocess.run([*query, '-c', 'SELECT name, setting FROM pg_settings WHERE name IN '
                                 "('fsync','synchronous_commit','full_page_writes','wal_level') ORDER BY name"],
                                check=True, capture_output=True, text=True).stdout.split()
