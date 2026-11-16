@@ -636,6 +636,10 @@ pub struct Leases {
     /// session past the keepalive: the next call to take the session drops it,
     /// so no lock taken on it survives the leases this process forgot.
     conn_stale: std::sync::atomic::AtomicBool,
+    /// Runs once between the keeper forgetting the leases of a busy session
+    /// and marking it stale, so a test can take a lease in that window.
+    #[cfg(test)]
+    between_lose_and_mark: Mutex<Option<std::pin::Pin<Box<dyn Future<Output = ()> + Send>>>>,
     held: Mutex<HashMap<String, CancellationToken>>,
     pending_release: Mutex<Vec<String>>,
 }
@@ -676,6 +680,8 @@ impl Leases {
             settings,
             conn: tokio::sync::Mutex::new(None),
             conn_stale: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            between_lose_and_mark: Mutex::new(None),
             held: Mutex::new(HashMap::new()),
             pending_release: Mutex::new(Vec::new()),
         }
@@ -822,6 +828,12 @@ impl Leases {
             // between is on the session the mark drops. A session that held
             // no lease (one still connecting) is kept.
             if self.lose_all("the lease connection is busy past the keepalive") {
+                #[cfg(test)]
+                let hook = self.between_lose_and_mark.lock().take();
+                #[cfg(test)]
+                if let Some(hook) = hook {
+                    hook.await;
+                }
                 self.conn_stale
                     .store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -1618,6 +1630,71 @@ mod lease_tests {
         held.release().await;
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_lease_taken_while_the_keeper_gives_a_busy_session_up_leaves_no_lock_behind() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let settings = settings("busy-race");
+        let leases = Arc::new(Leases::new(pool.clone(), settings.clone()));
+        let held = leases.try_acquire("a").await.unwrap().expect("free lease");
+
+        // A call holds the session past the keepalive.
+        let (free_tx, free_rx) = tokio::sync::oneshot::channel::<()>();
+        let (busy_tx, busy_rx) = tokio::sync::oneshot::channel::<()>();
+        let holder = tokio::spawn({
+            let leases = leases.clone();
+            async move {
+                let _busy = leases.conn.lock().await;
+                busy_tx.send(()).unwrap();
+                let _ = free_rx.await;
+            }
+        });
+        busy_rx.await.unwrap();
+        // Between the keeper's two steps, the call returns and a job takes "x".
+        let (x_tx, x_rx) = tokio::sync::oneshot::channel();
+        *leases.between_lose_and_mark.lock() = Some(Box::pin({
+            let leases = leases.clone();
+            async move {
+                free_tx.send(()).unwrap();
+                holder.await.unwrap();
+                let x = leases.try_acquire("x").await.unwrap().expect("free lease");
+                let _ = x_tx.send(x);
+            }
+        }));
+        leases.keepalive_once().await;
+        assert!(held.lost().is_cancelled());
+        let x = x_rx.await.unwrap();
+
+        // The next call on the session drops it with "x" on it.
+        leases.backend_pid().await;
+        assert!(
+            x.lost().is_cancelled(),
+            "the lease on the dropped session is lost"
+        );
+        drop(x);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let free: bool = sqlx::query_scalar(
+                "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) \
+                 AND pg_advisory_unlock(hashtext($1), hashtext($2))",
+            )
+            .bind(&settings.namespace)
+            .bind("x")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if free {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the lock on \"x\" outlived its lease"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// A TCP relay to Postgres that can go silent: once frozen it keeps both
