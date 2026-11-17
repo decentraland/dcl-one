@@ -490,8 +490,6 @@ pub struct State {
     pub world_manifest: world_manifest::WorldManifestState,
     pub posters: posters::PosterState,
     pub opensea: opensea::Runtime,
-    /// The `/auth-api` sign-in relay's requests and identities (process state).
-    pub auth_api: auth_api::AuthApiState,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
     /// The onboarding checkpoints (process state), shared with the Segment
@@ -537,7 +535,6 @@ impl State {
             world_manifest: world_manifest::WorldManifestState::default(),
             posters: posters::PosterState::default(),
             opensea: opensea::Runtime::default(),
-            auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
             onboarding: Arc::default(),
             registry_denylist: Default::default(),
@@ -811,4 +808,15 @@ pub(crate) mod tests_support {
         super::tests::node_without_db_state(super::Settings::for_tests(super::Sources::defaults()))
             .await
     }
+
+    /// A state over `pool` (the auth-api DB tests; one per replica).
+    pub async fn state_on_pool(pool: sqlx::PgPool) -> super::Shared {
+        super::tests::node_on_pool_state(
+            super::Settings::for_tests(super::Sources::defaults()),
+            pool,
+        )
+        .await
+    }
+
+    pub(crate) use super::tests::{ScratchDb, scratch_database};
 }

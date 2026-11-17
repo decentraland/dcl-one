@@ -1900,6 +1900,67 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Auth API relay state workload
+
+`/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
+relay: a client posts a signing request, a wallet page recovers it by id and
+posts the outcome, and the client polls for it; a signed identity is parked
+for one pickup by a device. The gateway spreads `/auth-api` across the API
+replicas round-robin without affinity, so the state lives in three
+`explore_api` tables (`schemas/11_explore_api.sql`) every replica reads and
+writes through the explore pool, as the upstream auth server keeps it in Redis.
+
+Workload: a sign-in is one create, one or two recover reads, a validation mark
+at most, one outcome and a poll about once a second until the outcome lands;
+an identity is one create and one pickup. Rows are small (a challenge of a
+few hundred bytes; an outcome or identity of 1-2 KB with its auth chain) and
+short-lived. The caps bound the live set: at most 10,000 undelivered
+unexpired requests (100 per creating network) and 10,000 unexpired
+identities (100 per network). No production rate is measured.
+
+- `auth_requests`: one row per request, keyed by its UUID. `status` moves
+  only forward, `pending` -> `signed` -> `fulfilled`; `outcome` is set exactly
+  while it is `signed` (a `CHECK`). The outcome is stored by
+  `UPDATE ... WHERE status = 'pending'`, so of two answers the second finds it
+  signed (400). It is delivered once: the poll's `UPDATE ... FROM (SELECT ...
+  WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
+  clears `outcome`, `params` and `challenge`, so a concurrent poller on any
+  replica waits on the row, finds it fulfilled and answers 410. A request
+  expires 5 minutes after its creation; the read that finds it expired
+  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+- `auth_identities`: one row per parked identity, keyed by its UUID, holding
+  the identity document with its ephemeral private key for at most an hour.
+  The pickup consumes it with `DELETE ... RETURNING` in the transaction that
+  writes its tombstone, so exactly one pickup gets it; a concurrent one waits
+  on the row, finds it gone and reads the tombstone.
+- `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
+  `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
+  operator's revoke), for the 404 bodies, kept 14 days and at most 50,000
+  rows (a create past that stores none).
+
+Caps: a create takes `pg_advisory_xact_lock` on one key per table
+(`hashtextextended('explore_api.auth_requests:admission', 0)` and the
+identities' twin), counts the live rows and those of its network in one pass
+and inserts in the same transaction, so concurrent creates on every replica
+admit one at a time and never overshoot. A full request table first drops
+requests past their grace, then the oldest delivered ones, just enough to
+admit one more. The count scans the table, bounded by the caps to about
+10,000 rows; sign-in creates are rare enough that serializing them on the
+lock costs nothing measurable.
+
+Expiry compares the stored instant with the handling replica's clock, so
+replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
+second. The periodic `auth-api-identity-sweep` job runs on every replica
+every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
+grace, identities past their hour, tombstones past 14 days), so replicas
+sweeping at once delete each row once. The expiry indexes
+(`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
+`auth_identity_tombstones_created_idx`) serve those deletes; every other read
+and write is by primary key. Nothing references these rows and they
+reference nothing: no FK. The bootstrap defines the tables; an existing
+database gains them from the object pass, so no step exists. A restart of
+every replica keeps the relay's state.
+
 ## Place removal feed
 
 `explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox

@@ -80,3 +80,53 @@ CREATE TABLE explore_api.map_grid (
     body_gzip bytea NOT NULL,
     fetched_at timestamp without time zone NOT NULL
 );
+
+-- /auth-api, the sign-in relay (DATABASE.md "Auth API relay state workload"):
+-- short-lived rows every API replica reads and writes, so a request created
+-- on one replica is recovered, answered and polled on any other. A request
+-- lives 5 minutes plus a 5-minute grace in which it answers 410; status
+-- moves pending -> signed (the outcome is stored) -> fulfilled (delivered
+-- once: the outcome, params and challenge are cleared).
+CREATE TABLE explore_api.auth_requests (
+    request_id text PRIMARY KEY,
+    method text NOT NULL,
+    params json NOT NULL,
+    sender text,
+    code smallint NOT NULL CHECK (code BETWEEN 0 AND 99),
+    challenge text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    expiration timestamp without time zone NOT NULL,
+    requires_validation boolean NOT NULL DEFAULT false,
+    status text NOT NULL CHECK (status IN ('pending', 'signed', 'fulfilled')),
+    outcome json,
+    -- The creating network's key, for the per-network pending cap.
+    source text,
+    CHECK ((status = 'signed') = (outcome IS NOT NULL))
+);
+
+CREATE INDEX auth_requests_expiration_idx ON explore_api.auth_requests (expiration);
+
+-- A signed identity parked for one pickup within an hour; the pickup deletes
+-- the row. It holds an ephemeral private key: never copied, logged or kept
+-- past its pickup or expiry.
+CREATE TABLE explore_api.auth_identities (
+    identity_id text PRIMARY KEY,
+    identity json NOT NULL,
+    ip_address text NOT NULL,
+    source text,
+    is_mobile boolean NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    expiration timestamp without time zone NOT NULL
+);
+
+CREATE INDEX auth_identities_expiration_idx ON explore_api.auth_identities (expiration);
+
+-- Why an identity is gone, kept 14 days for the 404 bodies: NULL while it is
+-- parked or once it was evicted (swept unread or revoked by an operator).
+CREATE TABLE explore_api.auth_identity_tombstones (
+    identity_id text PRIMARY KEY,
+    created_at timestamp without time zone NOT NULL,
+    deletion_reason text CHECK (deletion_reason IN ('consumed', 'expired', 'ip_mismatch'))
+);
+
+CREATE INDEX auth_identity_tombstones_created_idx ON explore_api.auth_identity_tombstones (created_at);

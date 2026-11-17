@@ -366,7 +366,12 @@ fn lazy_pool() -> PgPool {
 /// A node with no database behind it: everything the routes answer from
 /// memory (the realm doc, the registry reader, the embedded flags).
 async fn node_without_db(settings: Settings) -> Node {
-    let pool = lazy_pool();
+    node_on_pool(settings, lazy_pool()).await
+}
+
+/// A node over `pool` without `State::new`'s mirror loads: the routes that
+/// keep their own rows (the auth-api relay) on a scratch database.
+async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
     let (content, tmp) = content_state(pool.clone()).await;
     let state = Arc::new(State {
         settings,
@@ -383,7 +388,6 @@ async fn node_without_db(settings: Settings) -> Node {
         world_manifest: world_manifest::WorldManifestState::default(),
         posters: posters::PosterState::default(),
         opensea: opensea::Runtime::default(),
-        auth_api: auth_api::AuthApiState::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
         onboarding: Arc::default(),
         registry_denylist: Default::default(),
@@ -394,7 +398,12 @@ async fn node_without_db(settings: Settings) -> Node {
 
 /// The state alone, its temporary storage leaked for the test's lifetime.
 pub(crate) async fn node_without_db_state(settings: Settings) -> Shared {
-    let node = node_without_db(settings).await;
+    node_on_pool_state(settings, lazy_pool()).await
+}
+
+/// [`node_on_pool`]'s state alone, its temporary storage leaked.
+pub(crate) async fn node_on_pool_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_on_pool(settings, pool).await;
     let state = node.state.clone();
     std::mem::forget(node);
     state
@@ -409,13 +418,13 @@ async fn node_with_db(settings: Settings, pool: PgPool) -> Node {
     Node { state, _tmp: tmp }
 }
 
-struct ScratchDb {
-    pool: PgPool,
+pub(crate) struct ScratchDb {
+    pub(crate) pool: PgPool,
     admin: PgPool,
     name: String,
 }
 
-async fn scratch_database() -> Option<ScratchDb> {
+pub(crate) async fn scratch_database() -> Option<ScratchDb> {
     let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
@@ -443,7 +452,18 @@ async fn scratch_database() -> Option<ScratchDb> {
 }
 
 impl ScratchDb {
-    async fn teardown(self) {
+    /// Another pool on the same database, as a second replica holds.
+    pub(crate) async fn second_pool(&self) -> PgPool {
+        let url = std::env::var("CATALYST_TEST_DATABASE_URL").unwrap();
+        let base: PgConnectOptions = url.parse().unwrap();
+        PgPoolOptions::new()
+            .max_connections(6)
+            .connect_with(base.database(&self.name).options([("TimeZone", "UTC")]))
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn teardown(self) {
         self.pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{}\" WITH (FORCE)",
