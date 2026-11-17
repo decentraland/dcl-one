@@ -216,7 +216,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         self.next_transport_id += 1;
         self.register_transport(id, transport.clone());
         let events = self.server_events_sender.clone();
-        tokio::spawn(async move {
+        crate::task::spawn(async move {
             if let Err(error) = Self::announce_transport(events, id, transport).await {
                 error!(
                     "> RpcServer > Error on attaching transport to the server in order to receive message from it: {error:?}"
@@ -250,7 +250,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                             error!(
                                                 "> RpcServer > Server External Error {server_external_error:?}"
                                             );
-                                            tokio::spawn(async move {
+                                            crate::task::spawn(async move {
                                                 let mut remote_error: RemoteError =
                                                     server_external_error.into();
                                                 fill_remote_error(
@@ -323,12 +323,12 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             )
         };
 
-        tokio::spawn(async move {
+        crate::task::spawn(async move {
             while let Some(event) = events_receiver.recv().await {
                 match event {
                     ServerEvents::New(id, transport) => {
                         let tx_cloned = transports_notifier.clone();
-                        tokio::spawn(async move {
+                        crate::task::spawn(async move {
                             loop {
                                 match transport.receive().await {
                                     Ok(event) => {
@@ -454,7 +454,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         );
                         let msg_handler = self.messages_handler.clone();
                         // The open acknowledgement is a send, so it leaves the server loop.
-                        tokio::spawn(async move {
+                        crate::task::spawn(async move {
                             let unregister = msg_handler.clone();
                             match stream_protocol
                                 .start_processing(move || async move {
@@ -487,7 +487,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                             request.client_stream,
                         );
                         let msg_handler = self.messages_handler.clone();
-                        tokio::spawn(async move {
+                        crate::task::spawn(async move {
                             let unregister = msg_handler.clone();
                             match stream_protocol
                                 .start_processing(move || async move {
@@ -656,7 +656,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 /// Sends a reply off the server loop, like a unary response: a socket that stops admitting
 /// bytes stalls only its own replies.
 fn spawn_reply<T: Transport + ?Sized + 'static>(transport: Arc<T>, reply: Vec<u8>) {
-    tokio::spawn(async move {
+    crate::task::spawn(async move {
         if let Err(error) = transport.send(reply).await {
             error!("> RpcServer > Error on sending a port or module reply: {error:?}");
         }
