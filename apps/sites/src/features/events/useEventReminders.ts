@@ -11,6 +11,9 @@ import {
 
 type Toggle = { identity: AuthIdentity; eventId: string; attending: boolean };
 
+/** What a page says when a Remind me toggle fails. */
+export const REMIND_FAILED = "Couldn't update your reminder. Try again.";
+
 export type Reminder = { active: boolean; pending: boolean; toggle: () => void };
 
 const withId = (ids: readonly string[], id: string, attending: boolean): string[] =>

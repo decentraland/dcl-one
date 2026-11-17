@@ -1,6 +1,8 @@
 //! Profile fields exposed by the social RPC, resolved from the active profile
-//! entity in the shared content database. The first avatar must have a userId,
-//! name (or unclaimedName) and face256; the stored face256 is returned verbatim.
+//! entity in the shared content database. The first avatar must have a userId
+//! and a name (or unclaimedName). A stored face256 is returned verbatim; a
+//! profile deployed without snapshots gets the face the lambdas name for its
+//! entity, or no picture when the node derives none.
 //! List procedures omit unavailable profiles; block/unblock keep address-only
 //! fallbacks. Connectivity subscriptions skip missing profiles. Public identity
 //! and source cache facts are shared with communities, separate from actor keys.
@@ -309,7 +311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_avatar_requires_identity_name_and_face_and_preserves_snapshot_url() {
+    async fn first_avatar_requires_identity_and_name_and_preserves_snapshot_url() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
@@ -325,14 +327,19 @@ mod tests {
             (valid.clone(), Some("Alice")),
             (fallback, Some("Unclaimed")),
         ];
-        for key in ["userId", "name", "avatar"] {
+        for key in ["userId", "name"] {
             let mut avatar = valid.clone();
             avatar.as_object_mut().unwrap().remove(key);
             cases.push((avatar, None));
         }
+        // Clients leave snapshots to the server: a profile deployed without a face is kept,
+        // with no picture from a reader that derives none.
+        let mut no_snapshots = valid.clone();
+        no_snapshots.as_object_mut().unwrap().remove("avatar");
+        cases.push((no_snapshots, Some("Alice")));
         let mut empty_face = valid.clone();
         empty_face["avatar"]["snapshots"]["face256"] = serde_json::json!("");
-        cases.push((empty_face, None));
+        cases.push((empty_face, Some("Alice")));
         let mut wrong_identity = valid.clone();
         wrong_identity["userId"] = serde_json::json!("different-user");
         cases.push((wrong_identity, Some("Alice")));
@@ -342,6 +349,11 @@ mod tests {
                 .get("userId")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_lowercase);
+            let picture = avatar
+                .pointer("/avatar/snapshots/face256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let entity = format!("bafkreiprofile{tag}{index}");
             let metadata = serde_json::json!({"v":{"avatars":[avatar, valid.clone()]}});
             sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ($1,'v3','profile',$2,$3,to_timestamp(1451606400),ARRAY[$1],now(),'[]'::json)")
@@ -364,10 +376,7 @@ mod tests {
                 assert_eq!(result.len(), 1);
                 assert_eq!(Some(result[0].address.as_str()), public_address.as_deref());
                 assert_eq!(result[0].name, name);
-                assert_eq!(
-                    result[0].profile_picture_url,
-                    "https://example.test/stored-face.png"
-                );
+                assert_eq!(result[0].profile_picture_url, picture, "case {index}");
                 assert!(result[0].has_claimed_name);
                 assert_eq!(
                     result[0].name_color,

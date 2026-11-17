@@ -42,7 +42,7 @@
     "@types/react-modal": "^3.16.0",
     "@types/redux-saga": "^0.10.5",
     "babylonjs-gltf2interface": "8.7.0",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.2",
     "happy-dom": "21.0.4",
     "hotkeys-js": "^3.13.5",
     "markdown-to-jsx": "^7.5.0",

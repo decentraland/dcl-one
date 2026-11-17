@@ -8613,7 +8613,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "ec124ae1249b70c5ffda789a3cbe8411c04a5b5db91824295096b8431bcb98cd"
+      "sha256": "ee424616c8142c8e83912220d6cd7731ef24349042715e53078bbecbc0187991"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
