@@ -43,11 +43,11 @@ pub mod world_manifest;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde_json::json;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
