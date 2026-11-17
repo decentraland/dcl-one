@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  findBrowser,
-  openSession,
-} from "../../../../../../library/ui/figma/review/scripts/capture-browser.mjs";
+  type CaptureSession,
+  START_BUDGET_MS,
+  startCaptureBrowser,
+} from "./capture-browser.helpers";
 
 const root = new URL("../../../../../../", import.meta.url);
 const read = (file: string) =>
@@ -19,24 +20,15 @@ const css = [
   read("library/ui/components/PlaceCard/PlaceCard.module.css"),
 ].join("\n");
 
-let session: Awaited<ReturnType<typeof openSession>>;
-let startup: ReturnType<typeof openSession> | undefined;
+let session: CaptureSession;
+let startup: Promise<CaptureSession> | undefined;
 const startupController = new AbortController();
 
+// Teardown also owns a startup that outlives this fixture's budget.
 beforeAll(async () => {
-  startup = (async () =>
-    openSession(
-      await findBrowser([
-        process.env.BROWSER_PATH,
-        process.env.CHROME_PATH,
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-      ]),
-      { signal: startupController.signal },
-    ))();
+  startup = startCaptureBrowser("Focus cascade", startupController.signal);
   session = await startup;
-}, 40_000);
+}, START_BUDGET_MS + 10_000);
 
 afterAll(async () => {
   startupController.abort(new Error("Focus cascade fixture disposed"));
