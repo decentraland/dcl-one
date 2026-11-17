@@ -625,11 +625,7 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     assert_eq!(pruned.pruned, Some(1));
     assert!(row(&pool, thumb_missing).await.is_none());
     assert!(row(&pool, uploaded_here).await.is_some());
-    assert_eq!(
-        s.withheld(&c.image_hash).await,
-        None,
-        "a delete withholds nothing"
-    );
+    assert_eq!(s.withheld(&c.image_hash).await.as_deref(), Some("deleted"));
     let provenance: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM camera_reel.imported_images WHERE id = ANY($1)")
             .bind(&ids)

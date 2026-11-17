@@ -14,7 +14,7 @@ use image::io::{Limits, Reader as ImageReader};
 use image::{ImageFormat, guess_format};
 use uuid::Uuid;
 
-use crate::db::{DeletedImage, NewImage};
+use crate::db::{BlobVerdict, DeletedImage, NewImage};
 use crate::dto::{
     Image, Metadata, UpdateReview, UpdateVisibility, UploadResponse, UserDataResponse,
 };
@@ -656,11 +656,12 @@ pub async fn delete_image(
         .into_response())
 }
 
-/// The row goes; the blobs stay. The ONE store is shared with content,
-/// worlds and builder files and keeps hash-addressed bytes immutable, so
-/// nothing here unlinks or withholds (the old service's per-row refcount over
-/// its private tree is gone): the row was what made the hash reachable through
-/// `/api/images/{hash}`, and the collector reclaims bytes nothing else names.
+/// The row goes; the blobs stay, withheld. The ONE store is shared with
+/// content, worlds and builder files and keeps hash-addressed bytes
+/// immutable, so nothing here unlinks (the old service's per-row refcount
+/// over its private tree is gone); the row was what made the hash reachable
+/// through `/api/images/{hash}`, and the `withheld_blobs` record written in
+/// the same transaction is what keeps it off `/contents/{hash}` everywhere.
 async fn delete_image_row(
     state: &SharedState,
     image_id: &str,
@@ -669,13 +670,17 @@ async fn delete_image_row(
     let _verdict = state.blob_verdict.lock().await;
     let deleted = state
         .db
-        .delete_image_owned(image_id, owner)
+        .delete_image_owned(image_id, owner, chrono::Utc::now().naive_utc())
         .await
         .map_err(|e| {
             tracing::error!("failed to delete image metadata: {e}");
             ApiError::Internal("failed to delete image".to_string())
         })?
         .ok_or_else(|| ApiError::NotFound("image not found".to_string()))?;
+    state.apply_verdict(&BlobVerdict {
+        withheld: deleted.withheld.clone(),
+        released: Vec::new(),
+    });
     Ok(deleted)
 }
 

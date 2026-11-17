@@ -674,7 +674,7 @@ async fn prune(target: &PgPool, seen: &HashSet<Uuid>, dry_run: bool) -> anyhow::
                 continue;
             }
             let deleted = db
-                .delete_image_owned(&id.to_string(), None)
+                .delete_image_owned(&id.to_string(), None, chrono::Utc::now().naive_utc())
                 .await
                 .context("deleting an imported row the source no longer has")?;
             if deleted.is_some_and(|d| d.deleted) {

@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::db::{BlobVerdict, Database, NewImage, Page, WITHHELD_REJECTED};
+use super::db::{BlobVerdict, Database, NewImage, Page, WITHHELD_DELETED, WITHHELD_REJECTED};
 use super::dto::{Image, Metadata, ScreenRect, User};
 use super::handlers::images::{RankingSchedule, RankingSweep};
 use super::http::{ApiError, ForbiddenError, ForbiddenReason};
@@ -1278,97 +1278,6 @@ async fn the_insert_itself_enforces_the_per_user_limit() {
 }
 
 #[tokio::test]
-async fn owner_delete_reports_ownership_and_remaining() {
-    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
-        return;
-    };
-    let a = s.owner(&random_address());
-    let b = s.owner(&random_address());
-    let t = tag();
-    let (h1, h3, t1, t2) = (
-        s.hash(&format!("h1-{t}")),
-        s.hash(&format!("h3-{t}")),
-        s.hash(&format!("t1-{t}")),
-        s.hash(&format!("t2-{t}")),
-    );
-    let a1 = image(&a, &h1, &t1, true, "");
-    let a2 = image(&a, &h1, &t2, true, "");
-    let b1 = image(&b, &h3, &t1, true, "");
-    for img in [&a1, &a2, &b1] {
-        s.db().insert_image(img).await.unwrap();
-    }
-
-    assert!(
-        s.db()
-            .delete_image_owned(&Uuid::new_v4().to_string(), Some(&a))
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        s.db()
-            .delete_image_owned("not-a-uuid", Some(&a))
-            .await
-            .unwrap()
-            .is_none()
-    );
-
-    let refused = s
-        .db()
-        .delete_image_owned(&a2.id.to_string(), Some(&b))
-        .await
-        .unwrap()
-        .expect("row exists");
-    assert!(
-        !refused.deleted,
-        "another user's image is reported, not deleted"
-    );
-    assert_eq!(s.count(&a).await, 2);
-
-    let d = s
-        .db()
-        .delete_image_owned(&a1.id.to_string(), Some(&a.to_uppercase()))
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(d.deleted);
-    assert_eq!(d.user_address, a.to_lowercase());
-    assert_eq!(
-        (
-            d.image_hash.as_str(),
-            d.thumbnail_hash.as_str(),
-            d.remaining
-        ),
-        (h1.as_str(), t1.as_str(), 1)
-    );
-    assert_eq!(s.withheld(&h1).await, None);
-
-    let d = s
-        .db()
-        .delete_image_owned(&a2.id.to_string(), Some(&a))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!((d.deleted, d.remaining), (true, 0));
-    assert_eq!(
-        s.withheld(&h1).await,
-        None,
-        "a delete withholds nothing, even for the last row naming h1"
-    );
-
-    let d = s
-        .db()
-        .delete_image_owned(&b1.id.to_string(), None)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!((d.deleted, d.remaining), (true, 0));
-    assert_eq!(s.withheld(&h3).await, None);
-    assert_eq!(s.count(&a).await + s.count(&b).await, 0);
-    s.done().await;
-}
-
-#[tokio::test]
 async fn a_rejection_withholds_bytes_another_domain_names() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;
@@ -1391,17 +1300,21 @@ async fn a_rejection_withholds_bytes_another_domain_names() {
     s.db().insert_image(&img).await.unwrap();
     s.db().insert_image(&twin).await.unwrap();
     let now = chrono::Utc::now().naive_utc();
+    let review = |id: Uuid, status: &'static str| {
+        let db = s.db();
+        async move {
+            db.update_image_review_status(&id.to_string(), status, now)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
 
-    let verdict = s
-        .db()
-        .update_image_review_status(&img.id.to_string(), WITHHELD_REJECTED, now)
-        .await
-        .unwrap()
-        .unwrap();
+    let verdict = review(img.id, WITHHELD_REJECTED).await;
     assert_eq!(
         verdict.withheld,
         vec![h.clone(), th.clone()],
-        "neither the profile image nor another reel row keeps rejected bytes served"
+        "neither the profile image nor the twin row keeps rejected bytes served"
     );
     assert_eq!(s.withheld(&h).await.as_deref(), Some(WITHHELD_REJECTED));
 
@@ -1410,6 +1323,105 @@ async fn a_rejection_withholds_bytes_another_domain_names() {
         .execute(s.db().pool())
         .await
         .unwrap();
+    s.done().await;
+}
+
+#[tokio::test]
+async fn owner_delete_reports_ownership_and_remaining() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let a = s.owner(&random_address());
+    let b = s.owner(&random_address());
+    let t = tag();
+    let (h1, h3, t1, t2) = (
+        s.hash(&format!("h1-{t}")),
+        s.hash(&format!("h3-{t}")),
+        s.hash(&format!("t1-{t}")),
+        s.hash(&format!("t2-{t}")),
+    );
+    let a1 = image(&a, &h1, &t1, true, "");
+    let a2 = image(&a, &h1, &t2, true, "");
+    let b1 = image(&b, &h3, &t1, true, "");
+    for img in [&a1, &a2, &b1] {
+        s.db().insert_image(img).await.unwrap();
+    }
+    let now = chrono::Utc::now().naive_utc();
+
+    assert!(
+        s.db()
+            .delete_image_owned(&Uuid::new_v4().to_string(), Some(&a), now)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        s.db()
+            .delete_image_owned("not-a-uuid", Some(&a), now)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let refused = s
+        .db()
+        .delete_image_owned(&a2.id.to_string(), Some(&b), now)
+        .await
+        .unwrap()
+        .expect("row exists");
+    assert!(
+        !refused.deleted,
+        "another user's image is reported, not deleted"
+    );
+    assert!(refused.withheld.is_empty());
+    assert_eq!(s.count(&a).await, 2);
+
+    let d = s
+        .db()
+        .delete_image_owned(&a1.id.to_string(), Some(&a.to_uppercase()), now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(d.deleted);
+    assert_eq!(d.user_address, a.to_lowercase());
+    assert_eq!(
+        (
+            d.image_hash.as_str(),
+            d.thumbnail_hash.as_str(),
+            d.remaining
+        ),
+        (h1.as_str(), t1.as_str(), 1)
+    );
+    assert!(
+        d.withheld.is_empty(),
+        "a2 still names h1 and b1 still names t1: nothing withheld"
+    );
+    assert_eq!(s.withheld(&h1).await, None);
+
+    let d = s
+        .db()
+        .delete_image_owned(&a2.id.to_string(), Some(&a), now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((d.deleted, d.remaining), (true, 0));
+    assert_eq!(
+        d.withheld,
+        vec![h1.clone(), t2.clone()],
+        "the last row naming h1 and t2 is gone"
+    );
+    assert_eq!(s.withheld(&h1).await.as_deref(), Some(WITHHELD_DELETED));
+    assert_eq!(s.withheld(&t1).await, None, "b1 still names t1");
+
+    let d = s
+        .db()
+        .delete_image_owned(&b1.id.to_string(), None, now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((d.deleted, d.remaining), (true, 0));
+    assert_eq!(d.withheld, vec![h3.clone(), t1.clone()]);
+    assert_eq!(s.count(&a).await + s.count(&b).await, 0);
     s.done().await;
 }
 
@@ -1675,8 +1687,16 @@ async fn servable_memo_is_dropped_by_review_and_delete() {
         .unwrap();
     assert_eq!(verdict.withheld, both());
     assert!(!db.hash_is_servable(&hx).await.unwrap());
-    let d = db.delete_image_owned(&id, None).await.unwrap().unwrap();
+    let d = db
+        .delete_image_owned(&id, None, now)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(d.deleted);
+    assert!(
+        d.withheld.is_empty(),
+        "already withheld by the rejection; the row stays"
+    );
     assert_eq!(s.withheld(&hx).await.as_deref(), Some(WITHHELD_REJECTED));
     assert!(
         !db.hash_is_servable(&hx).await.unwrap(),
@@ -2467,19 +2487,17 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(bytes_everywhere(&app, &image_hash).await, served);
 
-    // the owner's delete: the row is gone from the reel route; the shared bytes are not withheld
+    // the owner's delete: the row is gone and the bytes are withheld everywhere
     let del_path = format!("{PREFIX}/api/images/{id}");
     let headers = signed_headers(&w, "delete", &del_path, true).await;
     let (status, _, _) = send(app.clone(), "DELETE", &del_path, headers, None).await;
     assert_eq!(status, StatusCode::OK);
-    let reel_gone = [
-        (StatusCode::NOT_FOUND, false),
-        (StatusCode::OK, true),
-        (StatusCode::OK, true),
-    ];
-    assert_eq!(bytes_everywhere(&app, &image_hash).await, reel_gone);
-    assert_eq!(bytes_everywhere(&app, &thumb_hash).await, reel_gone);
-    assert_eq!(s.withheld(&image_hash).await, None);
+    assert_eq!(bytes_everywhere(&app, &image_hash).await, withheld);
+    assert_eq!(bytes_everywhere(&app, &thumb_hash).await, withheld);
+    assert_eq!(
+        s.withheld(&image_hash).await.as_deref(),
+        Some(WITHHELD_DELETED)
+    );
     assert!(
         s.state.storage.exist(&image_hash).await.unwrap(),
         "the blob itself is never unlinked"
