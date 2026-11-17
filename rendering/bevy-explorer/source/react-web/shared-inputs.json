@@ -5105,8 +5105,12 @@
       "sha256": "7fdc86ebf5a3970823e089a131c5e4656a78ba8ed3ca2f0c744017ab42362a68"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emoteSlots.ts",
+      "sha256": "f7dad77a623a072bf66dca56deb1919d63bc647475fde58b40f9670a678b4065"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
-      "sha256": "2c26491ce7e8dd7a6c3a0556136bc2f66f47fd209318eca5eccb17e25c7c326d"
+      "sha256": "541420163f151e3adb47c4c147e3da9496f5807328597faaa6bd7b71fb28cd2d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
@@ -5138,7 +5142,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "1a39a6753fd4543c8096adefb541ec3d35e4e99aee95372666d1f9a8765594d7"
+      "sha256": "f78110656ff507376f8b92ee4df20660fcbdc50813dd961fa0327a80f40714e1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -5307,6 +5311,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
       "sha256": "e890e5b55625e2e1d521abc45fe7bf28852bcdef7b371320a4da75187282f541"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEmoteSlots.test.ts",
+      "sha256": "fb168bcef131e4b46830824b6536daa341424dad868cc4fdfd338b827d3bee44"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
@@ -5522,6 +5530,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeEmoteSlots.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
@@ -8676,7 +8685,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f5f3c331eb8baa3a375e1fc54a027ccca1d7c3f4523bf6e60a4953dc4d69f5e8"
+      "sha256": "e5708a314b7ca5df667b27fe218a374fa4694b6b7b6671f2906fcda618516677"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -8944,7 +8953,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "633eed424282e427e0e5f68e0c215c1b34c1533d3c539010ed789fd1f8aaed77"
+      "sha256": "4095071cff20aff248c14202bfe145ed7f16e6ccad339d9acd704ef41865e63a"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -9004,7 +9013,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
-      "sha256": "95fb7edb18b926388f21789a47269dc5d02b9f56085b97592aee81b683b410fd"
+      "sha256": "f9870142716f3b2eb1fb24519ccbd6815d8b9f4aa2ca622eee25761754f2fed2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.clicks.test.tsx",
@@ -31950,6 +31959,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
       "to": "library/explorer-core/engine/bridgeChannel.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
