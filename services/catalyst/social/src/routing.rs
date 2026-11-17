@@ -54,9 +54,67 @@ macro_rules! method {
             T: 'static,
             S: Clone + Send + Sync + 'static,
         {
+            #[allow(clippy::disallowed_methods)]
             axum::routing::$name(erase(handler))
         }
     )*};
 }
 
 method!(any, delete, get, patch, post, put);
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use axum::body::{Body, Bytes};
+    use axum::extract::DefaultBodyLimit;
+    use axum::http::{Method, StatusCode};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn send(app: Router, method: Method, body: &'static [u8]) -> (StatusCode, Bytes) {
+        let request = Request::builder()
+            .method(method)
+            .uri("/")
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        (
+            status,
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_erased_get_answers_head_without_a_body() {
+        let app = Router::new().route("/", get(|| async { "hello" }));
+        assert_eq!(
+            send(app.clone(), Method::GET, b"").await,
+            (StatusCode::OK, Bytes::from("hello"))
+        );
+        assert_eq!(
+            send(app, Method::HEAD, b"").await,
+            (StatusCode::OK, Bytes::new())
+        );
+    }
+
+    #[tokio::test]
+    async fn an_erased_body_extractor_keeps_the_route_body_limit() {
+        let app = Router::new().route(
+            "/",
+            post(|body: Bytes| async move { body.len().to_string() })
+                .layer(DefaultBodyLimit::max(4)),
+        );
+        assert_eq!(
+            send(app.clone(), Method::POST, b"1234").await,
+            (StatusCode::OK, Bytes::from("4"))
+        );
+        assert_eq!(
+            send(app, Method::POST, b"12345").await.0,
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+}

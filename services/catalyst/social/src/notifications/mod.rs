@@ -339,7 +339,9 @@ pub fn router(state: SharedState) -> Router {
             "/unsubscribe/{address}/{notificationType}",
             get(unsubscribe::unsubscribe_one),
         )
-        .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not found") })
+        .fallback(crate::routing::erase(|| async {
+            (axum::http::StatusCode::NOT_FOUND, "Not found")
+        }))
         .layer(axum::middleware::from_fn(errors::json_wire))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())
