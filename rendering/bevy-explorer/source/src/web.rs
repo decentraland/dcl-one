@@ -602,10 +602,12 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
             use bevy::log::tracing_subscriber::{Layer, Registry};
             // the benchmark log when the page streams it, and the scope profiler's layer
             let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
-            Some(Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
-                benchmark_log,
-                crate::perf::profiled_scopes::profiled_scopes_layer(),
-            )) as BoxedLayer)
+            Some(
+                Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
+                    benchmark_log,
+                    crate::perf::profiled_scopes::profiled_scopes_layer(),
+                )) as BoxedLayer,
+            )
         },
     });
 
