@@ -169,6 +169,10 @@ function ScheduleWizardInner({
     time: rangeLabel(s),
     hue: hueFromBackground(s.background, i),
     image: s.image ?? null,
+    // A schedule is not an event: its card opens the schedule's editor, as the browse grid does, and offers no
+    // reminder or share actions.
+    href: `?mode=edit&id=${encodeURIComponent(s.id)}`,
+    actions: false,
   }));
 
   const scheduleBrowse = (
@@ -230,7 +234,7 @@ function ScheduleWizardInner({
         liveNow={liveNow}
         allDays={allDays}
         dayLabels={dayLabels}
-        filterBar={scheduleBrowse}
+        notice={scheduleBrowse}
       />
 
       <div className="event-schedule__controls" role="group" aria-label="Schedule wizard">

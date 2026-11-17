@@ -366,6 +366,9 @@ def runtime_env(config):
         # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
         # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
         'BLOG_CMS_URL',
+        # Sites' /download: the host of the launcher installers and the JSON of the download
+        # counts (unset: /download offers no installer and shows no total).
+        'EXPLORER_INSTALLERS_URL', 'DOWNLOAD_COUNTS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({

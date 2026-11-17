@@ -303,6 +303,29 @@ pub async fn verify_wallet_signed_fetch(
     .await
 }
 
+/// Upstream's `authWatcher` (`/cast/watcher-token`): a wallet's own signed
+/// fetch, any `signer` but the scene's, and deliberately strict: no
+/// `canonicalMetadataKeys`, so the pre-6.0.0 payload is refused (the cast web
+/// app signs all-lowercase metadata, for which both payloads are the same).
+pub async fn verify_viewer_signed_fetch(
+    headers: &HeaderMap,
+    method: &str,
+    path: &SignedPath,
+    validator: Option<&dyn Eip1654Validator>,
+) -> Result<SignedFetch, SignedFetchError> {
+    verify_with_keys(
+        headers,
+        method,
+        path,
+        &[],
+        &[SCENE_SIGNER],
+        &[],
+        DEFAULT_EXPIRATION_SECS,
+        validator,
+    )
+    .await
+}
+
 /// Authoritative server context, verified with its existing five-minute window.
 pub async fn verify_server_signed_fetch(
     headers: &HeaderMap,
