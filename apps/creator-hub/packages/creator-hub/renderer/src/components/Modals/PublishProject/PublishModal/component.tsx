@@ -1,4 +1,4 @@
-import { Modal, onBackNoop, type ModalCloseReason, type ModalProps } from '../..';
+import { Modal, type ModalCloseReason, type ModalProps } from '../..';
 
 export function PublishModal(props: React.PropsWithChildren<ModalProps>) {
   const { onBack, onClose, size = 'small', ...rest } = props;
@@ -12,7 +12,7 @@ export function PublishModal(props: React.PropsWithChildren<ModalProps>) {
     <Modal
       {...rest}
       size={size}
-      onBack={onBack || onBackNoop}
+      onBack={onBack}
       onClose={handleClose}
     >
       {props.children}

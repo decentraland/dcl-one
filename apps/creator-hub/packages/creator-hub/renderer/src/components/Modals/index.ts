@@ -3,8 +3,6 @@ import Dialog, { type DialogCloseReason } from '@ui/atoms/Dialog';
 
 import styles from './Modal.module.css';
 
-export function onBackNoop() {}
-
 export type ModalProps = {
   open: boolean;
   size?: 'tiny' | 'small' | 'medium' | 'large';
@@ -90,7 +88,7 @@ export function Modal({
       'aria-labelledby': ariaLabelledBy,
       'data-testid': testId,
       className: classes(styles.paper, size === 'large' && styles.large),
-      backdropClassName: classes(styles.root, onBack === onBackNoop && styles.noBack, className),
+      backdropClassName: classes(styles.root, className),
     },
     children,
   );

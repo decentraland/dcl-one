@@ -3,7 +3,7 @@ import { editor } from '#preload';
 import type { MobileDebugSessionInfo } from '/shared/types/ipc';
 
 import { t } from '/@/modules/store/translation/utils';
-import { Modal, onBackNoop } from '..';
+import { Modal } from '..';
 import type { Props } from './types';
 
 import './styles.css';
@@ -27,7 +27,6 @@ export function MobileQRCode({ open, onClose, url, qr }: Props) {
       size="tiny"
       title={t('modal.mobile_qr.title')}
       subtitle={t('modal.mobile_qr.description')}
-      onBack={onBackNoop}
       onClose={onClose}
     >
       <div className="MobileQRCodeContent">
