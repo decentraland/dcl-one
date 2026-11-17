@@ -41,8 +41,6 @@ name: Bevy Explorer / E2E
     paths:
       - 'apps/bevy-explorer/**'
       - 'rendering/bevy-explorer/**'
-      - 'tooling/patched-sources.py'
-      - '.github/actions/bevy-explorer-sources/**'
       - 'library/protocol/**'
       - '.cargo/**'
       - 'rust-toolchain*'

@@ -99,7 +99,10 @@ describe("profile places, a member's profile", () => {
     expect(worldJump?.getAttribute("href")).toContain("realm=abcdcl.dcl.eth");
     // The view switch is the owner's only.
     expect(screen.queryByRole("tablist", { name: "Places shown" })).toBeNull();
-    expect(screen.queryByRole("tabpanel")).toBeNull();
+    // Only the profile's Places panel; no filtered panel inside it.
+    expect(screen.getAllByRole("tabpanel").map((panel) => panel.getAttribute("aria-labelledby"))).toEqual([
+      screen.getByRole("tab", { name: "Places" }).id,
+    ]);
     expect(net.fetchFavoritePlaces).not.toHaveBeenCalled();
     expect(net.fetchCommunityProfiles).not.toHaveBeenCalled();
   });
@@ -283,13 +286,13 @@ describe("profile places, the owner's favourites", () => {
     await screen.findByText("1 place");
     expect(net.fetchFavoritePlaces).not.toHaveBeenCalled();
     expect(chip("My Places").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(chip("My Places").id);
+    expect(screen.getByRole("tabpanel", { name: /My Places/ }).getAttribute("aria-labelledby")).toBe(chip("My Places").id);
 
     await userEvent.click(chip("Favourites"));
 
     expect(chip("Favourites").getAttribute("aria-selected")).toBe("true");
     expect(chip("My Places").getAttribute("aria-selected")).toBe("false");
-    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(chip("Favourites").id);
+    expect(screen.getByRole("tabpanel", { name: /Favourites/ }).getAttribute("aria-labelledby")).toBe(chip("Favourites").id);
     expect(await screen.findByText("Nothing saved yet", { selector: "p" })).toBeTruthy();
     expect(net.fetchFavoritePlaces).toHaveBeenCalledWith(identity, expect.anything(), expect.anything());
     expect(screen.getByRole("link", { name: "Explore places" }).getAttribute("href")).toBe("/places");

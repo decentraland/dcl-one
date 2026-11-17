@@ -700,9 +700,20 @@ def sql(config, query, database='catalyst'):
                capture_output=True, env=env).stdout.strip()
 
 
+# A CI test cluster holds only scratch databases, so it skips durability: every DROP DATABASE forces a
+# checkpoint, and with fsync on its sync phase stalls the cluster for seconds on a shared runner disk.
+DISPOSABLE_POSTGRES_SETTINGS = ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off',
+                                'wal_level=minimal', 'max_wal_senders=0',
+                                'checkpoint_timeout=1h', 'max_wal_size=2GB')
+# Written into a data directory initialized with FOUNDATION_DEV_DISPOSABLE_POSTGRES=1; only such a cluster runs
+# without durability, so the flag never weakens a cluster that already holds data.
+DISPOSABLE_MARKER = 'foundation-dev-disposable'
+
+
 def postgres(config):
     env = runtime_env(config)
     data = STATE / 'postgres'
+    disposable = os.environ.get('FOUNDATION_DEV_DISPOSABLE_POSTGRES') == '1'
     if not (data / 'PG_VERSION').exists():
         if data.exists() and any(data.iterdir()):
             raise RuntimeError('Incomplete PostgreSQL initialization; data preserved. Inspect .cache/dev/postgres.')
@@ -713,14 +724,23 @@ def postgres(config):
                  '--auth-host=scram-sha-256', '--pwfile', password_file, '--encoding=UTF8', '--locale=en_US.UTF-8'], env=env)
         finally:
             password_file.unlink(missing_ok=True)
+        if disposable:
+            (data / DISPOSABLE_MARKER).write_text('Disposable test cluster: runs with fsync off.\n')
     version = run(['postgres', '--version'], capture_output=True, text=True, env=env).stdout.split()[2].split('.')[0]
     if (data / 'PG_VERSION').read_text().strip() != version:
         raise RuntimeError('PostgreSQL major version changed. Data preserved; migrate it before restarting.')
+    durability = []
+    if disposable and (data / DISPOSABLE_MARKER).exists():
+        print('Disposable test cluster: ' + ', '.join(DISPOSABLE_POSTGRES_SETTINGS), flush=True)
+        durability = [arg for setting in DISPOSABLE_POSTGRES_SETTINGS for arg in ('-c', setting)]
+    elif disposable:
+        print('FOUNDATION_DEV_DISPOSABLE_POSTGRES ignored: this cluster was not created as disposable; '
+              'it keeps full durability.', file=sys.stderr, flush=True)
     os.execvpe('postgres', ['postgres', '-D', str(data), '-h', '127.0.0.1',
                            '-p', str(config['port'] + 3), '-k', '',
                            '-c', 'max_connections=400', '-c', 'shared_buffers=64MB',
                            # Concurrent test binaries apply the schema at once; an apply holds thousands of locks.
-                           '-c', 'max_locks_per_transaction=256'], env)
+                           '-c', 'max_locks_per_transaction=256', *durability], env)
 
 
 def ensure_collation(config, database='catalyst'):

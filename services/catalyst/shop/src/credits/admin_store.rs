@@ -141,7 +141,7 @@ pub const MAX_STUDIO_NAME_CHARS: usize = 80;
 /// The credits-server USD `ON_DEMAND_CREDITS_GRANTED` event as the old
 /// parser stored it, keyed on the grant's audit row.
 struct GrantNotice<'a> {
-    pub address: catalyst_social::Address,
+    pub address: crate::shared::identity::Address,
     pub audit_id: i64,
     pub amount: &'a str,
     pub usd_cents: Option<i64>,
@@ -152,7 +152,7 @@ struct GrantNotice<'a> {
 
 fn credits_granted_notification(
     notice: GrantNotice<'_>,
-) -> catalyst_social::notifications::NewNotification {
+) -> crate::shared::notifications::NewNotification {
     let GrantNotice {
         address,
         audit_id,
@@ -174,7 +174,7 @@ fn credits_granted_notification(
         metadata["studioName"] = studio.into();
     }
     metadata["image"] =
-        catalyst_social::notifications::cdn_asset(cdn_url, CREDITS_NOTIFICATION_ICON_PATH).into();
+        crate::shared::notifications::cdn_asset(cdn_url, CREDITS_NOTIFICATION_ICON_PATH).into();
     let amount = format!("{} Credits", en_us_amount(amount));
     let (title, description) = match studio {
         Some(studio) => (
@@ -189,7 +189,7 @@ fn credits_granted_notification(
     metadata["title"] = title.into();
     metadata["description"] = description.into();
     metadata["link"] = shop_base_url.into();
-    let mut n = catalyst_social::notifications::NewNotification::now(
+    let mut n = crate::shared::notifications::NewNotification::now(
         address,
         "credits_on_demand_granted",
         metadata,
@@ -378,7 +378,7 @@ impl Credits {
 
         // Only an operator grant notifies; purchases and refunds do not.
         if kind == "grant"
-            && let Ok(recipient) = catalyst_social::Address::parse(address)
+            && let Ok(recipient) = crate::shared::identity::Address::parse(address)
         {
             let notification = credits_granted_notification(GrantNotice {
                 address: recipient,
@@ -389,8 +389,7 @@ impl Credits {
                 shop_base_url: &self.shop_base_url,
                 cdn_url: &self.notifications_cdn_url,
             });
-            catalyst_social::notifications::insert_notifications(&mut **tx, &[notification])
-                .await?;
+            crate::shared::notifications::insert_notifications(&mut **tx, &[notification]).await?;
         }
 
         Ok(GrantOutcome {

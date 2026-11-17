@@ -32,12 +32,13 @@ _ARTIFACT.loader.exec_module(_artifact)
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
 PATCHES = 'rendering/bevy-explorer/patches'
+PATCH_TOOL = 'tooling/patched-sources.py'
 # The in-tree exact-bytes crates and the tools that prove them against their public repositories.
 PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenance.py', 'tooling/enet-provenance.py')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
-INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', 'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'library/hashing', 'tooling/check-local-hashing.mjs',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
@@ -54,17 +55,14 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/patches/**',
     'rendering/bevy-explorer/vendor/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
     '.github/actions/bevy-explorer-tools/**',
-    '.github/actions/bevy-explorer-sources/**',
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
-    'tooling/patched-sources.py',
     'tooling/hud_shared_inputs.py',
     'tooling/tests/hud_manifest_fixture.py',
     'tooling/tests/hud_manifest_invalid_cases.json',
@@ -326,6 +324,10 @@ def select(base, head):
                 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
+            # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
+            # on each system. Every build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)
@@ -404,23 +406,30 @@ def pin_names(paths):
 def guards_plan(event, base, head):
     """The online guards of the `source` job that a change needs. `pins`: the patched sources whose
     source.toml the change adds or edits; each is then proved to be on the ref it names.
+    `verify`: the patched sources to rebuild from their upstream commit and patch series, which
+    proves the `tree` and the `rev` that Cargo takes: each source with a change under
+    patches/<name>/, and every source when the tool that rebuilds them changes.
     `provenance`: whether the change touches an in-tree crate or the tools that prove them against
     their public repositories. Without a comparison every guard runs; the daily upstream workflow
-    runs both for the whole tree."""
+    runs them for the whole tree."""
+    sources = pin_names(git('ls-files', '--', PATCHES).splitlines())
     try:
         if event not in ('push', 'pull_request', 'local'):
             raise ValueError('No comparison for this event')
         ensure_commit(base)
         ensure_commit(head)
         pins = pin_names(git('diff', '--name-only', '--no-renames', '--diff-filter=d', '-z', base, head, '--', PATCHES).split('\0'))
+        changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', PATCHES, PATCH_TOOL).split('\0')
+        touched = {path.removeprefix(PATCHES + '/').split('/', 1)[0] for path in changed if path.startswith(PATCHES + '/')}
+        verify = sources if PATCH_TOOL in changed else [name for name in sources if name in touched]
         provenance = bool(git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *PROVENANCE_INPUTS).strip('\0'))
-        reason = (f'{len(pins)} changed pin(s) to prove on their refs; '
+        reason = (f'{len(pins)} changed pin(s) to prove on their refs; {len(verify)} patch series to prove; '
                   f'in-tree crates {"changed" if provenance else "unchanged"}')
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f'Every online guard runs: {exc}')
-        pins = pin_names(git('ls-files', '--', PATCHES).splitlines())
+        pins = verify = sources
         provenance, reason = True, 'Comparison unavailable; every online source guard runs'
-    return {'pins': ' '.join(pins), 'provenance': provenance, 'reason': reason}
+    return {'pins': ' '.join(pins), 'verify': ' '.join(verify), 'provenance': provenance, 'reason': reason}
 
 
 def scenes_plan(event, base, head):

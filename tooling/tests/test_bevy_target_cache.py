@@ -31,8 +31,7 @@ class KeyTest(unittest.TestCase):
         self.git('init', '-q')
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
-        for name, text in {'rendering/bevy-explorer/patches/bevy/series/0001-world.patch': 'world\n',
-                           'rendering/bevy-explorer/vendor/boimp/src/lib.rs': 'pub fn import() {}\n',
+        for name, text in {'rendering/bevy-explorer/vendor/boimp/src/lib.rs': 'pub fn import() {}\n',
                            'library/vendor/rusty_enet/src/lib.rs': 'pub fn host() {}\n',
                            'rendering/bevy-explorer/source/vendor/basisu/src/lib.rs': 'pub fn transcode() {}\n',
                            'rendering/bevy-explorer/source/Cargo.lock': 'version = 4\n',
@@ -72,6 +71,14 @@ class KeyTest(unittest.TestCase):
         self.assertNotEqual(self.key('clippy')[0], exact)
         self.assertNotEqual(self.key(env={**ENV, 'RUNNER_OS': 'macOS', 'RUNNER_ARCH': 'ARM64'})[0], exact)
 
+    def test_the_scheduled_cleanup_bounds_the_caches_of_this_key(self):
+        # The cleanup keeps the newest cache of each prefix on a ref; the prefix ends with the platform.
+        cleanup = (ROOT / '.github/workflows/closed-pr-cache.yml').read_text()
+        family = re.search(r"r'\|\^(bevy-native-.+)'\)", cleanup).group(1)
+        for lane, system, arch in (('test', 'Linux', 'X64'), ('clippy', 'macOS', 'ARM64'), ('headless', 'Windows', 'X64')):
+            exact = self.key(lane, {**ENV, 'RUNNER_OS': system, 'RUNNER_ARCH': arch})[0]
+            self.assertEqual(re.match(family, exact).group(0), exact[:-50])
+
     def test_the_tool_environment_changes_the_tools_digest_only(self):
         exact, fallbacks = self.key()
         moved, moved_fallbacks = self.key(env={**ENV, 'CC': '/opt/hostedtoolcache/llvm-22.1.0/bin/clang'})
@@ -87,8 +94,6 @@ class KeyTest(unittest.TestCase):
                            ('rendering/bevy-explorer/source/crates/common/Cargo.toml', '[package]\nname = "common"\nversion = "0.2.0"\n'),
                            ('rendering/bevy-explorer/source/.cargo/config.toml', '[env]\nRUST_BACKTRACE = "full"\n'),
                            ('.cargo/config.toml', '[build]\nrustflags = ["-Cdebuginfo=0"]\n'),
-                           ('rendering/bevy-explorer/patches/bevy/series/0001-world.patch', 'the world\n'),
-                           ('rendering/bevy-explorer/patches/bevy/source.toml', 'commit = "1"\n'),
                            ('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'pub fn import() { }\n'),
                            ('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() { }\n'),
                            ('rendering/bevy-explorer/source/vendor/basisu/src/lib.rs', 'pub fn transcode() { }\n')):
