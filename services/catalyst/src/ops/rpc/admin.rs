@@ -439,7 +439,7 @@ mod tests {
         for url in [
             "http://geth:8545",
             "http://8.8.8.8/",
-            "http://[2001:db8::1]/",
+            "http://[2606:4700:4700::1111]/",
         ] {
             assert!(
                 !is_blocked_upstream_host_with(url, true),

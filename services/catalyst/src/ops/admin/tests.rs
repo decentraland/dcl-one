@@ -83,7 +83,7 @@ async fn harness(
     control: Option<SyncControl>,
     admins: &str,
 ) -> (Router, SharedState) {
-    let state = Arc::new(admin_state(pool, writes_enabled, admins, control).await);
+    let state = SharedState::from(admin_state(pool, writes_enabled, admins, control).await);
     (router(state.clone()), state)
 }
 
@@ -318,7 +318,7 @@ async fn siwe_sign_in_admits_an_allowlisted_wallet_and_nobody_else() {
     let mut off = Settings::clone(&state.settings);
     off.session_secret = None;
     assert!(!off.admin_enabled());
-    let off_state = Arc::new(State::new(
+    let off_state = SharedState::from(State::new(
         lazy_pool(),
         off,
         state.content.clone(),
@@ -482,34 +482,6 @@ async fn the_sync_controls_stay_open_while_writes_are_disabled_and_are_audited()
         ("sync.pause", "error")
     );
     cleanup(&pool, &actor).await;
-}
-
-/// `OPS_WRITES_ENABLED` on, the console's own writes still wait for the
-/// restore stamps: a stale drill stamp answers the 503 naming it and its age.
-#[tokio::test]
-async fn a_stale_restore_stamp_holds_the_console_writes() {
-    use crate::shared::writes::restore::{
-        Stamp,
-        lab::{DAY, StampLab},
-        scoped,
-    };
-    let admin = PrivateKeySigner::random();
-    let (app, _) = harness(lazy_pool(), true, None, &wallet(&admin)).await;
-    let cookie = session_cookie(&app, &admin).await;
-    let h = [("cookie", cookie.as_str())];
-    let lab = StampLab::fresh();
-    lab.write_aged(Stamp::Drill, 12 * DAY);
-    let (status, headers, body) = scoped(
-        lab.stamps.clone(),
-        send(&app, "POST", "/admin/api/content/flush-cache", &h, None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(headers.get(header::RETRY_AFTER).unwrap(), "3600");
-    assert_eq!(
-        body["body"]["message"],
-        "operator-plane writes are held on this node: the last passing restore drill (drill.json) is 12 d old, past WRITES_DRILL_MAX_AGE_DAYS=8"
-    );
 }
 
 #[tokio::test]

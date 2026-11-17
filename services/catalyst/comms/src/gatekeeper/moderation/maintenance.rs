@@ -1,5 +1,5 @@
 //! Periodic removal cleanup and room metadata reconciliation.
-use crate::explore::places::removed::{PlaceContext, RemovedPlace, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
 use crate::gatekeeper::streaming::notifications::{notification, owner};
 use crate::gatekeeper::{CommsState, admission::scene, errors::ApiError};
 use crate::interfaces::StreamingNotificationKind;

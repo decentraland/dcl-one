@@ -250,15 +250,6 @@ pub fn crdt_send_to_renderer(op_state: Rc<RefCell<impl State>>, messages: &[u8])
 }
 
 pub async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<impl State>>) -> Vec<Vec<u8>> {
-    receive_renderer(op_state, true).await
-}
-
-/// Drain renderer data already available without flushing or waiting for another tick.
-pub async fn op_crdt_recv_ready(op_state: Rc<RefCell<impl State>>) -> Vec<Vec<u8>> {
-    receive_renderer(op_state, false).await
-}
-
-async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<Vec<u8>> {
     #[cfg(feature = "span_scene_loop")]
     {
         let span = op_state.borrow_mut().try_take::<EnteredSpan>();
@@ -280,29 +271,12 @@ async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<
     // these are what actually tick the scene. `injected` accumulates entity-instantiation
     // put_components from AllocateEntity requests so they ride along with that next tick.
     let mut injected: Vec<Vec<u8>> = Vec::new();
-    let mut disconnected = false;
     let response = loop {
         let receiver = op_state
             .borrow_mut()
             .borrow_mut::<Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<RendererResponse>>>>()
             .clone();
-        let response = if wait {
-            let response = receiver.lock().await.recv().await;
-            disconnected = response.is_none();
-            response
-        } else {
-            match receiver.try_lock() {
-                Ok(mut receiver) => match receiver.try_recv() {
-                    Ok(response) => Some(response),
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        disconnected = true;
-                        None
-                    }
-                },
-                Err(_) => None,
-            }
-        };
+        let response = receiver.lock().await.recv().await;
 
         match response {
             Some(RendererResponse::GetCrdtSnapshot) => {
@@ -423,7 +397,6 @@ async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<
     let mut renderer_state = op_state.take::<RendererStore>();
     let writers = op_state.take::<CrdtComponentInterfaces>();
 
-    let received_tick = matches!(&response, Some(RendererResponse::Ok(..)));
     let mut results = match response {
         Some(RendererResponse::Ok(updates, census, dt)) => {
             let stashed = op_state.try_take::<EngineTickDt>().map_or(0.0, |dt| dt.0);
@@ -470,7 +443,7 @@ async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<
         }
         // AllocateEntity is handled in the receive loop above (it doesn't tick the scene).
         Some(RendererResponse::AllocateEntity { .. }) => unreachable!(),
-        None if disconnected => {
+        None => {
             // channel has been closed, shutdown gracefully
             info!(
                 "{}: shutting down",
@@ -479,7 +452,6 @@ async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<
             op_state.borrow::<KillFlag>().kill();
             Default::default()
         }
-        None => injected,
         // GetCrdtSnapshot is handled before this match in the loop above.
         Some(RendererResponse::GetCrdtSnapshot) => unreachable!(),
     };
@@ -534,9 +506,7 @@ async fn receive_renderer(op_state: Rc<RefCell<impl State>>, wait: bool) -> Vec<
     op_state.put(entity_map);
     op_state.put(writers);
     op_state.put(global_update_receiver);
-    if received_tick {
-        op_state.put(CommunicatedWithRenderer);
-    }
+    op_state.put(CommunicatedWithRenderer);
 
     results
 }

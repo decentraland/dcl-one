@@ -25,7 +25,7 @@ use crate::jobs::{Jobs, PeriodicCfg};
 use crate::market::MarketplaceState;
 use crate::market::shop::{SHOP_MAX_PAGE_SIZE, ShopCatalogFilters, ShopListingType, ShopSortBy};
 use crate::shared::identity::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND: &str = "item_discounted";
 const INTERVAL: Duration = Duration::from_secs(5 * 60);

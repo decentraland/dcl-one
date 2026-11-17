@@ -20,20 +20,20 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::MethodRouter;
 
 use super::http::ResponseError;
-use crate::shared::writes::{Gate, Refusal};
+use crate::shared::writes::Gate;
 
 /// The paths (as this router sees them, after any nest prefix is stripped)
 /// whose non-GET methods stay open while writes are disabled.
 const OPEN_WHILE_DISABLED: &[&str] = &["/api/places/images"];
 
-pub const DISABLED_MESSAGE: &str = "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const DISABLED_MESSAGE: &str =
+    "creator writes are disabled on this node (CREATE_WRITES_ENABLED=false)";
 
 fn gate(writes_enabled: bool) -> Gate {
     Gate {
         enabled: writes_enabled,
         open_while_disabled: OPEN_WHILE_DISABLED,
-        refuse: refused_response,
-        blobs: true,
+        refuse: disabled_response,
     }
 }
 
@@ -46,15 +46,8 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
 /// `Retry-After` so a client does not hammer a node that will not change
 /// its mind soon.
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("creator", DISABLED_MESSAGE);
-    let body =
-        serde_json::to_string(&ResponseError::new(message)).expect("a string field serializes");
+    let body = serde_json::to_string(&ResponseError::new(DISABLED_MESSAGE))
+        .expect("a string field serializes");
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -189,32 +182,5 @@ mod tests {
             res.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json"
         );
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{DAY, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/camera-reel-service/api/images").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.write_aged(crate::shared::writes::restore::Stamp::Drill, 9 * DAY);
-            let (status, body) = call(&app, "POST", "/camera-reel-service/api/images").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(
-                v["message"],
-                "creator writes are held on this node: the last passing restore drill (drill.json) is 9 d old, past WRITES_DRILL_MAX_AGE_DAYS=8"
-            );
-            let (status, _) = call(&app, "GET", "/camera-reel-service/api/images/x").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

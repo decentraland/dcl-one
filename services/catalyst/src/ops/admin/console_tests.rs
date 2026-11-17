@@ -32,7 +32,7 @@ async fn storage() -> Arc<Storage> {
 }
 
 async fn app(pool: PgPool, ops_writes: bool, domains: Domains, admin: &str) -> Router {
-    router(Arc::new(
+    router(super::SharedState::from(
         admin_state(pool, ops_writes, admin, None)
             .await
             .with_domains(domains),
