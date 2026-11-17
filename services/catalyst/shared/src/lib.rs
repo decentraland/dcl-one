@@ -32,6 +32,7 @@ pub mod routing;
 pub mod rpc;
 pub mod segment_signature;
 pub mod signed_fetch;
+pub mod task;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_http;
 #[cfg(any(test, feature = "test-support"))]

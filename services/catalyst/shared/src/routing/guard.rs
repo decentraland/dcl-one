@@ -1,10 +1,12 @@
-//! The route guard each domain crate runs as a unit test: CI runs no clippy
-//! over `services/catalyst`, so this scan keeps production routes on
-//! [`crate::routing`]. Items under a test-only `#[cfg(..)]`, test files and
-//! `tests/` folders are exempt. It reads tokens, not types: chained
-//! `MethodRouter` methods (`.post(..)`) stay a review rule.
+//! The route and spawn guards each domain crate runs as unit tests: CI runs no
+//! clippy over `services/catalyst`, so these scans keep production routes on
+//! [`crate::routing`] and production spawns on [`crate::task`]. Items and
+//! out-of-line modules under a test-only `#[cfg(..)]`, test files and `tests/`
+//! folders are exempt. They
+//! read tokens, not types: chained `MethodRouter` methods (`.post(..)`) stay a
+//! review rule.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const METHODS: [&str; 7] = ["any", "delete", "get", "on", "patch", "post", "put"];
 
@@ -19,7 +21,14 @@ const TEST_CFGS: [&str; 3] = [
 /// method routers or imports `axum::routing` as a module.
 pub fn direct_axum_routes(src: &Path) -> Vec<String> {
     let mut found = Vec::new();
-    visit(src, &mut found);
+    visit(src, direct_lines, &mut found);
+    found
+}
+
+/// `file:line` of every production line under `src` that names `tokio::spawn`.
+pub fn direct_tokio_spawns(src: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    visit(src, spawn_lines, &mut found);
     found
 }
 
@@ -30,24 +39,77 @@ fn is_test_file(name: &str) -> bool {
         || name.starts_with("test_")
 }
 
-fn visit(dir: &Path, found: &mut Vec<String>) {
+fn visit(src: &Path, scan: fn(&str) -> Vec<usize>, found: &mut Vec<String>) {
+    let mut files = Vec::new();
+    collect(src, &mut files);
+    let texts: Vec<(PathBuf, String)> = files
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).unwrap();
+            (path, text)
+        })
+        .collect();
+    let test_modules: Vec<PathBuf> = texts
+        .iter()
+        .flat_map(|(path, text)| test_module_paths(path, text))
+        .collect();
+    for (path, text) in &texts {
+        if test_modules.iter().any(|module| path.starts_with(module)) {
+            continue;
+        }
+        for number in scan(text) {
+            found.push(format!("{}:{number}", path.display()));
+        }
+    }
+}
+
+fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         if path.is_dir() {
             if name != "tests" {
-                visit(&path, found);
+                collect(&path, files);
             }
-            continue;
-        }
-        if !name.ends_with(".rs") || is_test_file(&name) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).unwrap();
-        for number in direct_lines(&text) {
-            found.push(format!("{}:{number}", path.display()));
+        } else if name.ends_with(".rs") && !is_test_file(&name) {
+            files.push(path);
         }
     }
+}
+
+/// The files and folders of the out-of-line modules `path` declares under a
+/// test-only `#[cfg(..)]` (`#[cfg(test)] mod name;`).
+fn test_module_paths(path: &Path, text: &str) -> Vec<PathBuf> {
+    let stem = path.file_stem().unwrap().to_string_lossy();
+    let dir = path.parent().unwrap();
+    let dir = if ["lib", "main", "mod"].contains(&stem.as_ref()) {
+        dir.to_path_buf()
+    } else {
+        dir.join(stem.as_ref())
+    };
+    let mut modules = Vec::new();
+    let mut test_only = false;
+    for line in text.lines().map(str::trim) {
+        if TEST_CFGS.contains(&line) || line.starts_with("#[cfg(all(test") {
+            test_only = true;
+            continue;
+        }
+        if test_only && line.starts_with("#[") {
+            continue;
+        }
+        if test_only
+            && let Some(name) = line
+                .trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub ")
+                .strip_prefix("mod ")
+                .and_then(|rest| rest.strip_suffix(';'))
+        {
+            modules.push(dir.join(format!("{name}.rs")));
+            modules.push(dir.join(name));
+        }
+        test_only = false;
+    }
+    modules
 }
 
 /// Whether an `r` after `before` starts a raw string (`r"`, `br"`), not an identifier.
@@ -158,17 +220,13 @@ fn code_only(text: &str) -> String {
     out
 }
 
-/// 1-based numbers of the production lines in `text` that name an axum method
-/// router or import `axum::routing` as a module.
-fn direct_lines(text: &str) -> Vec<usize> {
+/// 1-based numbers and code of the lines in `text` outside test-only items.
+fn production_lines(text: &str) -> Vec<(usize, String)> {
     let code = code_only(text);
-    let mut found = Vec::new();
+    let mut lines = Vec::new();
     // Brace depth, the depth a skipped test item closes at, and whether
     // a test-only item has not reached its `;` or `{` yet.
     let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
-    // Inside a multi-line `use axum::{ .. }` or `use axum::routing::{ .. }`.
-    // A routing group nested in `use axum::{ .. }` ends at its own `}`.
-    let (mut axum_group, mut routing_group, mut nested) = (false, false, false);
     for (number, (line, original)) in code.lines().zip(text.lines()).enumerate() {
         let trimmed = line.trim();
         let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
@@ -196,6 +254,44 @@ fn direct_lines(text: &str) -> Vec<usize> {
             pending = true;
             continue;
         }
+        lines.push((number + 1, line.to_string()));
+        depth += delta;
+    }
+    lines
+}
+
+/// 1-based numbers of the production lines in `text` that name `tokio::spawn`
+/// or import it in a single-line `use tokio::{ .. }` group.
+fn spawn_lines(text: &str) -> Vec<usize> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    production_lines(text)
+        .into_iter()
+        .filter(|(_, line)| {
+            let line: String = line.split_whitespace().collect();
+            let path = ["tokio::spawn", "tokio::task::spawn"].iter().any(|path| {
+                line.split(path)
+                    .skip(1)
+                    .any(|after| !after.starts_with(ident))
+            });
+            let grouped = line.starts_with("usetokio::")
+                && line.contains('{')
+                && line.split(|c: char| !ident(c)).any(|name| name == "spawn");
+            path || grouped
+        })
+        .map(|(number, _)| number)
+        .collect()
+}
+
+/// 1-based numbers of the production lines in `text` that name an axum method
+/// router or import `axum::routing` as a module.
+fn direct_lines(text: &str) -> Vec<usize> {
+    let mut found = Vec::new();
+    // Inside a multi-line `use axum::{ .. }` or `use axum::routing::{ .. }`.
+    // A routing group nested in `use axum::{ .. }` ends at its own `}`.
+    let (mut axum_group, mut routing_group, mut nested) = (false, false, false);
+    for (number, line) in production_lines(text) {
+        let line = line.as_str();
+        let trimmed = line.trim();
         let opens_group = !trimmed.ends_with(';');
         if trimmed.starts_with("use axum::{") && opens_group {
             axum_group = true;
@@ -222,7 +318,7 @@ fn direct_lines(text: &str) -> Vec<usize> {
                     .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
                     .any(|name| name == "routing"));
         if direct || grouped || in_routing_group || module {
-            found.push(number + 1);
+            found.push(number);
         }
         if nested && trimmed.starts_with('}') {
             routing_group = false;
@@ -237,7 +333,6 @@ fn direct_lines(text: &str) -> Vec<usize> {
             routing_group = false;
             nested = false;
         }
-        depth += delta;
     }
     found
 }
@@ -330,6 +425,50 @@ use axum::{
 use axum::routing::{self, MethodRouter};
 "##;
         assert_eq!(direct_lines(text), [7, 15, 18, 20, 21, 27, 31]);
+    }
+
+    #[test]
+    fn spawn_lines_skip_tests_and_other_tokio_functions() {
+        let text = r#"use tokio::task::{JoinHandle, spawn_blocking};
+use tokio::task::{JoinHandle, spawn};
+fn a() { tokio::spawn(f); }
+fn b() { tokio::task::spawn_blocking(f); }
+fn c() { tokio::task::spawn(f); }
+const S: &str = "tokio::spawn(f)";
+#[cfg(test)]
+mod tests {
+    fn d() { tokio::spawn(f); }
+}
+fn e() { crate::shared::task::spawn(f); }
+"#;
+        assert_eq!(super::spawn_lines(text), [2, 3, 5]);
+    }
+
+    #[test]
+    fn out_of_line_test_modules_are_found() {
+        let text = "#[cfg(test)]\nmod load;\nmod prod;\n#[cfg(test)]\n#[path = \"x.rs\"]\npub(crate) mod other;\n";
+        let found = super::test_module_paths(std::path::Path::new("src/bus/broker.rs"), text);
+        let names: Vec<String> = found.iter().map(|p| p.display().to_string()).collect();
+        assert_eq!(
+            names,
+            [
+                "src/bus/broker/load.rs",
+                "src/bus/broker/load",
+                "src/bus/broker/other.rs",
+                "src/bus/broker/other",
+            ]
+        );
+        let lib = super::test_module_paths(
+            std::path::Path::new("src/lib.rs"),
+            "#[cfg(test)]\nmod kit;\n",
+        );
+        assert_eq!(
+            lib,
+            [
+                std::path::Path::new("src/kit.rs"),
+                std::path::Path::new("src/kit")
+            ]
+        );
     }
 
     #[test]
