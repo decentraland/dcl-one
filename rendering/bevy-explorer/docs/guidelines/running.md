@@ -222,12 +222,19 @@ State, in every build:
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
-  slots), as rendered (built or not, wearables by category, hidden categories) and the emote
+  slots), as rendered (built or not, wearables by category, hidden categories), the files it
+  could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
+  when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
   movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
+  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
+  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
+  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
+  it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
