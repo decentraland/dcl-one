@@ -54,6 +54,16 @@ describe('bridge events', () => {
     ])
   })
 
+  it('reads the events held at parcels, and keeps where each is held', async () => {
+    const h = fakeCtx()
+    signed.mockResolvedValueOnce([{ id: 'a', x: 1, y: 2, coordinates: [3, 4] }, { id: 'b', coordinates: 'bad' }])
+    await h.req({ kind: 'getEvents', request: 9, list: 'live', positions: [{ x: 1, y: 2 }, { x: -3, y: 0 }] })
+    expect(signed).toHaveBeenCalledWith('https://events.example.org/api/events?list=live&positions[]=1,2&positions[]=-3,0&with_connected_users=true')
+    const answer = h.sent[0]
+    if (answer.kind !== 'events') throw new Error('expected an events answer')
+    expect(answer.events.map((e) => e.coordinates)).toEqual([[3, 4], null])
+  })
+
   it('answers a failed read, and one with no list, as failed', async () => {
     const h = fakeCtx()
     signed.mockRejectedValueOnce(new Error('HTTP 503'))

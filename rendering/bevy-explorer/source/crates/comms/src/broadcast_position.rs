@@ -10,10 +10,11 @@ use dcl_component::{
 use wallet::Wallet;
 
 use crate::{
+    anim_announce::{Announcement, ClipAnnouncer},
     broadcast, broadcast_to,
     global_crdt::GlobalCrdtState,
     movement_compressed::{Movement, Temporal},
-    movement_pacing::{head_turned, Change, MovementPacer},
+    pulse::movement_pacing::{Change, MovementPacer},
     BroadcastTarget,
 };
 
@@ -29,12 +30,16 @@ impl Plugin for BroadcastPositionPlugin {
 
 // Re-send the anim hash pair at least this often so late joiners pick up the active clip.
 const ANIM_URN_KEEPALIVE: f64 = 1.0;
+// A head-yaw or head-pitch change beyond this threshold (in degrees) breaks the idle
+// keepalive and gets the next packet sent at the next regular slot (see `MovementPacer`).
+// Smaller deltas are coarsely sampled at 1Hz, which is fine for sub-threshold drift.
+const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
+
 #[derive(Default)]
 struct LastAnim {
-    // The (scene_hash, content_hash) pair we last broadcast. Tracked as one unit so we
-    // can detect transitions between clips and drive keepalives.
-    hashes: Option<(String, String)>,
-    sent_at: f64,
+    // Decides which sends carry the hash pair or the clear (change, repeats, keepalive). It also
+    // remembers the clip as of the previous send, so clip transitions are detected through it.
+    announcer: ClipAnnouncer,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
     // regular (`REGULAR_SPACING_SECONDS`) and idle keepalive broadcast intervals.
@@ -68,8 +73,6 @@ fn broadcast_position(
     mut last_head_sync: Local<HeadSync>,
     mut last_point_at: Local<PointAtSync>,
     mut pacer: Local<MovementPacer>,
-    // The grounded flag and the jump time of the last send, to spot a take-off, a landing or a jump.
-    mut last_edge_state: Local<(bool, f64)>,
     mut last_index: Local<u32>,
     mut last_anim: Local<LastAnim>,
     time: Res<Time>,
@@ -122,40 +125,35 @@ fn broadcast_position(
     let current_hashes = scene_anim
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
-    let anim_changed = current_hashes != last_anim.hashes;
-    let grounded = dynamics.ground_height < 0.2;
+    let anim_changed = last_anim.announcer.changed(current_hashes.as_ref());
     // Toggling either enabled flag, or a yaw/pitch delta past the threshold, breaks the
     // keepalive and goes out at the next regular slot. Sub-threshold drift just rides the
     // 1Hz keepalive.
     let head_changed = head_sync.yaw_enabled != last_head_sync.yaw_enabled
         || head_sync.pitch_enabled != last_head_sync.pitch_enabled
-        || head_turned(last_head_sync.yaw_deg, head_sync.yaw_deg)
-        || head_turned(last_head_sync.pitch_deg, head_sync.pitch_deg);
+        || (head_sync.yaw_deg - last_head_sync.yaw_deg).abs() > HEAD_SYNC_EPSILON_DEG
+        || (head_sync.pitch_deg - last_head_sync.pitch_deg).abs() > HEAD_SYNC_EPSILON_DEG;
     // Point-at toggling or any non-trivial coord change breaks the keepalive.
     // No degree-style threshold: target coords can move continuously when the
     // user drags, and the receiver visually integrates whatever it gets.
     let point_at_changed = point_at.is_pointing != last_point_at.is_pointing
         || (point_at.is_pointing
             && (point_at.target_world - last_point_at.target_world).length_squared() > 0.01);
-    // A take-off, a landing, a new jump or a new clip goes out on the frame it happens.
-    let edge =
-        anim_changed || grounded != last_edge_state.0 || dynamics.jump_time != last_edge_state.1;
-    // Pending seeks are ordinary movement, not edges: sending faster than the budget in
-    // `MovementPacer` gets us disconnected. The latch above already holds the most recent
-    // seek; it rides out on the next scheduled broadcast.
-    let moving = (translation - last_position.0).length_squared() >= 0.01
+    // Pending seeks and the repeats of a clip change are ordinary movement, not edges: they ride
+    // the next regular slot. The latch above already holds the most recent seek.
+    let velocity_change = (dynamics.velocity - last_position.2).length();
+    let moved = (translation - last_position.0).length_squared() >= 0.01
         || rotation != last_position.1
-        || (dynamics.velocity - last_position.2).length_squared() >= 0.01
+        || velocity_change >= 0.1
         || last_anim.pending_seek.is_some()
+        || last_anim.announcer.repeat_pending()
         || head_changed
         || point_at_changed;
-    let change = if edge {
-        Change::Edge
-    } else if moving {
-        Change::Moving
-    } else {
-        Change::Idle
-    };
+    // A new clip, or a velocity change no ordinary acceleration makes (a jump impulse, a landing,
+    // an abrupt start, stop or turn), goes out on the frame it happens; the rest waits for its
+    // slot. The flags a packet carries are computed for the frame that is sent, so they travel
+    // with the edge.
+    let change = Change::since_last_send(anim_changed, velocity_change, moved);
     if !pacer.should_send(time, change) {
         return;
     }
@@ -174,39 +172,34 @@ fn broadcast_position(
         rotation.to_euler(bevy::math::EulerRot::YXZ).0,
         movement.velocity_tier(),
         dynamics.move_kind,
-        grounded,
+        dynamics.ground_height < 0.2,
     );
 
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
 
     // Scene-driven animation carrier. The hash pair is sent on transition (new clip, or
-    // an empty `scene_hash` to clear a prior active anim) and re-sent every
-    // ANIM_URN_KEEPALIVE seconds while active so late joiners pick it up. The other
+    // an empty `scene_hash` to clear a prior active anim), repeated on the next sends so one
+    // lost datagram doesn't leave a stale clip, and re-sent every ANIM_URN_KEEPALIVE seconds
+    // while active so late joiners pick it up (see `ClipAnnouncer`). The other
     // fields ride along whenever an animation is active. `playback_time` is only sent
     // when the scene explicitly requested a seek this frame. The nested message itself
     // is only attached to the packet when there's something anim-related to say —
     // that way a receiver that's not interested (or that never sees us transition out
     // of an inactive state) costs no bytes.
     let active_anim = scene_anim.and_then(|s| s.active.as_ref());
-    let keepalive_due = active_anim.is_some() && time - last_anim.sent_at >= ANIM_URN_KEEPALIVE;
-    let (scene_hash, content_hash) = if anim_changed {
-        match &current_hashes {
-            Some((s, c)) => (Some(s.clone()), Some(c.clone())),
+    let (scene_hash, content_hash) =
+        match last_anim
+            .announcer
+            .announce(time, current_hashes.as_ref(), ANIM_URN_KEEPALIVE)
+        {
+            Announcement::Clip => current_hashes
+                .as_ref()
+                .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
+                .unwrap_or_default(),
             // Transition active → none: signal clear with an empty scene_hash.
-            None => (Some(String::new()), None),
-        }
-    } else if keepalive_due {
-        current_hashes
-            .as_ref()
-            .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
-    if scene_hash.is_some() {
-        last_anim.sent_at = time;
-    }
-    last_anim.hashes = current_hashes;
+            Announcement::Clear => (Some(String::new()), None),
+            Announcement::Nothing => (None, None),
+        };
 
     let speed = active_anim.map(|a| a.speed);
     let transition_seconds = active_anim.map(|a| a.transition_seconds);
@@ -392,6 +385,5 @@ fn broadcast_position(
     *last_position = (translation, rotation, dynamics.velocity);
     *last_head_sync = head_sync;
     *last_point_at = point_at;
-    *last_edge_state = (grounded, dynamics.jump_time);
     pacer.record_send(time);
 }

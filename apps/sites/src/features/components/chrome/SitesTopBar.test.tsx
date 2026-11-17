@@ -36,16 +36,18 @@ const baseAuth: ChromeAuth = {
 function Host({
   auth = baseAuth,
   children = <DclTopBar active="shop" />,
+  pathname = "/shop",
 }: {
   auth?: ChromeAuth;
   children?: React.ReactNode;
+  pathname?: string;
 }) {
   const [client] = React.useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/shop"]}>
+      <MemoryRouter initialEntries={[pathname]}>
         <ChromeAuthContext.Provider value={auth}>
           <ChromeNavBridge>{children}</ChromeNavBridge>
         </ChromeAuthContext.Provider>
@@ -85,11 +87,45 @@ describe("Sites native chrome integration", () => {
       screen.getByRole("link", { name: "Jump in" }).getAttribute("href"),
     ).toBe("/play/");
     expect(
-      screen.getByRole("link", { name: "What's on" }).getAttribute("href"),
-    ).toBe("/whats-on");
+      screen.getByRole("link", { name: "Events" }).getAttribute("href"),
+    ).toBe("/events");
+    expect(
+      screen.getByRole("link", { name: "Places" }).getAttribute("href"),
+    ).toBe("/places");
     expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
+  it("shows the canonical Events destination as selected inside the mobile menu", () => {
+    render(
+      <Host pathname="/events" children={<DclTopBar active="events" />} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+    const events = menu.getByRole("link", { name: "Events" });
+    expect(events.getAttribute("href")).toBe("/events");
+    expect(events.getAttribute("aria-current")).toBe("page");
+    expect(menu.queryByRole("link", { name: "What's on" })).toBeNull();
+  });
+  it.each([false, true])(
+    "keeps Places accessible in the mobile menu with signedIn=%s",
+    (signedIn) => {
+      render(
+        <Host
+          pathname="/places"
+          auth={{ ...baseAuth, signedIn, account: signedIn ? "0xa" : "" }}
+          children={<DclTopBar active="explore" />}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+      const places = menu.getByRole("link", { name: "Places" });
+      expect(places.getAttribute("href")).toBe("/places");
+      expect(places.getAttribute("aria-current")).toBe("page");
+      expect(
+        menu.getByRole("link", { name: "Events" }).getAttribute("aria-current"),
+      ).toBeNull();
+    },
+  );
   it("forwards account and balance slots once and closes mobile callback tabs", async () => {
     const tab = vi.fn();
     render(
@@ -206,7 +242,7 @@ describe("Sites native chrome integration", () => {
 
 describe("when native navigation uses the shared Sites link definitions", () => {
   it("should preserve destinations and selected Play children", () => {
-    const sections = sitesNavSections("events", "/whats-on");
+    const sections = sitesNavSections("events", "/events");
     expect(sections.map(({ label }) => label)).toEqual([
       "Play",
       "Shop",
@@ -216,12 +252,29 @@ describe("when native navigation uses the shared Sites link definitions", () => 
     ]);
     expect(sections[0]?.items).toEqual([
       { label: "Jump in", href: "/play/", active: false },
-      { label: "What's on", href: "/whats-on", active: true },
+      { label: "Events", href: "/events", active: true },
+      { label: "Places", href: "/places", active: false },
     ]);
     expect(sections[1]?.href).toBe("/shop");
     expect(sections[2]?.href).toBe("/create");
     expect(sections[3]?.href).toBe("/social/");
   });
+  it.each([
+    ["/places", [false, false, true]],
+    ["/places/realm", [false, false, true]],
+    ["/events/detail", [false, true, false]],
+    ["/play/", [true, false, false]],
+    ["/places-extra", [false, false, false]],
+  ] as const)(
+    "should select only the matching Play child for %s",
+    (pathname, selected) => {
+      expect(
+        sitesNavSections("explore", pathname)[0]?.items?.map(
+          ({ active }) => active,
+        ),
+      ).toEqual(selected);
+    },
+  );
   it("should select Docs or Blog without selecting the other Learn child", () => {
     for (const [pathname, expected] of [
       ["/docs/player/", [true, false]],

@@ -16,14 +16,14 @@ let
   version = (builtins.fromJSON (builtins.readFile (sites + /package.json))).version;
   depsSrc = lib.fileset.toSource {
     root = sites;
-    fileset = lib.fileset.unions (map (p: sites + p) [ /package.json /pnpm-lock.yaml /.npmrc /pnpm-workspace.yaml ]);
+    fileset = lib.fileset.unions (map (p: sites + p) [ /package.json /pnpm-lock.yaml /pnpm-workspace.yaml ]);
   };
   pnpmDeps = fetchPnpmDeps {
     pname = "foundation-sites";
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-4rTu6NSjLrRt5ylJ5VGNSwoh97h6uZGXHWF7MBHf3/Y=";
+    hash = "sha256-7Pa+AKdJfVnUK5PaZz5E/V7Cz+g6W7o5A/Bc4R7Dp8Y=";
   };
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
@@ -53,13 +53,15 @@ let
     inherit root;
     fileset = lib.fileset.unions [
       (sites + /src) (sites + /scripts)
-      (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /.npmrc) (sites + /pnpm-workspace.yaml)
+      (sites + /package.json) (sites + /pnpm-lock.yaml) (sites + /pnpm-workspace.yaml)
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api) (root + /library/shop)
       (root + /library/ui/index.ts)
       (root + /library/ui/css-modules.d.ts)
+      (root + /library/ui/content.helpers.ts)
+      (root + /library/ui/link.helpers.ts)
       (root + /library/ui/components)
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))

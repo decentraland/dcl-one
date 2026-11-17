@@ -146,7 +146,7 @@ describe('Explorer', () => {
   test('voiceState carries the call', async () => {
     const fake = new FakeConsole({
       voice_state: JSON.stringify({
-        mic: { available: true, enabled: false },
+        mic: { available: true, enabled: false, sceneBlocked: false },
         livekit: true,
         connected: true,
         rooms: [],
@@ -157,6 +157,20 @@ describe('Explorer', () => {
     const state = await new Explorer(fake).voiceState()
     assert.equal(state.call?.status, 'receivedCall')
     assert.equal(state.call?.peer, '0xabc')
+  })
+
+  test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
+    const tag = { player: 'local', name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const fake = new FakeConsole({
+      nametag_state: JSON.stringify({ visible: true, shown: 1, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_bubble: JSON.stringify({ bubbles: 1 })
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.nametags()
+    assert.equal(state.shown, 1)
+    assert.equal(state.tags[0]?.suffix, '#12ab')
+    assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
+    assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
   })
 
   test('nearbyMute sends the switch then the address, and nearbyMutes reads the list', async () => {

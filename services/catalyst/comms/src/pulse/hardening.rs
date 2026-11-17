@@ -148,20 +148,89 @@ pub enum ReplayRejection {
     Duplicate,
     Forgotten,
     Capacity,
+    SourceQuota,
+    WhitelistedQuota,
+    WalletQuota,
     FutureDated,
     Storage,
 }
 
-type ReplayEntries = std::collections::HashMap<(String, String), i64>;
+/// A live `(wallet, timestamp)` pair: its signed time and, when this process admitted it, the
+/// sources ([`replay_sources`]) it counts against. Pairs read back from the journal have none.
+struct ReplayEntry {
+    signed_ms: i64,
+    sources: Vec<String>,
+}
 
-struct ReplayJournal {
+type ReplayEntries = std::collections::HashMap<(String, String), ReplayEntry>;
+
+/// Live replay entries one source may hold. Each lives at most two freshness windows, so this is
+/// far above what the clients behind one address sign, and one source can take only a small part
+/// of the table.
+pub const DEFAULT_REPLAY_ENTRIES_PER_SOURCE: usize = 256;
+
+/// Live replay entries one wallet may hold. A client signs a new timestamp for every connection
+/// attempt; its fastest honest cadence is the reconnect after an accepted connection drops (about
+/// 3 s, less a fifth of jitter), about 25 per freshness window, while failed attempts back off from
+/// 1 s, doubling. This leaves room above that. The per-source and whitelisted quotas are the
+/// primary bounds on the table, since a wallet costs nothing to create; this one is defense in
+/// depth that keeps a single wallet to a small part of the table whatever its sources.
+pub const DEFAULT_REPLAY_ENTRIES_PER_WALLET: usize = 32;
+
+/// Live replay entries all whitelisted sources may hold together. Every peer is given its source
+/// address at connect, and only whitelisted ones reach the table without a counted source, so they
+/// share this one bucket. It is about half the production table, generous for trusted
+/// infrastructure, and leaves the rest of the table to everyone else.
+pub const DEFAULT_REPLAY_ENTRIES_WHITELISTED: usize = 4096;
+
+/// The `entries_by_source` key of the whitelisted bucket; it cannot collide with a
+/// [`replay_sources`] key, which is an IP address or an IPv6 prefix.
+const WHITELISTED_REPLAY_SOURCE: &str = "whitelisted";
+
+/// Prefix of the IPv6 site a peer is also counted against, so addresses spread over the /64s of
+/// one allocation share one quota, as the clients behind one IPv4 address do. A provider that
+/// places many subscribers in one /48 therefore shares one quota, like an IPv4 carrier NAT.
+pub const IPV6_REPLAY_SITE_PREFIX_BITS: u32 = 48;
+
+/// The sources a peer address counts against: its `client_ip::source_key` (the IPv4 address, or
+/// the IPv6 /64) and, for IPv6, its /48 site.
+fn replay_sources(ip: &str) -> Vec<String> {
+    let mut sources = vec![crate::shared::client_ip::source_key(ip)];
+    if let Ok(std::net::IpAddr::V6(v6)) = ip.parse::<std::net::IpAddr>()
+        && v6.to_ipv4_mapped().is_none()
+    {
+        let mask = u128::MAX << (128 - IPV6_REPLAY_SITE_PREFIX_BITS);
+        let site = std::net::Ipv6Addr::from(u128::from(v6) & mask);
+        sources.push(format!("{site}/{IPV6_REPLAY_SITE_PREFIX_BITS}"));
+    }
+    sources
+}
+
+/// One write to the replay journal, in the order the event loop issued it.
+enum JournalJob {
+    /// One record line.
+    Append(String),
+    /// The whole journal, replacing the file: the floor and every live pair.
+    Compact(String),
+}
+
+/// How far the journal writer has got: every job up to `durable_through` (counted from 1 in
+/// issue order) is on disk, and `failed` is set once a write failed, after which it writes
+/// nothing more.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JournalProgress {
+    pub durable_through: u64,
+    pub failed: bool,
+}
+
+/// The journal file, owned by the writer thread once the journal is open.
+struct ReplayJournalFile {
     path: std::path::PathBuf,
     file: std::fs::File,
     _lock: std::fs::File,
-    records: usize,
 }
 
-impl ReplayJournal {
+impl ReplayJournalFile {
     #[cfg(unix)]
     fn sync_parent(path: &std::path::Path) -> std::io::Result<()> {
         let parent = path
@@ -202,13 +271,11 @@ impl ReplayJournal {
         Self::sync_parent(&path)?;
         let mut seen = std::collections::HashMap::new();
         let mut forgotten_through_ms = i64::MIN;
-        let mut records = 0usize;
         for line in std::io::BufReader::new(&readable).lines() {
             let line = line?;
             if line.is_empty() {
                 continue;
             }
-            records = records.saturating_add(1);
             let fields: Vec<_> = line.split('\t').collect();
             match fields.as_slice() {
                 ["F", through] => {
@@ -238,7 +305,13 @@ impl ReplayJournal {
                             "inconsistent replay-journal timestamp",
                         ));
                     }
-                    seen.insert((wallet.to_string(), timestamp.to_string()), signed_ms);
+                    seen.insert(
+                        (wallet.to_string(), timestamp.to_string()),
+                        ReplayEntry {
+                            signed_ms,
+                            sources: Vec::new(),
+                        },
+                    );
                 }
                 _ => {
                     return Err(std::io::Error::new(
@@ -257,41 +330,35 @@ impl ReplayJournal {
                 path,
                 file,
                 _lock: lock,
-                records,
             },
             seen,
             forgotten_through_ms,
         ))
     }
 
-    fn append_seen(
-        &mut self,
-        wallet: &str,
-        timestamp: &str,
-        signed_ms: i64,
-    ) -> std::io::Result<()> {
+    /// Writes one batch with a single sync. Appends issued before a compaction are already in
+    /// the compacted contents, so they are not written separately.
+    fn write_batch(&mut self, batch: Vec<JournalJob>) -> std::io::Result<()> {
         use std::io::Write as _;
 
-        writeln!(self.file, "S\t{signed_ms}\t{wallet}\t{timestamp}")?;
-        self.file.sync_data()?;
-        self.records = self.records.saturating_add(1);
+        let mut appended = String::new();
+        for job in batch {
+            match job {
+                JournalJob::Append(line) => appended.push_str(&line),
+                JournalJob::Compact(contents) => {
+                    appended.clear();
+                    self.compact(&contents)?;
+                }
+            }
+        }
+        if !appended.is_empty() {
+            self.file.write_all(appended.as_bytes())?;
+            self.file.sync_data()?;
+        }
         Ok(())
     }
 
-    fn append_floor(&mut self, through: i64) -> std::io::Result<()> {
-        use std::io::Write as _;
-
-        writeln!(self.file, "F\t{through}")?;
-        self.file.sync_data()?;
-        self.records = self.records.saturating_add(1);
-        Ok(())
-    }
-
-    fn compact(
-        &mut self,
-        seen: &std::collections::HashMap<(String, String), i64>,
-        forgotten_through_ms: i64,
-    ) -> std::io::Result<()> {
+    fn compact(&mut self, contents: &str) -> std::io::Result<()> {
         use std::io::Write as _;
 
         let temporary = self.path.with_extension("replay-journal.tmp");
@@ -300,12 +367,7 @@ impl ReplayJournal {
             .truncate(true)
             .write(true)
             .open(&temporary)?;
-        writeln!(file, "F\t{forgotten_through_ms}")?;
-        let mut entries: Vec<_> = seen.iter().collect();
-        entries.sort_by(|left, right| left.0.cmp(right.0));
-        for ((wallet, timestamp), signed_ms) in entries {
-            writeln!(file, "S\t{signed_ms}\t{wallet}\t{timestamp}")?;
-        }
+        file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&temporary, &self.path)?;
         Self::sync_parent(&self.path)?;
@@ -313,26 +375,192 @@ impl ReplayJournal {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        self.records = seen.len().saturating_add(1);
         Ok(())
+    }
+
+    /// The writer thread: waits for a job, takes every job queued behind it as one batch, and
+    /// writes the batch with one sync, so concurrent handshakes share a sync. `gate`, used by
+    /// tests only, must release each batch with a [`WriterStep`]; a closed gate stops the writer
+    /// as a crash would, before the batch is written.
+    fn write_jobs(
+        mut self,
+        jobs: std::sync::mpsc::Receiver<JournalJob>,
+        progress: tokio::sync::watch::Sender<JournalProgress>,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) {
+        let _panic = ReportPanic(&progress);
+        let mut durable_through = 0u64;
+        while let Ok(first) = jobs.recv() {
+            let gated = match gate.as_ref().map(std::sync::mpsc::Receiver::recv) {
+                None | Some(Ok(WriterStep::Write)) => Ok(()),
+                Some(Ok(WriterStep::Fail)) => {
+                    Err(std::io::Error::other("injected journal write failure"))
+                }
+                Some(Ok(WriterStep::Panic)) => panic!("injected journal writer panic"),
+                Some(Err(_)) => return,
+            };
+            let batch: Vec<_> = std::iter::once(first).chain(jobs.try_iter()).collect();
+            let issued = batch.len() as u64;
+            match gated.and_then(|()| self.write_batch(batch)) {
+                Ok(()) => {
+                    durable_through += issued;
+                    progress.send_replace(JournalProgress {
+                        durable_through,
+                        failed: false,
+                    });
+                }
+                Err(error) => {
+                    tracing::error!(%error, "Pulse replay journal write failed; admission is closed");
+                    progress.send_replace(JournalProgress {
+                        durable_through,
+                        failed: true,
+                    });
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// What a test gate tells the journal writer to do with its next batch.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug)]
+pub(crate) enum WriterStep {
+    Write,
+    Fail,
+    Panic,
+}
+
+/// Reports the journal failed if the writer panics, so the event loop wakes and refuses the
+/// handshakes it holds instead of leaving them to the authentication timeout.
+struct ReportPanic<'a>(&'a tokio::sync::watch::Sender<JournalProgress>);
+
+impl Drop for ReportPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.send_modify(|progress| progress.failed = true);
+        }
+    }
+}
+
+fn journal_contents(seen: &ReplayEntries, forgotten_through_ms: i64) -> String {
+    use std::fmt::Write as _;
+
+    let mut contents = format!("F\t{forgotten_through_ms}\n");
+    let mut entries: Vec<_> = seen.iter().collect();
+    entries.sort_by(|left, right| left.0.cmp(right.0));
+    for ((wallet, timestamp), entry) in entries {
+        let _ = writeln!(contents, "S\t{}\t{wallet}\t{timestamp}", entry.signed_ms);
+    }
+    contents
+}
+
+/// The event loop's side of the journal: it issues jobs without waiting, and a dedicated
+/// thread writes them. Dropping it writes every job already issued before it returns.
+struct ReplayJournal {
+    jobs: Option<std::sync::mpsc::Sender<JournalJob>>,
+    progress: tokio::sync::watch::Receiver<JournalProgress>,
+    writer: Option<std::thread::JoinHandle<()>>,
+    issued: u64,
+    records: usize,
+}
+
+impl ReplayJournal {
+    fn start(
+        file: ReplayJournalFile,
+        records: usize,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) -> std::io::Result<Self> {
+        let (jobs, queued) = std::sync::mpsc::channel();
+        let (sender, progress) = tokio::sync::watch::channel(JournalProgress::default());
+        let writer = std::thread::Builder::new()
+            .name("pulse-replay-journal".into())
+            .spawn(move || file.write_jobs(queued, sender, gate))?;
+        Ok(Self {
+            jobs: Some(jobs),
+            progress,
+            writer: Some(writer),
+            issued: 0,
+            records,
+        })
+    }
+
+    fn issue(&mut self, job: JournalJob) {
+        // A send fails only once the writer has stopped, which `progress` reports as failed.
+        if let Some(jobs) = self.jobs.as_ref() {
+            let _ = jobs.send(job);
+        }
+        self.issued += 1;
+    }
+
+    fn append_seen(&mut self, wallet: &str, timestamp: &str, signed_ms: i64) {
+        self.issue(JournalJob::Append(format!(
+            "S\t{signed_ms}\t{wallet}\t{timestamp}\n"
+        )));
+        self.records = self.records.saturating_add(1);
+    }
+
+    fn append_floor(&mut self, through: i64) {
+        self.issue(JournalJob::Append(format!("F\t{through}\n")));
+        self.records = self.records.saturating_add(1);
+    }
+
+    fn compact(&mut self, seen: &ReplayEntries, forgotten_through_ms: i64) {
+        self.issue(JournalJob::Compact(journal_contents(
+            seen,
+            forgotten_through_ms,
+        )));
+        self.records = seen.len().saturating_add(1);
+    }
+
+    fn progress(&self) -> JournalProgress {
+        let mut progress = *self.progress.borrow();
+        // The writer stops only on a failed write or when this side is dropped.
+        progress.failed |= self.progress.has_changed().is_err();
+        progress
+    }
+}
+
+impl Drop for ReplayJournal {
+    fn drop(&mut self) {
+        self.jobs = None;
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
     }
 }
 
 /// Admits each `(wallet, signed timestamp)` at most once. The production constructor journals a
-/// valid pair before answering, including a clock-ahead pair that is refused for now, so restart
-/// cannot turn observed signed bytes into a first use. An entry is dropped only after the wall
+/// valid pair before it is answered, including a clock-ahead pair that is refused for now, so
+/// restart cannot turn observed signed bytes into a first use. Journal writes run on a dedicated
+/// thread and are group-committed: an admission issues its record and returns, and the caller
+/// holds the answer until [`Self::journal_progress`] covers [`Self::journal_issued`] as it was
+/// after the admission. A crash before that sync loses only pairs that were never answered. An entry is dropped only after the wall
 /// clock has left its freshness window, and every dropped timestamp raises
 /// `forgotten_through_ms`, at or below which nothing is admitted. A stepped-back wall clock
 /// therefore cannot make a dropped timestamp fresh again, and `forget_before` puts everything
 /// signed before this process started under the same floor.
+///
+/// The table is bounded overall by `max_entries`, per source by `max_entries_per_source`, for all
+/// whitelisted sources together by `max_entries_whitelisted`, and per wallet by
+/// `max_entries_per_wallet`: a source, the whitelisted bucket or a wallet at its quota is refused a
+/// new pair, which is then neither recorded nor answered, and no existing entry is dropped early. A
+/// clock-ahead pair stays recorded, and counted, because it was answered. Pairs read back from the
+/// journal count per wallet but not per source, so the source and whitelisted counts restart empty.
 pub struct HandshakeReplayPolicy {
     enabled: bool,
     skew_ms: i64,
     max_entries: usize,
+    max_entries_per_source: usize,
+    max_entries_per_wallet: usize,
+    max_entries_whitelisted: usize,
+    /// At or below every live entry's `signed_ms`, so a sweep can be skipped until it may expire.
+    oldest_signed_ms: i64,
     forgotten_through_ms: i64,
     seen: ReplayEntries,
+    entries_by_source: std::collections::HashMap<String, usize>,
+    entries_by_wallet: std::collections::HashMap<String, usize>,
     journal: Option<ReplayJournal>,
-    storage_failed: bool,
 }
 
 impl HandshakeReplayPolicy {
@@ -341,10 +569,15 @@ impl HandshakeReplayPolicy {
             enabled,
             skew_ms,
             max_entries,
+            max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+            max_entries_per_wallet: DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+            max_entries_whitelisted: DEFAULT_REPLAY_ENTRIES_WHITELISTED,
+            oldest_signed_ms: i64::MAX,
             forgotten_through_ms: i64::MIN,
             seen: std::collections::HashMap::new(),
+            entries_by_source: std::collections::HashMap::new(),
+            entries_by_wallet: std::collections::HashMap::new(),
             journal: None,
-            storage_failed: false,
         }
     }
 
@@ -355,25 +588,68 @@ impl HandshakeReplayPolicy {
         path: impl AsRef<std::path::Path>,
         now_ms: i64,
     ) -> std::io::Result<Self> {
-        let (journal, seen, forgotten_through_ms) = ReplayJournal::open(path)?;
+        Self::durable_with_gate(enabled, skew_ms, max_entries, path, now_ms, None)
+    }
+
+    fn durable_with_gate(
+        enabled: bool,
+        skew_ms: i64,
+        max_entries: usize,
+        path: impl AsRef<std::path::Path>,
+        now_ms: i64,
+        gate: Option<std::sync::mpsc::Receiver<WriterStep>>,
+    ) -> std::io::Result<Self> {
+        let (mut file, seen, forgotten_through_ms) = ReplayJournalFile::open(path)?;
         let mut policy = Self {
             enabled,
             skew_ms,
             max_entries,
+            max_entries_per_source: DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
+            max_entries_per_wallet: DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+            max_entries_whitelisted: DEFAULT_REPLAY_ENTRIES_WHITELISTED,
+            oldest_signed_ms: i64::MAX,
             forgotten_through_ms,
             seen,
-            journal: Some(journal),
-            storage_failed: false,
+            entries_by_source: std::collections::HashMap::new(),
+            entries_by_wallet: std::collections::HashMap::new(),
+            journal: None,
         };
         policy.sweep_expired_in_memory(now_ms);
+        // A journal written under a larger or no per-wallet bound still loads; its wallets are
+        // refused new pairs until their entries leave the freshness window.
+        for (wallet, _) in policy.seen.keys() {
+            *policy.entries_by_wallet.entry(wallet.clone()).or_default() += 1;
+        }
         if policy.seen.len() > max_entries {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "replay journal exceeds configured capacity",
             ));
         }
-        policy.compact_journal()?;
+        file.compact(&journal_contents(&policy.seen, policy.forgotten_through_ms))?;
+        policy.journal = Some(ReplayJournal::start(
+            file,
+            policy.seen.len().saturating_add(1),
+            gate,
+        )?);
         Ok(policy)
+    }
+
+    /// [`Self::durable`] whose writer waits for one message from the returned gate before each
+    /// batch (see [`WriterStep`]), and dropping the gate stops the writer before the batch
+    /// reaches the file, as a crash would.
+    #[cfg(test)]
+    pub(crate) fn durable_gated(
+        skew_ms: i64,
+        max_entries: usize,
+        path: impl AsRef<std::path::Path>,
+        now_ms: i64,
+    ) -> (Self, std::sync::mpsc::Sender<WriterStep>) {
+        let (gate, released) = std::sync::mpsc::channel();
+        let policy =
+            Self::durable_with_gate(true, skew_ms, max_entries, path, now_ms, Some(released))
+                .expect("open the gated replay journal");
+        (policy, gate)
     }
 
     /// [`Self::durable`] as a restart inside one test process: the previous
@@ -402,30 +678,74 @@ impl HandshakeReplayPolicy {
         self.enabled
     }
 
+    /// Live entries one source may hold; 0 removes the per-source bound.
+    pub fn set_max_entries_per_source(&mut self, max: usize) {
+        self.max_entries_per_source = max;
+    }
+
+    /// Live entries one wallet may hold; 0 removes the per-wallet bound.
+    pub fn set_max_entries_per_wallet(&mut self, max: usize) {
+        self.max_entries_per_wallet = max;
+    }
+
+    /// Live entries all whitelisted sources may hold together; 0 removes that bound.
+    pub fn set_max_entries_whitelisted(&mut self, max: usize) {
+        self.max_entries_whitelisted = max;
+    }
+
     pub fn forget_before(&mut self, wall_ms: i64) {
         let next = self.forgotten_through_ms.max(wall_ms.saturating_sub(1));
         if next == self.forgotten_through_ms {
             return;
         }
         self.forgotten_through_ms = next;
-        if let Some(journal) = self.journal.as_mut()
-            && journal.append_floor(next).is_err()
-        {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
+        if let Some(journal) = self.journal.as_mut() {
+            journal.append_floor(next);
         }
     }
 
+    /// Journal jobs issued so far; 0 without a journal.
+    pub fn journal_issued(&self) -> u64 {
+        self.journal.as_ref().map_or(0, |journal| journal.issued)
+    }
+
+    /// How far the journal writer has got. Without a journal nothing is ever pending.
+    pub fn journal_progress(&self) -> JournalProgress {
+        self.journal
+            .as_ref()
+            .map_or_else(JournalProgress::default, ReplayJournal::progress)
+    }
+
+    /// Resolves when the journal writer reports progress, including its last report after it
+    /// stopped; never once that report has been seen, nor without a journal.
+    pub async fn journal_progressed(&mut self) {
+        match self.journal.as_mut() {
+            // `changed` yields an unseen value before it reports the writer gone.
+            Some(journal) => {
+                if journal.progress.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Records a fresh pair from the peer address `ip` (`None`, a whitelisted source, counts
+    /// against the one whitelisted bucket instead) and issues its journal record; see the type's
+    /// documentation for when it may be answered. The pair, and its source, whitelisted and
+    /// wallet counts, enter the table here, before the record is durable, so a pending or failed
+    /// write leaves the counts matching the table; a failed write closes admission instead.
     pub fn try_admit(
         &mut self,
         now_ms: i64,
+        ip: Option<&str>,
         wallet: &str,
         timestamp: &str,
     ) -> Result<(), ReplayRejection> {
         if !self.enabled {
             return Ok(());
         }
-        if self.storage_failed {
+        if self.journal_progress().failed {
             return Err(ReplayRejection::Storage);
         }
         let signed_ms = match timestamp.parse::<i64>() {
@@ -437,31 +757,58 @@ impl HandshakeReplayPolicy {
             return Err(ReplayRejection::Duplicate);
         }
 
-        if self.seen.len() >= self.max_entries / 2 {
-            self.sweep_expired(now_ms)?;
+        let (sources, source_limit) = match ip {
+            Some(ip) if self.max_entries_per_source > 0 => {
+                (replay_sources(ip), self.max_entries_per_source)
+            }
+            None if self.max_entries_whitelisted > 0 => (
+                vec![WHITELISTED_REPLAY_SOURCE.to_string()],
+                self.max_entries_whitelisted,
+            ),
+            _ => (Vec::new(), 0),
+        };
+        let source_full = |policy: &Self| {
+            sources.iter().any(|source| {
+                policy.entries_by_source.get(source).copied().unwrap_or(0) >= source_limit
+            })
+        };
+        let wallet_full = |policy: &Self| {
+            policy.max_entries_per_wallet > 0
+                && policy.entries_by_wallet.get(&key.0).copied().unwrap_or(0)
+                    >= policy.max_entries_per_wallet
+        };
+        if self.seen.len() >= self.max_entries / 2 || source_full(self) || wallet_full(self) {
+            self.sweep_expired(now_ms);
         }
 
+        if source_full(self) {
+            return Err(if ip.is_some() {
+                ReplayRejection::SourceQuota
+            } else {
+                ReplayRejection::WhitelistedQuota
+            });
+        }
+        if wallet_full(self) {
+            return Err(ReplayRejection::WalletQuota);
+        }
         if self.seen.len() >= self.max_entries {
             return Err(ReplayRejection::Capacity);
         }
 
-        if let Some(journal) = self.journal.as_mut()
-            && journal.append_seen(&key.0, &key.1, signed_ms).is_err()
-        {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+        if let Some(journal) = self.journal.as_mut() {
+            journal.append_seen(&key.0, &key.1, signed_ms);
         }
-        self.seen.insert(key, signed_ms);
-        if self
-            .journal
-            .as_ref()
-            .is_some_and(|journal| journal.records > self.max_entries.saturating_mul(4).max(4))
-            && self.compact_journal().is_err()
+        for source in &sources {
+            *self.entries_by_source.entry(source.clone()).or_default() += 1;
+        }
+        *self.entries_by_wallet.entry(key.0.clone()).or_default() += 1;
+        self.oldest_signed_ms = self.oldest_signed_ms.min(signed_ms);
+        self.seen.insert(key, ReplayEntry { signed_ms, sources });
+        let compaction_due = self.max_entries.saturating_mul(4).max(4);
+        if let Some(journal) = self.journal.as_mut()
+            && journal.records > compaction_due
         {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal compaction failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+            journal.compact(&self.seen, self.forgotten_through_ms);
         }
         if signed_ms > now_ms {
             Err(ReplayRejection::FutureDated)
@@ -470,37 +817,50 @@ impl HandshakeReplayPolicy {
         }
     }
 
-    fn sweep_expired(&mut self, now_ms: i64) -> Result<(), ReplayRejection> {
+    fn sweep_expired(&mut self, now_ms: i64) {
+        // Nothing can have left the freshness window yet, so the sweep would change nothing.
+        if self.oldest_signed_ms >= now_ms.saturating_sub(self.skew_ms) {
+            return;
+        }
         let old_floor = self.forgotten_through_ms;
         self.sweep_expired_in_memory(now_ms);
         if self.forgotten_through_ms != old_floor
             && let Some(journal) = self.journal.as_mut()
-            && journal.append_floor(self.forgotten_through_ms).is_err()
         {
-            self.storage_failed = true;
-            tracing::error!("Pulse replay journal write failed; admission is closed");
-            return Err(ReplayRejection::Storage);
+            journal.append_floor(self.forgotten_through_ms);
         }
-        Ok(())
     }
 
     fn sweep_expired_in_memory(&mut self, now_ms: i64) {
         let oldest_fresh_ms = now_ms.saturating_sub(self.skew_ms);
         let mut forgotten_through_ms = self.forgotten_through_ms;
-        self.seen.retain(|_, &mut signed_ms| {
-            if signed_ms < oldest_fresh_ms {
-                forgotten_through_ms = forgotten_through_ms.max(signed_ms);
+        let entries_by_source = &mut self.entries_by_source;
+        let entries_by_wallet = &mut self.entries_by_wallet;
+        let mut oldest_signed_ms = i64::MAX;
+        self.seen.retain(|(wallet, _), entry| {
+            if entry.signed_ms >= oldest_fresh_ms {
+                oldest_signed_ms = oldest_signed_ms.min(entry.signed_ms);
+                return true;
             }
-            signed_ms >= oldest_fresh_ms
+            forgotten_through_ms = forgotten_through_ms.max(entry.signed_ms);
+            if let Some(count) = entries_by_wallet.get_mut(wallet) {
+                *count -= 1;
+                if *count == 0 {
+                    entries_by_wallet.remove(wallet);
+                }
+            }
+            for source in &entry.sources {
+                if let Some(count) = entries_by_source.get_mut(source) {
+                    *count -= 1;
+                    if *count == 0 {
+                        entries_by_source.remove(source);
+                    }
+                }
+            }
+            false
         });
+        self.oldest_signed_ms = oldest_signed_ms;
         self.forgotten_through_ms = forgotten_through_ms;
-    }
-
-    fn compact_journal(&mut self) -> std::io::Result<()> {
-        if let Some(journal) = self.journal.as_mut() {
-            journal.compact(&self.seen, self.forgotten_through_ms)?;
-        }
-        Ok(())
     }
 }
 
@@ -1004,15 +1364,15 @@ mod tests {
     #[test]
     fn replay_first_admit_succeeds_then_dup_rejected() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
-        assert_eq!(p.try_admit(SIGNED, "0xabc", "1700000000000"), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, None, "0xabc", "1700000000000"), Ok(()));
 
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", "1700000000000"),
+            p.try_admit(SIGNED, None, "0xabc", "1700000000000"),
             Err(ReplayRejection::Duplicate)
         );
 
         assert_eq!(
-            p.try_admit(SIGNED, "0xABC", "1700000000000"),
+            p.try_admit(SIGNED, None, "0xABC", "1700000000000"),
             Err(ReplayRejection::Duplicate)
         );
     }
@@ -1021,14 +1381,17 @@ mod tests {
     fn replay_same_pair_is_never_admitted_again_after_its_entry_is_dropped() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
         let used = SIGNED.to_string();
-        assert_eq!(p.try_admit(SIGNED + SKEW, "0xabc", &used), Ok(()));
+        assert_eq!(p.try_admit(SIGNED + SKEW, None, "0xabc", &used), Ok(()));
 
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "0xdef", &later.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(later, None, "0xdef", &later.to_string()),
+            Ok(())
+        );
         assert_eq!(p.seen.len(), 1, "the expired entry was dropped");
         for stepped_back in [later, SIGNED + SKEW, SIGNED, SIGNED - SKEW] {
             assert_eq!(
-                p.try_admit(stepped_back, "0xabc", &used),
+                p.try_admit(stepped_back, None, "0xabc", &used),
                 Err(ReplayRejection::Forgotten)
             );
         }
@@ -1039,14 +1402,14 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
         let future_dated = (SIGNED + SKEW).to_string();
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", &future_dated),
+            p.try_admit(SIGNED, None, "0xabc", &future_dated),
             Err(ReplayRejection::FutureDated)
         );
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "0x1", &later.to_string()), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x1", &later.to_string()), Ok(()));
         assert_eq!(p.seen.len(), 1);
         let slowest_fresh = (later - SKEW).to_string();
-        assert_eq!(p.try_admit(later, "0x2", &slowest_fresh), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x2", &slowest_fresh), Ok(()));
     }
 
     #[test]
@@ -1054,18 +1417,21 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
         p.forget_before(SIGNED);
         assert_eq!(
-            p.try_admit(SIGNED, "0xabc", &(SIGNED - 1).to_string()),
+            p.try_admit(SIGNED, None, "0xabc", &(SIGNED - 1).to_string()),
             Err(ReplayRejection::Forgotten)
         );
-        assert_eq!(p.try_admit(SIGNED, "0xabc", &SIGNED.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xabc", &SIGNED.to_string()),
+            Ok(())
+        );
         p.forget_before(SIGNED - SKEW);
         assert_eq!(
-            p.try_admit(SIGNED, "0xdef", &(SIGNED - 1).to_string()),
+            p.try_admit(SIGNED, None, "0xdef", &(SIGNED - 1).to_string()),
             Err(ReplayRejection::Forgotten),
             "the floor never moves back"
         );
         assert_eq!(
-            p.try_admit(SIGNED, "0xdef", "not-a-number"),
+            p.try_admit(SIGNED, None, "0xdef", "not-a-number"),
             Err(ReplayRejection::Forgotten)
         );
     }
@@ -1073,13 +1439,18 @@ mod tests {
     #[test]
     fn replay_different_timestamp_or_wallet_accepted() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
-        assert_eq!(p.try_admit(SIGNED + 2, "0xabc", "1700000000001"), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED + 2, None, "0xabc", "1700000000001"),
+            Ok(())
+        );
         assert!(
-            p.try_admit(SIGNED + 2, "0xabc", "1700000000002").is_ok(),
+            p.try_admit(SIGNED + 2, None, "0xabc", "1700000000002")
+                .is_ok(),
             "fresh timestamp = legit reconnect"
         );
         assert!(
-            p.try_admit(SIGNED + 2, "0xdef", "1700000000001").is_ok(),
+            p.try_admit(SIGNED + 2, None, "0xdef", "1700000000001")
+                .is_ok(),
             "different wallet, same ts"
         );
     }
@@ -1088,25 +1459,31 @@ mod tests {
     fn replay_disabled_admits_everything() {
         let mut p = HandshakeReplayPolicy::new(false, SKEW, 4096);
         for _ in 0..100 {
-            assert_eq!(p.try_admit(SIGNED, "0xabc", "ts"), Ok(()));
+            assert_eq!(p.try_admit(SIGNED, None, "0xabc", "ts"), Ok(()));
         }
     }
 
     #[test]
     fn replay_capacity_rejects_new_admission_without_forgetting_live_entries() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
-        assert_eq!(p.try_admit(SIGNED + 3, "0x1", "1700000000001"), Ok(()));
-        assert_eq!(p.try_admit(SIGNED + 3, "0x2", "1700000000002"), Ok(()));
         assert_eq!(
-            p.try_admit(SIGNED + 3, "0x3", "1700000000003"),
+            p.try_admit(SIGNED + 3, None, "0x1", "1700000000001"),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + 3, None, "0x2", "1700000000002"),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + 3, None, "0x3", "1700000000003"),
             Err(ReplayRejection::Capacity)
         );
         assert_eq!(
-            p.try_admit(SIGNED + 1, "0x1", "1700000000001"),
+            p.try_admit(SIGNED + 1, None, "0x1", "1700000000001"),
             Err(ReplayRejection::Duplicate)
         );
         let later = SIGNED + SKEW + 3;
-        assert_eq!(p.try_admit(later, "0x3", &later.to_string()), Ok(()));
+        assert_eq!(p.try_admit(later, None, "0x3", &later.to_string()), Ok(()));
         assert_eq!(p.seen.len(), 1);
     }
 
@@ -1115,21 +1492,24 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 1);
         let future_dated = (SIGNED + SKEW).to_string();
         assert_eq!(
-            p.try_admit(SIGNED, "wallet", &future_dated),
+            p.try_admit(SIGNED, None, "wallet", &future_dated),
             Err(ReplayRejection::FutureDated)
         );
         for delta in [7_000, 31_000, 60_000, 120_000] {
             assert_eq!(
-                p.try_admit(SIGNED + delta, "wallet", &future_dated),
+                p.try_admit(SIGNED + delta, None, "wallet", &future_dated),
                 Err(ReplayRejection::Duplicate)
             );
             assert_eq!(
-                p.try_admit(SIGNED + delta, "other", &(SIGNED + delta).to_string()),
+                p.try_admit(SIGNED + delta, None, "other", &(SIGNED + delta).to_string()),
                 Err(ReplayRejection::Capacity)
             );
         }
         let later = SIGNED + 2 * SKEW + 1;
-        assert_eq!(p.try_admit(later, "other", &later.to_string()), Ok(()));
+        assert_eq!(
+            p.try_admit(later, None, "other", &later.to_string()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1139,7 +1519,7 @@ mod tests {
         {
             let mut first = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
             assert_eq!(
-                first.try_admit(SIGNED, "0xabc", &future.to_string()),
+                first.try_admit(SIGNED, None, "0xabc", &future.to_string()),
                 Err(ReplayRejection::FutureDated)
             );
         }
@@ -1148,7 +1528,7 @@ mod tests {
                 .unwrap();
         restarted.forget_before(SIGNED + 1);
         assert_eq!(
-            restarted.try_admit(future, "0xabc", &future.to_string()),
+            restarted.try_admit(future, None, "0xabc", &future.to_string()),
             Err(ReplayRejection::Duplicate)
         );
     }
@@ -1175,28 +1555,142 @@ mod tests {
         );
     }
 
-    #[test]
-    fn baseline_input_boundaries_durable_storage_failure_latches_closed() {
+    async fn settle(
+        policy: &mut HandshakeReplayPolicy,
+        done: impl Fn(JournalProgress) -> bool,
+    ) -> JournalProgress {
+        tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+            loop {
+                let progress = policy.journal_progress();
+                if done(progress) {
+                    return progress;
+                }
+                policy.journal_progressed().await;
+            }
+        })
+        .await
+        .expect("the journal writer reports progress")
+    }
+
+    #[tokio::test]
+    async fn baseline_input_boundaries_durable_storage_failure_latches_closed() {
         let path = ReplayPath::new("storage-failure");
-        let mut policy = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
-        // A real write error, without relying on platform-dependent chmod or disk exhaustion.
-        policy.journal.as_mut().unwrap().file = std::fs::File::open(&path.0).unwrap();
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 4, &path.0, SIGNED);
         assert_eq!(
-            policy.try_admit(SIGNED, "wallet", &SIGNED.to_string()),
-            Err(ReplayRejection::Storage)
+            policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
+            Ok(())
         );
+        let issued = policy.journal_issued();
+        gate.send(WriterStep::Fail).unwrap();
+        let progress = settle(&mut policy, |progress| progress.failed).await;
         assert!(
-            policy.seen.is_empty(),
+            progress.durable_through < issued,
             "failed persistence cannot grant admission"
         );
-        // Repairing the file handle cannot reopen admission inside the failed process.
-        policy.journal.as_mut().unwrap().file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path.0)
-            .unwrap();
+        // The failure is latched: nothing reopens admission inside the failed process.
+        let _ = gate.send(WriterStep::Write);
         assert_eq!(
-            policy.try_admit(SIGNED + 1, "other", &(SIGNED + 1).to_string()),
+            policy.try_admit(SIGNED + 1, None, "other", &(SIGNED + 1).to_string()),
             Err(ReplayRejection::Storage)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_writer_that_failed_and_stopped_still_wakes_the_event_loop() {
+        let path = ReplayPath::new("failed-wakes");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 4, &path.0, SIGNED);
+        assert_eq!(
+            policy.try_admit(SIGNED, None, "wallet", &SIGNED.to_string()),
+            Ok(())
+        );
+        gate.send(WriterStep::Fail).unwrap();
+        // The writer reports the failure and exits before the event loop looks.
+        assert!(
+            crate::shared::test_wait::until(async || {
+                policy
+                    .journal
+                    .as_ref()
+                    .is_some_and(|journal| journal.progress.has_changed().is_err())
+            })
+            .await
+        );
+        tokio::time::timeout(
+            crate::shared::test_wait::HANG_GUARD,
+            policy.journal_progressed(),
+        )
+        .await
+        .expect("the failure wakes the event loop so held handshakes are refused");
+        assert!(policy.journal_progress().failed);
+    }
+
+    #[tokio::test]
+    async fn journal_group_commits_every_record_queued_behind_one_sync() {
+        let path = ReplayPath::new("group-commit");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        let ts = SIGNED.to_string();
+        for wallet in ["0x1", "0x2", "0x3"] {
+            assert_eq!(policy.try_admit(SIGNED, None, wallet, &ts), Ok(()));
+        }
+        let issued = policy.journal_issued();
+        assert_eq!(issued, 3);
+        assert_eq!(
+            policy.journal_progress(),
+            JournalProgress::default(),
+            "nothing is durable before the sync"
+        );
+        // The writer needs one release per batch: one release makes all three durable.
+        gate.send(WriterStep::Write).unwrap();
+        let progress = settle(&mut policy, |progress| progress.durable_through >= issued).await;
+        assert_eq!(
+            progress,
+            JournalProgress {
+                durable_through: issued,
+                failed: false
+            }
+        );
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        for wallet in ["0x1", "0x2", "0x3"] {
+            assert!(
+                journal.contains(&format!("\t{wallet}\t{ts}\n")),
+                "{journal}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_crash_before_the_sync_loses_only_unanswered_pairs() {
+        let path = ReplayPath::new("crash");
+        let ts = SIGNED.to_string();
+        {
+            let (mut policy, gate) =
+                HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+            assert_eq!(policy.try_admit(SIGNED, None, "0xanswered", &ts), Ok(()));
+            let answerable = policy.journal_issued();
+            gate.send(WriterStep::Write).unwrap();
+            settle(&mut policy, |progress| {
+                progress.durable_through >= answerable
+            })
+            .await;
+
+            assert_eq!(policy.try_admit(SIGNED, None, "0xunanswered", &ts), Ok(()));
+            assert!(
+                policy.journal_progress().durable_through < policy.journal_issued(),
+                "its answer is still held"
+            );
+            // Crash: the writer stops before the batch reaches the file.
+            drop(gate);
+        }
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 16, &path.0, SIGNED).unwrap();
+        assert_eq!(
+            restarted.try_admit(SIGNED, None, "0xanswered", &ts),
+            Err(ReplayRejection::Duplicate),
+            "a pair that could have been answered is never admitted again"
+        );
+        assert_eq!(
+            restarted.try_admit(SIGNED, None, "0xunanswered", &ts),
+            Ok(()),
+            "a pair that was never answered may be lost"
         );
     }
 
@@ -1204,10 +1698,508 @@ mod tests {
     fn zero_capacity_fails_closed() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 0);
         assert_eq!(
-            p.try_admit(SIGNED, "wallet", "1700000000000"),
+            p.try_admit(SIGNED, None, "wallet", "1700000000000"),
             Err(ReplayRejection::Capacity)
         );
         assert!(p.seen.is_empty());
+    }
+
+    #[test]
+    fn one_wallet_cannot_take_the_replay_table_from_other_wallets() {
+        let capacity = 256;
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, capacity);
+        // One wallet signs many distinct timestamps inside the freshness window, current and
+        // clock-ahead, with no source to count them against.
+        for i in 0..capacity as i64 {
+            let signed = SIGNED + i * (SKEW / capacity as i64);
+            assert_ne!(
+                p.try_admit(SIGNED, None, "0xFlood", &signed.to_string()),
+                Err(ReplayRejection::Capacity)
+            );
+        }
+        // Other wallets are still admitted, now and later in the same window.
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xother", &SIGNED.to_string()),
+            Ok(())
+        );
+        let later = SIGNED + SKEW - 1;
+        assert_eq!(
+            p.try_admit(later, None, "0xthird", &later.to_string()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn wallet_quota_counts_clock_ahead_pairs_and_frees_after_the_window() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_wallet(2);
+        let current = SIGNED.to_string();
+        let ahead = (SIGNED + SKEW).to_string();
+        assert_eq!(p.try_admit(SIGNED, None, "0xABC", &current), Ok(()));
+        // A clock-ahead pair is answered, so it stays recorded and counts against the wallet.
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xabc", &ahead),
+            Err(ReplayRejection::FutureDated)
+        );
+        let refused = (SIGNED + 1).to_string();
+        assert_eq!(
+            p.try_admit(SIGNED + 1, Some("192.0.2.9"), "0xabc", &refused),
+            Err(ReplayRejection::WalletQuota)
+        );
+        // The refused pair was not recorded; other wallets are unaffected.
+        assert_eq!(p.seen.len(), 2);
+        assert_eq!(p.try_admit(SIGNED + 1, None, "0xdef", &refused), Ok(()));
+        // The answered clock-ahead pair is still consumed once it becomes current.
+        assert_eq!(
+            p.try_admit(SIGNED + SKEW, None, "0xabc", &ahead),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Once the current pair leaves the window, the wallet has room for one more.
+        let later = SIGNED + SKEW + 2;
+        assert_eq!(
+            p.try_admit(later, None, "0xabc", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_wallet.get("0xabc"), Some(&2));
+        assert_eq!(
+            p.try_admit(later, None, "0xabc", &(later + 1).to_string()),
+            Err(ReplayRejection::WalletQuota)
+        );
+    }
+
+    #[test]
+    fn durable_replay_journal_restores_wallet_counts_across_restart() {
+        let path = ReplayPath::new("wallet-quota-restart");
+        {
+            let mut first =
+                HandshakeReplayPolicy::durable(true, SKEW, 64, &path.0, SIGNED).unwrap();
+            for i in 0..3 {
+                let signed = SIGNED + i;
+                assert_eq!(
+                    first.try_admit(SIGNED + 2, None, "0xabc", &signed.to_string()),
+                    Ok(())
+                );
+            }
+        }
+        // A journal holding more than the wallet's quota still loads.
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 64, &path.0, SIGNED + 3)
+                .unwrap();
+        restarted.set_max_entries_per_wallet(2);
+        assert_eq!(restarted.entries_by_wallet.get("0xabc"), Some(&3));
+        assert_eq!(restarted.oldest_signed_ms, SIGNED);
+        assert_eq!(
+            restarted.try_admit(SIGNED + 3, None, "0xabc", &(SIGNED + 3).to_string()),
+            Err(ReplayRejection::WalletQuota)
+        );
+        assert_eq!(
+            restarted.try_admit(SIGNED + 3, None, "0xdef", &(SIGNED + 3).to_string()),
+            Ok(())
+        );
+        let later = SIGNED + SKEW + 3;
+        assert_eq!(
+            restarted.try_admit(later, None, "0xabc", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(restarted.entries_by_wallet.get("0xabc"), Some(&1));
+    }
+
+    #[test]
+    fn whitelisted_sources_share_one_bucket_that_frees_after_the_window() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_whitelisted(2);
+        let ts = SIGNED.to_string();
+        assert_eq!(p.try_admit(SIGNED, None, "0x1", &ts), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, None, "0x2", &ts), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0x3", &ts),
+            Err(ReplayRejection::WhitelistedQuota)
+        );
+        assert_eq!(p.seen.len(), 2);
+        // Counted sources keep their own quotas.
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.1"), "0x3", &ts), Ok(()));
+        // Once the bucket's entries leave the window, whitelisted sources are admitted again.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(p.try_admit(later, None, "0x4", &later.to_string()), Ok(()));
+        assert_eq!(p.entries_by_source.get(WHITELISTED_REPLAY_SOURCE), Some(&1));
+        // 0 removes the bound.
+        p.set_max_entries_whitelisted(0);
+        for wallet in ["0x5", "0x6", "0x7"] {
+            assert_eq!(p.try_admit(later, None, wallet, &later.to_string()), Ok(()));
+        }
+    }
+
+    #[test]
+    fn replay_table_tracks_its_oldest_entry_for_the_sweep() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_wallet(1);
+        assert_eq!(p.oldest_signed_ms, i64::MAX);
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0xabc", &SIGNED.to_string()),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + 5, None, "0xdef", &(SIGNED + 5).to_string()),
+            Ok(())
+        );
+        assert_eq!(p.oldest_signed_ms, SIGNED);
+        // An entry already outside the window that the tracked oldest does not cover: only a
+        // full sweep would drop it, so it survives the refusal only if the sweep is skipped.
+        p.seen.insert(
+            ("0xstale".to_string(), (SIGNED - 1).to_string()),
+            ReplayEntry {
+                signed_ms: SIGNED - 1,
+                sources: Vec::new(),
+            },
+        );
+        // Inside the window the wallet refusal reaches the sweep, which returns early.
+        let floor = p.forgotten_through_ms;
+        assert_eq!(
+            p.try_admit(SIGNED + SKEW, None, "0xabc", &(SIGNED + SKEW).to_string()),
+            Err(ReplayRejection::WalletQuota)
+        );
+        assert_eq!((p.seen.len(), p.forgotten_through_ms), (3, floor));
+        assert_eq!(p.oldest_signed_ms, SIGNED);
+        // Past it, the full sweep drops both expired entries and tracks the next oldest.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, None, "0xabc", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.seen.len(), 2);
+        assert_eq!(p.forgotten_through_ms, SIGNED);
+        assert_eq!(p.oldest_signed_ms, SIGNED + 5);
+    }
+
+    #[test]
+    fn source_quota_refuses_only_that_source_and_keeps_its_entries() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_source(2);
+        let ts = SIGNED.to_string();
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.1"), "0x2", &ts), Ok(()));
+        assert_eq!(
+            p.try_admit(SIGNED, Some("192.0.2.1"), "0x3", &ts),
+            Err(ReplayRejection::SourceQuota)
+        );
+        // The refused pair was not recorded, and the source's entries were not dropped.
+        assert_eq!(p.seen.len(), 2);
+        assert_eq!(
+            p.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Another source, and a pair with no source, still have room.
+        assert_eq!(p.try_admit(SIGNED, Some("192.0.2.2"), "0x3", &ts), Ok(()));
+        assert_eq!(p.try_admit(SIGNED, None, "0x4", &ts), Ok(()));
+        // Once the source's entries leave the freshness window, its quota is free again.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, Some("192.0.2.1"), "0x5", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("192.0.2.1"), Some(&1));
+        assert_eq!(
+            p.try_admit(later, Some("192.0.2.1"), "0x1", &ts),
+            Err(ReplayRejection::Forgotten)
+        );
+    }
+
+    #[test]
+    fn ipv6_peers_share_the_quota_of_their_slash_48_site() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        p.set_max_entries_per_source(2);
+        let ts = SIGNED.to_string();
+        // Two /64s of one /48 site take its whole quota.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:1::1"), "0x1", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:2::1"), "0x2", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:1:3::1"), "0x3", &ts),
+            Err(ReplayRejection::SourceQuota)
+        );
+        // Another /48 has its own quota, and IPv4 (also v4-mapped) is counted by address only.
+        assert_eq!(
+            p.try_admit(SIGNED, Some("2001:db8:2:1::1"), "0x3", &ts),
+            Ok(())
+        );
+        assert_eq!(
+            p.try_admit(SIGNED, Some("::ffff:192.0.2.1"), "0x4", &ts),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("192.0.2.1"), Some(&1));
+        // Expiry releases both the /64 and the /48 counts.
+        let later = SIGNED + SKEW + 1;
+        assert_eq!(
+            p.try_admit(later, Some("2001:db8:1:3::1"), "0x5", &later.to_string()),
+            Ok(())
+        );
+        assert_eq!(p.entries_by_source.get("2001:db8:1::/48"), Some(&1));
+        assert_eq!(p.entries_by_source.get("2001:db8:1:1::/64"), None);
+    }
+
+    #[test]
+    fn source_quota_refusal_journals_nothing_and_admitted_pairs_survive_restart() {
+        let path = ReplayPath::new("source-quota");
+        let ts = SIGNED.to_string();
+        {
+            let mut first = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
+            first.set_max_entries_per_source(1);
+            assert_eq!(
+                first.try_admit(SIGNED, Some("192.0.2.1"), "0x1", &ts),
+                Ok(())
+            );
+            assert_eq!(
+                first.try_admit(SIGNED, Some("192.0.2.1"), "0x2", &ts),
+                Err(ReplayRejection::SourceQuota)
+            );
+        }
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 4, &path.0, SIGNED + 1)
+                .unwrap();
+        restarted.set_max_entries_per_source(1);
+        assert_eq!(
+            restarted.try_admit(SIGNED + 1, Some("192.0.2.2"), "0x1", &ts),
+            Err(ReplayRejection::Duplicate)
+        );
+        // Restored pairs carry no source, so they do not count against one after restart.
+        assert_eq!(
+            restarted.try_admit(SIGNED + 1, Some("192.0.2.1"), "0x2", &ts),
+            Ok(())
+        );
+    }
+
+    /// The wallet, source and whitelisted counts as the table implies them.
+    fn counts_from_table(
+        policy: &HandshakeReplayPolicy,
+    ) -> (
+        std::collections::HashMap<String, usize>,
+        std::collections::HashMap<String, usize>,
+    ) {
+        let mut by_wallet = std::collections::HashMap::new();
+        let mut by_source = std::collections::HashMap::new();
+        for ((wallet, _), entry) in &policy.seen {
+            *by_wallet.entry(wallet.clone()).or_default() += 1;
+            for source in &entry.sources {
+                *by_source.entry(source.clone()).or_default() += 1;
+            }
+        }
+        (by_wallet, by_source)
+    }
+
+    #[tokio::test]
+    async fn wallet_quota_refusal_while_a_write_is_pending_issues_and_counts_nothing() {
+        let path = ReplayPath::new("quota-pending");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        policy.set_max_entries_per_wallet(2);
+        let ts = SIGNED.to_string();
+        assert_eq!(
+            policy.try_admit(SIGNED, Some("192.0.2.1"), "0xw", &ts),
+            Ok(())
+        );
+        let ts2 = (SIGNED + 1).to_string();
+        assert_eq!(policy.try_admit(SIGNED + 1, None, "0xw", &ts2), Ok(()));
+        let issued = policy.journal_issued();
+        assert_eq!(issued, 2);
+        assert_eq!(
+            policy.journal_progress(),
+            JournalProgress::default(),
+            "both admitted pairs are still waiting for their sync"
+        );
+        let wallets = policy.entries_by_wallet.clone();
+        let sources = policy.entries_by_source.clone();
+        assert_eq!(wallets.get("0xw"), Some(&2));
+        assert_eq!(sources.get("192.0.2.1"), Some(&1));
+        assert_eq!(sources.get(WHITELISTED_REPLAY_SOURCE), Some(&1));
+
+        let refused = (SIGNED + 2).to_string();
+        for ip in [Some("192.0.2.1"), Some("192.0.2.2"), None] {
+            assert_eq!(
+                policy.try_admit(SIGNED + 2, ip, "0xW", &refused),
+                Err(ReplayRejection::WalletQuota),
+                "{ip:?}"
+            );
+        }
+        assert_eq!(
+            policy.journal_issued(),
+            issued,
+            "a refusal issues no record"
+        );
+        assert_eq!(policy.seen.len(), 2);
+        assert!(
+            !policy
+                .seen
+                .contains_key(&("0xw".to_string(), refused.clone()))
+        );
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_source, sources);
+
+        gate.send(WriterStep::Write).unwrap();
+        let progress = settle(&mut policy, |progress| progress.durable_through >= issued).await;
+        assert_eq!(
+            progress,
+            JournalProgress {
+                durable_through: issued,
+                failed: false
+            }
+        );
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        assert!(journal.contains(&format!("\t0xw\t{ts}\n")), "{journal}");
+        assert!(journal.contains(&format!("\t0xw\t{ts2}\n")), "{journal}");
+        assert!(
+            !journal.contains(&format!("\t0xw\t{refused}\n")),
+            "{journal}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_keeps_quota_counts_matching_the_table_until_they_expire() {
+        let path = ReplayPath::new("quota-failed");
+        let (mut policy, gate) = HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+        policy.set_max_entries_per_wallet(2);
+        let ts = SIGNED.to_string();
+        let ts2 = (SIGNED + 1).to_string();
+        assert_eq!(
+            policy.try_admit(SIGNED, Some("192.0.2.1"), "0xw", &ts),
+            Ok(())
+        );
+        assert_eq!(policy.try_admit(SIGNED + 1, None, "0xw", &ts2), Ok(()));
+        let issued = policy.journal_issued();
+        gate.send(WriterStep::Fail).unwrap();
+        let progress = settle(&mut policy, |progress| progress.failed).await;
+        assert!(progress.durable_through < issued);
+
+        // The admitted entries stay in the table, counted exactly once each.
+        let (wallets, sources) = counts_from_table(&policy);
+        assert_eq!(policy.seen.len(), 2);
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_wallet.get("0xw"), Some(&2));
+        assert_eq!(policy.entries_by_source, sources);
+        assert_eq!(policy.entries_by_source.get("192.0.2.1"), Some(&1));
+        assert_eq!(
+            policy.entries_by_source.get(WHITELISTED_REPLAY_SOURCE),
+            Some(&1)
+        );
+
+        // Admission is closed, for this wallet and every other, and a refusal changes nothing.
+        for wallet in ["0xw", "0xother"] {
+            assert_eq!(
+                policy.try_admit(
+                    SIGNED + 2,
+                    Some("192.0.2.2"),
+                    wallet,
+                    &(SIGNED + 2).to_string()
+                ),
+                Err(ReplayRejection::Storage)
+            );
+        }
+        let later = SIGNED + 1 + SKEW + 1;
+        assert_eq!(
+            policy.try_admit(later, None, "0xother", &later.to_string()),
+            Err(ReplayRejection::Storage)
+        );
+        assert_eq!(policy.seen.len(), 2);
+        assert_eq!(policy.entries_by_wallet, wallets);
+        assert_eq!(policy.entries_by_source, sources);
+
+        // A sweep after the window drops both entries and every count reaches zero and is removed.
+        policy.sweep_expired(later);
+        assert!(policy.seen.is_empty());
+        assert!(
+            policy.entries_by_wallet.is_empty(),
+            "{:?}",
+            policy.entries_by_wallet
+        );
+        assert!(
+            policy.entries_by_source.is_empty(),
+            "{:?}",
+            policy.entries_by_source
+        );
+        assert_eq!(policy.forgotten_through_ms, SIGNED + 1);
+        assert_eq!(policy.oldest_signed_ms, i64::MAX);
+        assert!(policy.journal_progress().failed);
+        assert_eq!(
+            policy.try_admit(later, None, "0xw", &later.to_string()),
+            Err(ReplayRejection::Storage),
+            "the failure stays latched after the counts drain"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wallet_quota_refusal_whose_sweep_journals_a_floor_still_records_nothing() {
+        let path = ReplayPath::new("quota-sweep-floor");
+        let fresh = SIGNED + SKEW;
+        let refused_at = fresh + 1;
+        let refused = refused_at.to_string();
+        {
+            let (mut policy, gate) =
+                HandshakeReplayPolicy::durable_gated(SKEW, 16, &path.0, SIGNED);
+            policy.set_max_entries_per_wallet(1);
+            assert_eq!(
+                policy.try_admit(SIGNED, Some("192.0.2.9"), "0xold", &SIGNED.to_string()),
+                Ok(())
+            );
+            assert_eq!(
+                policy.try_admit(fresh, Some("192.0.2.1"), "0xw", &fresh.to_string()),
+                Ok(())
+            );
+            let issued = policy.journal_issued();
+            gate.send(WriterStep::Write).unwrap();
+            settle(&mut policy, |progress| progress.durable_through >= issued).await;
+
+            // The wallet is full, so the refusal sweeps; the sweep drops the other wallet's
+            // expired entry and issues its floor, and the wallet is still full.
+            assert_eq!(
+                policy.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+                Err(ReplayRejection::WalletQuota)
+            );
+            assert_eq!(
+                policy.journal_issued(),
+                issued + 1,
+                "the floor is the only record the refusal issues"
+            );
+            assert_eq!(policy.forgotten_through_ms, SIGNED);
+            assert_eq!(policy.seen.len(), 1);
+            assert!(
+                !policy
+                    .seen
+                    .contains_key(&("0xw".to_string(), refused.clone()))
+            );
+            let (wallets, sources) = counts_from_table(&policy);
+            assert_eq!(policy.entries_by_wallet, wallets);
+            assert_eq!(policy.entries_by_source, sources);
+            assert_eq!(policy.entries_by_wallet.get("0xold"), None);
+            assert_eq!(policy.entries_by_source.get("192.0.2.9"), None);
+
+            // The floor's write fails: the refusal has already been answered as a refusal, and
+            // the pair it refused was never recorded.
+            gate.send(WriterStep::Fail).unwrap();
+            settle(&mut policy, |progress| progress.failed).await;
+            assert_eq!(policy.seen.len(), 1);
+            assert_eq!(policy.entries_by_wallet.get("0xw"), Some(&1));
+            assert_eq!(
+                policy.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+                Err(ReplayRejection::Storage)
+            );
+        }
+        let journal = std::fs::read_to_string(&path.0).unwrap();
+        assert!(!journal.contains(&format!("\t{refused}\n")), "{journal}");
+        let mut restarted =
+            HandshakeReplayPolicy::durable_after_restart(true, SKEW, 16, &path.0, refused_at)
+                .unwrap();
+        assert_eq!(
+            restarted.try_admit(refused_at, Some("192.0.2.1"), "0xw", &refused),
+            Ok(()),
+            "the refused pair was never recorded, so it is still a first use"
+        );
+        assert_eq!(
+            restarted.try_admit(refused_at, None, "0xw", &fresh.to_string()),
+            Err(ReplayRejection::Duplicate)
+        );
     }
 
     #[test]

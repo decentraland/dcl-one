@@ -2,7 +2,7 @@
 // look its new profile deploys with. The looks come from the page (its fetches work before sign-in,
 // the scene's signed ones don't): before sign-in the stage wears one as a stand-in, signed in it is
 // the Backpack's draft (./avatarDraft), so the stage wears each pick before anything deploys.
-//   from: getWelcome / expectLook / showLook / acceptWelcome (the page), BevyApi.getWelcome
+//   from: getWelcome / showLook / acceptWelcome (the page), BevyApi.getWelcome
 //   to:   welcome / welcomeAccepted / wearables (the page), BevyApi.setAvatar + acceptTerms,
 //         RestrictedActions.openExternalUrl (openLegal)
 import { AvatarEquippedData, engine } from '@dcl/sdk/ecs'
@@ -11,7 +11,7 @@ import { openExternalUrl } from '~system/RestrictedActions'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { deployLookAs, editLook, hasDraft, setStandInLook } from './avatarDraft'
-import { expectLook, syncShape, waitFrames } from './avatarPreview'
+import { syncShape, waitFrames } from './avatarPreview'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { sendEquipped } from './wearables'
 
@@ -31,26 +31,22 @@ export function registerWelcome(ctx: Ctx): void {
 
   // A curated default look, as the page fetched it, on the stage: signed in, on the draft (the
   // page's equipped set follows); not yet, as the stand-in. Applied a frame later, so the picks
-  // queued while the scene was not yet up (the page's rerolls before the engine ran) collapse to
-  // the last.
-  ctx.on('expectLook', () => {
-    expectLook()
-  })
-  let queuedShow: { look: number; avatar: AvatarLook } | null = null
+  // queued while the scene was not yet up (picks made before the engine ran) collapse to the last.
+  let queuedShow: AvatarLook | null = null
   ctx.on('showLook', (msg) => {
-    queuedShow = { look: msg.look, avatar: msg.avatar }
+    queuedShow = msg.avatar
   })
   ctx.push(() => {
     if (queuedShow == null) return
-    const { look: n, avatar: look } = queuedShow
+    const look = queuedShow
     queuedShow = null
     if (getPlayer() == null) {
       setStandInLook(look)
-      syncShape(n)
+      syncShape()
       return
     }
     editLook({ bodyShape: look.bodyShape, wearables: look.wearables, eyes: look.eyes, hair: look.hair, skin: look.skin, forceRender: [] })
-    syncShape(n)
+    syncShape()
     sendEquipped(ctx).catch((e: unknown) => {
       console.error('[welcome] equipped', e)
     })

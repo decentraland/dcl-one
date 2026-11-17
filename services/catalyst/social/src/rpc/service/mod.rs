@@ -100,12 +100,8 @@ pub const WRITE_PROCEDURES: &[&str] = &[
 ];
 
 fn write_gate(name: &str, context: &ProcedureContext<Context>) -> Result<(), RemoteError> {
-    if WRITE_PROCEDURES.contains(&name)
-        && let Some(refusal) =
-            crate::shared::writes::refusal(context.server_context.writes_enabled())
-    {
-        let message = refusal.message("social", crate::writes::DISABLED_MESSAGE);
-        return Err(SocialError::WritesDisabled(message).into());
+    if WRITE_PROCEDURES.contains(&name) && !context.server_context.writes_enabled() {
+        return Err(SocialError::WritesDisabled(crate::writes::DISABLED_MESSAGE.into()).into());
     }
     Ok(())
 }
@@ -566,20 +562,7 @@ mod tests {
             "subscriptions stay open"
         );
 
-        // on, a mutating procedure still waits for the restore stamps
         ctx.set_writes_enabled(true);
-        let lab = crate::shared::writes::restore::lab::StampLab::fresh();
-        crate::shared::writes::restore::scoped(lab.stamps.clone(), async {
-            assert!(write_gate("UpsertFriendship", &pctx).is_ok());
-            lab.advance(27 * crate::shared::writes::restore::lab::HOUR);
-            let err = write_gate("UpsertFriendship", &pctx).unwrap_err();
-            assert_eq!(err.error_code, 503);
-            assert_eq!(
-                err.error_message,
-                "social writes are held on this node: the last complete backup (backup.json) is 28 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            assert!(write_gate("GetFriends", &pctx).is_ok(), "reads stay open");
-        })
-        .await;
+        assert!(write_gate("UpsertFriendship", &pctx).is_ok());
     }
 }

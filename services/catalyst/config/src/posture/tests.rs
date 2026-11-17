@@ -23,8 +23,6 @@ fn expanded(posture: Posture, pairs: &[(&str, &str)]) -> HashMap<&'static str, S
 fn parsed(pairs: &[(&str, &str)]) -> Config {
     let map = env(pairs);
     let mut all = map.clone();
-    // `check` reads the stamp directory from the environment itself.
-    all.remove(RESTORE_STAMP_DIR);
     if let Some((_, vars)) = resolve(&lookup(&map)).unwrap() {
         for (k, v) in vars {
             all.insert(k.to_string(), v);
@@ -553,7 +551,10 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
     );
-    assert!(!c.content.content_history_prune_enabled);
+    assert!(
+        c.content.content_history_prune_enabled,
+        "content writes leave the prune default alone"
+    );
 
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
@@ -588,7 +589,7 @@ fn the_presence_collector_follows_the_data_write_switch() {
 }
 
 #[test]
-fn journey_opens_all_six_write_domains_without_a_stamp() {
+fn journey_opens_all_six_write_domains() {
     let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
     assert!(c.writes.content_writes_enabled && c.create.create_writes_enabled);
     assert!(c.writes.data_writes_enabled && c.writes.social_writes_enabled);
@@ -618,33 +619,19 @@ fn startup_refuses_the_contradictions() {
         ("WORLDS_FORWARD_UPSTREAM_URL", "https://worlds.example.org"),
     ]);
     assert!(err.contains("WORLDS_FORWARD_UPSTREAM_URL"), "{err}");
-    let err = refused(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]);
-    assert!(
-        err.contains("SOCIAL_WRITES_ENABLED is on with no WRITES_RESTORE_STAMP_DIR"),
-        "{err}"
-    );
-    let err = refused(&[
-        db,
-        (ENV, "mirror"),
-        ("CONTENT_WRITES_ENABLED", "true"),
-        ("OPS_WRITES_ENABLED", "true"),
-    ]);
-    assert!(
-        err.contains("CONTENT_WRITES_ENABLED, OPS_WRITES_ENABLED are on"),
-        "{err}"
-    );
 
-    // The stamp directory opens them; a forward URL is a mirror's choice.
+    // A write switch alone opens its plane; a forward URL is a mirror's choice.
     let ok = |pairs: &[(&str, &str)]| {
         let c = parsed(pairs);
         let map = env(pairs);
         check(&c, &lookup(&map))
     };
+    ok(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]).unwrap();
     ok(&[
         db,
-        (ENV, "island"),
-        ("SOCIAL_WRITES_ENABLED", "true"),
-        (RESTORE_STAMP_DIR, "/var/lib/catalyst/stamps"),
+        (ENV, "mirror"),
+        ("CONTENT_WRITES_ENABLED", "true"),
+        ("OPS_WRITES_ENABLED", "true"),
     ])
     .unwrap();
     ok(&[

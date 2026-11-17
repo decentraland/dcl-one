@@ -1,5 +1,6 @@
 pub mod access_status;
 pub mod adapter;
+mod anim_announce;
 pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
@@ -11,7 +12,6 @@ pub mod global_crdt;
 pub mod livekit;
 pub mod moderation;
 pub mod movement_compressed;
-pub mod movement_pacing;
 pub mod nearby_mutes;
 pub mod preview;
 #[cfg(feature = "livekit")]
@@ -23,6 +23,7 @@ pub mod room_connection;
 pub mod scene_rooms;
 pub mod scene_topics;
 pub mod signed_login;
+pub mod speaking;
 #[cfg(test)]
 mod test;
 mod traffic;
@@ -118,6 +119,7 @@ impl Plugin for CommsPlugin {
             automation::CommsAutomationPlugin,
             nearby_mutes::NearbyMutesPlugin,
             scene_topics::SceneTopicsPlugin,
+            speaking::SpeakingPlugin,
         ));
 
         #[cfg(feature = "livekit")]
