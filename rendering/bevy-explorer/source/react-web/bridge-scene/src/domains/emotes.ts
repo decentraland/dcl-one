@@ -42,6 +42,17 @@ export function equippedSlots(emotes: readonly unknown[] | undefined): string[] 
   return slots.every((u) => u === '') ? [...BASE_EMOTES] : slots
 }
 
+// The 10 slots of the look the Backpack shows (the draft, else the live player). An entirely empty
+// wheel takes the defaults only while the live profile's wheel is empty too (`equippedSlots`, a
+// fresh profile). A wheel the player emptied in the draft stays empty, as in Unity, whose
+// empty-wheel fill runs when the profile loads: otherwise the next equip would refill the other 9
+// slots with the defaults, beside the one equipped (an emote in two slots).
+function lookSlots(emotes: readonly unknown[] | undefined): string[] {
+  const slots = Array.from({ length: SLOT_COUNT }, (_, i) => String((emotes ?? [])[i] ?? ''))
+  const liveEquipped = (getPlayer()?.emotes ?? []).some((urn) => String(urn) !== '')
+  return liveEquipped ? slots : equippedSlots(slots)
+}
+
 // Title-case a base-emote id ("raisehand" → "Raise Hand"); custom emotes use the catalog name.
 function baseEmoteName(urn: string): string {
   const i = urn.indexOf('base-emotes:')
@@ -153,9 +164,10 @@ export function registerEmotes(ctx: Ctx): void {
     if (!isBase(msg.urn) && tokenUrnByItem.size === 0) await getOwned(await catalystBase(), me.userId).catch(() => [])
     const look = currentLook()
     if (look == null) return
-    // Seed from the effective slots (base defaults when the wheel is empty) so equipping into a fresh
-    // profile persists the defaults alongside the new one, instead of blanking the other 9 slots.
-    const slots = equippedSlots(look.emotes)
+    // Seed from the effective slots (base defaults for a fresh profile's empty wheel) so equipping
+    // into a fresh profile persists the defaults alongside the new one, instead of blanking the
+    // other 9 slots.
+    const slots = lookSlots(look.emotes)
     slots[msg.slot] = equipUrn(msg.urn)
     editLook({ emotes: slots })
   })
@@ -167,7 +179,7 @@ export function registerEmotes(ctx: Ctx): void {
     // equipped array index = wheel slot; map item-urn → slot (base defaults when the wheel is empty).
     // Normalize short base-emote names to the full urn so equipped base emotes match a slot.
     const slotByItem = new Map<string, number>()
-    equippedSlots(currentLook()?.emotes).forEach((urn, slot) => {
+    lookSlots(currentLook()?.emotes).forEach((urn, slot) => {
       if (urn !== '') slotByItem.set(itemUrn(fullEmoteUrn(urn)), slot)
     })
 
