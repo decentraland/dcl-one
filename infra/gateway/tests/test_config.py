@@ -100,8 +100,9 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(gateway.site_prefixes([
             "_index.tsx", "$slug.tsx", "places_.$id.tsx", "api.screens.v1.play.ts",
             "api.marketplace-screen.ts", "internal.pair.tsx", "profile.$id.tsx", "robots[.]txt.ts",
-            "play_.app[.]html.tsx",
-        ]), ["/api/marketplace-screen", "/api/screens", "/internal", "/places", "/play", "/profile", "/robots.txt"])
+            "play_.app[.]html.tsx", "a[$b].tsx", "[_]x.tsx",
+        ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/internal", "/places", "/play",
+             "/profile", "/robots.txt"])
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

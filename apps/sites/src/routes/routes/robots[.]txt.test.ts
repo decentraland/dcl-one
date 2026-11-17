@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { flatRoutes } from "@react-router/fs-routes";
 import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
@@ -31,5 +33,22 @@ describe("when a crawler requests /robots.txt", () => {
 
   it("should name no sitemap, since none is served", async () => {
     expect(await loader().text()).not.toMatch(/sitemap/i);
+  });
+});
+
+describe("when the route table is built from the route files", () => {
+  it("should serve this file at /robots.txt", async () => {
+    (
+      globalThis as { __reactRouterAppDirectory?: string }
+    ).__reactRouterAppDirectory = fileURLToPath(new URL("..", import.meta.url));
+    const tree = (await flatRoutes({
+      ignoredRouteFiles: ["**/*.test.*", "**/*.spec.*", "**/*.module.css"],
+    })) as { path?: string; file: string }[];
+
+    expect(
+      tree
+        .filter((entry) => entry.path === "robots.txt")
+        .map((entry) => entry.file),
+    ).toEqual(["routes/robots[.]txt.ts"]);
   });
 });

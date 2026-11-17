@@ -53,10 +53,11 @@ function heading(level: number, text: string): string {
 }
 
 function bulletList(items: string[], ordered = false): string {
+  // An ordered item keeps its position as its number, so the numbers match the rendered list.
   return items
-    .map((i) => clean(i))
-    .filter((i) => i.length > 0)
-    .map((i, n) => `${ordered ? `${n + 1}.` : "-"} ${i}`)
+    .map((i, n) => [clean(i), ordered ? `${n + 1}.` : "-"] as const)
+    .filter(([i]) => i.length > 0)
+    .map(([i, marker]) => `${marker} ${i}`)
     .join("\n");
 }
 

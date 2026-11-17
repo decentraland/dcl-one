@@ -102,16 +102,22 @@ def upstream(value):
     return f"{host}:{int(port)}"
 
 
+ESCAPE_LITERAL = str.maketrans({".": "\0", "_": "\1", "$": "\2"})
+RESTORE_LITERAL = str.maketrans({"\0": ".", "\1": "_", "\2": "$"})
+
+
 def site_prefixes(files):
     prefixes = set()
     for name in files:
-        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its dots do not split.
-        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).replace(".", "\0"), re.sub(r"\.tsx?$", "", name))
-        parts = [part.replace("\0", ".") for part in stem.split(".")]
+        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its ".", "_" and "$"
+        # neither split segments nor end the prefix.
+        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).translate(ESCAPE_LITERAL),
+                      re.sub(r"\.tsx?$", "", name))
+        parts = stem.split(".")
         if parts[0].startswith(("$", "_")):
             continue
         parts = parts[:2] if parts[0] == "api" else parts[:1]
-        parts = [re.split(r"[_$]", part)[0] for part in parts]
+        parts = [re.split(r"[_$]", part)[0].translate(RESTORE_LITERAL) for part in parts]
         if all(parts):
             prefixes.add("/" + "/".join(parts))
     return sorted(prefixes)

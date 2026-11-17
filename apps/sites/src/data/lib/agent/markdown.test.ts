@@ -186,12 +186,12 @@ describe("legalDocToMarkdown", () => {
     expect(md).not.toMatch(NO_HTML);
   });
 
-  it("numbers an ordered list from 1, skipping empty items", () => {
+  it("numbers an ordered list by position, skipping empty items", () => {
     const md = legalDocToMarkdown({
       title: "Creator Fund",
       sections: [{ heading: "3. Eligibility", body: [{ type: "ol", items: ["be 18", " ", "own the LAND"] }] }],
     });
-    expect(md).toContain("1. be 18\n2. own the LAND");
+    expect(md).toContain("1. be 18\n3. own the LAND");
     expect(md).not.toContain("- be 18");
   });
 });
