@@ -1,0 +1,137 @@
+.field.field {
+  display: flex;
+  width: 100%;
+  height: 46px;
+  border: 1px solid var(--palette-whiteTransparent-blurry);
+  border-radius: 12px;
+  box-shadow: none;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  line-height: 1.125rem;
+}
+
+.field.field:hover {
+  border-color: var(--palette-whiteTransparent-backdrop);
+}
+
+.field.field:focus-within,
+.field.field[data-open] {
+  border-color: var(--palette-neutral-softWhite);
+}
+
+.field.field[data-disabled] {
+  border-color: var(--palette-whiteTransparent-blurry);
+  opacity: 1;
+}
+
+/* The 1px border of the field is outside the trigger: the paddings and the caret count from the border. */
+.field.field > [role="combobox"] {
+  height: 100%;
+  padding: 13px 39px 13px 15px;
+  /* The font stack and the letter spacing of the body text, which the value and the options had before.
+     The stack gives a symbol with no glyph in the first font the same substitute font. */
+  font-family: var(--text-font);
+  letter-spacing: 0.00938em;
+}
+
+/* The value cuts its text at this box. The padding, with the opposite margin, keeps the layout and gives a
+   symbol that is taller than the line the room it had before. */
+.field.field > [role="combobox"] > span {
+  min-height: 0;
+  margin-block: -6px;
+  padding-block: 6px;
+}
+
+/* A disabled field paints each text of its value in the disabled text colour. */
+.field.field[data-disabled] > [role="combobox"] {
+  -webkit-text-fill-color: var(--text-tone-disabled);
+}
+
+.field.field > span[aria-hidden="true"] {
+  /* The 7px arrow is placed by its top, not by a transform, so it has the pixels it had before. */
+  top: calc(50% - 3.5px);
+  right: 15px;
+  color: var(--palette-neutral-softWhite);
+  transform: none;
+}
+
+.field.field[data-open] > span[aria-hidden="true"] {
+  transform: rotate(180deg);
+}
+
+.menu.menu {
+  --overlay-surface: var(--palette-neutral-onyx);
+  --overlay-radius: 12px;
+  --overlay-shadow:
+    inset 0 0 0 1px var(--palette-whiteTransparent-subtle),
+    0 4px 8px var(--palette-blackTransparent-blurry);
+  /* The popup is 4px under the field; with this margin the distance is --field-menu-gap. */
+  margin-top: calc(var(--field-menu-gap, 10px) - 4px);
+  padding: 10px 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* No room under the field: the menu stays 16px from the window edge, plus the gap, and covers the field. */
+.menu.menu[data-placement^="top"] {
+  top: auto;
+  bottom: calc(16px - var(--field-menu-gap, 10px));
+  margin-top: 0;
+}
+
+.menu.menu > [role="option"] {
+  justify-content: flex-start;
+  min-height: 38px;
+  margin: 0 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: none;
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--text-font);
+  font-weight: 400;
+  letter-spacing: 0.00938em;
+}
+
+.menu.menu > [role="option"] svg {
+  flex-shrink: 0;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+}
+
+/* The option the keys point at has no paint of its own: only the pointer and the choice have one. */
+.menu.menu > [role="option"][aria-selected="true"],
+.menu.menu > [role="option"]:hover {
+  background-color: var(--dark-gray);
+}
+
+.menu.menu > [role="option"]:active {
+  background-color: var(--dark-gray);
+  background-image: linear-gradient(
+    var(--palette-whiteTransparent-subtle),
+    var(--palette-whiteTransparent-subtle)
+  );
+}
+
+.menu.menu > [role="option"][aria-disabled="true"] {
+  opacity: 1;
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.menu.menu > [role="option"][aria-disabled="true"] svg {
+  opacity: 0.4;
+}
+
+.check {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+}
+
+.menu.menu > [role="option"] .check svg {
+  width: 16px;
+  height: 16px;
+}

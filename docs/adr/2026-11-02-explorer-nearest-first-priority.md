@@ -42,13 +42,22 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   (`file_emote_downloads`, between choosing the frame's emotes and starting their loads): the
   full-body emote and the upper-body request, while they play, so an emote's definition, model
   and sounds do not wait behind every scene in range. A scene emote downloads under its scene's
-  hash and a built-in one does not download, so neither is listed. Every
+  hash and a built-in one does not download, so neither is listed. Every other
   avatar comes after the player's scenes and before any other scene; among avatars the key
   decides, nearer ring first, in front before behind within a ring, then distance. Scene content
   stays per scene (the download-slot entry below); avatar downloads are partitioned per entity.
+- **The player's own avatar comes first, ahead of the scenes the player stands in.** The body,
+  wearables and emotes filed on the `PrimaryUser` entity take `LoadPriority::OWN_AVATAR`, in a
+  tier of their own before the player's scenes, whatever the entity's partition and before it
+  has one. Slots go strictly best-first, so in the avatar tier an emote the player triggers
+  waits for the whole backlog of the scene they stand in, and of the portables, and plays
+  after a noticeable pause while a scene downloads. One outfit and the emotes playing (a
+  full-body one and an upper-body request) are few and small, and they are what the player is
+  directly waiting on.
 - **A tier, then raw distance and parcel distance, no buckets.** The admission key is
   `LoadPriority (tier, parcel_distance, is_behind, sqr_distance)`, lower first. The tier is the
-  band a download belongs to: the player's scenes, then avatars, then the other scenes, then
+  band a download belongs to: the player's own avatar, then the player's scenes, then the other
+  avatars, then the other scenes, then
   requests whose hash no scene root or avatar holds, then scenes that have left. Within the avatar
   and scene bands the partition decides, and in the others the oldest request goes first; parcel
   distance comes before facing only so that "in front before behind" can still decide between
@@ -109,10 +118,13 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   the player's scenes at `LoadPriority::TOP` (found through `ContainingScene::get_oow`, so a
   scene without a context yet counts, and so does the destination while the player is still
   out of world arriving in it), the other scenes at their partition in the `Scene` tier
-  (`SCENE_PENDING`, the tier's bottom, until a scene has one), and each avatar's wearable
-  hashes at the avatar's partition in the `Avatar` tier, the best of them for a shared one (the
+  (`SCENE_PENDING`, the tier's bottom, until a scene has one), the wearable and emote hashes of
+  the player's own entity at `LoadPriority::OWN_AVATAR`, and each other avatar's
+  at the avatar's partition in the `Avatar` tier, the best of them for a shared one, which is
+  the player's own key when the player wears or plays it too (the
   first write of a hash in a publish replaces its key, later writes take the best, and a hash
-  nobody registered is ignored). The gate owns the keys and ranks its queues by them at each
+  nobody registered is ignored). The hooks apply the same rule, so the player's hashes rank
+  first from the moment they are filed, on a frame the publish skips too. The gate owns the keys and ranks its queues by them at each
   grant; publishing builds no map, clones no string and touches no request, and an idle frame
   publishes nothing, since the keys are only read at a grant: while idle only values can go
   stale, never which hashes are held. The keys are the one per-scene (and per-avatar) fact this
@@ -180,6 +192,13 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   as scenes puts an avatar five parcels away behind a scene one parcel away; every avatar is
   wanted before the non-active scenes, so avatars are a tier of their own, distance deciding
   within it.
+- **The player's own avatar in the avatar tier, or level with the player's scenes.** In the
+  avatar tier it is the first avatar download and still waits for every file of the scene the
+  player stands in and of the portables: on the zone deployment an emote the player triggered
+  paused noticeably before it played while a scene was downloading. Level with the player's
+  scenes it would queue oldest-first behind the scene requests already waiting. Its downloads
+  are bounded by one outfit and two emotes, so a tier of its own ahead of the player's scenes
+  delays those scenes by little.
 - **A flat avatar tier, first come first served.** Distance order among avatars is wanted: the
   nearest avatar's wearables first. It costs a partition per avatar and a key written per
   wearable hash on every frame with a download waiting: for 20 live scenes and 50 avatars with
@@ -222,6 +241,11 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   The load distance bounds how many scenes compete. The
   avatar tier is strict as well: while any avatar's wearables wait, no scene but the player's
   gets a slot, so a crowd delays the neighbouring scenes' files by its wearables.
+- The player's own avatar is strict over everything: while one of the player's own wearables
+  or an emote they play waits, it takes the next free slot before any scene's file, the scene
+  they stand in included. On an arrival with an empty cache the player's outfit therefore
+  downloads ahead of the destination scene. A wearable or emote another avatar shares with the
+  player downloads at the player's key.
 - A scene behind the camera ticks as before while frame time is spare, and is the first to tick
   less often when it is not; the player's scenes never yield.
 - NFT images, profile pictures, Fontsource font families and imposter archives name no scene,

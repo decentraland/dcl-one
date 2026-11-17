@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { data } from "react-router";
 
 import { JumpInvalidRoute } from "@/features/jump/JumpInvalidRoute";

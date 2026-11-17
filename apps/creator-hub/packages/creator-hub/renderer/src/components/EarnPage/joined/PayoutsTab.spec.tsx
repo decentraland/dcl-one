@@ -1,8 +1,7 @@
 import { Provider } from 'react-redux';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';
 
@@ -12,6 +11,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
 import { Worlds } from '/@/lib/worlds';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import {
   CYCLES,
@@ -65,9 +65,9 @@ const PAYOUTS = [
 function mountTab(store: ReturnType<typeof createTestStore>) {
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <PayoutsTab />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
 }
@@ -82,6 +82,12 @@ const cycleButton = (table: HTMLElement, name: string) =>
   within(table).getByRole('button', { name });
 const walletCard = async () => within(await screen.findByTestId('payouts-wallet-card'));
 const contactCard = async () => within(await screen.findByTestId('payouts-contact-card'));
+
+const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/get-a-wallet';
+const walletInfo = async () =>
+  (await walletCard()).findByRole('button', { name: 'About payout wallets' });
+const learnMore = () => screen.findByRole('link', { name: /Learn More/ });
+const pause = (ms: number) => act(() => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
 const WALLET_CARD = '[data-testid="payouts-wallet-card"]';
 const CARDS = '[data-testid="payouts-wallet-card"], [data-testid="payouts-contact-card"]';
@@ -456,6 +462,129 @@ describe('PayoutsTab', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(screen.getByText('0x00000...000002')).toBeTruthy();
       expect(api.getPayoutWallet).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the payout wallet info button gets focus', () => {
+    it('should show the tooltip and name it as the description of the button', async () => {
+      await renderTab();
+      const info = await walletInfo();
+
+      act(() => info.focus());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toMatch(/^A digital wallet is where you store/);
+      expect(info.getAttribute('aria-describedby')).toBe(tooltip.id);
+    });
+
+    it('should move focus to Learn More on Tab and keep the tooltip open', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+
+      const moved = !fireEvent.keyDown(info, { key: 'Tab' });
+
+      expect(moved).toBe(true);
+      expect(document.activeElement).toBe(link);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+    });
+
+    it('should go back to the button on Shift+Tab from Learn More, with the tooltip open', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      const held = !fireEvent.keyDown(link, { key: 'Tab', shiftKey: true });
+
+      expect(held).toBe(true);
+      expect(document.activeElement).toBe(info);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+      expect(info.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+    });
+
+    it('should close the tooltip when Tab leaves Learn More for the next control', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      const edit = (await walletCard()).getByRole('button', { name: 'Edit' });
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      // Tab goes on from the button: the handler puts focus there and leaves the key to the page.
+      const left = fireEvent.keyDown(link, { key: 'Tab' });
+      expect(left).toBe(true);
+      expect(document.activeElement).toBe(info);
+      act(() => edit.focus());
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(info.hasAttribute('aria-describedby')).toBe(false);
+    });
+
+    it('should close the tooltip on Escape in Learn More and put focus on the button', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      fireEvent.keyDown(link, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(document.activeElement).toBe(info);
+    });
+
+    it('should open the tooltip on the next hover after Escape closed it from Learn More', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+      fireEvent.keyDown(link, { key: 'Escape' });
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+
+      fireEvent.mouseEnter(info);
+
+      expect(await screen.findByRole('tooltip')).toBeTruthy();
+    });
+
+    it('should open the wallet guide in the browser from Learn More', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      act(() => info.focus());
+
+      const followed = fireEvent.click(await learnMore());
+
+      expect(followed).toBe(false);
+      expect(misc.openExternal).toHaveBeenCalledWith(GET_A_WALLET_URL);
+    });
+  });
+
+  describe('when the pointer crosses the payout wallet info button', () => {
+    it('should never open the tooltip when the pointer leaves before the open delay', async () => {
+      await renderTab();
+      const info = await walletInfo();
+      const tooltip = watchFor('[role="tooltip"]');
+
+      fireEvent.mouseEnter(info);
+      fireEvent.mouseLeave(info);
+      await pause(400);
+
+      expect(tooltip.seen()).toBe(false);
+      tooltip.stop();
+      expect(info.hasAttribute('aria-describedby')).toBe(false);
+    });
+
+    it('should open the tooltip when the pointer stays', async () => {
+      await renderTab();
+      const info = await walletInfo();
+
+      fireEvent.mouseEnter(info);
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(within(tooltip).getByRole('link', { name: /Learn More/ })).toBeTruthy();
     });
   });
 

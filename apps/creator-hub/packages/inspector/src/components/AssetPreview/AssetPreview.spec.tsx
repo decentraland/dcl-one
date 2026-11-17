@@ -1,17 +1,21 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { AssetPreview } from './AssetPreview';
 
 const preview = vi.hoisted(() => ({
-  props: null as { onLoad?: () => void; onError?: (error: Error) => void } | null,
+  props: null as {
+    onLoad?: () => void;
+    onError?: (error: Error) => void;
+    onUpdate?: () => void;
+  } | null,
   getScreenshot: vi.fn(),
   getMetrics: vi.fn(),
 }));
 
-vi.mock('decentraland-ui', () => ({
+vi.mock('../WearablePreview', () => ({
   WearablePreview: Object.assign(
-    (props: { onLoad?: () => void; onError?: (error: Error) => void }) => {
+    (props: NonNullable<typeof preview.props>) => {
       preview.props = props;
       return <iframe />;
     },
@@ -24,7 +28,7 @@ vi.mock('decentraland-ui', () => ({
 }));
 
 describe('AssetPreview', () => {
-  let onScreenshot: ReturnType<typeof vi.fn>;
+  let onScreenshot: Mock;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -49,19 +53,14 @@ describe('AssetPreview', () => {
       />,
     );
 
-  /** The preview frame announcing it is ready, which is when the model is sent to it. */
-  const frameReady = (container: HTMLElement) => {
-    const frame = container.querySelector('iframe')!.contentWindow!;
-    const postMessage = vi.spyOn(frame, 'postMessage');
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'ready' }, source: frame }));
-    return postMessage;
-  };
+  /** The preview component reporting that it sent the model to the frame. */
+  const modelSent = () => preview.props!.onUpdate!();
 
   describe('when the preview renders the model and returns a screenshot', () => {
     it('should report the thumbnail it captured', async () => {
       preview.getScreenshot.mockResolvedValue('data:image/png;base64,thumbnail');
-      const { container } = renderModel();
-      frameReady(container);
+      renderModel();
+      modelSent();
 
       await act(async () => {
         preview.props!.onLoad!();
@@ -89,8 +88,8 @@ describe('AssetPreview', () => {
   describe('when taking the screenshot fails', () => {
     it('should report no thumbnail rather than leave the promise unhandled', async () => {
       preview.getScreenshot.mockRejectedValue(new Error('no renderer'));
-      const { container } = renderModel();
-      frameReady(container);
+      renderModel();
+      modelSent();
 
       await act(async () => {
         preview.props!.onLoad!();
@@ -117,22 +116,6 @@ describe('AssetPreview', () => {
     });
   });
 
-  describe('when the frame is ready', () => {
-    it('should send it the model, which the preview component drops when it arrives early', () => {
-      const { container } = renderModel();
-
-      const postMessage = frameReady(container);
-
-      expect(postMessage).toHaveBeenCalledWith(
-        {
-          type: 'update',
-          payload: { options: { blob: expect.objectContaining({ id: 'model.glb' }) } },
-        },
-        '*',
-      );
-    });
-  });
-
   describe('when the frame loads before the model has been sent', () => {
     it('should not screenshot that empty scene', async () => {
       preview.getScreenshot.mockResolvedValue('data:image/png;base64,empty');
@@ -153,8 +136,8 @@ describe('AssetPreview', () => {
       preview.getScreenshot
         .mockRejectedValueOnce(new Error('The scene was disposed, a newer render has replaced it'))
         .mockResolvedValueOnce('data:image/png;base64,model');
-      const { container } = renderModel();
-      frameReady(container);
+      renderModel();
+      modelSent();
 
       await act(async () => {
         preview.props!.onLoad!();
@@ -178,8 +161,8 @@ describe('AssetPreview', () => {
         .mockResolvedValueOnce({ triangles: 0 })
         .mockResolvedValueOnce({ triangles: 12 });
       preview.getScreenshot.mockResolvedValue('data:image/png;base64,model');
-      const { container } = renderModel();
-      frameReady(container);
+      renderModel();
+      modelSent();
 
       await act(async () => {
         preview.props!.onLoad!();

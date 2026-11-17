@@ -2712,8 +2712,13 @@ pub fn process_startup_scenes(
                     .get_or_insert_with(tokio::sync::mpsc::unbounded_channel)
                     .0
                     .clone();
+                // a startup scene's server reloads it; its texture status has no HUD
                 IoTaskPool::get()
-                    .spawn(handle_preview_socket(scene.source.clone(), sx.clone()))
+                    .spawn(handle_preview_socket(
+                        scene.source.clone(),
+                        sx.clone(),
+                        None,
+                    ))
                     .detach();
                 scene.hot_reload = Some(sx);
             }

@@ -1,6 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import cx from 'classnames';
-import { Typography, Checkbox } from 'decentraland-ui2';
+import { Link } from 'react-router-dom';
+import { cx } from '/@/lib/cx';
+import Checkbox from '@ui/atoms/Checkbox';
+import Text from '@ui/atoms/Text';
 
 import { misc } from '#preload';
 import { useDispatch, useSelector } from '#store';
@@ -33,18 +35,18 @@ import { formatSize } from '/@/modules/file';
 
 import { PublishModal } from '/@/components/Modals/PublishProject/PublishModal';
 import { ConnectedSteps } from '/@/components/Step';
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 import { Loader } from '/@/components/Loader';
 import { ExpandMore } from '/@/components/ExpandMore';
 import { ReportIssue } from '/@/components/Modals/ReportIssue';
 import { ExternalLink } from '/@/components/ExternalLink';
+import { CheckBoxIcon, CheckBoxOutlineBlankIcon } from '@ui/atoms/icons-material';
 
 import type { Step } from '/@/components/Step/types';
 import type { Props } from '/@/components/Modals/PublishProject/types';
 import { ProjectStepWrapper } from '/@/components/Modals/PublishProject/ProjectStepWrapper';
 import { parseCoords } from '/@/components/Modals/PublishProject/utils';
 
-import { SettingsLink } from './Deploy.styled';
 import { DeployProgress, type DeployCancel } from './DeployProgress';
 import styles from './Deploy.module.css';
 
@@ -314,24 +316,26 @@ export function Deploy(props: Props) {
               </div>
             </div>
             <div className="actions">
-              <label className="dont-show-again">
-                <Checkbox
-                  value={skipWarning}
-                  onChange={() => setSkipWarning(!skipWarning)}
-                />
+              <Checkbox
+                className="dont-show-again"
+                icon={<CheckBoxOutlineBlankIcon />}
+                checkedIcon={<CheckBoxIcon />}
+                checked={skipWarning}
+                onChange={setSkipWarning}
+              >
                 {t('modal.publish_project.deploy.warning.checkbox')}
-              </label>
+              </Checkbox>
               <span className="buttons">
                 <Button
-                  color="secondary"
-                  variant="outlined"
-                  size="medium"
+                  variant="outline"
+                  className="hub-button hub-button--secondary hub-button--outlined"
                   onClick={handleBack}
                 >
                   {t('modal.publish_project.deploy.warning.back')}
                 </Button>
                 <Button
-                  size="medium"
+                  variant="text"
+                  className="hub-button hub-button--primary"
                   data-testid="publish-modal-deploy-warning-continue-button"
                   onClick={handlePublish}
                 >
@@ -350,9 +354,7 @@ export function Deploy(props: Props) {
             {loadingPublish ? (
               <div className="header Loading">
                 <Loader />
-                <Typography variant="h5">
-                  {t('modal.publish_project.deploy.deploying.publish')}
-                </Typography>
+                <Text variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Text>
               </div>
             ) : hasError ? (
               <Error
@@ -494,7 +496,9 @@ export function Idle({
       <div className="actions">
         <p className="error">{errorMessage}</p>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
           disabled={!!error || exceedsSceneSize || isSceneSizeLimitLoading}
         >
@@ -519,7 +523,7 @@ function Deploying({ steps, children }: DeployingProps) {
     >
       <div className="header">
         <Loader />
-        <Typography variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Typography>
+        <Text variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Text>
       </div>
       <ConnectedSteps steps={steps} />
       {children}
@@ -575,7 +579,7 @@ function Error({
     >
       <div className="header">
         <div className="Warning" />
-        <Typography variant="h5">{t('modal.publish_project.deploy.deploying.failed')}</Typography>
+        <Text variant="h5">{t('modal.publish_project.deploy.deploying.failed')}</Text>
       </div>
       <p className="description">{renderErrorMessage(errorMessage)}</p>
       {errorCause && (
@@ -593,15 +597,17 @@ function Error({
           {t('modal.report_issue.help_center')}
         </ExternalLink>
         <Button
-          size="large"
-          variant="outlined"
-          color="secondary"
+          variant="outline"
+          size="lg"
+          className="hub-button hub-button--secondary hub-button--outlined"
           onClick={onReportIssue}
         >
           {t('modal.publish_project.deploy.deploying.actions.report_issue')}
         </Button>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           data-testid="publish-modal-deploy-error-retry"
           onClick={onRetry}
         >
@@ -635,12 +641,13 @@ export function Success({ info, url, worldName, onClick, onClose }: SuccessProps
           url={url}
         />
         {worldName && (
-          <SettingsLink
+          <Link
+            className={styles.settingsLink}
             to={`/manage/world/${encodeURIComponent(worldName)}/settings`}
             onClick={onClose}
           >
             {t('modal.publish_project.deploy.success.world_settings')}
-          </SettingsLink>
+          </Link>
         )}
         <div className="indexing-note">
           {t('modal.publish_project.deploy.success.indexing_note')}
@@ -648,7 +655,9 @@ export function Success({ info, url, worldName, onClick, onClose }: SuccessProps
       </div>
       <div className="actions">
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
         >
           {t('modal.publish_project.deploy.success.jump_in')}

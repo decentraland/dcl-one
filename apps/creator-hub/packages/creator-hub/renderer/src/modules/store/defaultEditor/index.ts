@@ -46,6 +46,8 @@ export const addEditor = createAsyncThunk(
         errorKey = 'invalid_app_bundle';
       } else if (error.message.includes('invalid_exe_file')) {
         errorKey = 'invalid_exe_file';
+      } else if (error.message.includes('invalid_executable')) {
+        errorKey = 'invalid_executable';
       }
       dispatch(
         snackbarActions.pushSnackbar({

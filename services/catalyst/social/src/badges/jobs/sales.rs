@@ -43,14 +43,15 @@ const ASSET_TYPE_ERC721: i64 = 3;
 const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 /// The callers that buy a legacy order on a user's behalf and forward the
-/// token in the same transaction: the fiat and cross-chain relays, then every
-/// CreditsManager deployment (Polygon, then Amoy). The buyer is the
+/// token in the same transaction: the fiat and cross-chain relays, a
+/// fee-taking order router, then every CreditsManager deployment (Polygon,
+/// then Amoy). The buyer is the
 /// recipient of the relay's own first forward of the token after the order,
 /// so a later hand-on in the block credits nobody else.
 const RELAY_BUYERS: &str = "\
     '0xed038688ecf1193f8d9717eb3930f0bf0d745cb4', '0xea749fd6ba492dbc14c24fe8a3d08769229b896c', \
     '0x6a03991dfa9d661ef7ad3c6f88b31f16e5a282cf', '0xe9f961e6ded4e1476bbee4faab886d63a2493eb9', \
-    '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5', \
+    '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5', '0x31102fd8ab1303b847c1f8735b877acbad958aa4', \
     '0xb40a9a1afde767025626e9b0c17e028b6305d8b0', '0x1985fa82b531cb4e20f103787eba99de67b5c25c', \
     '0xa1691afad71b9a92d329f1a95c39d3077d8f2f5f', '0x037566bc90f85e76587e1b07f9184585f09c1420', \
     '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3'";

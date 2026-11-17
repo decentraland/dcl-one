@@ -6,8 +6,8 @@ origin     = "https://github.com/robtfm/copypwasmta"
 origin_rev = "586bfd836b98aadc87ad4e30d65174ad4c9ac7a5"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "1d0090219efb3b4f5017b8bd1f9bf09c8dec48b7"
-tree       = "02ab782785b7c1d1d106dfdd8d98e742e206606f"
-rev        = "3030ee052f8cab7ff0f252cfa41119b687a0b7a7"
+exclude    = [".github"]
+base_tree  = "efc5d1d45b2d5f2d643ed9d771767b4f8de9d346"
+tree       = "1df90925739f29a9b9bb59be0c057ee0d507c04c"
+rev        = "b56757323a5f73eb4a373fef69c4e840f76f98f2"
 nix_hash   = "sha256-h5vzCR10YtSKTP7L96Wr1MX5qjSFa2Y4M9l0pPICUew="

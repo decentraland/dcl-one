@@ -1,12 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
-import { dclColors } from 'decentraland-ui2';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ParcelPickerModal } from '.';
 
 type Layer = (x: number, y: number) => { color: string; scale?: number } | null;
@@ -15,9 +14,15 @@ type AtlasProps = {
   layers: Layer[];
   onClick: (x: number, y: number) => void;
   onChange: (viewport: { nw: Coord; se: Coord }) => void;
+  onHover: (x: number, y: number) => void;
+  onMouseDownEvent: (event: { button: number }) => void;
+  onMouseDown: (x: number, y: number) => void;
+  onMouseUp: (x: number, y: number) => void;
   x?: number;
   y?: number;
 };
+
+const CURSOR_COLOR = '#FCFCFC';
 
 let atlas: AtlasProps;
 
@@ -38,7 +43,7 @@ function renderModal(initialParcels: string[] = []) {
   const onCancel = vi.fn();
   const onConfirm = vi.fn();
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ParcelPickerModal
         open
         name="Fixture Ben"
@@ -49,7 +54,7 @@ function renderModal(initialParcels: string[] = []) {
         onCancel={onCancel}
         onConfirm={onConfirm}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { onCancel, onConfirm };
 }
@@ -57,7 +62,7 @@ function renderModal(initialParcels: string[] = []) {
 const map = () => screen.getByRole('application', { name: 'Parcels for Fixture Ben' });
 const press = (key: string) => fireEvent.keyDown(map(), { key });
 const cursorAt = (x: number, y: number) =>
-  atlas.layers.some(layer => layer(x, y)?.color === dclColors.neutral.softWhite);
+  atlas.layers.some(layer => layer(x, y)?.color === CURSOR_COLOR);
 const announced = () =>
   screen
     .getAllByRole('status')
@@ -185,6 +190,67 @@ describe('ParcelPickerModal', () => {
 
       expect(announced()).toContain('Selecting 1 parcel');
       expect(cursorAt(3, 0)).toBe(true);
+    });
+  });
+
+  describe('when a rectangle is dragged', () => {
+    const dragFrom = (x: number, y: number) => {
+      act(() => atlas.onMouseDownEvent({ button: 0 }));
+      act(() => atlas.onMouseDown(x, y));
+    };
+    const confirmed = (onConfirm: ReturnType<typeof renderModal>['onConfirm']) => {
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+      return onConfirm.mock.calls[0][0];
+    };
+
+    it('should select the allowed parcels between the press and the release', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -5, y: 6 }, se: { x: 4, y: -5 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(3, 0));
+      act(() => atlas.onMouseUp(3, 0));
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0', '3,0']);
+    });
+
+    it('should keep a rectangle of a short drag, which the map also reports as a click', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -5, y: 6 }, se: { x: 4, y: -5 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(1, 0));
+      // The map reports the release and the click in the same task.
+      act(() => {
+        atlas.onMouseUp(1, 0);
+        atlas.onClick(1, 0);
+      });
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0']);
+    });
+
+    it('should toggle on the next click after a rectangle', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -5, y: 6 }, se: { x: 4, y: -5 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(1, 0));
+      act(() => atlas.onMouseUp(1, 0));
+      dragFrom(3, 0);
+      act(() => {
+        atlas.onMouseUp(3, 0);
+        atlas.onClick(3, 0);
+      });
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0', '3,0']);
+    });
+
+    it('should end the rectangle at the last parcel in view when the pointer leaves the map', () => {
+      const { onConfirm } = renderModal();
+      act(() => atlas.onChange({ nw: { x: -1, y: 1 }, se: { x: 1, y: -1 } }));
+      dragFrom(0, 0);
+      act(() => atlas.onHover(1, 0));
+      act(() => atlas.onHover(3, 0));
+      act(() => atlas.onMouseUp(3, 0));
+
+      expect(confirmed(onConfirm)).toEqual(['0,0', '1,0']);
     });
   });
 

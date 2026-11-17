@@ -10,30 +10,9 @@ import { t } from '/@/modules/store/translation/utils';
 import { CollapseIcon, ExpandIcon, MapPinIcon, TransactionIcon } from '../icons';
 
 import { formatCount, formatUsdc, placeLocation, placeTitle } from './format';
-import {
-  PlaceCell,
-  PlaceName,
-  PlaceText,
-  PlaceWhere,
-  PlaceWhereText,
-  Thumbnail,
-} from './LeaderboardTab.styled';
-import {
-  CycleCell,
-  CycleRow,
-  Disclosure,
-  DisclosureLabel,
-  Figure,
-  HeaderCell,
-  HeaderRow,
-  PlaceRow,
-  PlaceSpan,
-  StatusPill,
-  Table,
-  TransactionButton,
-  TransactionCell,
-} from './PayoutsTab.styled';
 import { useWorldSceneCounts } from './useWorldSceneCounts';
+import leaderboard from './LeaderboardTab.module.css';
+import styles from './PayoutsTab.module.css';
 
 const COLUMNS = ['cycle', 'status', 'paid_places', 'amount', 'transaction'] as const;
 
@@ -42,17 +21,24 @@ const ETHERSCAN_TX = 'https://etherscan.io/tx/';
 function Usdc({ amount }: { amount: string }) {
   const locale = useSelector(state => state.translation.locale);
   return (
-    <Figure role="cell">
+    <span
+      className={styles.figure}
+      role="cell"
+    >
       {t('earn.joined.payouts.table.usdc', { amount: formatUsdc(amount, locale) })}
-    </Figure>
+    </span>
   );
 }
 
 function TransactionLink({ hash }: { hash: string | null }) {
   return (
-    <TransactionCell role="cell">
+    <span
+      className={styles.transactionCell}
+      role="cell"
+    >
       {hash && (
-        <TransactionButton
+        <button
+          className={styles.transactionButton}
           type="button"
           aria-label={t('earn.joined.payouts.table.view_transaction')}
           onClick={() => {
@@ -61,9 +47,9 @@ function TransactionLink({ hash }: { hash: string | null }) {
           }}
         >
           <TransactionIcon />
-        </TransactionButton>
+        </button>
       )}
-    </TransactionCell>
+    </span>
   );
 }
 
@@ -83,62 +69,86 @@ function PayoutRows({
   const placeIds = payout.places.map((_, index) => `${id}-${index}`);
   return (
     <>
-      <CycleRow role="row">
-        <CycleCell role="cell">
-          <Disclosure
+      <div
+        className={styles.cycleRow}
+        role="row"
+      >
+        <span
+          className={styles.cycleCell}
+          role="cell"
+        >
+          <button
+            className={styles.disclosure}
             type="button"
             aria-expanded={open}
             aria-controls={open ? placeIds.join(' ') : undefined}
             onClick={onToggle}
           >
             {open ? <CollapseIcon /> : <ExpandIcon />}
-            <DisclosureLabel>{formatCycleLabel(payout.cycle, locale)}</DisclosureLabel>
-          </Disclosure>
-        </CycleCell>
-        <span role="cell">
-          <StatusPill data-status={payout.status}>
-            {t(`earn.joined.payouts.table.${payout.status}`)}
-          </StatusPill>
+            <span className={styles.disclosureLabel}>{formatCycleLabel(payout.cycle, locale)}</span>
+          </button>
         </span>
-        <Figure role="cell">{formatCount(payout.paid_places, locale)}</Figure>
+        <span role="cell">
+          <span
+            className={styles.statusPill}
+            data-status={payout.status}
+          >
+            {t(`earn.joined.payouts.table.${payout.status}`)}
+          </span>
+        </span>
+        <span
+          className={styles.figure}
+          role="cell"
+        >
+          {formatCount(payout.paid_places, locale)}
+        </span>
         <Usdc amount={payout.amount_usdc} />
         <TransactionLink hash={payout.transaction_hash} />
-      </CycleRow>
+      </div>
       {open &&
         payout.places.map(({ place, amount_usdc }, index) => (
-          <PlaceRow
+          <div
             key={place.id}
+            className={styles.placeRow}
             id={placeIds[index]}
             role="row"
           >
-            <PlaceSpan
+            <div
+              className={styles.placeSpan}
               role="cell"
               aria-colspan={3}
             >
-              <PlaceCell>
-                <Thumbnail
+              <div className={leaderboard.placeCell}>
+                <img
+                  className={leaderboard.thumbnail}
                   src={place.image ?? undefined}
                   alt=""
                   width={89}
                   height={50}
                   loading="lazy"
                 />
-                <PlaceText>
-                  <PlaceName title={placeTitle(place)}>{placeTitle(place)}</PlaceName>
-                  <PlaceWhere>
+                <div className={leaderboard.placeText}>
+                  <span
+                    className={leaderboard.placeName}
+                    title={placeTitle(place)}
+                  >
+                    {placeTitle(place)}
+                  </span>
+                  <span className={leaderboard.placeWhere}>
                     <MapPinIcon />
-                    <PlaceWhereText
+                    <span
+                      className={leaderboard.placeWhereText}
                       title={placeLocation(place, sceneCounts[place.world_name ?? ''])}
                     >
                       {placeLocation(place, sceneCounts[place.world_name ?? ''])}
-                    </PlaceWhereText>
-                  </PlaceWhere>
-                </PlaceText>
-              </PlaceCell>
-            </PlaceSpan>
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </div>
             <Usdc amount={amount_usdc} />
             <span role="cell" />
-          </PlaceRow>
+          </div>
         ))}
     </>
   );
@@ -158,21 +168,26 @@ export function PayoutsTable({ payouts }: { payouts: Payout[] }) {
     });
 
   return (
-    <Table
+    <div
+      className={styles.table}
       role="table"
       aria-label={t('earn.joined.payouts.table.label')}
     >
       <div role="rowgroup">
-        <HeaderRow role="row">
+        <div
+          className={styles.headerRow}
+          role="row"
+        >
           {COLUMNS.map(column => (
-            <HeaderCell
+            <span
               key={column}
+              className={styles.headerCell}
               role="columnheader"
             >
               {t(`earn.joined.payouts.table.${column}`)}
-            </HeaderCell>
+            </span>
           ))}
-        </HeaderRow>
+        </div>
       </div>
       <div role="rowgroup">
         {payouts.map(payout => (
@@ -185,6 +200,6 @@ export function PayoutsTable({ payouts }: { payouts: Payout[] }) {
           />
         ))}
       </div>
-    </Table>
+    </div>
   );
 }

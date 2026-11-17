@@ -1,10 +1,10 @@
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flatten } from 'flat';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { flatten } from '/@/modules/store/translation/flatten';
 import type { ChainId, Scene } from '@dcl/schemas';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
 import type { Project } from '/shared/types/projects';
 import { editor, scene } from '#preload';
@@ -27,8 +27,7 @@ vi.mock('#store', async () => {
   return { useDispatch, useSelector };
 });
 
-/** The ui2 modal shell and the wallet summary read theme slices this environment does
- * not populate; the flow under test lives in the step, not the chrome. */
+/** The flow under test lives in the step, not in the modal shell or the wallet summary. */
 vi.mock('../../PublishModal', () => ({
   PublishModal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
@@ -36,12 +35,10 @@ vi.mock('../../ProjectStepWrapper', () => ({
   ProjectStepWrapper: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-/** The worlds client calls `decentraland-crypto-fetch`, which on Node 24 bypasses a stubbed global
- * fetch and hits undici with jsdom's AbortSignal. Route it through the global so the stub
- * below answers it on every Node version. */
-vi.mock('decentraland-crypto-fetch', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  default: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+/** The signed fetch keeps the `fetch` that exists when its module loads, so a global stubbed later
+ * does not answer it. Route it through the global at call time so the stub below answers. */
+vi.mock('/@/lib/signedFetch', () => ({
+  signedFetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
 }));
 
 vi.mock('/@/modules/store/deployment/utils', async importOriginal => ({
@@ -78,13 +75,13 @@ describe('PublishToWorld', () => {
   let order: string[];
   let sceneJson: Scene;
   let deployedSceneJson: Scene | undefined;
-  let onStep: ReturnType<typeof vi.fn>;
+  let onStep: Mock;
 
   const publishToTheWorld = async () => {
     render(
       <Provider store={store}>
         <MemoryRouter>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <AuthContext.Provider value={{ wallet: WALLET, chainId: 11155111 as ChainId } as never}>
               <PublishToWorld
                 open
@@ -93,7 +90,7 @@ describe('PublishToWorld', () => {
                 onStep={onStep}
               />
             </AuthContext.Provider>
-          </ThemeProvider>
+          </TestProviders>
         </MemoryRouter>
       </Provider>,
     );

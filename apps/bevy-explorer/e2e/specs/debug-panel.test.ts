@@ -43,7 +43,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     }>('/cef_hud_perf'), (reading) => (reading.bitmapMiBPerSecond ?? 0) > 0,
     { timeoutMs: 10_000, what: 'a CEF repaint while the debug panel is closed' })
     assert.ok(cef.paintSize?.every(size => size > 0))
-    if (developmentBuild) await explorer.hud.click(sidebarSettings)
+    // the open popup's backdrop covers its handle: Escape closes the popup
+    if (developmentBuild) await explorer.escape()
   }
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
@@ -88,11 +89,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     } finally {
       await explorer.key('KeyW', 'up')
     }
+    // The world, high in the sky left of the panel: mid-height, another session's avatar can stand
+    // under the pointer, and a click on it opens its menu over the rail.
     const open = await explorer.hud.get(panel)
-    await explorer.clickAt(open.x / 2, open.y + open.height / 2)
+    await explorer.clickAt(open.x / 2, open.y + 10)
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
-    await explorer.hud.click(sidebarSettings)
+    // Escape closes the popup first, and the debug panel stays
+    await explorer.escape()
     await explorer.hud.waitHidden(button('Debug panel'))
     assert.equal(await explorer.hud.isVisible(panel), true)
     await expand('Avatar')

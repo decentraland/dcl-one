@@ -3,7 +3,6 @@ import { join } from 'path';
 import fs from 'fs/promises';
 import log from 'electron-log/main';
 import { shell } from 'electron';
-import QRCode from 'qrcode';
 
 import type { PreviewOptions } from '/shared/types/settings';
 import { PREVIEW_CLIENT } from '/shared/types/settings';
@@ -21,6 +20,7 @@ import { getProjectId, track } from './analytics';
 import { install } from './npm';
 import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
+import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
@@ -86,9 +86,9 @@ export async function killPreview(path: string) {
 // Bumped by every deliberate stop (leaving the scene, app quit). A start captures the
 // value on entry and gives up — killing whatever it spawned, with no reinstall-retry — once
 // it moves: a start still pending when the user left would otherwise finish (or retry)
-// after the stop and leave a preview no editor owns, holding its port and the scene's
-// authoritative-server seat. Internal kills (replacing a preview, the retry) go through
-// killPreview and don't bump it, so a real start failure still retries.
+// after the stop and leave a preview no editor owns, holding its port. Internal kills
+// (replacing a preview, the retry) go through killPreview and don't bump it, so a real
+// start failure still retries.
 const stopGenerations = new Map<string, number>();
 
 function stopGeneration(path: string) {
@@ -231,7 +231,7 @@ export async function getMobilePreview(path: string): Promise<{ url: string; qr:
         }
 
         // Regenerate QR with the modified URL
-        qr = await QRCode.toDataURL(url, { width: 512, margin: 2 });
+        qr = qrCodeDataUrl(url);
 
         log.info(`[mobile-debug] WS at ws://0.0.0.0:${wsPort}, mobile URL updated`);
       } catch (wsError: unknown) {

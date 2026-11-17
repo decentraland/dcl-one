@@ -25,11 +25,11 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use chrono::NaiveDateTime;
@@ -134,11 +134,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/mls/groups", post(create_group))
         .route(
             "/mls/groups/{group_id}/commits",
-            get(fetch_commits).post(submit_commit),
+            get(fetch_commits).post(erase(submit_commit)),
         )
         .route(
             "/mls/groups/{group_id}/messages",
-            get(fetch_history).post(send_message),
+            get(fetch_history).post(erase(send_message)),
         )
         .route("/mls/blobs/{hash}", get(fetch_blob))
         .layer(axum::extract::DefaultBodyLimit::max(512 * 1024))

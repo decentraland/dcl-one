@@ -100,7 +100,6 @@ export class RendererHost {
       default:
         // Exhaustiveness guard: an unknown command (e.g. version skew with a
         // newer inspector) is logged rather than silently dropped.
-        // eslint-disable-next-line no-console
         return void console.warn(
           `[renderer host] unknown command "${(command as { kind: string }).kind}" (ignored)`,
         );

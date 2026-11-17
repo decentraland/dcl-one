@@ -24,9 +24,7 @@ const COMPONENT_REGISTRY = {
   'inspector::TransformConfig': [{ porportionalScaling: Schemas.Optional(Schemas.Boolean) }],
   'inspector::Hide': [{ value: Schemas.Boolean }],
   'inspector::Lock': [{ value: Schemas.Boolean }],
-  // eslint-disable-next-line @typescript-eslint/ban-types
   'inspector::Ground': [{}],
-  // eslint-disable-next-line @typescript-eslint/ban-types
   'inspector::Tile': [{}],
   'inspector::CustomAsset': [{ assetId: Schemas.String }],
   'inspector::Config': [

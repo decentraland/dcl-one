@@ -9,6 +9,7 @@ import {
   webGuestBackendFor,
   type GuestBackend
 } from '../features/auth/guest'
+import { GUEST_SESSION_KEY } from '../features/auth/thirdweb'
 import { personalSign } from '../shell/sign'
 
 function personalHash(message: string): Uint8Array {
@@ -54,6 +55,27 @@ describe('guest identity', () => {
     const days = (new Date(identity.expiration).getTime() - Date.now()) / 86_400_000
     expect(days).toBeGreaterThan(29.9)
     expect(days).toBeLessThanOrEqual(30)
+  })
+
+  it("signs the kept session's wallet in again, so the guest comes back the same", async () => {
+    const sessions: string[] = []
+    const backend: GuestBackend = {
+      login: async (sessionId) => {
+        sessions.push(sessionId)
+        return { token: 'jwt', walletAddress: '0x1e9a6ddCb5D0B8C2Ffd79372e022d63d053aB1bF' }
+      },
+      sign: async () => '0xsigned',
+      keptSessionId: () => 'kept-session'
+    }
+    await createGuestIdentity(backend)
+    expect(sessions).toEqual(['kept-session'])
+  })
+
+  it('the web backend keeps the session id it signs in with', async () => {
+    localStorage.setItem(GUEST_SESSION_KEY, 'abc')
+    expect(webGuestBackend.keptSessionId?.()).toBe('abc')
+    localStorage.removeItem(GUEST_SESSION_KEY)
+    expect(webGuestBackend.keptSessionId?.()).toBeNull()
   })
 
   it('uses thirdweb on Decentraland domains and a browser-held key everywhere else', () => {

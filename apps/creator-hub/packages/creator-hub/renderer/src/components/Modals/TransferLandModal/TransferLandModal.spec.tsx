@@ -1,8 +1,8 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, RoleType, type Land } from '/@/lib/land';
@@ -73,14 +73,14 @@ describe('TransferLandModal', () => {
     vi.mocked(useAuth).mockReturnValue({ wallet: SELF } as unknown as ReturnType<typeof useAuth>);
     render(
       <Provider store={createTestStore() as never}>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <TransferLandModal
             open
             land={land}
             name="Land Name"
             onClose={() => {}}
           />
-        </ThemeProvider>
+        </TestProviders>
       </Provider>,
     );
   });

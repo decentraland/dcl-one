@@ -216,6 +216,34 @@ describe('toOverview', () => {
     });
   });
 
+  describe('when reading the total playtime', () => {
+    const allSeries = (location: LocationMetrics, name: string) =>
+      location.metrics[name].find(row => row.series === 'all')!.value;
+
+    it.each([
+      ['30', LAST_30_DAYS],
+      ['60', LAST_60_DAYS],
+    ] as const)(
+      'should multiply the %s-day average playtime by the visits, in minutes',
+      (days, window) => {
+        const seconds =
+          allSeries(FULL, `avg_playtime_seconds_${days}d`) *
+          allSeries(FULL, `unique_visits_${days}d`);
+
+        expect(toOverview(FULL, window).totalPlaytime).toBeCloseTo(seconds / 60, 6);
+      },
+    );
+
+    it.each(['avg_playtime_seconds_60d', 'unique_visits_60d'])(
+      'should be null when %s is missing',
+      name => {
+        const { [name]: _missing, ...rest } = FULL.metrics;
+
+        expect(toOverview({ ...FULL, metrics: rest }, LAST_60_DAYS).totalPlaytime).toBeNull();
+      },
+    );
+  });
+
   describe('when the location carries only some of the metrics', () => {
     it('should render what is there and leave the rest null', () => {
       const overview = toOverview(PARTIAL, LAST_60_DAYS);

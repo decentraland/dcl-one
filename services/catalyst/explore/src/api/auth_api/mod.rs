@@ -4,13 +4,13 @@
 //! pick up once. Everything is process state with a short TTL (5 min
 //! requests, 1 h identities), as the old service kept it.
 
+use crate::shared::routing::{erase, get, post};
 use axum::Extension;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
@@ -256,13 +256,13 @@ pub fn routes() -> Router<AppState> {
         .route("/requests", post(create_request))
         .route(
             "/requests/{id}",
-            get(get_request_outcome).post(post_request_outcome_legacy),
+            get(get_request_outcome).post(erase(post_request_outcome_legacy)),
         )
         .route("/v2/requests/{id}", get(get_request_v2))
         .route("/v2/requests/{id}/outcome", post(post_request_outcome))
         .route(
             "/v2/requests/{id}/validation",
-            post(post_request_validation).get(get_request_validation),
+            post(post_request_validation).get(erase(get_request_validation)),
         )
         .route("/identities", post(create_identity))
         .route("/identities/{id}", get(get_identity))
