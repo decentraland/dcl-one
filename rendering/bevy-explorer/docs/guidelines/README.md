@@ -6,6 +6,7 @@ in these pages are relative to `source/`, the engine workspace.
 - [Architecture](architecture.md): the two dataflow diagrams, native and web, and how to read them.
 - [Security](security.md): the trust model and the rules that follow from it. Read first.
 - [Contributing](contributing.md): scope, diffs, tests, PR descriptions, dependencies (never `cargo update`), review.
+- [Reviewing engine changes](review.md): the review bar for engine code, rule by rule, with severities.
 - [Scheduling](scheduling.md): the frame, the scene loop, PostUpdate, and where a new system goes.
 - [Code style](code-style.md): lean into the ECS; state, cleanup, async, errors, logging.
 - [Platforms](platforms.md): what differs between native, web and headless, and what bites.
