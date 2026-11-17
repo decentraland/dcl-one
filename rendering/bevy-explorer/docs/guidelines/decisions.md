@@ -498,10 +498,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only.** unity-explorer draws live events, points of
-  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
-  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
-  full map alone, and a route shows no pin on the minimap's edge.
+- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
+  events, points of interest, players, scene pins and the home pin on the minimap too, and the
+  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
+  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
+  minimap's edge. The minimap has no favourite button for the place the player stands in.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
   experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
@@ -509,10 +510,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   reads no `MapPin` and has no such layer.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
-  sets it.
-- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
-  menu and from Places cards; neither has that control here.
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
+  minimap's switch only set it: the switch reads on where the player stands in their home, and
+  can't be turned off.
+- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
+  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. A World's copied link
+  names the World and the parcel and carries the sharer's address, as unity-explorer's.
 - **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
   (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
   starts from the player's saved interest and keeps working after the list is rebuilt; a like or

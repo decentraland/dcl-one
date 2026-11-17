@@ -12,6 +12,14 @@ export function jumpInLink(x: number, y: number, referrer: string | undefined): 
   return referrer != null && referrer !== '' ? `${link}&referrer=${referrer}` : link
 }
 
+/** The minimap's link to where the player stands: a Genesis City parcel, or in a World its name and
+ *  the parcel; with the sharer's address when they have one. */
+export function minimapJumpLink(realm: string, inWorld: boolean, x: number, y: number, referrer: string | undefined): string {
+  if (!inWorld) return jumpInLink(x, y, referrer)
+  const link = siteUrl(`/jump/?realm=${encodeURIComponent(realm)}&position=${x},${y}`)
+  return referrer != null && referrer !== '' ? `${link}&referrer=${referrer}` : link
+}
+
 const X_POST = 'https://twitter.com/intent/tweet'
 const HASHTAG = 'DCLPlace'
 

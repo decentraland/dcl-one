@@ -502,6 +502,10 @@
       "path": "library/explorer-core/features/minimap",
       "entries": [
         {
+          "name": "minimapHome.ts",
+          "kind": "regular"
+        },
+        {
           "name": "minimapPlaces.ts",
           "kind": "regular"
         },
@@ -1069,6 +1073,10 @@
         },
         {
           "name": "menu-on",
+          "kind": "directory"
+        },
+        {
+          "name": "minimap",
           "kind": "directory"
         },
         {
@@ -2117,6 +2125,23 @@
         },
         {
           "name": "shop.webp",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/minimap",
+      "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
+        {
+          "name": "reload.png",
           "kind": "regular"
         }
       ]
@@ -6287,7 +6312,11 @@
     },
     {
       "path": "library/explorer-core/features/map/shareLinks.ts",
-      "sha256": "2fb507eb2596e5de1b9440c598873afcafad9e7e220dce3c810fec6a16d3fe19"
+      "sha256": "2808c25d7d80a2fd50dd6f540aa171da82f4fb49a4d636b61c590a1bd6bf8033"
+    },
+    {
+      "path": "library/explorer-core/features/minimap/minimapHome.ts",
+      "sha256": "3eb5fcb840dec97344a7aa2f0538b1d0a693bb2a4cee56cd243f795009dad501"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapPlaces.ts",
@@ -6567,7 +6596,7 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "8260e0d6e58950b2d72049488e48885a2598396b9663531bc9810436a1b457aa"
+      "sha256": "22af178ed3b97479e7ea4e4e4ea4bfc48374315a5e1592e74c801b577ddb745e"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -7480,6 +7509,10 @@
     {
       "path": "library/ui/apps/hud/assets/menu-on/shop.webp",
       "sha256": "9e83faaec87c39c6b8e278a2c8ed45e4d6ddbba18005c7f3845096d087f9e10d"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/minimap/reload.png",
+      "sha256": "ca00a32d628e90ff2858bda58df00b26a5823ba1ff8ced84351206108cdafa5f"
     },
     {
       "path": "library/ui/apps/hud/assets/photo-mode/gallery.png",
@@ -9115,15 +9148,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "fa13f06aced6f3f0c5df2e6468839f29fbcb23b4879c4f01f77591026f103aef"
+      "sha256": "6b10ef725855fb36b1425e3a1cad854be89af62aeb5fc1cda3fc650f88a4e480"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
-      "sha256": "ff4d56095e4debe6275490b4f50b44e7f80a506ba9075fbc9ca99cd2c9fb326e"
+      "sha256": "c41eb77a1db195e1329314a68e7a60f20e4b589ec9c82fb09164b639d1e86730"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "sha256": "3cad147afd0b2177f9e47ac53e0ef8ddff291f720f1586b47cc1d28e59251f8f"
+      "sha256": "125da6008b8ff16226225e538b5fc916301ca92e86044e31fdcb6cbce15c3c3d"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
@@ -9331,7 +9364,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "42594452f547663f451fb5b59f5b37dcbb43433b7c39c6d7a96de6f9e52a78b9"
+      "sha256": "16308cc1c44a4b2647bc73da5510528adc2f9cc2ffb73ec143e15bd8993ebff1"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9363,7 +9396,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "955a51d5e767edcb27cf55c780fb1646313ebcc1365fdc4be882f1dd434167df"
+      "sha256": "0e42602becaef695652f2c08220cd345ec6b0b29624299552e9004ca99b74318"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -9379,7 +9412,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MapPanel.tsx",
-      "sha256": "0b87d13c1bf813b073fc2c14e44230d28310d67d92a796ff4ca77fc0cd5ef2d0"
+      "sha256": "bacd0dce37e42289d8b398648662ef4241523a4ac2b4625349a35c0f3cd4df95"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MePanel.module.css",
@@ -9639,7 +9672,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "bd0ddfe507b8f6575bcb1e7a9755a3edf9f3517c76fe338d1a9d4260dd0cc2e4"
+      "sha256": "25bbd5e951b55ff1c1b716eea6022db5c08f61782a699063a3725a0937f5ef02"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -9891,7 +9924,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "0cb19bf8b05467d508a5810c75739057a4d754409142e145e85702cdaa4a569b"
+      "sha256": "c26bb5a62104a310287c00dfbcaa1f8580f17cb26d8f48844a971b1335cfa0d5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -11239,6 +11272,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/minimap/minimapHome.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "native:runtime"
@@ -12271,6 +12334,36 @@
     {
       "from": "library/explorer-core/test/minimap.test.ts",
       "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
       "kind": "test:runtime"
     },
     {
@@ -27290,6 +27383,66 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "kind": "native:runtime"
     },
@@ -27470,6 +27623,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/lib/hudInset.ts",
       "kind": "native:runtime"
     },
@@ -27496,6 +27664,36 @@
     {
       "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
       "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "test:runtime"
     },
     {
@@ -41815,6 +42013,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "kind": "type"
     },
@@ -47546,6 +47749,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/menu-on/shop.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
       "kind": "test:asset"
     },
     {
