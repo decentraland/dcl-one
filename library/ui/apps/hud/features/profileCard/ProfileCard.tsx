@@ -13,6 +13,7 @@ import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '@explorer-core/lib/identity'
 import { startCallWith } from '../voiceChat/callGate'
 import { offersInvite, useInviteToCommunityItems } from '../communities/InviteToCommunity'
+import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 
 export function ProfileCard({
   userId,
@@ -70,6 +71,7 @@ export function ProfileCard({
       onCall={(u) => (onCall != null ? onCall(u.address) : startCallWith(session, u.address))}
       hushed={session.nearbyMutes.muted.has(userId.toLowerCase())}
       onSetHushed={(u, hushed) => session.nearbyMutes.set(u.address, hushed)}
+      onJump={canJumpToFriend(session.friends, userId) ? (u) => void jumpToFriend(session.map, u.address) : undefined}
       onViewProfile={() => openPassport(userId)}
       onClose={onClose}
     />
