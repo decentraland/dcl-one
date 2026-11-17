@@ -119,19 +119,19 @@ describe("JumpEventActions", () => {
   });
 
   it("should point an ended event to the events list", () => {
-    render(<JumpEventActions state="ended" eventsHref="/whats-on" />);
-    expect(screen.getByRole("link", { name: "Explore events" }).getAttribute("href")).toBe("/whats-on");
+    render(<JumpEventActions state="ended" eventsHref="/events" />);
+    expect(screen.getByRole("link", { name: "Explore events" }).getAttribute("href")).toBe("/events");
   });
 
   it("should tell a deleted event is gone", () => {
-    render(<JumpEventActions state="deleted" eventsHref="/whats-on" />);
+    render(<JumpEventActions state="deleted" eventsHref="/events" />);
     expect(screen.getByText(/This event is no longer available/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "All Events" }).getAttribute("href")).toBe("/whats-on");
+    expect(screen.getByRole("link", { name: "All Events" }).getAttribute("href")).toBe("/events");
   });
 });
 
 describe("JumpInvalid", () => {
-  const hrefs = { jumpInHref: "/play/", eventsHref: "/whats-on", homeHref: "/" };
+  const hrefs = { jumpInHref: "/play/", eventsHref: "/events", homeHref: "/" };
 
   it("should offer events only on an event link", () => {
     const { rerender } = render(<JumpInvalid kind="place" {...hrefs} />);

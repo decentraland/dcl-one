@@ -15,6 +15,9 @@ spec.loader.exec_module(drift)
 spec2 = importlib.util.spec_from_file_location('upstream_drift_site', TOOLING / 'upstream-drift-site.py')
 site = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(site)
+spec3 = importlib.util.spec_from_file_location('patched_sources', TOOLING / 'patched-sources.py')
+patched = importlib.util.module_from_spec(spec3)
+spec3.loader.exec_module(patched)
 
 
 SOURCE_TOML = textwrap.dedent('''
@@ -147,6 +150,31 @@ class PinnedSourceTests(unittest.TestCase):
         self.assertEqual([s['name'] for s in sources], ['winit', 'draco-oxide', 'gltf'])
         self.assertEqual(sources[2]['reason'], 'Pin the merge commit until a release ships it.')
         self.assertIsNone(sources[1]['reason'])
+
+    def test_a_patched_source_the_lock_takes_from_this_repository_is_listed_once(self):
+        # Cargo takes a patched source from this repository by revision. That lock entry has no
+        # upstream of its own: the source.toml names the upstream to watch.
+        for url in (drift.REPOSITORY, drift.REPOSITORY + '.git', drift.REPOSITORY + '/',
+                    drift.REPOSITORY.replace('/decentraland/', '/Decentraland/')):
+            lock = LOCK + textwrap.dedent(f'''
+                [[package]]
+                name = "winit"
+                version = "0.30.12"
+                source = "git+{url}?rev=6666666666666666666666666666666666666666#6666666666666666666666666666666666666666"
+            ''')
+            (self.pin / 'source/Cargo.lock').write_text(lock, encoding='utf-8')
+            self.assertIn(url, [s['upstream'] for s in drift.lock_git_sources(lock)])
+            sources = drift.pinned_sources(self.pin)
+            self.assertEqual([s['name'] for s in sources], ['winit', 'draco-oxide', 'gltf'])
+            self.assertEqual(sources[0]['upstream'], 'https://github.com/rust-windowing/winit')
+
+    def test_this_repository_is_the_one_that_the_patch_tool_names(self):
+        self.assertEqual(drift.REPOSITORY, patched.MIRROR)
+        # The two tools read the same URLs as this repository.
+        same = (drift.REPOSITORY, drift.REPOSITORY + '.git', drift.REPOSITORY + '/', drift.REPOSITORY.upper() + '.git/')
+        for url in (*same, drift.REPOSITORY + '-fork', GLTF + '.git'):
+            self.assertEqual(drift.canonical(url), patched.canonical(url), url)
+            self.assertEqual(drift.canonical(url) == drift.canonical(drift.REPOSITORY), url in same, url)
 
     def test_the_tracked_sources_follow_the_contract(self):
         sources = drift.patched_sources(drift.PIN / 'patches')

@@ -29,14 +29,14 @@ separate from the current runtime described here.
 | `archipelago` | primary `serve` | `/ws`, authenticated observations, socket registrations and enforcement room assignments |
 | `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
-| `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
+| `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
-| `rooms`, `world_identity`, `access`, `limits`, `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds, social and shop use |
+| `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
 
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
@@ -53,7 +53,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::AccessPolicy` | `worlds::policy::Policy` | may this wallet enter this world, scene or parcel |
 | `interfaces::SceneIdentity` | `worlds::rooms::SceneResolver` | a world's active scene and the resolved room; room names are `comms::rooms` |
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
-| `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
+| `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
@@ -62,7 +62,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | Comms offers | Consumers |
 |---|---|
 | `CommsState::revoke(RoomRevocation)`, the one revocation entry point | worlds permission edits |
-| `explore::places::live::Participants` for `CommsState` | explore live counts, the presence archive |
+| `CommsState::live_participants`, as Explore's `places::live::Participants` through root `serve_adapters::CommsParticipants` | explore live counts, the presence archive |
 | ban status, presence, voice rooms | worlds policy and publish; social, `/worlds/status`; social call signalling |
 | signed `POST /get-server-scene-adapter`, `GET /scene-participants` | scene hosts |
 
@@ -77,7 +77,7 @@ comms room-name contracts remain unchanged. The periodic catalogue job refreshes
 metadata; it does not own identity lifecycle.
 
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
-the repository structure checks. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
+the repository structure checks. Comms links no Explore code: it reads Explore's tables by shared SQL and the root adapts its participants to Explore. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
 
 ## Deployment generation ownership
 

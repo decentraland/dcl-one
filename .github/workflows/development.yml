@@ -82,6 +82,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
       FOUNDATION_DEV_STARTUP_TIMEOUT: '120'
+      # The cluster holds only scratch databases; see tooling/dev.py DISPOSABLE_POSTGRES_SETTINGS.
+      FOUNDATION_DEV_DISPOSABLE_POSTGRES: '1'
     steps:
       - name: Reserve disk space for the Rust test build
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'

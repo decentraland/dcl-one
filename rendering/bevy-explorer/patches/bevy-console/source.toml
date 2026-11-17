@@ -8,5 +8,6 @@ license    = "MIT"
 paths      = ["."]
 exclude    = []
 base_tree  = "a7ad290d217506d9dc83e28d0e0d37efaf3516b3"
-tree       = "1b3d1d95c63519358ceddf9b7e1a1c17e3855337"
+tree       = "c599d86795534d3ce4fed2edc1473ae9a100dc8a"
+rev        = "b841a83d0218ecf450541baeb6b94b4e331c7bb9"
 nix_hash   = "sha256-2ycoQJyyW11OqCV/hlSCiMZc/yPiuz9tEujYdD9a04o="

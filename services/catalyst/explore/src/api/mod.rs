@@ -530,7 +530,7 @@ impl State {
             http,
             content,
             denylist: Arc::default(),
-            flags: Arc::new(feature_flags::Snapshot::default()),
+            flags: Arc::new(feature_flags::Snapshot::from_document(feature_flags::embedded_document())),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
@@ -548,9 +548,7 @@ impl State {
             .reload(&state.pool)
             .await
             .context("loading the mirrored denylist")?;
-        state
-            .flags
-            .reload(&state.pool, &app)
+        feature_flags::reload(&state.flags, &state.pool, &app)
             .await
             .context("loading the mirrored feature flags")?;
         state

@@ -99,8 +99,8 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
-/** Redraw a Nearby chat bubble with other words (its translation), if that message is still the
- *  sender's bubble; its timer starts again. */
+/** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
+ *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
   kind: 'chatBubbleText'
   sender: string
