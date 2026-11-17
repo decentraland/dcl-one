@@ -406,44 +406,6 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
 
-    def test_creator_hub_pnpm_version_comes_from_the_setup_action(self):
-        # The setup-pnpm action's PNPM_VERSION and digests.txt agree, and the Creator Hub jobs run
-        # the action before setup-node with no Corepack. Neither Creator Hub project carries a
-        # packageManager pin.
-        root = WORKFLOW.parents[2]
-        action_dir = root / '.github/actions/setup-pnpm'
-        versions = re.findall(r'(?m)^        PNPM_VERSION: (\S+)$', (action_dir / 'action.yml').read_text())
-        self.assertEqual(len(versions), 2, versions)
-        self.assertEqual(versions[0], versions[1])
-        self.assertRegex(versions[0], r'^\d+\.\d+\.\d+$')
-        header, *rows = (action_dir / 'digests.txt').read_text().splitlines()
-        self.assertEqual(header, f'# pnpm {versions[0]}')
-        assets = [re.fullmatch(r'[0-9a-f]{64}  (pnpm-\S+)', row)[1] for row in rows]
-        self.assertEqual(sorted(assets), sorted(f'pnpm-{system}-{arch}.{ext}' for arch in ('x64', 'arm64')
-                                                for system, ext in (('linux', 'tar.gz'), ('darwin', 'tar.gz'), ('win32', 'zip'))))
-        hub = 'apps/creator-hub'
-        for project in (hub, f'{hub}/packages/inspector/agents/bevy'):
-            self.assertNotIn('packageManager', json.loads((root / project / 'package.json').read_text()), project)
-        # A job that runs code of a pull request in main's cache scope takes the action from the
-        # commit of its workflow (.workflow-actions), not from the pull request checkout.
-        setup, node = re.compile(r'uses: \./(\.workflow-actions/)?\.github/actions/setup-pnpm\n'), 'uses: actions/setup-node@'
-        files = [root / '.github/actions/creator-hub-setup/action.yml', *sorted(WORKFLOW.parent.glob('creator-hub-*.yml'))]
-        self.assertGreater(len(files), 1)
-        for path in files:
-            text = path.read_text()
-            self.assertNotRegex(text, r'corepack|pnpm@\d', path.name)
-            if node in text:
-                found = setup.search(text)
-                self.assertIsNotNone(found, path.name)
-                self.assertLess(found.start(), text.index(node), path.name)
-        upload = (WORKFLOW.parent / 'creator-hub-asset-packs-upload-pr.yml').read_text()
-        self.assertIn('uses: ./.workflow-actions/.github/actions/setup-pnpm\n', upload)
-        self.assertIn('ref: ${{ github.workflow_sha }}\n          path: .workflow-actions\n', upload)
-        # A change to the action alone starts the Creator Hub jobs, on a push and on a pull request.
-        entry = (WORKFLOW.parent / 'creator-hub-ci.yml').read_text()
-        self.assertIn("\n      - '.github/actions/setup-pnpm/**'\n", entry)
-        self.assertIn(r"|\.github/actions/setup-pnpm/)'", entry)
-
 
 if __name__ == '__main__':
     unittest.main()

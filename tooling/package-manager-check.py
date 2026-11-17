@@ -24,9 +24,8 @@ PNPM_VERSION = '12.21.0'
 PNPM_SHA512 = ('66fd8278ee28935ce951792d34367ff3af5c432a2756445823029533835b8da5'
                '29bbe0be5130afd56ed0713fb8789e47bad82d93bd5ae2fe54b15562d6276ef0')
 PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
-# Copies of projects the service test installs with the pnpm its machine carries, and the Creator Hub,
-# whose CI takes pnpm from .github/actions/setup-pnpm.
-UNPINNED = ('infra/dev/service-test/fixture/', 'apps/creator-hub/')
+# Copies of projects the service test installs with the pnpm its machine carries.
+UNPINNED = ('infra/dev/service-test/fixture/',)
 # A job may fetch a newer npm to publish; that npm is checked like any other.
 NPX_NPM = re.compile(r'\bnpx\s+--yes\s+npm@\S+')
 # npm commands that install or run a project, after any global flags; publishing and registry queries stay on npm.

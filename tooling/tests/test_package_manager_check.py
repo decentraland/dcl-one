@@ -25,9 +25,6 @@ class PackageManagerTest(unittest.TestCase):
             write(root, 'apps/w/package.json', '{"packageManager": "pnpm@%s"}' % check.PNPM_VERSION)
             write(root, 'apps/x/pnpm-workspace.yaml', 'ignoreScripts: true\nsaveExact: true\n')
             write(root, 'infra/dev/service-test/fixture/apps/x/pnpm-lock.yaml')
-            write(root, 'apps/creator-hub/pnpm-lock.yaml')
-            write(root, 'apps/creator-hub/package.json', '{}')
-            write(root, 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-lock.yaml')
             write(root, 'apps/x/.npmrc', '\n'.join((
                 '; registry and auth only',
                 'registry=https://registry.npmjs.org/',
