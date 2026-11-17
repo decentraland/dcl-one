@@ -25,6 +25,7 @@
 //! wallet listed twice is merged twice in order. The body is capped at
 //! [`super::MAX_BACKFILL_BODY_BYTES`] here and at the gateway.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use axum::Json;
@@ -321,10 +322,10 @@ fn unique_sorted(
     let mut out: Vec<(String, i64)> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     for (id, ts) in items {
-        match index.get(&key(&id)) {
-            Some(&i) => out[i].1 = ts,
-            None => {
-                index.insert(key(&id), out.len());
+        match index.entry(key(&id)) {
+            Entry::Occupied(i) => out[*i.get()].1 = ts,
+            Entry::Vacant(slot) => {
+                slot.insert(out.len());
                 out.push((id, ts));
             }
         }
