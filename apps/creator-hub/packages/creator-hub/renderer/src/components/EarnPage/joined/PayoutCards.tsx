@@ -25,6 +25,7 @@ import {
   InfoGroup,
   LearnMore,
   UnverifiedBadge,
+  VerifyEmailButton,
 } from './PayoutsTab.styled';
 import { shortAddress } from './wallet';
 
@@ -173,12 +174,12 @@ export function ContactCard({
         </CardTitle>
       </CardHeader>
       {unverified && (
-        <CornerButton
-          variant="outlined"
+        <VerifyEmailButton
+          variant="contained"
           onClick={onVerify}
         >
           {t('earn.joined.payouts.contact.verify')}
-        </CornerButton>
+        </VerifyEmailButton>
       )}
       {enrollment && (
         <ContactValues>

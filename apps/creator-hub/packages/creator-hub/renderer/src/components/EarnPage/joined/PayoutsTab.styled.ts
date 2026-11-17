@@ -78,17 +78,27 @@ const CornerButton = styled(Button)({
   '& .MuiTouchRipple-root': { display: 'none' },
 });
 
+const primaryButton = {
+  ...cornerButton,
+  ...typeToken('h8-semi'),
+  textTransform: 'uppercase' as const,
+  color: 'var(--palette-neutral-softWhite)',
+  backgroundColor: 'var(--primary)',
+  ...focusRing,
+};
+
 const AddWalletButton = styled(Button)({
   '&&&': {
-    ...cornerButton,
-    ...typeToken('h8-semi'),
+    ...primaryButton,
     position: 'static',
     alignSelf: 'flex-start',
-    textTransform: 'uppercase',
-    color: 'var(--palette-neutral-softWhite)',
-    backgroundColor: 'var(--primary)',
-    ...focusRing,
   },
+  '&&&:hover': { backgroundColor: 'var(--primary-hover)' },
+  '& .MuiTouchRipple-root': { display: 'none' },
+});
+
+const VerifyEmailButton = styled(Button)({
+  '&&&': primaryButton,
   '&&&:hover': { backgroundColor: 'var(--primary-hover)' },
   '& .MuiTouchRipple-root': { display: 'none' },
 });
@@ -405,4 +415,5 @@ export {
   TransactionButton,
   TransactionCell,
   UnverifiedBadge,
+  VerifyEmailButton,
 };

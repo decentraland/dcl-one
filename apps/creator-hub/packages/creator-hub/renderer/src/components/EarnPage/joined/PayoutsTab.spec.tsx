@@ -473,6 +473,17 @@ describe('PayoutsTab', () => {
       expect(wallet.queryByRole('button', { name: 'Copy wallet address' })).toBeNull();
     });
 
+    it('should give ADD WALLET and an unverified VERIFY EMAIL the same primary button', async () => {
+      await renderTab();
+
+      const add = await (await walletCard()).findByRole('button', { name: 'Add wallet' });
+      const verify = await (await contactCard()).findByRole('button', { name: 'Verify email' });
+      for (const button of [add, verify]) {
+        expect(button.classList).toContain('MuiButton-containedPrimary');
+      }
+      expect(getComputedStyle(verify).backgroundColor).toBe(getComputedStyle(add).backgroundColor);
+    });
+
     it('should hold the submit until the address is valid and flag a bad one on blur', async () => {
       await renderTab();
       fireEvent.click(await (await walletCard()).findByRole('button', { name: 'Add wallet' }));
