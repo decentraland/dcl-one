@@ -155,6 +155,13 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
+The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
+`foundation-dev` initializes with it set runs without durability (`fsync`,
+`synchronous_commit` and `full_page_writes` off, `wal_level=minimal`), because
+every scratch database a test drops forces a checkpoint. The flag has no effect
+on a cluster created without it, so it never weakens a stack that holds data.
+Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
+
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.

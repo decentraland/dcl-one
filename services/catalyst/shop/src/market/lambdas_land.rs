@@ -475,9 +475,10 @@ async fn read_name_owner(
     }
 }
 
-#[async_trait::async_trait]
-impl crate::comms::interfaces::NameOwnerReader for super::MarketplaceState {
-    async fn name_owner(
+impl super::MarketplaceState {
+    /// The owner of `name` as the gatekeeper's Admin Toolkit asks it (`serve`
+    /// hands it to comms as its `NameOwnerReader`).
+    pub async fn name_owner(
         &self,
         name: &str,
     ) -> Result<Option<crate::shared::identity::Address>, String> {
@@ -505,7 +506,6 @@ mod tests {
 
     #[tokio::test]
     async fn moderation_name_owner_store_fault_is_unavailable_even_with_a_fallback() {
-        use crate::comms::interfaces::NameOwnerReader;
         let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         pool.close().await;
         let state = super::super::MarketplaceState::new(
@@ -516,7 +516,7 @@ mod tests {
                 ..super::super::Settings::for_tests()
             },
         );
-        assert!(NameOwnerReader::name_owner(&state, "Alice").await.is_err());
+        assert!(state.name_owner("Alice").await.is_err());
     }
 
     #[test]
