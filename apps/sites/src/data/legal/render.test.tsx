@@ -38,7 +38,7 @@ const sidebar = (active: string) =>
     active: key === active,
   }));
 
-describe("when rendering the nine pinned legal documents", () => {
+describe("when rendering the pinned legal documents", () => {
   it.each(Object.values(LEGAL_DOCS))(
     "should preserve the captured text, structure and links for $slug",
     (doc) => {
@@ -69,6 +69,38 @@ describe("when rendering the nine pinned legal documents", () => {
       expect(resolveLegalKey(doc.key)).toBe(doc.key);
     },
   );
+  it("should list Creator Fund between Rewards Program and Credits, as source", () => {
+    expect(LEGAL_SIDEBAR.map(({ slug }) => slug)).toEqual([
+      "brand",
+      "content",
+      "ethics",
+      "rewards-terms",
+      "creator-fund-terms",
+      "credits-terms",
+      "security",
+      "privacy",
+      "referral-terms",
+      "terms",
+    ]);
+    expect(LEGAL_SIDEBAR.find(({ key }) => key === "creatorFund")).toEqual({
+      key: "creatorFund",
+      slug: "creator-fund-terms",
+      label: "Creator Fund",
+      icon: "paid",
+    });
+  });
+  it("should render an ordered list block as an ol", () => {
+    const view = render(
+      <LegalPageLayout
+        {...layout(LEGAL_DOCS.creatorFund)}
+        sidebar={sidebar("creatorFund")}
+        sidebarLabel="Legal documents"
+      />,
+    );
+    const list = view.container.querySelector("#eligibility ol");
+    expect(list?.querySelectorAll("li")).toHaveLength(5);
+    expect(view.container.querySelectorAll("#eligibility ul")).toHaveLength(0);
+  });
   it("should resolve the content-policy alias", () => {
     expect(resolveLegalKey("content-policy")).toBe("content");
   });

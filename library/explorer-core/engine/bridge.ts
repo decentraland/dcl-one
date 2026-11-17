@@ -27,11 +27,11 @@ const QUICK_RPC_TIMEOUT_MS: Partial<Record<RpcMethod, number>> = {
   getPreviousLogin: 10_000,
   loginCancel: 10_000,
   logout: 10_000,
-  guestDiscard: 10_000
+  guestSession: 10_000
 }
 
 // Answered by the bridge scene, not the engine's boot shim.
-const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestDiscard', 'emailStart', 'emailComplete'])
+const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestSession', 'emailStart', 'emailComplete'])
 
 export class BridgeClient implements LoginDriver {
   private readonly ch: BridgeChannel
@@ -65,7 +65,9 @@ export class BridgeClient implements LoginDriver {
     if (!('engine_console_command' in window)) return this.loginGuest()
     const identity = await createGuestIdentity({
       login: (sessionId) => this.rpc<GuestWallet>('guestLogin', { sessionId }),
-      sign: (token, message) => this.rpc<string>('guestSign', { token, message })
+      sign: (token, message) => this.rpc<string>('guestSign', { token, message }),
+      // the guest that signed out, or that an account signed in over, comes back the same
+      keptSessionId: () => this.rpc<string | null>('guestSession')
     })
     await this.command(`/login_identity ${encodeIdentity(identity)} --guest${newAccountFlags(pick)}`)
   }
@@ -97,7 +99,12 @@ export class BridgeClient implements LoginDriver {
     return this.rpc<void>('loginCancel')
   }
 
-  logout(): Promise<void> {
+  // Forgetting the stored login has no bridge rpc: the engine console carries it. The mock has none.
+  async logout(forget?: boolean): Promise<void> {
+    if (forget === true && 'engine_console_command' in window) {
+      await this.command('/logout --forget')
+      return
+    }
     return this.rpc<void>('logout')
   }
 
@@ -126,8 +133,7 @@ export class BridgeClient implements LoginDriver {
   async loginNew(): Promise<void> {
     const r = await this.rpc<LoginPreviousResult>('loginNew')
     if (r && r.success === false) throw new Error(r.error || 'Sign-in failed')
-    // Signing in with an account replaces the guest.
-    this.rpc<void>('guestDiscard').catch(() => {})
+    // An account signing in keeps the guest's wallet session for Play as guest, as unity-explorer does.
   }
 
   send(msg: PageToScene): void {

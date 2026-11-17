@@ -1,4 +1,5 @@
 import { getScriptParams } from './parser';
+import { reconcileColor } from './color';
 import { isMalformedParam, isPlainObject } from './validation';
 import type { ScriptLayout, ScriptParamUnion } from './types';
 
@@ -44,6 +45,8 @@ function reconcileValue(sourceParam: ScriptParamUnion, storedValue: unknown): un
       const n = typeof storedValue === 'number' ? storedValue : sourceParam.value;
       return Math.min(Math.max(n, sourceParam.min), sourceParam.max);
     }
+    case 'color':
+      return reconcileColor(sourceParam, storedValue);
     default:
       return storedValue !== undefined ? storedValue : sourceParam.value;
   }
@@ -82,8 +85,12 @@ export function mergeLayout(source: ScriptLayout, target: ScriptLayout): ScriptL
           ? targetParam.value
           : value.value;
       layout.params[name] = { ...value, value: storedValue };
+    } else if (value.type === 'color' && targetParam.type === 'color') {
+      layout.params[name] = { ...value, value: reconcileColor(value, targetParam.value) };
     } else {
-      layout.params[name] = { ...value, ...targetParam };
+      // editor metadata (tooltip, @enabledIf, @components…) comes from the fresh parse too, so
+      // removing a tag from the script takes effect on refresh
+      layout.params[name] = { ...value, value: targetParam.value } as ScriptParamUnion;
     }
   }
 

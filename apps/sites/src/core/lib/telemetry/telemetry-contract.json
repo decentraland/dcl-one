@@ -3000,6 +3000,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3024,6 +3025,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",

@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react'
 import { serviceUrl } from '@hud-host'
 import { openPopup } from '../design'
+import { Mark } from '../design/Glyphs'
 import styles from './WorldVisitModal.module.css'
 
 const WORLDS_API = `${serviceUrl('places')}/api/worlds`
@@ -52,7 +53,7 @@ export function WorldVisitModal({
 
   return (
     <div className={styles.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Visit world">
-      <button type="button" className={styles.close} aria-label="Close" onClick={onCancel}>✕</button>
+      <button type="button" className={styles.close} aria-label="Close" onClick={onCancel}><Mark name="close" /></button>
       <div className={styles.question}>Do you want to jump to the following world?</div>
       {info.image && !imageBroken && (
         // Decorative: the world name/title right below already names the destination.

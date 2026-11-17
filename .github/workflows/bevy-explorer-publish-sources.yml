@@ -22,7 +22,7 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main'
     name: Publish the patched sources
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write
