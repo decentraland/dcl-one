@@ -21,7 +21,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
 use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
-use crate::{AVCommand, MediaRetry, MediaRetryStatus, RetryStep, first_reopen_delay};
+use crate::{AVCommand, MediaRetry, MediaRetryStatus, RetryStep, first_reopen_delay, reopen_delay};
 
 type RcClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64, JsValue)>>>>;
 
@@ -285,6 +285,9 @@ impl Source {
         if retry.gave_up() || self.timeout.get().is_some() || self.reopen_on_play.get() {
             return;
         }
+        if self.is_live() {
+            self.was_live.set(true);
+        }
         self.failed.set(true);
         self.last_error.set(Some(error));
         self.failures.set(self.failures.get() + 1);
@@ -324,6 +327,9 @@ impl Source {
     /// ([`Self::played`]). Never runs while a reopen is scheduled (the state filter drops that
     /// `canplay`); the cancel is a guard.
     fn opened(&self) {
+        if self.is_live() {
+            self.was_live.set(true);
+        }
         self.failed.set(false);
         self.reopen_on_play.set(false);
         if self.cancel_reopen() {
@@ -575,11 +581,15 @@ impl HostMedia {
             AVCommand::Play => {
                 self.source.wants_play.set(true);
                 self.source.paused.set(false);
-                if self.source.reopen_on_play.get() {
-                    // the scene last saw VsError; the reopen's own states stay hidden
+                if self.source.reopen_on_play.get() && self.source.timeout.get().is_none() {
+                    // the scene last saw VsError; the reopen waits out the current delay, so
+                    // toggling playback cannot reopen faster than the schedule
+                    let delay =
+                        reopen_delay(first_reopen_delay(), self.source.retry.get().attempts());
                     self.source.send_state(VideoState::VsLoading);
-                    self.source.reopen();
-                } else {
+                    self.source.schedule_reopen(delay);
+                    self.source.send_retry(Some(delay));
+                } else if !self.source.reopen_on_play.get() {
                     try_play(&self.media, &self.source.play_refused);
                 }
             }
@@ -588,14 +598,9 @@ impl HostMedia {
                 self.source.paused.set(true);
                 self.media.pause().report();
                 // a pause cancels a scheduled or loading reopen, keeping the count; the next play
-                // reopens at once
-                let scheduled = self.source.cancel_reopen();
-                let failed = self.source.failed.get() && !self.source.retry.get().gave_up();
-                if failed && !scheduled && !self.source.reopen_on_play.get() {
-                    // a loading reopen detached before it could play counts as a failure, so
-                    // toggling playback still ends a source that never opens
-                    self.source.fail("reopen interrupted by pause");
-                } else if failed {
+                // reopens after the current delay
+                self.source.cancel_reopen();
+                if self.source.failed.get() && !self.source.retry.get().gave_up() {
                     self.source.suspend();
                     self.source.reopen_on_play.set(true);
                     self.source.send_state(VideoState::VsError);
