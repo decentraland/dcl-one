@@ -5426,7 +5426,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerCache.test.ts",
-      "sha256": "9575d03e55719e2df50b0cd125ded6ed26a5b16b71be7fdbb748169132d69403"
+      "sha256": "3f1d198907db693c7e280c15fb81aacaaa5fc9c130a8455a7cf9ffa1381487f9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",

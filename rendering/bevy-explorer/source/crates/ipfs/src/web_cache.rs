@@ -1,10 +1,9 @@
 //! The service worker's asset cache (deploy/web/service_worker.js), as the engine reaches it.
-//! The cache name and the keys here MUST match the worker's.
+//! The cache name here MUST match the worker's.
 //!
-//! The worker only answers from the cache; the engine fills it from what it downloads. An entry
-//! under the shared key answers for every content server, so it is only written once the bytes
-//! are checked against the hash (`content_hash`), and under that hash; a url's response goes
-//! under the url.
+//! The engine reads the cache and fills it from what it downloads. An entry under the shared key
+//! answers for every content server, so it is only written once the bytes are checked against
+//! the hash (`content_hash`), and under that hash; a url's response goes under the url.
 //!
 //! The cache is capped (`effective_cap`). The service worker trims it, oldest-written entries
 //! first, when the engine asks through the `__contentCacheTrim` page function

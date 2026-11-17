@@ -1,15 +1,9 @@
-// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name, both keys):
-// this worker only answers from the cache; the engine fills it (content it has checked against
-// its hash under the shared key, a url's response under the url), and its asset processor writes
-// processed bytes back over the entry it read.
+// MUST stay in sync with crates/ipfs/src/web_cache.rs (cache name):
+// the engine reads and fills this cache (content it has checked against its hash under the shared
+// key, a url's response under the url), and its asset processor writes processed bytes back over
+// the entry it read. This worker only trims it.
 // v2: v1 entries were shared across content servers on the path alone, with nothing checked.
 const CACHE_NAME = 'ipfs-path-cache-v2';
-const CUSTOM_HEADER = 'X-IPFS';
-// Stand-in origin for entries shared across content servers. `.invalid` is reserved, so no real
-// server's own entries can land on these keys.
-const SHARED_ORIGIN = 'https://shared.invalid';
-// Set on responses answered from the cache.
-const CACHED_HEADER = 'X-IPFS-Cached';
 
 // The scene editor's preview realm (PREVIEW_REALM.md): urls under <scope>preview/ are answered
 // from this cache alone. Scenes can't write it: the sandbox worker deletes `caches`.
@@ -69,13 +63,6 @@ self.addEventListener('fetch', (event) => {
     }
     if (request.url.startsWith(EDITOR_SCENE_ROOT)) {
         event.respondWith(serveEditorScene(request, event.clientId));
-        return;
-    }
-
-    // Check if the request has our custom header.
-    if (request.headers.has(CUSTOM_HEADER)) {
-        // If it does, use our caching strategy.
-        event.respondWith(cacheFirstStrategy(request));
         return;
     }
 
@@ -306,64 +293,4 @@ async function addCrossOriginIsolationHeaders(request) {
     }
 
     return response;
-}
-
-async function cacheFirstStrategy(request) {
-    // DEV: never cache LOCAL preview content. sdk-commands' `start` server hashes mutable files by a
-    // CONSTANT id (the file path), so cache-first would serve the first build of the local bridge scene
-    // forever — every rebuild would be invisible. Always go to network for localhost so scene edits show.
-    const reqUrl = new URL(request.url);
-    if (reqUrl.hostname === 'localhost' || reqUrl.hostname === '127.0.0.1') {
-        return fetch(stripCustomHeader(request));
-    }
-
-    // Cache entries are keyed by url alone, so only a GET may be answered from one.
-    if (request.method !== 'GET') {
-        return fetch(stripCustomHeader(request));
-    }
-
-    // Two keys. The shared one is the hash alone (the last path segment), so every content server
-    // serving a hash hits the same entry. This worker writes neither: any client (a scene
-    // included) can make it fetch, so what it fetched would have to stay under the url it came
-    // from, and the engine already stores what it downloads, under the hash once it has checked
-    // the bytes against it. Storing here would also hold the response until the whole body was
-    // in, which on a slow link makes a large file look like a request that never sent headers.
-    const sharedKey = SHARED_ORIGIN + '/' + reqUrl.pathname.split('/').pop();
-    const originKey = reqUrl.origin + reqUrl.pathname + reqUrl.search;
-
-    //Open the cache
-    const cache = await caches.open(CACHE_NAME);
-
-    //Try to find a response in the cache
-    const sharedResponse = await cache.match(sharedKey);
-    if (sharedResponse) {
-        // an origin's own copy is dead weight once the shared entry exists (one can be left behind
-        // when the engine never got to check it). Not awaited: nothing depends on it.
-        cache.delete(originKey).catch(() => {});
-    }
-    const cachedResponse = sharedResponse ?? (await cache.match(originKey));
-    if (cachedResponse) {
-        const headers = new Headers(cachedResponse.headers);
-        headers.set(CACHED_HEADER, '1');
-        return new Response(cachedResponse.body, {
-            status: cachedResponse.status,
-            statusText: cachedResponse.statusText,
-            headers
-        });
-    }
-
-    //If not in cache, fetch from network
-    return fetch(stripCustomHeader(request));
-}
-
-function stripCustomHeader(request) {
-    const newHeaders = new Headers(request.headers);
-    newHeaders.delete(CUSTOM_HEADER);
-    
-    // A headers override resets referrer fields unless the forward carries them too.
-    return new Request(request, {
-        headers: newHeaders,
-        referrer: request.referrer,
-        referrerPolicy: request.referrerPolicy,
-    });
 }
