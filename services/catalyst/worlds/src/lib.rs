@@ -22,6 +22,10 @@
 //! [`app_router`] composes them at the old gateway's prefixes behind the
 //! [`writes`] switch.
 
+// Production routes go through `shared::routing` (worlds/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 use catalyst_comms as comms;
@@ -56,8 +60,8 @@ pub mod writes;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use axum::Router;
-use axum::routing::get;
 use sqlx::PgPool;
 
 use crate::config::Config;
@@ -382,7 +386,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/world/{world_name}/about", get(about::get_about))
         .route(
             "/world/{world_name}/scenes",
-            get(scenes::list_scenes).post(scenes::post_list_scenes),
+            get(scenes::list_scenes).post(erase(scenes::post_list_scenes)),
         )
         .route(
             "/world/{world_name}/preview-wearables",
@@ -439,7 +443,7 @@ pub fn app_router(
         .route(
             "/contents/{hashId}",
             get(crate::content::get_content::get_world_content)
-                .head(crate::content::get_content::get_world_content)
+                .head(erase(crate::content::get_content::get_world_content))
                 .with_state(blobs.clone()),
         )
         // The deploy clients' pre-upload check, over the same blob store.
@@ -450,7 +454,7 @@ pub fn app_router(
         .route(
             "/ipfs/{hashId}",
             get(crate::content::get_content::get_world_content)
-                .head(crate::content::get_content::get_world_content)
+                .head(erase(crate::content::get_content::get_world_content))
                 .with_state(blobs),
         )
         .route(

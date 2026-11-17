@@ -123,7 +123,7 @@ mod tests {
     /// `*test*` and `tests/` folders are test code and exempt.
     #[test]
     fn production_routes_do_not_use_axum_methods_directly() {
-        const CRATES: [&str; 3] = ["comms", "explore", "social"];
+        const CRATES: [&str; 4] = ["comms", "explore", "social", "worlds"];
         const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
         fn names_a_method(after: &str) -> bool {
             let names = match after.strip_prefix('{') {
