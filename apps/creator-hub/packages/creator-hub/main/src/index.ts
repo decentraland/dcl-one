@@ -35,6 +35,7 @@ import { stopExplorerGateway } from '/@/modules/explorer-gateway';
 import { runMigrations } from '/@/modules/migrations';
 import { getAnalytics, track, trackLifecycleEvent } from './modules/analytics';
 import { handleAppArguments } from './modules/app-args-handle';
+import { registerAppImageProtocolClient, runningAppImage } from './modules/appimage';
 import {
   DEEPLINK_PROTOCOL,
   flushPendingDeeplink,
@@ -91,12 +92,17 @@ app.on('second-instance', async (_e: unknown, argv: string[]) => {
  * point must be passed explicitly for the registration to resolve correctly.
  */
 if (shouldRegisterProtocolClient(!!process.defaultApp, platform)) {
+  const appImage =
+    platform === 'linux' ? runningAppImage(process.env, process.execPath) : undefined;
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
       app.setAsDefaultProtocolClient(DEEPLINK_PROTOCOL, process.execPath, [
         path.resolve(process.argv[1]),
       ]);
     }
+  } else if (appImage) {
+    // Electron registers the desktop entry of an installed package, which an AppImage does not have.
+    registerAppImageProtocolClient(appImage, DEEPLINK_PROTOCOL);
   } else {
     app.setAsDefaultProtocolClient(DEEPLINK_PROTOCOL);
   }

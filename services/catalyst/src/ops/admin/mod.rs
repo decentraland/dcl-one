@@ -155,7 +155,33 @@ pub struct State {
     pub domains: console::Domains,
 }
 
-pub type SharedState = Arc<State>;
+/// The console's state; `dyn` stops axum re-proving `Send + Sync` of every domain per route (-25% crate build).
+#[derive(Clone)]
+pub struct SharedState(Arc<dyn AsState + Send + Sync>);
+
+trait AsState {
+    fn state(&self) -> &State;
+}
+
+impl AsState for State {
+    fn state(&self) -> &State {
+        self
+    }
+}
+
+impl std::ops::Deref for SharedState {
+    type Target = State;
+
+    fn deref(&self) -> &State {
+        self.0.state()
+    }
+}
+
+impl From<State> for SharedState {
+    fn from(state: State) -> Self {
+        Self(Arc::new(state))
+    }
+}
 
 impl State {
     pub fn new(

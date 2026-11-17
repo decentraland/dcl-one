@@ -21,14 +21,6 @@
   outline: none;
 }
 
-@media (max-height: 540px) {
-  .card {
-    padding: 18px;
-    border-radius: var(--r-control);
-    max-height: calc(100% - 16px);
-  }
-}
-
 /* ---- ModalShell ---- */
 .shell {
   display: flex;
@@ -40,13 +32,6 @@
   min-width: 0;
   line-height: 1.5;
   color: var(--ink-85);
-}
-
-@media (max-height: 540px) {
-  .shell {
-    padding: 18px;
-    gap: 14px;
-  }
 }
 
 /* ---- ModalTitle ---- */

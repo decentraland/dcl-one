@@ -6,7 +6,8 @@ origin     = "https://github.com/robtfm/bevy_ecss"
 origin_rev = "1192869a8a56d3fe9e7812215b71fcdcd1093d99"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "a1d8005166de9e81f63dd57ea8e12401cd7fb25b"
-tree       = "0534d20b116d38cb8f9ba4db458031202eb59e98"
+exclude    = [".github"]
+base_tree  = "96903a095b805fa90ca471831b0c6cfb90c70539"
+tree       = "681075f5aaca044952b7bc7854855f8689ac251e"
+rev        = "da37b8fbfd7d2561257254f4ae9370ca33a71acb"
 nix_hash   = "sha256-aZ1zwsvBClX7+2fOWgxPzMvW8g/2FK9q6ZEWJ3/H/4s="

@@ -256,7 +256,8 @@ class WorkflowSetupTest(unittest.TestCase):
                     'library/ui/apps/sites/assets/hero_desktop.webp',
                     'library/ui/apps/sites/assets/catch_the_vibe/alan.mp4',
                     'library/ui/apps/sites/assets/video_landing.webm',
-                    'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2')
+                    'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2',
+                    'apps/ui3/public/assets/invite/referral.webm')
         for path in required:
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
@@ -275,6 +276,8 @@ class WorkflowSetupTest(unittest.TestCase):
 
         for path in ('library/ui/index.ts',
                      'library/ui/css-modules.d.ts',
+                     'library/ui/content.helpers.ts',
+                     'library/ui/link.helpers.ts',
                      'library/ui/components/NavBar/NavBar.tsx',
                      'library/ui/components/NavBar/NavBar.module.css',
                      'library/ui/components/Button/Button.tsx',
@@ -299,17 +302,20 @@ class WorkflowSetupTest(unittest.TestCase):
             work = root / 'apps/sites'
             assets = root / 'library/ui/apps/sites/assets'
             fonts = root / 'library/ui/foundations/typography/fonts'
-            for path in (work, assets, fonts):
+            invite = root / 'apps/ui3/public/assets/invite'
+            for path in (work, assets, fonts, invite):
                 path.mkdir(parents=True)
             media = assets / 'hero.webp'
             font = fonts / 'inter.woff2'
+            clip = invite / 'referral.webm'
             payload = b'actual\0binary'
             media.write_bytes(payload)
             font.write_bytes(payload)
+            clip.write_bytes(payload)
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
                                     cwd=work, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for path in (media, font):
+            for path in (media, font, clip):
                 with self.subTest(path=path.name):
                     path.write_text('version https://git-lfs.github.com/spec/v1\n'
                                     'oid sha256:' + 'a' * 64 + '\nsize 12\n')

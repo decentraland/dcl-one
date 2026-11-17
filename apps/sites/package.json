@@ -6,6 +6,7 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "pnpm@12.21.0+sha512.66fd8278ee28935ce951792d34367ff3af5c432a2756445823029533835b8da529bbe0be5130afd56ed0713fb8789e47bad82d93bd5ae2fe54b15562d6276ef0",
   "scripts": {
     "sync:assets": "node scripts/sync-ui3-public.mts",
     "predev": "node scripts/sync-ui3-public.mts",
@@ -32,6 +33,7 @@
     "gen:seed-catalog": "node scripts/gen-seed-catalog.mjs",
     "gen:seed-catalog:check": "node scripts/gen-seed-catalog.mjs --check",
     "gen:docs-content": "node scripts/gen-docs-content.mts",
+    "gen:docs-content:capture": "node scripts/gen-docs-content.mts --capture",
     "gen:docs-content:check": "node scripts/gen-docs-content.mts --check"
   },
   "dependencies": {
@@ -48,6 +50,7 @@
     "@xstate/react": "6.1.0",
     "fflate": "0.8.3",
     "isbot": "5.2.2",
+    "livekit-client": "2.22.4",
     "magic-sdk": "27.0.0",
     "marked": "18.1.1",
     "monaco-editor": "0.57.0",

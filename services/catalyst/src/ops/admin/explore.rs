@@ -227,9 +227,12 @@ fn flag_name(body: &Value) -> Result<String, Response> {
 }
 
 async fn reload_flags(api: &crate::explore::api::Shared) -> sqlx::Result<()> {
-    api.flags
-        .reload(&api.pool, &api.settings.feature_flags_app)
-        .await
+    crate::explore::api::feature_flags::reload(
+        &api.flags,
+        &api.pool,
+        &api.settings.feature_flags_app,
+    )
+    .await
 }
 
 /// `POST /admin/api/explorer-api/flags-toggle` `{name, value?}` (`value`,

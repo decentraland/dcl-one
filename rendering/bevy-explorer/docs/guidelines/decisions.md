@@ -7,13 +7,6 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate divergences from Unity
 
-- **Legacy Ethereum response envelopes follow Protocol.** `getUserAccount` returns
-  `{address}` (or `{}` without a connected wallet), and `convertMessageToObject` returns
-  `{dict}`. These are the shapes declared in `ethereum_controller.proto`. The Unity client
-  at [`c78b1f0`](https://github.com/decentraland/unity-explorer/blob/c78b1f0c59545b0d3b1ff43e109fa63997267850/Explorer/Assets/StreamingAssets/Js/Modules/EthereumController.js)
-  returns the bare address and dictionary. Dictionary keys are own properties, including
-  `__proto__`, as a protobuf map requires. Signing uses the existing engine Web3 permission
-  and wallet approval path; a hosted scene has no connected user wallet.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
@@ -83,7 +76,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
   downloads of a scene that has left.
@@ -153,7 +147,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unaffected.
   - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
     hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
-  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
+  - A scene room that refuses the player as banned (a platform, world or scene ban, as
+    `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
+    every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
+    realm or wallet, lifts it without reopening the mic. A recheck with no answer (a network
+    error, a 503) keeps the refusal. The interval bounds both the gatekeeper requests from a
+    player who stays banned and the wait before an unban is noticed. Platform bans recheck here
+    too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
+    again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
+    room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **Blocked and scene-banned players are not heard nearby.** A player blocked in either
+  direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
+  voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
+  source. Calls and community streams still carry them. Scene bans apply without the
+  `alfa-banned-users-from-scene` flag unity-explorer reads, as in Nearby chat.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -234,8 +241,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
   owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
   Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
-  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
-  gifting flag). Chat is always offered in-world: unity-explorer greys it
+  to Community. Gift sits after Call, greyed for a blocked member (see the gifting entries below). Chat is
+  always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
@@ -412,8 +419,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
   portable like any other: each restricted action goes through the stored rules and the per-use
   prompt, which shows what is being done (the URL to open, the realm to change to). So
-  `requiredPermissions` grants and refuses nothing (legacy permission queries only report it),
-  and nothing is asked before the scene starts. On native,
+  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
   `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
   permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
   declared-permission check on them would be bypassable.
@@ -447,6 +453,43 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
   the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Gifting is on `/play` only, for web3 and managed sign-ins, never a guest.** As with Donate, only
+  the Sites `/play` web shell holds a wallet that can sign the transfer, so the Explorer's own HUD
+  offers no Gift; it still shows the gift-received popup, which signs nothing. Both wallet kinds
+  sign the gasless meta-transaction, so both may gift; a guest can't, as in the Shop. See
+  [the ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md).
+- **The shell asks for a second confirmation.** unity-explorer's picker SEND GIFT starts the
+  transfer. Here it opens the shell's "Send Gift to" step (the item and the recipient's name and
+  address as the shell read them, SEND GIFT and CANCEL), and only that press signs: an email or
+  social account's wallet signs with no prompt, so the app frame alone must not be able to move
+  items. The shell also re-reads the token's owner on chain, checks the collection is the
+  marketplace index's on the build's chain and that the recipient is another account, and signs
+  nothing else (the guard). Closing it before the wallet signs cancels the gift.
+- **"Gift Sent" shows once the relay takes it.** As in unity-explorer. A token moves only once,
+  so a gift can't be sent twice; an answer lost on the way is settled by the token's owner, and
+  TRY AGAIN after a refusal signs the same nonce. There is no fallback to a transaction from the
+  wallet.
+- **Ethereum items are listed, and refused on SEND.** unity-explorer lists every on-chain item
+  and its transfer of a `collections-v1` item can't succeed; here the picker lists them too and
+  SEND shows "Cannot send this item as a gift because it's not a transferable NFT.", since the
+  relay serves Polygon only.
+- **Pending gifts are kept by the shell, per account, for a week.** unity-explorer keeps them in
+  its player preferences. The app frame has no storage here, so the shell keeps them; the picker
+  hides a token only while the owned catalog still lists it with the `transferredAt` it had when
+  sent.
+- **The slow-transfer link opens `/shop`'s Activity page.** unity-explorer links the Marketplace's
+  activity; here the Shop's Activity page is that page.
+- **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
+  View Profile), the community member menu (after Call; greyed for a blocked member either way),
+  and another player's passport options (before Block; the picker replaces the passport). The
+  voice-stream panel's menu has none, as in unity-explorer. It is not offered to a guest
+  recipient either (unity-explorer doesn't check): a guest's account is a throwaway key on one
+  device, so an item sent there would be lost with it. A picker error is a toast and the
+  picker stays open; unity-explorer closes its picker on SEND before it can show the error.
+- **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
+  successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
+  port leaves both out for now. The shell's "Preparing Gift for" tile shows the
+  marketplace index's item category (wearable or emote), so its corner glyph is the generic one.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
   markers with a camera into a texture; here the atlas and every marker are elements of the HUD
   page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
@@ -516,6 +559,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
+  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
@@ -545,6 +600,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **Only a url's cached file is dropped when its asset fails to load.** A load its loader rejects
+  drops the entry it read, once per entry per session, when that entry is filed under a url, and
+  every asset that failed on it is then reloaded once. So a url whose bytes never decode is
+  downloaded again in every session. An entry under a content hash is never dropped this way: it
+  was checked against the hash before it was written, so a bad one is the asset processor's
+  output or disk damage, which belong to the processor and the disk, not to a retry.
 - **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
   `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
   client), so the worker passes the request to the network untouched; a lookup there could only
@@ -610,40 +671,52 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
-- **Legacy permission queries report declarations and current runtime policy without granting
-  either.** As in kernel@5b2cff4, a permission the scene.json `requiredPermissions` declares
-  reports true, and a portable also reports move-player and trigger-emote. Otherwise native
-  queries use the same trusted scene, realm, portable and presence rules as per-use checks;
-  an `Ask` policy reports false and never opens a prompt. Web Fetch and WebSocket report
-  availability for an assigned scene because those browser paths are ungated. Undeclared media
-  hostname grants report false because the engine has no such grant store. Actions still pass
-  their existing permission and wallet checks, so a declaration does not create a grant. A
-  query accepts at most 16 permission items and resolves the scene policy once.
-- **Legacy parcel metadata has no asset-bundle URL.** `ParcelIdentity.getParcel` returns the
-  assigned scene's actual identifier, metadata, content mappings and content URL. Its
-  `baseUrlBundles` string is empty: the engine's bundle service serves Bevy artifacts and
-  cannot satisfy the legacy bundle format.
-- **Legacy avatar pulls recover current state after queue overflow.** Each scene owns at most
-  1024 queued events. Overflow causes the next pull to remove previously delivered identities
-  and bootstrap current peers; intermediate positions and transient expressions are not
-  replayed. Public speaking state is sampled from current participants, scoped by both room
-  hash and native context, with private calls excluded. Position indices count received native
-  updates, and expression timestamps record native delivery time.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
-- **Legacy reads and signing can resolve during scene startup.** Account, permission and
-  entity-definition reads, signing, and avatar subscription/pulls use the immediate RPC
-  transport, keeping the existing trusted scene identity and action handlers. They do not
-  require a CRDT flush from the caller. Immediate and queued requests share the 1000-call
-  budget between renderer flushes, excluding file reads; all immediate payloads share an
-  80 MiB budget. The web
-  relay independently enforces these limits and runs at most 32 queries concurrently,
-  alongside the existing file-read barrier. Retained payloads remain charged until the engine
-  releases their reply channels, even when callers cancel. A pending wallet approval therefore
-  does not block unrelated reads. A full renderer queue retains accepted web requests for retry;
-  native IPC buffers at most 1000 responses and 80 MiB per scene, serves pending scenes in
-  turn, and continues reading channel closes while the renderer queue is full. Overflow
-  terminates that scene and retains a terminal error for the renderer. File reads retain
-  their existing ordering. Deprecated CRDT reads drain already received data without
-  flushing scene state or waiting for another renderer tick.
+- **The HUD scales with the window, with no legibility floor.** `--ui-scale` is
+  `min(width / 1920, height / 1080)` (`library/explorer-core/lib/hudScale.ts`), the same rule
+  the Unity client's canvas follows, so one layout holds at every size: nothing wraps, hides or
+  collides in a small window, and a 4K window gets a proportionally larger HUD. The 0.25 and 4
+  bounds only keep the value finite for the layout boxes that divide by it. Known limitation:
+  text shrinks with everything else. A 16 px label is about 10.7 px in a 1280x720 window and
+  about 5 px at 640x480, which is not legible. A floor on the scale would trade that for a
+  layout that no longer fits the window at those sizes.
+- **The open chat does not fade out when idle.** Its message column stays tinted and the
+  conversation rail is on screen for as long as the chat is open, with Nearby's tab on it even
+  when there is no other conversation, so the chat's controls stay reachable without first
+  waking the panel. Only the title bar and its navigation wait for hover or focus.
+- **Places is one grid.** The page has no separate Live Now or Featured sections: every
+  destination appears once, in the order of the chosen sort, and a featured place carries a
+  ribbon on its card. The layout is the Unity client's, so a place is found the same way in
+  either client; search, the category chips and the sort all act on the one grid.
+- **Settings tabs are Graphics, Sounds, Controls, Chat; key bindings sit under Controls.** The
+  row is the Unity client's, so a setting is found in the same place in either client; any other
+  category the engine sends follows in the engine's order. Key bindings are (action, keys) rows
+  from the bindings relay, not engine settings, so they get a card of their own below the
+  Controls rows instead of a tab, and the Controls tab is there even when the engine sends no
+  Controls category.
+- **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
+  Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
+  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
+  and Badges, then Sign Out (a sign-in on the web, a guest's included) and Exit (where the page can
+  close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
+  and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
+  a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and
+  Gallery.
+  The end-to-end suite reads these buttons by name
+  (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
+- **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
+  guest, and so does an account signing in. The next start does not sign the guest in on its own,
+  and Play as guest brings the same guest back: on the web its kept sign-in, or its kept wallet
+  session once that sign-in has run out; on the desktop client its kept wallet session, since
+  Sign Out drops the sign-in the engine keeps (`/logout --forget`). The desktop client signs out
+  from the start lobby only: the engine refuses a sign-out once the world is entered.
+- **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
+  a destination of this HUD, and matching another client's tab row is not grounds for dropping
+  it.
+- **A control without a function is hidden, not shown disabled.** The HUD renders a button, tab
+  or menu row only when it does something. A dead or greyed control promises a function the
+  HUD does not have and reads as a fault; the control appears when its function exists. The
+  Portable experiences button follows the same rule and shows only while an experience is
+  active.

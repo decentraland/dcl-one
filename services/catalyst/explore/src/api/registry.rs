@@ -36,9 +36,8 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, OriginalUri, Request, State};
+use axum::extract::{DefaultBodyLimit, OriginalUri, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
-use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -102,23 +101,7 @@ async fn not_found() -> Response {
     (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
-/// The Registry's CORS: `@dcl/http-server` with the methods its
-/// `createServerComponent` lists and `maxAge: 86400` (`components.ts`),
-/// captured as `captures/abr/AB-12-preflight.json`
-/// ([`crate::shared::cors::HttpServerCors`]).
-const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServerCors {
-    methods: Some("GET,HEAD,OPTIONS,DELETE,POST,PUT"),
-    max_age: "86400",
-    nosniff: false,
-    preflight_echoes_request: false,
-};
-
-/// The Registry's CORS ([`CORS`]): every `OPTIONS` is a 204 preflight with
-/// origin `*`, with or without `Origin`; any other response gets origin `*`
-/// only when the request carries an `Origin`, and never exposed headers.
-pub async fn cors(req: Request, next: Next) -> Response {
-    CORS.run(req, next).await
-}
+pub use crate::shared::cors::registry_cors as cors;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Backend {

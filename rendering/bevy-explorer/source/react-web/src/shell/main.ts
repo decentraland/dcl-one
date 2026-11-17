@@ -11,6 +11,8 @@ import { migratePrefs } from '@explorer-core/lib/prefs'
 import { request } from './login'
 import { shellResponse } from '@explorer-core/lib/shellReply'
 import { onInWorld } from '@explorer-core/shell/googleTag'
+import { reloadPage } from '@explorer-core/lib/reloadPage'
+import { dropDestination } from '@explorer-core/lib/startScreenUrl'
 
 // The service worker's scope is the package DIRECTORY, but the production entry URL has no
 // trailing slash, which puts this page outside it: the worker never sees the request, so the
@@ -26,6 +28,8 @@ const entryUrl = location.href
 
 let frame: HTMLIFrameElement | null = null
 let mounting = false
+// Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
+let signedOut = false
 function mount(): void {
   if (mounting) return
   mounting = true
@@ -97,7 +101,7 @@ addEventListener('message', async (e: MessageEvent) => {
     }
     // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar
     case 'bevy-shell:url':
-      if (typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
+      if (!signedOut && typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
         history.replaceState(null, '', location.pathname + m.search + location.hash)
       }
       break
@@ -115,6 +119,23 @@ addEventListener('message', async (e: MessageEvent) => {
     case 'bevy-shell:exit':
       window.close()
       location.replace(exitUrl())
+      break
+    // the Me panel's Sign Out in world (library/ui/apps/hud/features/gate/signOutOfWorld.ts): the stored
+    // sign-in and the place in the address bar go, and the page loads again on the start screen,
+    // which ends the engine session
+    case 'bevy-shell:sign-out':
+      signedOut = true
+      try {
+        await request('logout', undefined)
+      } catch (error) {
+        // the stored sign-in is still there, so a reload would sign the same account in again
+        signedOut = false
+        console.error('sign-out: the stored sign-in could not be removed', error)
+        f.contentWindow?.postMessage({ type: 'bevy-shell:sign-out-failed' }, location.origin)
+        break
+      }
+      dropDestination()
+      reloadPage()
       break
   }
 })

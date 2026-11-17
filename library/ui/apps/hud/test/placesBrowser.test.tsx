@@ -44,9 +44,9 @@ describe('places browser', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     render(<PlacesBrowser onPick={vi.fn()} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Most active' }))
+    await userEvent.click(screen.getByRole('button', { name: /Filter & Sort/ }))
     await userEvent.click(await screen.findByRole('option', { name: 'Most liked' }))
-    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'other' } })
+    fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'other' } })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/worlds?'), expect.anything()))
     expect(await screen.findByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
     expect(screen.queryByText(/Couldn't load/)).toBeNull()
@@ -59,9 +59,9 @@ describe('places browser', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     render(<PlacesBrowser onPick={vi.fn()} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Most active' }))
+    await userEvent.click(screen.getByRole('button', { name: /Filter & Sort/ }))
     await userEvent.click(await screen.findByRole('option', { name: 'Most liked' }))
-    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'other' } })
+    fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'other' } })
     expect(await screen.findByText("Couldn't load places")).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
@@ -82,29 +82,37 @@ describe('places browser', () => {
     expect(screen.queryByRole('button', { name: 'Load more places' })).toBeNull()
   })
 
-  it('hides unsupported sorting in personal sections and restores it for public discovery', async () => {
+  it('disables sorting in personal sections and restores it for public discovery', async () => {
     servePlaces()
     vi.spyOn(auth, 'getLogin').mockResolvedValue(null)
     render(<PlacesBrowser onPick={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Most active' })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: /Favourites/ }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Most active' })).toBeNull())
-    await userEvent.click(screen.getByRole('tab', { name: /Explore all/ }))
-    expect(screen.getByRole('button', { name: 'Most active' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Filter & Sort/ })).toBeEnabled()
+    await userEvent.click(screen.getByRole('tab', { name: /Favorites/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Filter & Sort/ })).toBeDisabled())
+    await userEvent.click(screen.getByRole('tab', { name: /Explore/ }))
+    expect(screen.getByRole('button', { name: /Filter & Sort/ })).toBeEnabled()
   })
-  it('keeps Live Now to populated destinations, Featured to the curated set, and the grid to the rest', async () => {
+  it('returns to the busiest order when Explore follows Recent through a personal section', async () => {
+    servePlaces()
+    vi.spyOn(auth, 'getLogin').mockResolvedValue(null)
+    render(<PlacesBrowser onPick={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('tab', { name: /Favorites/ }))
+    await userEvent.click(screen.getByRole('tab', { name: /Explore/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Filter & Sort/ }))
+    expect(screen.getByRole('option', { name: 'Most active' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('option', { name: 'Newest' })).toHaveAttribute('aria-selected', 'false')
+  })
+  // There are no Live Now or Featured rows: one grid holds every destination once.
+  it('shows every destination once in one grid, without unfinished deploys', async () => {
     servePlaces()
     render(<PlacesBrowser onPick={vi.fn()} />)
-    const live = (await screen.findByRole('heading', { name: /Live Now/ })).closest('section') as HTMLElement
-    const featured = (await screen.findByRole('heading', { name: 'Featured Places' })).closest('section') as HTMLElement
-
-    expect(within(live).getByRole('button', { name: /Busy Club/ })).toBeInTheDocument()
-    expect(within(live).queryByRole('button', { name: /Quiet Gallery/ })).not.toBeInTheDocument()
-    expect(within(featured).getByRole('button', { name: /Curated World/ })).toBeInTheDocument()
-
+    const results = screen.getByRole('region', { name: 'Places results' })
+    expect(await within(results).findByRole('button', { name: /Busy Club/ })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /Busy Club/ })).toHaveLength(1)
-    expect(screen.getByRole('button', { name: /Quiet Gallery/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
+    expect(within(results).getByRole('button', { name: /Quiet Gallery/ })).toBeInTheDocument()
+    expect(within(results).getByRole('button', { name: /Curated World/ })).toBeInTheDocument()
+    expect(within(results).getByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /\bEmpty\b/ })).not.toBeInTheDocument()
   })
 
@@ -123,7 +131,7 @@ describe('places browser', () => {
       })
     )
     render(<PlacesBrowser onPick={vi.fn()} />)
-    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'tortilla' } })
+    fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'tortilla' } })
     expect(await screen.findByRole('button', { name: /My Scene/ }, { timeout: 2000 })).toBeInTheDocument()
   })
 
@@ -143,7 +151,7 @@ describe('places browser', () => {
     await screen.findByRole('button', { name: /Other Scene/ })
     expect(results).toHaveAttribute('aria-busy', 'false')
 
-    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'gallery' } })
+    fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'gallery' } })
     // the old cards stay while the box waits out its debounce: the panel says they are not this search's
     expect(screen.getByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
     expect(results).toHaveAttribute('aria-busy', 'true')

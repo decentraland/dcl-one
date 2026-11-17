@@ -155,7 +155,10 @@
       ],
       "paths": [
         "/schemas/",
-        "/services/catalyst/db/"
+        "/services/catalyst/db/",
+        "/tooling/migration/",
+        "/tooling/tests/migration_*.py",
+        "/tooling/tests/test_migration.py"
       ]
     },
     {
@@ -272,6 +275,8 @@
         "/tooling/patched-sources.py",
         "/tooling/vendor-provenance.py",
         "/tooling/tests/test_bevy_*.py",
+        "/infra/dev/explorer-shell-hook.sh",
+        "/infra/packages/bevy-explorer-native.nix",
         "/infra/packages/bevy-explorer.nix"
       ]
     },

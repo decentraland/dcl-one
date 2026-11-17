@@ -106,17 +106,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('cache-on-failure: true', cache)
         self.assertLess(rust.index('Put the Nix Rust toolchain on PATH'), rust.index('Swatinem/rust-cache@'))
         self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('bash tooling/dev-test.sh rust'))
-        # The compiler cache: optional, pinned, and on only when the dependency cache hit its exact key
-        # and the server started, so it holds what that entry does not and a failure of the cache does
-        # not fail the tests. The wrapper is set in the test script only, because the dependency cache
-        # key hashes the job environment.
+        # The compiler cache: optional, pinned, and on only when the dependency cache restored an entry
+        # (exact or partial key) and the server started, so it holds what that entry does not and a
+        # failure of the cache does not fail the tests. The wrapper is set in the test script only,
+        # because the dependency cache key hashes the job environment.
         self.assertIn('        id: deps\n        uses: Swatinem/rust-cache@', rust)
         tool = re.search(r'(?ms)^      - name: Install the optional compiler cache\n(.*?)(?=^      - |\Z)', rust).group(1)
         self.assertIn('continue-on-error: true', tool)
         self.assertRegex(tool, r'uses: Mozilla-Actions/sccache-action@[0-9a-f]{40} # v')
         self.assertNotRegex(rust, r'(?m)^ +RUSTC_WRAPPER: ')
         tests = re.search(r'(?ms)^      - name: Run backend tests with PostgreSQL and isolated NATS\n(.*?)(?=^      - |\Z)', rust).group(1)
-        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps.outputs.cache-hit == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
+        restored = re.search(r'(?ms)^      - name: Check whether the dependency cache restored an entry\n(.*?)(?=^      - |\Z)', rust).group(1)
+        self.assertIn('id: deps-restored', restored)
+        self.assertIn('[ -d services/catalyst/target/debug/deps ]', restored)
+        self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('id: deps-restored'))
+        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps-restored.outputs.restored == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
         self.assertIn('if [ "$USE_COMPILER_CACHE" = true ] && sccache --start-server; then\n            export RUSTC_WRAPPER=sccache\n', tests)
         self.assertEqual(tests.count('RUSTC_WRAPPER=sccache'), 1)
         self.assertLess(tests.index('export RUSTC_WRAPPER=sccache'), tests.index('bash tooling/dev-test.sh rust'))
@@ -137,6 +141,36 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('steps.rust-cache.outputs.cache-primary-key', saves[0])
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
+
+    def test_header_geometry_control_requires_the_original_missing_port_evidence(self):
+        web = jobs()['web']
+        original = re.search(r'(?ms)^      - name: Run Sites unit tests\n(.*?)(?=^      - |\Z)', web).group(1)
+        self.assertIn('id: sites-tests', original)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test\n', original)
+        self.assertNotIn('continue-on-error', original)
+        control = re.findall(r'(?ms)^      - name: Diagnose isolated header geometry startup\n(.*?)(?=^      - |\Z)', web)
+        self.assertEqual(len(control), 1)
+        control = control[0]
+        self.assertIn('timeout-minutes: 4', control)
+        self.assertNotIn('continue-on-error', control)
+        self.assertNotIn('|', control)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts\n', control)
+        self.assertLess(web.index('name: Run Sites unit tests'), web.index('name: Diagnose isolated header geometry startup'))
+        expression = re.search(r'^        if: \$\{\{ (.*?) \}\}$', control, re.M).group(1)
+        expression = expression.replace('&&', 'and')
+        expression = expression.replace('steps.sites-tests.outcome', 'outcome')
+        expression = expression.replace('steps.sites-tests.outputs.capture-missing-port', 'evidence')
+        for failed, outcome, evidence, expected in (
+            (True, 'failure', 'true', True),
+            (True, 'failure', '', False),
+            (True, 'success', 'true', False),
+            (False, 'cancelled', 'true', False),
+            (False, 'success', '', False),
+        ):
+            with self.subTest(failed=failed, outcome=outcome, evidence=evidence):
+                self.assertEqual(bool(eval(expression, {'__builtins__': {}}, {
+                    'failure': lambda: failed, 'outcome': outcome, 'evidence': evidence,
+                })), expected)
 
     def test_no_privileged_job_takes_its_runner_from_a_variable(self):
         # The RUNNER_* variables can name a fork's own runners. A job with a write permission, an
@@ -294,6 +328,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 17, 'ref': 'refs/pull/11/merge', 'key': bevy + 'old'},
             {'id': 18, 'ref': 'refs/pull/11/merge', 'key': bevy + 'new'},
             {'id': 19, 'ref': 'refs/heads/main', 'key': 'v0-rust-e2e-scene-cli-scene-cli-Windows_NT-x64-only'},
+            {'id': 20, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'a' * 64 + '-' + '1' * 64},
+            {'id': 21, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'b' * 64 + '-' + '2' * 64},
+            {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
+            {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
         def api(args, **kwargs):
             if any(arg.endswith('/actions/caches') for arg in args):
@@ -316,6 +355,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/12',
             'repos/decentraland/dcl-one/actions/caches/15',
             'repos/decentraland/dcl-one/actions/caches/17',
+            'repos/decentraland/dcl-one/actions/caches/20',
+            'repos/decentraland/dcl-one/actions/caches/22',
+            'repos/decentraland/dcl-one/actions/caches/24',
         ])
         self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 
@@ -363,8 +405,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
         label = "contains(github.event.pull_request.labels.*.name, 'ci:desktop')"
+        linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
-        self.assertIn(f"    if: github.event_name != 'pull_request' || {label}\n", found['creator-hub'])
+        self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
+        # ci:desktop builds macOS and Windows, ci:linux builds Linux; main builds all three.
+        self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])

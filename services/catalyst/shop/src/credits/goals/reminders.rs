@@ -114,15 +114,15 @@ async fn send(
     metadata: Value,
     now: NaiveDateTime,
 ) -> Result<bool, ApiError> {
-    let notification = catalyst_social::notifications::NewNotification {
+    let notification = crate::shared::notifications::NewNotification {
         id: Uuid::new_v5(&NOTIFICATION_NAMESPACE, key.as_bytes()),
-        address: catalyst_social::Address::parse(address)
+        address: crate::shared::identity::Address::parse(address)
             .map_err(|_| ApiError::Internal("invalid reminder address".into()))?,
         kind: kind.notification_type().into(),
         occurred_at: now,
         metadata,
     };
-    let n = catalyst_social::notifications::store::insert_keyed_notification(
+    let n = crate::shared::notifications::insert_keyed_notification(
         &state.credits.pool,
         key,
         &notification,
@@ -313,7 +313,7 @@ pub fn spawn(state: &SharedState, jobs: &Jobs) {
         move |ctx| {
             let (state, ran) = (state.clone(), ran.clone());
             async move {
-                if crate::shared::writes::ops_refusal(state.settings.writes_enabled).is_some() {
+                if !state.settings.writes_enabled {
                     return Ok(());
                 }
                 let now = crate::credits::store::now();

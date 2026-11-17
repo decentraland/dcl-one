@@ -23,7 +23,7 @@
 //! onto which worlds' core maps its permission and block revocations), the
 //! social RPC's voice runtime ([`voice::rooms::VoiceRooms`],
 //! implemented by [`CommsState`]) and a scene's live participants
-//! (`explore::places::live::Participants`). Social's MLS delivery service
+//! (`CommsState::live_participants`, which `serve` hands Explore). Social's MLS delivery service
 //! (`social::messaging`, on its own state) is mounted beside these routes
 //! with its own signed-fetch and community-binding authorization.
 //!
@@ -36,8 +36,9 @@
 //! (`admission::relay_authority`, `POST /internal/pulse/room-authority/v1`)
 //! answers over the same permission core with the frames and the claim and
 //! proof types of `protocol::room_authority`. `/scene-stream-access`
-//! mints a place's RTMP ingress credential (`streaming`); `/cast/*` answers
-//! the old service's 501.
+//! mints a place's RTMP ingress credential (`streaming`); the Cast 2.0
+//! routes (`/cast/*`, `streaming::cast`) hand out stream links and the
+//! streamer, watcher and presentation-bot tokens over the same credential.
 //!
 //! The island feed (`admission::cluster`: Pulse's cluster changes turned
 //! into island credentials, the realm-lane fence of configured legacy owners) backs
@@ -61,6 +62,7 @@ pub mod events;
 pub use crate::shared::livekit;
 pub mod moderation;
 pub(crate) mod removal;
+pub mod removed_places;
 pub mod reports;
 pub mod revocation;
 pub mod streaming;
@@ -75,7 +77,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use sqlx::PgPool;
 
 use crate::Address;
@@ -138,6 +140,9 @@ pub struct RawSettings {
     /// `REPORT_EVIDENCE_DAILY_MIB` (default 2048): the node-wide bound of
     /// the player report intake.
     pub report_evidence_daily_mib: u32,
+    /// `CAST2_URL`: the Cast 2.0 web app the stream and watcher links name;
+    /// empty uses upstream's default.
+    pub cast2_url: String,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
 }
@@ -179,6 +184,8 @@ pub struct Settings {
     /// from all wallets and addresses ([`reports`]). The value is the
     /// operator's policy, not a measurement.
     pub report_evidence_daily_bytes: i64,
+    /// The Cast 2.0 web app base of the stream links, no trailing slash.
+    pub cast2_url: String,
     pub commit_hash: Option<String>,
 }
 
@@ -209,6 +216,7 @@ impl std::fmt::Debug for Settings {
                 "report_evidence_daily_bytes",
                 &self.report_evidence_daily_bytes,
             )
+            .field("cast2_url", &self.cast2_url)
             .field("commit_hash", &self.commit_hash)
             .finish()
     }
@@ -335,6 +343,10 @@ impl Settings {
                 expired_batch_size: raw.voice_expired_batch_size,
             },
             report_evidence_daily_bytes: i64::from(raw.report_evidence_daily_mib) * 1024 * 1024,
+            cast2_url: match raw.cast2_url.trim().trim_end_matches('/') {
+                "" => streaming::cast::DEFAULT_CAST2_URL.to_string(),
+                url => url.to_string(),
+            },
             commit_hash: raw.commit_hash,
         })
     }
@@ -362,6 +374,7 @@ impl Settings {
                 RawSettings::defaults().report_evidence_daily_mib,
             ) * 1024
                 * 1024,
+            cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
         }
     }
@@ -493,13 +506,48 @@ impl CommsState {
     /// The island feed's settings, the NATS link of `NATS_URL` and, with a
     /// v4 audience, the realm-lane fence. Before
     /// [`Self::with_room_authority_key`], whose island rooms read the fence.
-    pub fn with_cluster(
-        mut self,
+    pub fn with_cluster(self, config: admission::cluster::ClusterConfig) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_cluster_for_test(
+        self,
         config: admission::cluster::ClusterConfig,
     ) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, false)
+    }
+    fn with_cluster_inner(
+        mut self,
+        config: admission::cluster::ClusterConfig,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let config = config.normalized();
+        anyhow::ensure!(
+            !generation_required
+                || config.nats_url.is_none()
+                || config.control_v4_audience.is_some(),
+            "configured island credentials require a deployment audience and fenced Pulse generation"
+        );
         self.island_safety = admission::cluster::safety::SafetyStore::new(self.pool.clone());
         self.assignments = admission::cluster::fence_for(self.pool.clone(), &config)?;
+        #[cfg(any(test, feature = "test-support"))]
+        if !generation_required {
+            self.island_safety =
+                admission::cluster::safety::SafetyStore::unfenced_test(self.pool.clone());
+            self.assignments = config
+                .control_v4_audience
+                .clone()
+                .map(|audience| {
+                    admission::cluster::fence::PgAssignmentFence::unfenced_test_with_limit(
+                        self.pool.clone(),
+                        audience,
+                        config.peer_state_max,
+                    )
+                    .map(Arc::new)
+                })
+                .transpose()
+                .map_err(|error| anyhow::anyhow!("fixture fence: {error}"))?;
+        }
         self.bus = match config.nats_url.clone() {
             Some(url) => Arc::new(bus::BrokerBus::new(Some(url), "catalyst-comms")),
             None => {
@@ -543,7 +591,21 @@ impl CommsState {
     /// Mounts the Pulse room authority with `PULSE_ROOM_AUTHORITY_KEY` (32
     /// base64url bytes, distinct from the LiveKit secret); `None` leaves the
     /// route unmounted and the application relay unusable.
-    pub fn with_room_authority_key(mut self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+    pub fn with_room_authority_key(self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_room_authority_key_for_test(
+        self,
+        encoded_key: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, false)
+    }
+    fn with_room_authority_key_inner(
+        mut self,
+        encoded_key: Option<&str>,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let Some(encoded) = encoded_key.map(str::trim).filter(|k| !k.is_empty()) else {
             tracing::info!(
                 "PULSE_ROOM_AUTHORITY_KEY unset; the Pulse room authority is not mounted (application relay off)"
@@ -563,12 +625,33 @@ impl CommsState {
             )
             .with_assignments(self.assignment_reader()),
         );
-        let authority = admission::relay_authority::RelayAuthority::new(
-            policy,
-            self.livekit.api_key.clone(),
-            self.livekit.api_secret.as_bytes().to_vec(),
-            service_key,
-        )
+        let authority = if generation_required {
+            let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
+                anyhow!("room authority requires a deployment audience and fenced Pulse generation")
+            })?;
+            admission::relay_authority::RelayAuthority::new_with_generation(
+                policy,
+                self.livekit.api_key.clone(),
+                self.livekit.api_secret.as_bytes().to_vec(),
+                service_key,
+                self.pool.clone(),
+                audience,
+            )
+        } else {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                admission::relay_authority::RelayAuthority::unfenced_test(
+                    policy,
+                    self.livekit.api_key.clone(),
+                    self.livekit.api_secret.as_bytes().to_vec(),
+                    service_key,
+                )
+            }
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                return Err(anyhow!("unfenced room authority is unavailable"));
+            }
+        }
         .map_err(|e| anyhow!("PULSE_ROOM_AUTHORITY_KEY: {e}"))?;
         self.relay_authority = Some(Arc::new(authority));
         tracing::info!(
@@ -868,7 +951,28 @@ pub fn router(state: SharedState) -> Router {
                 .put(streaming::scene_stream_access)
                 .delete(streaming::scene_stream_access),
         )
-        .route("/cast/{*rest}", axum::routing::any(streaming::cast_any))
+        .route(
+            "/cast/streamer-token",
+            post(streaming::cast::streamer_token),
+        )
+        .route("/cast/watcher-token", post(streaming::cast::watcher_token))
+        .route(
+            "/cast/generate-stream-link",
+            get(streaming::cast::generate_stream_link),
+        )
+        .route(
+            "/cast/stream-info/{streaming_key}",
+            get(streaming::cast::stream_info),
+        )
+        .route(
+            "/cast/presentation-bot-token",
+            post(streaming::cast::presentation_bot_token),
+        )
+        .route("/cast/presenters", get(streaming::cast::list_presenters))
+        .route(
+            "/cast/presenters/{participant_identity}",
+            put(streaming::cast::promote_presenter).delete(streaming::cast::demote_presenter),
+        )
         .route(
             admission::island_refresh::ISLAND_REFRESH_PATH,
             post(admission::island_refresh::refresh).layer(axum::extract::DefaultBodyLimit::max(0)),

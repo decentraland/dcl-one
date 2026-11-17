@@ -35,10 +35,6 @@ pnpm run gpu-probe                     # the GPU the browser gives, started as t
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The app uses the browser origin `http://localhost:<port>` over an IPv4 loopback listener.
-The services accept `localhost` for development CORS requests; its numeric loopback spelling
-is a distinct origin and may be refused.
-
 The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
@@ -126,8 +122,10 @@ What the driver does for every scenario, so a spec need not:
   renders beside the rest on the one GPU.
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
-  rail reads pressed, the rail's settings popover is closed and no field holds the keys
-  (`/world_state`'s `keyboardClaimed`). The rail is read once it holds still (sliding in, it reads
+  rail reads pressed, none of the rail's lists of rows is open (Me, Discover, Shop, System, Volume,
+  Camera: each a dialog named as its button), the rail's settings popover is closed and no field
+  holds the keys (`/world_state`'s `keyboardClaimed`). The rail's Map button reads pressed while
+  the minimap shows, which is a HUD at rest. The rail is read once it holds still (sliding in, it reads
   as covered with nothing open). Each press waits for the HUD to show it took effect (a layer
   gone, the rail done sliding back in, and after leaving the chat input the engine told of it)
   before the next. A HUD already at rest gets no Escape; a client with no HUD (the standalone
@@ -147,8 +145,7 @@ What the driver does for every scenario, so a spec need not:
   typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
   closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
   Escape twice only when a field holds the keys, and falls back to the page's Close button when a
-  field keeps them. If the page is already closed, `closePage` sends no key, so a restore does
-  not send an extra Escape into the world before reopening it. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
+  field keeps them. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
   and is refused, not raced: run the suite against a web build of its own commit.
 - **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
   slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
@@ -157,14 +154,11 @@ What the driver does for every scenario, so a spec need not:
   (the emotes, the communities) are read once they show.
 - **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
   3 s (`Entity rate limited`), a rule of the server's clock that the client cannot observe;
-  closing the Backpack on a changed look and saving the passport are deployments. Before either,
-  `profileDeployWindow()` waits for `/profile_requests` to report no pending deployment and the
-  own version equal to the version peers may see, then counts the window from that confirmation.
-  A local version bump alone does not confirm the HTTP request completed. A confirmed version
-  spends the window once; a rollback of an observed edit fails instead of issuing another write.
-  This also keeps a change and its restore from overlapping the server's deployment window.
+  closing the Backpack on a changed look and saving the passport are deployments, so they first
+  wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
+  change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, compares the Legacy avatar events queue counts with `/legacy_social`, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
@@ -189,27 +183,27 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 46, Partial 34, Gap 7, Drop 2.
+test is in the spec file's header. Port 46, Partial 35, Gap 6, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
-| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
+| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
-| Navbar (4) | `navbar` | | 2 | 2 | | A fixed rail set, no flags; no help menu or controls panel |
-| Minimap (5) | `minimap` | 2 | 1 | 2 | | No favourite heart or kebab menu; name and compass are unreadable text |
+| Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
+| Minimap (5) | `minimap` | 2 | 1 | 2 | | The rail's Map button shows the minimap; no favourite heart or kebab menu; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
-| Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the destination card, which no scenario opens yet |
 | Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
-| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |
+| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the Take A Shot row of the rail's Camera panel) and shows the overlay's Shoot and Close |
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |
 | BackpackOutfits (4) | `backpack-outfits` | 2 | 2 | | | No delete confirmation; two closes to commit a look |
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
-| Passport (5) | `passport` | 1 | 4 | | | Header and bio are plain text; name and address from `/get_user_data` |
+| Passport (5) | `passport` | 1 | 4 | | | Opens from the Profile row of the rail's Me panel; header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
@@ -221,11 +215,22 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+`specs/navbar.test.ts` also covers the Me panel's `Sign Out` row, which only an account on the web
+has: a session whose sign-in was an account, the suite's own sign-in included. The standalone and a
+guest have none (a guest's stored identity stays), so both scenarios are skipped on the standalone
+and neither signs in with `--guest`. The row opens
+a dialog named `Sign out?` over the open panel, and its `Cancel` button and Escape close the dialog
+with the panel still open and the session signed in. The dialog's own `Sign Out` button ends the
+session: the page loads again without the stored sign-in and without `position`, `realm` and
+`world` in its address, so it opens on the start screen and that screen's engine answers the
+console. Its scenario has a session of its own (`E2eSignOut`), waits until `/world_state` reads
+`signedIn` false, and closes that session.
+
 Specs with no explorer-automation counterpart, outside the counts above:
 
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
-| `debug-panel` | every debug reading resolves; the panel shows live data and legacy avatar queue counts, stays open while the player walks and uses the world and HUD, and plays an emote | |
+| `debug-panel` | every debug reading resolves; the panel shows live data, stays open while the player walks and uses the world and HUD, and plays an emote | |
 | `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
 
 The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
@@ -245,16 +250,14 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 outer browser window (the screenshot uses the actual canvas dimensions; see
-[references/README.md](references/README.md)), turns the nametags off and holds the landscape's trees still (`/nametags false`:
+960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-and teleports to each scene. After its entities and settle time, it pins the cloud field with
-`/cloud_motion false`, retaining scene sky times and authored cloud settings. It waits 128 CPU
-sky updates as a conservative refresh window for the sky and reflections, not a GPU fence,
-then compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
-pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
+the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
+show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -357,7 +360,7 @@ change on the left updates what is on the right in the same change, then runs th
 
 | Changed | Update | Check |
 | --- | --- | --- |
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`); a row added to or removed from a rail panel (Me, Discover, System), or the title of the question a row asks | `RAIL_ROWS` and the row's selectors in `specs/navbar.test.ts` for a rail row; the selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
