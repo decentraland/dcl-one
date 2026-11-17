@@ -76,7 +76,10 @@ pub fn media_host_main(render_worker: Worker) {
     let on_gesture = Closure::<dyn FnMut()>::new(|| {
         MEDIA.with(|media| {
             for m in media.borrow().values() {
-                if m.source.wants_play.get() && m.source.play_refused.get() {
+                if m.source.wants_play.get()
+                    && m.source.play_refused.get()
+                    && !m.source.retry.get().gave_up()
+                {
                     try_play(&m.media, &m.source.play_refused);
                 }
             }
@@ -540,7 +543,8 @@ impl HostMedia {
         media.set_onerror(Some(&register({
             let source = source.clone();
             Box::new(move || {
-                // hls.js recovers its own errors first and reports the rest to `on_fatal`
+                // with hls.js attached, engine.js handles the element's error and reports it to
+                // `on_fatal`
                 if !source.uses_hls() {
                     source.fail(media_error_label(&source.media));
                 }
@@ -552,8 +556,14 @@ impl HostMedia {
                 if source.failed.get() {
                     return;
                 }
-                // a live stream only ends when its feed drops
-                if source.live_stream() {
+                // a live stream only ends when its feed drops; hls.js knows when a playlist
+                // ended for good (`EXT-X-ENDLIST`), the element alone only that it was live
+                let live = if source.uses_hls() {
+                    source.is_live()
+                } else {
+                    source.live_stream()
+                };
+                if live {
                     source.fail("live stream ended");
                     return;
                 }

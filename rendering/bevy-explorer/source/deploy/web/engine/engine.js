@@ -282,16 +282,21 @@ export async function initEngine() {
   );
 
   // Attaches `src` to `video`, through hls.js for an HLS stream the browser cannot play itself.
-  // hls.js recovers one fatal error in place (`startLoad`, `recoverMediaError`) until a fragment
-  // buffers again; a second one is passed to `onFatal` with its type. Returns the source's
-  // `destroy()`, `live` and `hls` (attached through hls.js).
+  // hls.js recovers a fatal error, or the element's own error, in place (`startLoad`,
+  // `recoverMediaError`) at most once every 10 s; any other is passed to `onFatal` with its type.
+  // Returns the source's `destroy()`, `live` and `hls` (attached through hls.js).
   window.setVideoSource = (video, src, onFatal) => {
     let hls = null;
     let hlsLive = false;
     let destroyed = false;
+    let onElementError = null;
     const source = {
       destroy() {
         destroyed = true;
+        if (onElementError) {
+          video.removeEventListener("error", onElementError);
+          onElementError = null;
+        }
         if (hls) {
           hls.destroy();
           hls = null;
@@ -310,7 +315,15 @@ export async function initEngine() {
 
     function attachHls() {
       hls = new Hls();
-      let recovered = false;
+      // a recovery that fails again at once would otherwise loop without reaching `onFatal`
+      const RECOVERY_INTERVAL_MS = 10000;
+      let lastRecovery = -Infinity;
+      const mayRecover = () => {
+        const now = performance.now();
+        if (now - lastRecovery < RECOVERY_INTERVAL_MS) return false;
+        lastRecovery = now;
+        return true;
+      };
       // before the manifest parses there is nothing to recover in place
       let manifestParsed = false;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -319,23 +332,28 @@ export async function initEngine() {
       hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
         hlsLive = data.details.live;
       });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => {
-        recovered = false;
-      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal || destroyed) return;
-        if (!manifestParsed) {
+        if (!manifestParsed || !mayRecover()) {
           onFatal(data.type);
-        } else if (!recovered && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          recovered = true;
+        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           hls.startLoad();
-        } else if (!recovered && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          recovered = true;
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           hls.recoverMediaError();
         } else {
           onFatal(data.type);
         }
       });
+      // hls.js only logs the element's error (a decode error), so it is handled as a media error
+      onElementError = () => {
+        if (destroyed) return;
+        if (manifestParsed && mayRecover()) {
+          hls.recoverMediaError();
+        } else {
+          onFatal(Hls.ErrorTypes.MEDIA_ERROR);
+        }
+      };
+      video.addEventListener("error", onElementError);
       hls.loadSource(src);
       hls.attachMedia(video);
     }

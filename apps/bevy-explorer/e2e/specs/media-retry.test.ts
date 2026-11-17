@@ -23,7 +23,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { after } from 'node:test'
-import { buildScene, contentHash, readTarget, serveRealm, spec, until, type BuiltScene, type Explorer, type MediaPlayerRow, type ScenarioOptions } from '../driver/index.ts'
+import { buildScene, contentHash, readTarget, serveRealm, spec, until, type BuiltScene, type Explorer, type MediaPlayerRow, type RealmServer, type ScenarioOptions } from '../driver/index.ts'
 import { SCENES_DIR } from '../driver/paths.ts'
 
 const scenario = spec(import.meta.url)
@@ -59,7 +59,7 @@ const brokenHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'br
 
 /** A realm and session of a scenario's own, so its failure counts start from zero whatever ran
  *  before. An ephemeral port: the visual realm holds the configured one in the same process. */
-async function sessionFor(name: string): Promise<ScenarioOptions['session']> {
+async function realmFor(name: string): Promise<{ server: RealmServer; session: ScenarioOptions['session'] }> {
   const server = await serveRealm({
     scenes: scene ? [scene] : [],
     port: 0,
@@ -70,11 +70,13 @@ async function sessionFor(name: string): Promise<ScenarioOptions['session']> {
     ])
   })
   after(() => server.close())
-  return { realm: server.realm, position: '0,26', signIn: 'guest' }
+  return { server, session: { realm: server.realm, position: '0,26', signIn: 'guest' } }
 }
 
-const RECOVER_SESSION = await sessionFor('recover')
-const BROKEN_SESSION = await sessionFor('broken')
+const RECOVER = await realmFor('recover')
+const BROKEN = await realmFor('broken')
+/** A scenario's budget: `prepare` (the scene's boot), its main wait and the rest. */
+const SCENARIO_TIMEOUT_MS = 2 * GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000
 
 async function prepare(explorer: Explorer): Promise<void> {
   if (sceneError) throw sceneError
@@ -113,10 +115,12 @@ scenario(
       what: 'the recover screen\'s reopen count to restart after playing'
     })
     assert.equal(row.retryFailures, RECOVER_FAILURES, `the recover screen failed ${row.retryFailures} times`)
+    const gets = RECOVER.server.contentGets.get(recoverHash) ?? 0
+    assert.ok(gets > RECOVER_FAILURES, `recover.webm was requested ${gets} times, not after each failure`)
     assert.equal(row.retryGaveUp, false)
     assert.notEqual(row.lastError, null, 'the failures left no last error')
   },
-  { ...webOnly, session: RECOVER_SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: RECOVER.session, closeSession: true, timeoutMs: SCENARIO_TIMEOUT_MS }
 )
 
 scenario(
@@ -130,9 +134,19 @@ scenario(
       what: 'the broken screen to give up'
     })
     assert.equal(row.retryFailures, 1 + MAX_REOPENS, `the broken screen failed ${row.retryFailures} times, not one open and five reopens`)
+    const gets = BROKEN.server.contentGets.get(brokenHash) ?? 0
+    assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
+    // the reopens report VS_LOADING and only the give-up ends on VS_ERROR (a VS_ERROR before the
+    // walk is a failure while paused)
+    const logs = await until(() => explorer.sceneLogs(200), (lines) => stateLines(lines, 'broken').at(-1)?.endsWith('state=VS_ERROR') ?? false, {
+      timeoutMs: 10_000,
+      what: 'the broken screen to log its give-up'
+    })
+    const states = stateLines(logs, 'broken')
+    assert.ok(states.some((line) => line.endsWith('state=VS_LOADING')), `the broken screen did not report VS_LOADING before giving up:\n${states.join('\n')}`)
     assert.equal(row.retryAttempt, MAX_REOPENS)
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')
   },
-  { ...webOnly, session: BROKEN_SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: BROKEN.session, closeSession: true, timeoutMs: SCENARIO_TIMEOUT_MS }
 )

@@ -448,11 +448,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     paused.
   - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
     element error or an hls.js fatal error at any time starts the schedule, and a live stream that
-    ends (its feed dropped) counts as a failure rather than a normal end. Once its manifest has
-    parsed, hls.js first recovers a fatal error in place once (`startLoad`, `recoverMediaError`); a
-    second before a fragment buffers again reopens the source, and the element's own `error` is
-    left to hls.js. A reopened source that is not live resumes where it failed, or where the scene
-    seeked meanwhile.
+    ends (its feed dropped) counts as a failure rather than a normal end; an HLS playlist that
+    ends for good (`EXT-X-ENDLIST`) ends normally. Once its manifest has parsed, hls.js recovers a
+    fatal error or the element's own `error` in place (`startLoad`, `recoverMediaError`) at most
+    once every 10 s; any other reopens the source. A reopened source that is not live resumes
+    where it failed, or where the scene seeked meanwhile.
   - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
     only after 5 s of playback since the last failure, so a source that keeps failing at the same
     point gives up.
