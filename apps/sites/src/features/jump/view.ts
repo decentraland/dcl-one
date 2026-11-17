@@ -9,6 +9,7 @@ import {
   type JumpCard,
 } from "@/data/lib/catalyst/jump/jump";
 import type { JumpCreator } from "@/data/lib/catalyst/jump/jump.server";
+import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
 
 /** The serializable part of the card; event actions are added by the page. */
 export type JumpCardView = Omit<JumpCardProps, "actions">;
@@ -31,6 +32,10 @@ export function cardProps(card: JumpCard, creator: JumpCreator | null, now = Dat
     creator: {
       name: creator?.name || card.creatorName,
       avatar: creator?.avatar,
+      // The disc behind the avatar takes the colour every Decentraland client derives from the display name.
+      color: creator
+        ? getAvatarBackgroundColor(getDisplayName(creator.name, creator.hasClaimedName, creator.address))
+        : undefined,
       foundation,
       href: address ? profileHref(address) : undefined,
     },

@@ -47,11 +47,13 @@ decisions; the rest of both stands.
 - Script arguments follow the script name with no separator (`pnpm run e2e --inworld`). pnpm
   hands a `--` to the script as an argument, where npm removes it.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
-  install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
+  install with npm, yarn or pnpm. They are versioned, packed and published with pnpm: the
+  Creator Hub's through `.github/actions/creator-hub-npm-publish`, the Explorer's through
+  oddish's `package-manager` input. pnpm records no `gitHead`, so the Creator Hub action sets it.
 - `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
   off the pinned pnpm (`PNPM_VERSION`), on a pin carrying another release's integrity
-  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs
-  with npm or yarn, or runs anything through `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
+  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that runs any npm
+  command, packing, publishing and registry queries included, yarn, or anything through `npx`.
 
 Where the layout differs from pnpm's default:
 

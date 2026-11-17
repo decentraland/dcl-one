@@ -61,8 +61,23 @@ const config = {
       filter: ['**/*'],
     },
   ],
+  // The AppImage with this runtime needs no libfuse2, which Ubuntu does not install, and its
+  // launcher starts the app without the Chromium sandbox where the system forbids it.
+  toolsets: {
+    appimage: '1.0.3',
+  },
+  // The AppImage runs on any distribution, and the deb installs on Debian and Ubuntu. Linux has
+  // no code signing step.
+  // Keep AppImage before deb, and before any other package target: a package target writes
+  // resources/package-type into the unpacked app that the AppImage is made from, and an AppImage
+  // with that file updates itself as that package (creator-hub-desktop.yml checks it).
   linux: {
-    target: 'deb',
+    target: [
+      { target: 'AppImage', arch: ['x64'] },
+      { target: 'deb', arch: ['x64'] },
+    ],
+    icon: 'buildResources/icon.png',
+    category: 'Development',
   },
   productName: 'Decentraland Creator Hub',
   artifactName: '${productName}-${version}-${os}-${arch}.${ext}',

@@ -1,0 +1,80 @@
+/* The gift's transfer panels: the preparing step's column, the sent
+   step's full-screen rays, and the failed step's line with its support link. */
+.centre {
+  display: flex;
+  justify-content: center;
+  padding: 32px 0;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.recipient {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.name {
+  font-size: var(--font-title-l);
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+.address {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.tag {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
+.itemName {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  text-align: left;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.hint {
+  max-width: 360px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lavender);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.sent {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sentTitle {
+  margin: 0;
+  font-size: var(--font-title-xl);
+  font-weight: var(--fw-bold);
+  overflow-wrap: anywhere;
+}
+.failed {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  text-align: center;
+}

@@ -1,6 +1,7 @@
 {
   "name": "creator-hub",
   "description": "Decentraland Creator Hub",
+  "desktopName": "creator-hub.desktop",
   "version": "0.0.0-dev",
   "author": {
     "email": "hello@decentraland.org",

@@ -861,6 +861,17 @@ impl<'a> RoomServiceClient<'a> {
         }
     }
 
+    /// The room, created with LiveKit's defaults when it does not exist yet
+    /// (upstream's `getRoom`), so room metadata can be written before anyone
+    /// joins it.
+    pub async fn ensure_room(&self, room: &str) -> Result<(), RoomServiceError> {
+        if self.get_room_info(room).await?.is_none() {
+            self.call("CreateRoom", room, serde_json::json!({ "name": room }))
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Create an empty room only after a definite missing-room removal rejection. Creation
     /// does not confirm revocation; callers must revalidate and issue a new removal.
     pub async fn ensure_cutoff_room(&self, room: &str) -> Result<(), RoomServiceError> {

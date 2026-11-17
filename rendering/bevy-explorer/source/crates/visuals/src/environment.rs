@@ -294,27 +294,42 @@ fn environment_command(
     let Some(Ok(_)) = command.take() else { return };
     let sun_scene = light.source.filter(|scene| suns.contains(*scene));
     let sun = sun_scene.and_then(|scene| suns.get(scene).ok());
-    command.reply_ok(
-        serde_json::json!({
-            "scene": state.skybox.or(state.fog).or(sun_scene).map(|e| e.to_bits().to_string()),
-            "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
-            "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
-            "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
-            "sunDirection": sun.and_then(|sun| sun.direction).map(|d| d.to_array()),
-            "sunColor": sun.is_some_and(|sun| sun.color.is_some()).then(|| light.dir_color.to_linear().to_vec3().to_array()),
-            "fogDensity": state.fog_density,
-            "zenith": state.zenith.map(|c| c.to_array()),
-            "horizon": state.horizon.map(|c| c.to_array()),
-            "nadir": state.nadir.map(|c| c.to_array()),
-            "rim": state.rim.map(|c| c.to_array()),
-            "fogColor": state.fog_color.map(|c| c.to_array()),
-            "cloudColor": state.cloud_color.map(|c| c.to_array()),
-            "cloudSpeed": state.cloud_speed,
-            "cloudOpacity": state.cloud_opacity,
-            "starsBrightness": state.star_brightness,
-        })
-        .to_string(),
-    );
+    command.reply_ok(environment_reading(&state, &light, sun_scene, sun).to_string());
+}
+
+/// The scene overrides in force. A field the scenes leave unset reads null, explained by the one
+/// default entry under `unavailable`.
+fn environment_reading(
+    state: &SceneEnvironment,
+    light: &SceneGlobalLight,
+    sun_scene: Option<Entity>,
+    sun: Option<&Sun>,
+) -> serde_json::Value {
+    let scene = state.skybox.or(state.fog).or(sun_scene);
+    let reason = if scene.is_some() {
+        "No override for this field; using renderer defaults."
+    } else {
+        "No active scene environment overrides."
+    };
+    serde_json::json!({
+        "scene": scene.map(|e| e.to_bits().to_string()),
+        "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
+        "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
+        "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
+        "sunDirection": sun.and_then(|sun| sun.direction).map(|d| d.to_array()),
+        "sunColor": sun.is_some_and(|sun| sun.color.is_some()).then(|| light.dir_color.to_linear().to_vec3().to_array()),
+        "fogDensity": state.fog_density,
+        "zenith": state.zenith.map(|c| c.to_array()),
+        "horizon": state.horizon.map(|c| c.to_array()),
+        "nadir": state.nadir.map(|c| c.to_array()),
+        "rim": state.rim.map(|c| c.to_array()),
+        "fogColor": state.fog_color.map(|c| c.to_array()),
+        "cloudColor": state.cloud_color.map(|c| c.to_array()),
+        "cloudSpeed": state.cloud_speed,
+        "cloudOpacity": state.cloud_opacity,
+        "starsBrightness": state.star_brightness,
+        "unavailable": { "": reason },
+    })
 }
 
 #[cfg(test)]
@@ -324,6 +339,36 @@ mod tests {
         common::{Color4, ColorKey},
         sdk::components::pb_skybox,
     };
+
+    #[test]
+    fn environment_reading_explains_its_nulls_with_one_default_entry() {
+        let light = SceneGlobalLight::default();
+        let reading = environment_reading(&SceneEnvironment::default(), &light, None, None);
+        assert!(reading["scene"].is_null());
+        assert_eq!(reading["textureState"], "unset");
+        assert_eq!(reading["sunVisible"], true);
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No active scene environment overrides."})
+        );
+
+        let scene = Entity::PLACEHOLDER;
+        let state = SceneEnvironment {
+            fog: Some(scene),
+            fog_density: Some(0.0),
+            zenith: Some(Vec3::Z),
+            ..default()
+        };
+        let reading = environment_reading(&state, &light, None, None);
+        assert_eq!(reading["scene"], scene.to_bits().to_string());
+        assert_eq!(reading["fogDensity"], 0.0);
+        assert_eq!(reading["zenith"], serde_json::json!([0.0, 0.0, 1.0]));
+        assert!(reading["horizon"].is_null());
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No override for this field; using renderer defaults."})
+        );
+    }
 
     fn gradient(keys: &[(f32, f32)]) -> ColorGradient {
         ColorGradient {

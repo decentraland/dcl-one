@@ -154,7 +154,7 @@ fn admissions(world: &mut World, charged: Duration, costs: &[Duration]) -> Vec<b
     let costs = costs.to_vec();
     world
         .run_system_once(move |mut budget: InstantiationBudget| {
-            let mut gate = budget.gate();
+            let gate = budget.gate();
             costs
                 .iter()
                 .map(|cost| gate.admit(*cost))
@@ -254,7 +254,7 @@ fn a_gate_is_spent_once_it_refuses() {
 
     let spent = world
         .run_system_once(|mut budget: InstantiationBudget| {
-            let mut gate = budget.gate();
+            let gate = budget.gate();
             let before = gate.is_spent();
             gate.admit(ms(1));
             let after_the_first = gate.is_spent();
