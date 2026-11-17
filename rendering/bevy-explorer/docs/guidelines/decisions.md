@@ -580,6 +580,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **Only a url's cached file is dropped when its asset fails to load.** A load its loader rejects
+  drops the entry it read, once per entry per session, when that entry is filed under a url, and
+  every asset that failed on it is then reloaded once. So a url whose bytes never decode is
+  downloaded again in every session. An entry under a content hash is never dropped this way: it
+  was checked against the hash before it was written, so a bad one is the asset processor's
+  output or disk damage, which belong to the processor and the disk, not to a retry.
 - **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
   `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
   client), so the worker passes the request to the network untouched; a lookup there could only
