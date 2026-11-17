@@ -27,18 +27,10 @@ required-features = ["avatar_render"]
 # - copy ./assets to deploy/web/assets
 # - copy ./crates/dcl_js/src/modules to deploy/web/modules
 # - rustup default nightly # (tested with 2026-04-15)
-# - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social,performance-profiler" (then serve via react-web; see react-web/README.md)
+# - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = [
-  "livekit",
-  "ffmpeg",
-  "inspect",
-  "social",
-  "react-hud-cef",
-  "remote",
-  "performance-profiler",
-]
+default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
@@ -46,8 +38,9 @@ gen-tests = []
 # The in-app profiler's inputs: Bevy's `trace` spans around every system, schedule and
 # render-graph node (`src/perf/profiled_scopes.rs`), the counting allocator
 # (`src/perf/allocation_counter.rs`) and, on native, Bevy's render and system-information
-# diagnostics. In `default` and in the web build; `build-web.py --no-performance-profiler` or
-# `WASM_FEATURES=livekit,social just wasm` builds the web engine without it.
+# diagnostics. They cost every frame even while the profiler records nothing, so release builds
+# leave the feature out: `--features performance-profiler` natively, `build-web.py
+# --performance-profiler` or `WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web.
 performance-profiler = ["bevy/trace"]
 tracy = ["performance-profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]

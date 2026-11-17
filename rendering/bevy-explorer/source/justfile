@@ -7,9 +7,9 @@ set positional-arguments
 # the wasm rustflags (+atomics, ...) need nightly; same pin as apps/bevy-explorer/build-web.py
 wasm_toolchain := "nightly-2026-04-15"
 
-# the wasm engine's cargo features; drop `performance-profiler` for an engine without the Profiler
-# section's spans and allocation counts
-wasm_features := env_var_or_default("WASM_FEATURES", "livekit,social,performance-profiler")
+# the wasm engine's cargo features; add `performance-profiler` for the Profiler section's spans
+# and allocation counts
+wasm_features := env_var_or_default("WASM_FEATURES", "livekit,social")
 
 # the bridge scene's package manager; a shell with pnpm on its PATH sets PNPM=pnpm (nix develop .#wasm does)
 pnpm := env_var_or_default("PNPM", "corepack pnpm@12.21.0")

@@ -608,16 +608,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
-- **Every build profiles Bevy's systems; Bevy's `tracing-wasm` layer is off.** The
+- **The profiler's inputs are opt-in; Bevy's `tracing-wasm` layer is off.** The
   `performance-profiler` cargo feature (Bevy's `trace` spans, the counting allocator, Bevy's render
-  and system-information diagnostics) is in `default` and in the web build's features. Its cost
-  on the web, measured while recording, is CPU frame time +0.8 ms on average (within noise) and
-  +2.9 ms on the 1% worst frames ([profiling](profiling.md)). Stock
+  and system-information diagnostics) is out of `default` and of the web build's features: those
+  inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
+  off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
+  renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
+  profiling. A build with the feature, native or web, profiles Bevy's systems. Stock
   `bevy_log` installs `tracing-wasm` on the web, which marks and measures every span on the
   page's performance timeline, entries nothing clears, so with `trace` on the page's memory and
   main-thread time grow with the session. The vendored `bevy_log` installs that layer only behind
   its `tracing-wasm` feature, off, and the explorer writes the console lines with its own layer
-  (`src/web.rs`). Recording stays a runtime switch. See
+  (`src/web.rs`). Recording stays a runtime switch within a `performance-profiler` build. See
   [the bevy fork](bevy-fork.md#logging) and
   [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
 - **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts

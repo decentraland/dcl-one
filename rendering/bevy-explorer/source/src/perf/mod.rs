@@ -12,7 +12,7 @@
 //! - [`allocation_counter`]: allocations per frame.
 //!
 //! Bevy's spans and the allocation counter exist only under the `performance-profiler` cargo
-//! feature (in `default` and in the web build); the rest measures in every build.
+//! feature, which release builds leave out; the rest measures in every build.
 
 #[cfg(feature = "performance-profiler")]
 pub mod allocation_counter;

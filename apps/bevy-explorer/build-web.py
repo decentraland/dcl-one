@@ -110,7 +110,9 @@ def web_features(performance_profiler):
     return ['livekit', 'social', *(['performance-profiler'] if performance_profiler else [])]
 
 
-def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=True):
+def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False):
+    # the release engine leaves out `performance-profiler`: its spans and allocation counter cost
+    # every frame even while the profiler records nothing
     features = web_features(performance_profiler)
     env = build_environment()
     revision = os.environ.get('GITHUB_SHA', 'local')
@@ -169,25 +171,25 @@ def main():
                         help='CI-only compiled WASM cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
-    parser.add_argument('--no-performance-profiler', action='store_true',
-                        help="Leave out the Profiler section's spans and allocation counter")
+    parser.add_argument('--performance-profiler', action='store_true',
+                        help="Compile in the Profiler section's spans and allocation counter (off in release builds)")
     parser.add_argument('--target-only', action='store_true',
                         help='Run only the Cargo steps of a shared build (the two modules and the bindings '
                              'test build) and stop; CI fills a target cache with them')
     args = parser.parse_args()
-    if args.no_performance_profiler and args.engine_cache:
-        parser.error('--no-performance-profiler builds a different engine than the cache holds')
+    if args.performance_profiler and args.engine_cache:
+        parser.error('--performance-profiler builds a different engine than the cache holds')
     if args.target_only:
         if args.engine_cache or args.shared_build:
             parser.error('--target-only packs no engine: it takes neither --engine-cache nor --shared-build')
         env = build_environment()
-        cargo_wasm(args.no_opt, web_features(not args.no_performance_profiler), env)
+        cargo_wasm(args.no_opt, web_features(args.performance_profiler), env)
         # The bindings script compiles a test build in the same target; a build that restores
         # the target without it compiles that again.
         run('bash', './scripts/gen-ts-bindings.sh', env=env)
         return
     web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build,
-        not args.no_performance_profiler)
+        args.performance_profiler)
 
 
 if __name__ == '__main__':
