@@ -1167,6 +1167,39 @@ impl<'a> RoomServiceClient<'a> {
         Ok(())
     }
 
+    /// Rewrites the string array `field` of the room's metadata in one read and
+    /// one write under the metadata lock: `rewrite` gets the current strings
+    /// (non-strings are dropped) and returns the new array. Nothing is written
+    /// when it is unchanged or the room is missing.
+    pub async fn rewrite_room_metadata_array(
+        &self,
+        room: &str,
+        field: &str,
+        rewrite: impl FnOnce(Vec<String>) -> Vec<String>,
+    ) -> Result<(), RoomServiceError> {
+        let _guard = room_metadata_write_lock().lock().await;
+        let Some(info) = self.get_room_info(room).await? else {
+            return Ok(());
+        };
+        let mut metadata = parse_room_metadata(info.get("metadata").and_then(|m| m.as_str()));
+        let current: Vec<String> = match metadata.get(field) {
+            Some(serde_json::Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let updated = rewrite(current.clone());
+        if updated == current {
+            return Ok(());
+        }
+        metadata.insert(
+            field.to_string(),
+            serde_json::Value::Array(updated.into_iter().map(serde_json::Value::String).collect()),
+        );
+        self.write_room_metadata(room, metadata).await
+    }
+
     pub async fn remove_from_room_metadata_array(
         &self,
         room: &str,

@@ -2119,29 +2119,74 @@ fn display_names_drop_invisible_characters_and_never_carry_another_wallet() {
     let other = address_of(OUTSIDER_KEY);
     let guest = format!("Guest#{}", &own.as_str()[38..]);
     assert_eq!(shown_name("  Ada \t Lovelace ", Some(&own)), "Ada Lovelace");
-    // Direction overrides and zero-width marks render nothing.
+    // Direction overrides, zero-width marks, the grapheme joiner, variation
+    // selectors and tags render nothing.
     assert_eq!(
         shown_name("Mod\u{202e}rotareD\u{200b}", Some(&own)),
         "ModrotareD"
     );
-    assert_eq!(shown_name("\u{200b}\u{feff}", Some(&own)), guest);
-    // Another wallet's address, bare or inside a name, is not shown.
-    assert_eq!(shown_name(&other, Some(&own)), guest);
-    assert_eq!(
-        shown_name(
-            &format!("admin {}", other.to_uppercase().replace("0X", "0x")),
-            Some(&own)
-        ),
-        guest
-    );
+    assert_eq!(shown_name("A\u{34f}d\u{fe0f}a\u{e0041}", Some(&own)), "Ada");
+    // Names that render blank (fillers, the blank braille cell) fall back.
+    for blank in [
+        "\u{200b}\u{feff}",
+        "\u{3164}\u{3164}",
+        "\u{115f}\u{1160}",
+        "\u{ffa0}",
+        "\u{2800}",
+    ] {
+        assert_eq!(shown_name(blank, Some(&own)), guest, "{blank:?}");
+    }
+    // Another wallet's address, bare, inside a name, split by an invisible
+    // character, through lookalike letters or abbreviated, is not shown.
+    let (head, tail) = other.split_at(22);
+    let lookalike = other
+        .replacen("0x", "0\u{445}", 1)
+        .replace('a', "\u{430}")
+        .replace('e', "\u{435}");
+    let abbreviated = format!("{}…{}", &other[..6], &other[38..]);
+    for spoof in [
+        other.clone(),
+        format!("admin {}", other.to_uppercase().replace("0X", "0x")),
+        format!("{head}\u{34f}{tail}"),
+        lookalike,
+        abbreviated.clone(),
+        abbreviated.replace('…', "..."),
+        format!("\u{ff10}\u{ff58}{}", &other[2..]),
+    ] {
+        assert_eq!(shown_name(&spoof, Some(&own)), guest, "{spoof:?}");
+    }
     assert_eq!(shown_name(&other, None), "Streamer");
-    // The caller's own address is theirs to show.
+    // Another viewer's default name is not shown; the caller's own is.
+    assert_eq!(shown_name("Guest#beef", Some(&own)), guest);
+    assert_eq!(shown_name(&guest, Some(&own)), guest);
+    // The caller's own address, full or abbreviated, is theirs to show.
     assert_eq!(shown_name(own.as_str(), Some(&own)), own.as_str());
+    let own_short = format!("{}…{}", &own.as_str()[..6], &own.as_str()[38..]);
+    // NFKC spells the ellipsis as three dots.
+    assert_eq!(
+        shown_name(&own_short, Some(&own)),
+        own_short.replace('…', "...")
+    );
     assert_eq!(shown_name("Viewer #1", Some(&own)), "Viewer #1");
+    assert_eq!(shown_name("Oxford Room", Some(&own)), "Oxford Room");
+}
+
+/// A streamer identity of `place` whose token was minted `age_ms` ago, as
+/// `streamer_token` mints them (a version 7 UUID carries the time).
+fn streamer_minted_ago(place: &str, age_ms: i64) -> String {
+    let mut bytes = *Uuid::new_v4().as_bytes();
+    let ms = ((chrono::Utc::now().timestamp_millis() - age_ms) as u64).to_be_bytes();
+    bytes[..6].copy_from_slice(&ms[2..]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    format!(
+        "stream:{place}:{}:{}",
+        Uuid::new_v4(),
+        Uuid::from_bytes(bytes)
+    )
 }
 
 #[tokio::test]
-async fn streamer_presenters_stay_bounded_and_leave_with_their_streamer() {
+async fn streamer_presenters_stay_bounded_and_follow_the_streamers_session() {
     let Some(pool) = scratch().await else { return };
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
@@ -2154,24 +2199,20 @@ async fn streamer_presenters_stay_bounded_and_leave_with_their_streamer() {
         chrono::Duration::days(1),
     )
     .await;
-    // 32 streamer ids already listed, the first one connected, plus a wallet.
-    let stale: Vec<String> = (0..32)
-        .map(|_| {
-            format!(
-                "stream:{}:{}:{}",
-                scene.place_id,
-                Uuid::new_v4(),
-                Uuid::new_v4()
-            )
-        })
+    // Ten ids whose token expired unused, 32 recent ones (the first connected), and a wallet.
+    let expired: Vec<String> = (0..10)
+        .map(|_| streamer_minted_ago(&scene.place_id, 10 * 60 * 1000))
+        .collect();
+    let recent: Vec<String> = (0..32)
+        .map(|_| streamer_minted_ago(&scene.place_id, 60 * 1000))
         .collect();
     let admin = address_of(KEY);
-    let mut listed: Vec<Value> = stale.iter().map(|id| json!(id)).collect();
+    let mut listed: Vec<Value> = expired.iter().chain(&recent).map(|id| json!(id)).collect();
     listed.push(json!(admin));
     h.livekit
         .set_metadata(&scene.room, json!({ "presenters": listed }));
     h.livekit
-        .join(&scene.room, &stale[0], chrono::Utc::now().timestamp());
+        .join(&scene.room, &recent[0], chrono::Utc::now().timestamp());
 
     let (status, body) = h
         .post(
@@ -2185,22 +2226,196 @@ async fn streamer_presenters_stay_bounded_and_leave_with_their_streamer() {
     assert_eq!(claims(&body["token"])["name"], "Streamer");
     let presenters: Vec<String> =
         serde_json::from_value(h.livekit.metadata(&scene.room)["presenters"].clone()).unwrap();
-    let streamers: Vec<&String> = presenters
-        .iter()
-        .filter(|id| id.starts_with("stream:"))
-        .collect();
-    assert_eq!(streamers.len(), 32);
-    // The oldest that is not in the room made way; the connected one stays.
-    assert!(presenters.contains(&stale[0]));
-    assert!(!presenters.contains(&stale[1]));
+    // Expired ids went first; then the oldest recent one not in the room made way.
+    assert!(expired.iter().all(|id| !presenters.contains(id)));
+    assert_eq!(
+        presenters
+            .iter()
+            .filter(|id| id.starts_with("stream:"))
+            .count(),
+        32
+    );
+    assert!(presenters.contains(&recent[0]));
+    assert!(!presenters.contains(&recent[1]));
     assert!(presenters.contains(&streamer));
     assert!(presenters.contains(&admin));
 
-    // A streamer that leaves the room leaves the presenters; a wallet is untouched.
-    let forget = crate::gatekeeper::streaming::cast::forget_departed_streamer;
-    assert!(forget(&h.state, &scene.room, &streamer).await.unwrap());
-    assert!(!forget(&h.state, &scene.room, &admin).await.unwrap());
-    let presenters = h.livekit.metadata(&scene.room)["presenters"].clone();
-    assert!(!presenters.as_array().unwrap().contains(&json!(streamer)));
-    assert!(presenters.as_array().unwrap().contains(&json!(admin)));
+    // Through the LiveKit webhook: the old session of a full reconnect leaves
+    // with DUPLICATE_IDENTITY and keeps the streamer; a real leave removes it,
+    // and a rejoin with the live credential puts it back.
+    let event = |id: &str, kind: &str, at: i64, reason: Option<&str>| {
+        let mut participant = json!({"sid": format!("PA_{id}"), "identity": streamer});
+        if let Some(reason) = reason {
+            participant["disconnectReason"] = json!(reason);
+        }
+        json!({"id": id, "event": kind, "createdAt": at, "room": {"name": scene.room}, "participant": participant})
+    };
+    let dispatch = crate::gatekeeper::webhook::dispatch_for_tests;
+    let listed = |h: &Harness| {
+        h.livekit.metadata(&scene.room)["presenters"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(streamer))
+    };
+    dispatch(
+        &h.state,
+        &event(
+            &format!("dup-{}", tag()),
+            "participant_left",
+            100,
+            Some("DUPLICATE_IDENTITY"),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(
+        listed(&h),
+        "a full reconnect's old session keeps the presenter"
+    );
+    dispatch(
+        &h.state,
+        &event(
+            &format!("left-{}", tag()),
+            "participant_left",
+            101,
+            Some("CLIENT_INITIATED"),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(!listed(&h), "a streamer that left is no longer a presenter");
+    dispatch(
+        &h.state,
+        &event(&format!("join-{}", tag()), "participant_joined", 102, None),
+    )
+    .await
+    .unwrap();
+    assert!(
+        listed(&h),
+        "a streamer that rejoins with a live credential is a presenter again"
+    );
+    assert!(
+        h.livekit.metadata(&scene.room)["presenters"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(admin))
+    );
+}
+
+/// A concurrent change while a reset stores its credential (here the insert
+/// is silently skipped, as when another credential won the place): 409, the
+/// old key stays, no cleanup is recorded, and the new ingress is deleted.
+#[tokio::test]
+async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, first) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let function = format!("cast_skip_{}", tag());
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.place_id = '{place}' THEN RETURN NULL; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {function} BEFORE INSERT ON social.scene_stream_access \
+         FOR EACH ROW EXECUTE FUNCTION social.{function}();",
+        place = scene.place_id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = h
+        .signed(KEY, "PUT", "/scene-stream-access", &metadata, None)
+        .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {function} ON social.scene_stream_access; DROP FUNCTION social.{function}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The reset route answers its own failure text for anything but success.
+    assert!(
+        status.is_client_error() || status.is_server_error(),
+        "{status} {body}"
+    );
+    let (kept, pending): (String, bool) = sqlx::query_as(
+        "SELECT streaming_key, EXISTS(SELECT 1 FROM social.scene_stream_cleanup c WHERE c.access_id = a.id) \
+         FROM social.scene_stream_access a WHERE place_id = $1 AND active",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, first["streamingKey"].as_str().unwrap());
+    assert!(!pending);
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+}
+
+/// A reset intent whose replacement never arrived (left by a crash before
+/// replacements committed with their intent, or a replacement revoked in
+/// turn) is delivered as a revocation once the grace hour is over, instead of
+/// retrying forever; a recent one keeps waiting.
+#[tokio::test]
+async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let mut intents = Vec::new();
+    for age in [chrono::Duration::hours(2), chrono::Duration::minutes(10)] {
+        seed_access(
+            &pool,
+            &scene.place_id,
+            Some(&scene.room),
+            chrono::Duration::days(1),
+        )
+        .await;
+        let id: Uuid = sqlx::query_scalar(
+            "UPDATE social.scene_stream_access SET active = false WHERE place_id = $1 AND active RETURNING id",
+        )
+        .bind(&scene.place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO social.scene_stream_cleanup (access_id, place_id, notification_kind, occurred_at, due_at, ingress_deleted) \
+             VALUES ($1, $2, 'streaming_key_reset', timezone('UTC', now()) - $3::interval, timezone('UTC', now()), true)",
+        )
+        .bind(id)
+        .bind(&scene.place_id)
+        .bind(format!("{} seconds", age.num_seconds()))
+        .execute(&pool)
+        .await
+        .unwrap();
+        intents.push(id);
+    }
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state)
+        .await
+        .unwrap();
+    let kind = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT notification_kind FROM social.scene_stream_cleanup WHERE access_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        kind(intents[0]).await.as_deref(),
+        Some("streaming_key_revoke")
+    );
+    assert_eq!(
+        kind(intents[1]).await.as_deref(),
+        Some("streaming_key_reset")
+    );
 }

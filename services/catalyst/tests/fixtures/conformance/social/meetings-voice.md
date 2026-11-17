@@ -71,11 +71,17 @@ Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a
   token of a revoked key. Upstream only deletes the RTMP ingress.
 - A replacement (expiry renewal or reset) stores the new credential in the transaction that
-  deactivates the old one: a failure keeps the old key in force.
-- `presenters` keeps at most 32 streamer ids of a place (the oldest not in the room make way), and a
-  streamer that leaves the room leaves it. Upstream appends one per streamer token.
-- A display name loses control and invisible format characters and never carries a wallet address
-  other than the caller's own; such a name becomes `Guest#<last 4>` (watcher) or `Streamer`.
+  deactivates the old one: a failure keeps the old key in force, so a reset that fails leaves the key
+  it meant to replace working until the admin retries or revokes. A reset intent whose replacement
+  is still missing after an hour is delivered as a revocation.
+- `presenters` keeps at most 32 streamer ids of a place, written in one read-modify-write: ids whose
+  token expired unused go first, then the oldest not in the room. A streamer that leaves the room
+  leaves it, except the old session of a full reconnect, and one that rejoins with a live credential
+  is added back. Upstream appends one per streamer token.
+- A display name loses controls and Unicode default-ignorable characters and is NFKC-normalized. A
+  name that reads as another wallet's address (full or `0x1234…abcd`, through common Cyrillic and
+  Greek lookalikes) or as another viewer's `Guest#` default becomes `Guest#<last 4>` (watcher) or
+  `Streamer`, and so does a blank one. Lookalikes outside that fold are not caught.
 - A watcher token checks a world's access policy (allow-list, password, NFT, bans), carries the
   viewer's wallet (`dcl.castWatcher`) and, in a world, the authorization proof a scene join carries,
   so the ban and world access sweeps reach watchers already in the room.

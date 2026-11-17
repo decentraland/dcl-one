@@ -389,6 +389,10 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
 }
 
+/// How long a reset intent waits for its replacement credential before it
+/// is delivered as a revocation.
+const RESET_REPLACEMENT_GRACE: chrono::Duration = chrono::Duration::hours(1);
+
 /// Revokes first: the RTMP ingress is deleted (and `ingress_deleted`
 /// recorded) before anything else, so a room-service failure while evicting
 /// the WebRTC publishers never leaves the revoked key accepting RTMP. Eviction
@@ -425,6 +429,18 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Ok(());
         }
         if kind == StreamingNotificationKind::KeyReset && !replacement {
+            // A replacement commits with its reset intent (`replace_access`), so one still
+            // missing after the grace period never will (an intent from before that, or the
+            // replacement revoked in turn): the reset is delivered as the revocation it is.
+            let now = chrono::Utc::now().naive_utc();
+            if now - row.occurred_at > RESET_REPLACEMENT_GRACE {
+                sqlx::query("UPDATE social.scene_stream_cleanup SET notification_kind='streaming_key_revoke', recipient=NULL, metadata=NULL \
+                    WHERE access_id=$1 AND claim_token=$2 AND notification_kind='streaming_key_reset'")
+                    .bind(row.access_id).bind(token).execute(&state.pool).await?;
+                return Err(ApiError::internal(
+                    "stream reset without a replacement: delivered as a revocation on retry",
+                ));
+            }
             return Err(ApiError::internal(
                 "stream reset awaiting replacement credential",
             ));

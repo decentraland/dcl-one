@@ -340,7 +340,9 @@ async fn mint_ingress(
 /// Replaces credential `old` with one for the freshly minted `info`: the old
 /// row's deactivation, its cleanup intent and the new row are one
 /// transaction, so any failure (a concurrent change included) leaves the old
-/// credential in force and deletes the new ingress.
+/// credential in force and deletes the new ingress. For a reset that trades
+/// security for availability: a reset that answers 500 or 409 leaves the key
+/// it meant to replace working, and the admin retries it (or revokes).
 async fn replace_access(
     state: &CommsState,
     ingress: &IngressClient<'_>,
