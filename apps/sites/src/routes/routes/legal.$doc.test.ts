@@ -19,6 +19,7 @@ describe("when redirecting legacy legal routes", () => {
     ["credits", "/credits-terms"],
     ["content", "/content"],
     ["rewards", "/rewards-terms"],
+    ["creator-fund-terms", "/creator-fund-terms"],
   ])("should redirect %s to its canonical route", async (doc, location) => {
     const response = await loadRedirect(doc);
     expect(response.status).toBe(301);

@@ -530,10 +530,10 @@ fn a_hidden_name_keeps_its_tag_and_its_message() {
     app.update();
     assert!(!shown(&app, ada));
     app.world_mut().entity_mut(ada).remove::<HiddenNametag>();
-    app.world_mut().entity_mut(ada).insert(NametagBlocked);
+    app.world_mut().entity_mut(ada).insert(BlockedOrBanned);
     app.update();
     assert!(!shown(&app, ada));
-    app.world_mut().entity_mut(ada).remove::<NametagBlocked>();
+    app.world_mut().entity_mut(ada).remove::<BlockedOrBanned>();
     app.world_mut().entity_mut(ada).insert(BeyondMaxAvatars);
     app.update();
     assert!(!shown(&app, ada));

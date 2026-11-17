@@ -34,8 +34,8 @@ describe("normalizeReport", () => {
     expect(r!.stack.length).toBeLessThan(20000);
     expect(r!.url).toBe("https://example.org/marketplace");
     expect(
-      normalizeReport({ message: "x", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })!.url,
-    ).toBe("https://example.org/landings/cast-stream?utm_source=x");
+      normalizeReport({ message: "x", url: "https://example.org/report?token=k&utm_source=x" })!.url,
+    ).toBe("https://example.org/report?utm_source=x");
     expect(r!.correlationId).toBe("4ef97fa3-9dcf-4630-9bc4-5f742706e87a");
     expect(r!.engineBuild).toBe("22d73274c");
     expect(r!.source).toBe("panic");
@@ -82,15 +82,15 @@ describe("action (client-error ingest)", () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     try {
       const res = await call(
-        post(JSON.stringify({ message: "boom", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })),
+        post(JSON.stringify({ message: "boom", url: "https://example.org/report?token=k&utm_source=x" })),
       );
       expect(res.status).toBe(202);
       const logged = JSON.parse(errSpy.mock.calls[0][1] as string);
-      expect(logged.url).toBe("https://example.org/landings/cast-stream?utm_source=x");
+      expect(logged.url).toBe("https://example.org/report?utm_source=x");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       expect(JSON.parse(init.body as string).properties.url).toBe(
-        "https://example.org/landings/cast-stream?utm_source=x",
+        "https://example.org/report?utm_source=x",
       );
     } finally {
       vi.unstubAllGlobals();

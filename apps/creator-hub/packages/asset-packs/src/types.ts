@@ -48,6 +48,10 @@ export type AssetData = {
   // A built-in avatar animation every scene can already play by this name (e.g. 'wave'). The
   // asset ships only its thumbnails: there is nothing to add to a scene.
   builtInEmote?: string;
+  // The lowest @dcl/sdk version a scene needs to run this asset (e.g. '7.32.0'), for one whose
+  // script uses components that older SDKs don't have. The editor refuses to place it in a scene
+  // on an older SDK and offers to update the scene.
+  minSdkVersion?: string;
 };
 
 export type AssetDataWithoutComposite = Omit<AssetData, 'composite'>;
@@ -117,6 +121,18 @@ export function assertValidTriggerComponent(assetName: string, trigger: TriggerD
       }
     });
   });
+}
+
+// A full `major.minor.patch`: the editor compares only that form, so '7.32' would never block.
+const SDK_VERSION = /^\d+\.\d+\.\d+$/;
+
+export function assertValidMinSdkVersion(assetName: string, minSdkVersion: unknown) {
+  if (minSdkVersion === undefined) return;
+  if (typeof minSdkVersion !== 'string' || !SDK_VERSION.test(minSdkVersion)) {
+    throw new Error(
+      `Invalid minSdkVersion on "${assetName}": ${JSON.stringify(minSdkVersion)}. Use a full version such as "7.32.0".`,
+    );
+  }
 }
 
 export type Asset = AssetData & { contents: Record<string, string> };

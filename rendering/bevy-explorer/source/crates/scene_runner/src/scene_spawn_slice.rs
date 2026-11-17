@@ -10,7 +10,7 @@
 //! [`SceneSpawnSlicePlugin`] owns the slice: its deadlines, the charges, how long the spawner and
 //! processing take each frame (`spawn_timing`) and the debug panel's Instantiation section.
 
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use bevy::{
     ecs::system::SystemParam,
@@ -95,9 +95,9 @@ impl InstantiationBudget<'_, '_> {
     pub fn gate(&mut self) -> Gate<'_> {
         Gate {
             slice: self.slice(),
-            charges: &mut self.charges.this_frame,
-            admitted: 0,
-            deferred: 0,
+            charges: Cell::from_mut(&mut self.charges.this_frame),
+            admitted: Cell::new(0),
+            deferred: Cell::new(0),
         }
     }
 
@@ -109,42 +109,44 @@ impl InstantiationBudget<'_, '_> {
 }
 
 /// Admits a system run's items against the slice: the run's first item whatever was spent, so
-/// every consumer moves each frame; then each item while it fits in what is left.
+/// every consumer moves each frame; then each item while it fits in what is left. It is used
+/// through `&self`, so a walk over the waiting can stop once it is spent
+/// (`take_while(|_| !gate.is_spent())`) while the loop admits.
 pub struct Gate<'a> {
     slice: Option<Duration>,
-    charges: &'a mut Duration,
-    admitted: usize,
-    deferred: usize,
+    charges: &'a Cell<Duration>,
+    admitted: Cell<usize>,
+    deferred: Cell<usize>,
 }
 
 impl Gate<'_> {
-    pub fn admit(&mut self, cost: Duration) -> bool {
+    pub fn admit(&self, cost: Duration) -> bool {
         let Some(slice) = self.slice else {
             return true;
         };
-        if self.admitted > 0 && *self.charges + cost > slice {
-            self.deferred += 1;
+        if self.admitted.get() > 0 && self.charges.get() + cost > slice {
+            self.deferred.set(self.deferred.get() + 1);
             return false;
         }
-        *self.charges += cost;
-        self.admitted += 1;
+        self.charges.set(self.charges.get() + cost);
+        self.admitted.set(self.admitted.get() + 1);
         true
     }
 
     /// Once it has refused an item this run: the rest wait as they are, untouched.
     pub fn is_spent(&self) -> bool {
-        self.slice.is_some() && self.deferred > 0
+        self.slice.is_some() && self.deferred.get() > 0
     }
 
     /// Logs the run under target `instantiation_budget` when it deferred anything.
     pub fn report(&self, consumer: &'static str) {
-        if self.deferred > 0 {
+        if self.deferred.get() > 0 {
             debug!(
                 target: "instantiation_budget",
                 "{consumer}: {} admitted, {} deferred, {:.2} ms charged this frame",
-                self.admitted,
-                self.deferred,
-                self.charges.as_secs_f64() * 1000.0
+                self.admitted.get(),
+                self.deferred.get(),
+                self.charges.get().as_secs_f64() * 1000.0
             );
         }
     }

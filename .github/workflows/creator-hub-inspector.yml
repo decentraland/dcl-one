@@ -157,7 +157,7 @@ jobs:
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/asset-packs versions --json | tail -5 || true
+            pnpm view @dcl/asset-packs versions --json | tail -5 || true
             exit 1
           elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
             echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
@@ -174,7 +174,7 @@ jobs:
       - name: build
         run: make build-inspector
 
-      - name: npm version
+      - name: version
         working-directory: apps/creator-hub/packages/inspector
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -182,14 +182,15 @@ jobs:
           else
             VERSION="${{ needs.version.outputs.version }}-commit-${{ github.sha }}"
           fi
-          npm version "$VERSION" --force --no-git-tag-version --allow-same-version
+          # pnpm has no --force; skipping its git checks is what --force did for npm.
+          pnpm version "$VERSION" --no-git-checks --no-git-tag-version --allow-same-version
 
-      - name: npm pack
+      - name: pack
         working-directory: apps/creator-hub/packages/inspector
         id: npm-pack
         run: |
-          PACK_OUTPUT=$(npm pack --json)
-          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.[0].filename')
+          PACK_OUTPUT=$(pnpm pack --json)
+          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.filename')
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3

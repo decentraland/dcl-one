@@ -14,6 +14,7 @@ import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
 import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
+import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
@@ -23,6 +24,7 @@ import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
+import { registerGifting } from './domains/gifting'
 import { registerOutfits } from './domains/outfits'
 import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
@@ -56,6 +58,7 @@ export function main(): void {
     registerSession(ctx)
     registerConnectivity(ctx)
     registerAnalytics(ctx)
+    registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
     registerChat(ctx)
@@ -67,6 +70,7 @@ export function main(): void {
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
+    registerGifting(ctx)
     registerOutfits(ctx)
     registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {

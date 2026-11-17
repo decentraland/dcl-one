@@ -14,7 +14,6 @@ mod material;
 mod text;
 
 use alloy_core::primitives::Address;
-use ban_block::BanBlock;
 use bevy::{
     color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
     platform::collections::HashSet, prelude::*, render::primitives::Aabb,
@@ -32,6 +31,7 @@ use comms::{
     nearby_mutes::NearbyMutes,
     profile::{name_color::name_color, CurrentUserProfile, UserProfile},
     speaking::Speaking,
+    BlockedOrBanned,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
@@ -121,7 +121,6 @@ impl Plugin for NametagPlugin {
                 resolve_content,
                 resolve_scene_avatar_content,
                 resolve_voice,
-                mark_blocked,
                 show_tags,
                 retext_from_bridge,
                 show_chat_bubbles,
@@ -278,11 +277,6 @@ pub struct SceneAvatarNametag {
 /// On a player or a scene avatar: what their nametag's voice badge shows.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NametagVoice(pub Voice);
-
-/// On a player: the local user blocked them or is blocked by them, or the scene's room banned
-/// them. Their name is not shown.
-#[derive(Component)]
-pub struct NametagBlocked;
 
 /// A player's tag, a child of the player, and what its mesh was last built from.
 #[derive(Component, Default)]
@@ -696,30 +690,6 @@ fn tag_scale(distance: f32, fov: f32) -> f32 {
     (fov * 0.5).tan() * SCREEN_SCALE * distance * UNIT
 }
 
-/// Mark the players whose names the local user's blocks and the scene's bans hide: the same
-/// reading that keeps their messages out of the chat.
-fn mark_blocked(
-    mut commands: Commands,
-    ban_block: BanBlock,
-    players: Query<(Entity, &ForeignPlayer, Has<NametagBlocked>), With<NametagContent>>,
-) {
-    let blocks = ban_block.blocks();
-    let room = ban_block.scene_room();
-    for (player, foreign, marked) in &players {
-        let blocked = blocks.is_blocked_either_way(foreign.address)
-            || room.is_addr_banned_in_scene(foreign.address);
-        match (blocked, marked) {
-            (true, false) => {
-                commands.entity(player).try_insert(NametagBlocked);
-            }
-            (false, true) => {
-                commands.entity(player).try_remove::<NametagBlocked>();
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Decide which names show. One that doesn't is only hidden: its tag, and its message, stay.
 #[allow(clippy::type_complexity)]
 fn show_tags(
@@ -731,7 +701,7 @@ fn show_tags(
             Has<PrimaryUser>,
             Has<HiddenNametag>,
             Has<BeyondMaxAvatars>,
-            Has<NametagBlocked>,
+            Has<BlockedOrBanned>,
             Option<&PlayerModifiers>,
             Option<&InheritedVisibility>,
         ),

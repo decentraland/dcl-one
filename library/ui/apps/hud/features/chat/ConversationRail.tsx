@@ -92,7 +92,7 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
           aria-pressed={chat.channel === 'Nearby'}
           onClick={() => chat.select('Nearby')}
         >
-          <DclLogo size={28} />
+          <DclLogo size={32} />
           {badge(chat.nearbyUnread)}
         </button>
       </Tooltip>

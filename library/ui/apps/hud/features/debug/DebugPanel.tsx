@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
+import { Mark } from '../../design/Glyphs'
 import type { EngineSession } from '../session/useEngineSession'
 import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
 import { isEditableTarget } from '../../lib/bindingLabels'
@@ -108,7 +109,7 @@ function StructuredReading({ value, label }: { value: object; label: string }) {
   return (
     <>
       <Button size="sm" variant="ghost" aria-label={label + ' details'} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {count} {count === 1 ? 'entry' : 'entries'} {open ? '▴' : '▾'}
+        {count} {count === 1 ? 'entry' : 'entries'} <Mark name={open ? 'up' : 'down'} />
       </Button>
       {open && <pre className={styles.reply}>{JSON.stringify(value, null, 2)}</pre>}
     </>
@@ -270,7 +271,7 @@ function SectionRow({ section, run, open, toggle }: {
   return (
     <section className={styles.section}>
       <Button size="sm" variant="ghost" aria-expanded={open} onClick={toggle}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span> {section.title}
+        <span aria-hidden="true"><Mark name={open ? 'down' : 'right'} /></span> {section.title}
       </Button>
       {open && <Widgets section={section} run={run} />}
     </section>

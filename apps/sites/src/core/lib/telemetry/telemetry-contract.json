@@ -590,15 +590,6 @@
         }
       }
     },
-    "cast_watch_access_expired": {
-      "loose": false,
-      "props": {
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
     "cast_watch_chat_opened": {
       "loose": false,
       "props": {}
@@ -636,28 +627,6 @@
     "cast_watch_muted": {
       "loose": false,
       "props": {}
-    },
-    "cast_watch_no_stream": {
-      "loose": false,
-      "props": {
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "cast_watch_opened": {
-      "loose": false,
-      "props": {
-        "is_world": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
     },
     "cast_watch_refused": {
       "loose": false,
@@ -2704,7 +2673,7 @@
           "optional": false
         },
         "file_name": {
-          "kind": "unknown",
+          "kind": "string",
           "optional": false
         },
         "kind": {
@@ -2897,54 +2866,6 @@
       "loose": false,
       "props": {}
     },
-    "lp_home_download_clicked": {
-      "loose": false,
-      "props": {
-        "placement": {
-          "kind": "string",
-          "optional": false
-        },
-        "store": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_rail_clicked": {
-      "loose": false,
-      "props": {
-        "rail": {
-          "kind": "string",
-          "optional": false
-        },
-        "target": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_rail_viewed": {
-      "loose": false,
-      "props": {
-        "rail": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_viewed": {
-      "loose": false,
-      "props": {
-        "live_rail": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "rails": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
     "lp_invite_referrer_resolved": {
       "loose": false,
       "props": {
@@ -3000,6 +2921,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3024,6 +2946,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3129,109 +3052,6 @@
         "event_id": {
           "kind": "string",
           "optional": false
-        }
-      }
-    },
-    "lp_schedule_created": {
-      "loose": false,
-      "props": {
-        "active": {
-          "kind": "boolean",
-          "optional": true
-        },
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "schedule_id": {
-          "kind": "string",
-          "optional": true
-        }
-      }
-    },
-    "lp_schedule_gate_viewed": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_schedule_list_viewed": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "empty",
-            "error",
-            "live"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_review_reached": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_schedule_started": {
-      "loose": false,
-      "props": {
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_step_completed": {
-      "loose": false,
-      "props": {
-        "from": {
-          "kind": "enum-string",
-          "values": [
-            "authGate",
-            "basics",
-            "created",
-            "dates",
-            "review",
-            "submitting"
-          ],
-          "optional": false
-        },
-        "to": {
-          "kind": "enum-string",
-          "values": [
-            "authGate",
-            "basics",
-            "created",
-            "dates",
-            "review",
-            "submitting"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_submit_attempted": {
-      "loose": false,
-      "props": {
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "theme": {
-          "kind": "unknown",
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_submit_failed": {
-      "loose": false,
-      "props": {
-        "error": {
-          "kind": "string",
-          "optional": true
         }
       }
     },
@@ -3392,7 +3212,7 @@
         },
         "report_id": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },
@@ -3419,7 +3239,7 @@
       "props": {
         "reason": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },
