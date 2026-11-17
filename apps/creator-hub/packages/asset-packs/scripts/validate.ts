@@ -1,4 +1,8 @@
-import { getTriggerComponent, assertValidTriggerComponent } from '../src/types';
+import {
+  getTriggerComponent,
+  assertValidTriggerComponent,
+  assertValidMinSdkVersion,
+} from '../src/types';
 import { LocalFileSystem } from './utils/local';
 
 async function main() {
@@ -11,6 +15,7 @@ async function main() {
       console.log(asset.name, '✅');
       const triggerComponent = getTriggerComponent(asset);
       if (triggerComponent) assertValidTriggerComponent(asset.name, triggerComponent);
+      assertValidMinSdkVersion(asset.name, asset.minSdkVersion);
     }
     console.log(assetPack.name, '✅');
   }

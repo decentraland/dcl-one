@@ -8,7 +8,7 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -24,7 +24,8 @@ import { PassportPhotos, type PassportPhotoActions } from '../gallery/PassportPh
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
-type Tab = 'overview' | 'badges' | 'photos' | 'creations'
+export type PassportTab = 'overview' | 'badges' | 'photos' | 'creations'
+type Tab = PassportTab
 const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
 const EDIT_TAB: TabItem<'edit'>[] = [{ id: 'edit', label: 'EDIT PROFILE', disabled: true }]
@@ -37,7 +38,7 @@ const NAME_COLOR_PRESETS = [
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   return (
     <button type="button" className={styles.copy} title={`Copy ${label}`} onClick={() => navigator.clipboard?.writeText(value).catch(() => {})}>
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
         <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.7" />
         <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
       </svg>
@@ -45,6 +46,7 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
   )
 }
 
+// The outlined seal with a tick on the NAME buttons.
 function Verified(): React.JSX.Element {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-label="verified">
@@ -64,6 +66,17 @@ const badgeLabel = (badge: Badge): string => (badge.tier != null ? `${badge.name
 // unity-explorer's badge date: month and year ("Oct. 2026").
 const monthYear = (ms: number): string => `${new Date(ms).toLocaleDateString('en-US', { month: 'short' })}. ${new Date(ms).getFullYear()}`
 
+// The badge categories, in display order: the filter pills and the grid's headings.
+// The engine's Badge has no category yet; a source that sends one (the mock does) gets the grouped
+// grid, any other the plain one.
+const BADGE_CATEGORIES = ['Explorer', 'Collector', 'Creator', 'Socializer', 'Builder']
+function groupBadges(badges: Badge[]): { category: string; badges: Badge[] }[] {
+  const of = (b: Badge): string | undefined => (b as Badge & { category?: string }).category
+  if (!badges.some((b) => of(b) != null)) return []
+  const names = [...BADGE_CATEGORIES, ...new Set(badges.map((b) => of(b) ?? 'Other').filter((c) => !BADGE_CATEGORIES.includes(c)))]
+  return names.map((category) => ({ category, badges: badges.filter((b) => (of(b) ?? 'Other') === category) })).filter((g) => g.badges.length > 0)
+}
+
 // The badge picture in a circle: the 56px tile by default, `className` for the other sizes.
 function BadgeIcon({ image, alt, className = '' }: { image?: string; alt: string; className?: string }): React.JSX.Element {
   return (
@@ -82,16 +95,18 @@ function BadgeTile({ badge }: { badge: Badge }): React.JSX.Element {
   )
 }
 
-function BadgeProgress({ done, target }: { done: number; target: number }): React.JSX.Element {
+function BadgeProgress({ done, target, bare = false }: { done: number; target: number; bare?: boolean }): React.JSX.Element {
   const pct = target > 0 ? Math.min(100, Math.round((done * 100) / target)) : 0
   return (
     <div className={styles.badgeProgress}>
       <div className={styles.badgeBar} role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={target}>
         <div className={styles.badgeBarFill} style={{ width: `${pct}%` }} />
       </div>
-      <span className={styles.badgeBarValue}>
-        {done}/{target}
-      </span>
+      {!bare && (
+        <span className={styles.badgeBarValue}>
+          {done}/{target}
+        </span>
+      )}
     </div>
   )
 }
@@ -102,8 +117,7 @@ function BadgeCard({ badge, isSelf, selected, onSelect }: { badge: Badge; isSelf
   const foot =
     isSelf && badge.progress != null ? (
       <>
-        {badge.tiers != null && <span className={styles.badgeLabel}>NEXT TIER</span>}
-        <BadgeProgress {...badge.progress} />
+        <BadgeProgress {...badge.progress} bare />
       </>
     ) : badge.unlockedAt != null ? (
       <time dateTime={new Date(badge.unlockedAt).toISOString()}>{monthYear(badge.unlockedAt)}</time>
@@ -118,7 +132,7 @@ function BadgeCard({ badge, isSelf, selected, onSelect }: { badge: Badge; isSelf
       onClick={() => onSelect(badge.id)}
     >
       <BadgeIcon image={badge.image} alt={badge.name} />
-      <div className={styles.badgeName}>{badgeLabel(badge)}</div>
+      <div className={styles.badgeName}>{badge.name}</div>
       <div className={styles.badgeFoot}>{foot}</div>
     </button>
   )
@@ -255,8 +269,8 @@ function CreationsSection({ address }: { address: string }): React.JSX.Element {
 
   if (load.status === 'loading') {
     return (
-      <section className={styles.card}>
-        <div className={styles.empty}>
+      <section className={`${styles.card} ${styles.cardFill}`}>
+        <div className={styles.emptyState}>
           <Spinner size={34} />
         </div>
       </section>
@@ -276,9 +290,20 @@ function CreationsSection({ address }: { address: string }): React.JSX.Element {
     )
   }
   const { wearables, emotes } = load.creations
+  if (wearables.length === 0 && emotes.length === 0) {
+    return (
+      <section className={`${styles.card} ${styles.cardFill}`}>
+        <div className={styles.emptyState}>
+          <span className={styles.emptyIcon}>
+            <Search size={34} />
+          </span>
+          <p className={styles.emptyText}>There are no creations to show yet</p>
+        </div>
+      </section>
+    )
+  }
   return (
     <section className={styles.card}>
-      {wearables.length === 0 && emotes.length === 0 && <div className={styles.empty}>There are no creations to show yet.</div>}
       {wearables.length > 0 && (
         <>
           <h2 className={styles.cardTitle}>Wearables</h2>
@@ -329,7 +354,8 @@ export function ProfilePassport({
   inviteItems = [],
   onClose,
   onDirtyChange,
-  photoActions
+  photoActions,
+  initialTab = 'overview'
 }: {
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
@@ -364,13 +390,18 @@ export function ProfilePassport({
   onDirtyChange?: (dirty: boolean) => void
   /** The Photos tab's writes and viewer (signed through the session); without them it only lists. */
   photoActions?: PassportPhotoActions
+  /** The tab the passport opens on. */
+  initialTab?: PassportTab
 }): React.JSX.Element {
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTab] = useState<Tab>(initialTab)
   // The Badges tab's selection: a badge id and, for tiered badges, a tier id. Both fall back —
   // to the first badge, and to the badge's latest reached tier — so the panel is never empty.
   const [picked, setPicked] = useState<{ badge?: string; tier?: string }>({})
   const badges = profile.badges ?? []
   const unlockedBadges = badges.filter((b) => !b.locked)
+  const badgeGroups = groupBadges(badges)
+  const [badgeCategory, setBadgeCategory] = useState('All')
+  const shownCategory = badgeGroups.some((g) => g.category === badgeCategory) ? badgeCategory : 'All'
   const selectedBadge = badges.find((b) => b.id === picked.badge) ?? badges[0]
   const selectedTier = selectedBadge?.tiers?.some((t) => t.id === picked.tier) ? picked.tier : selectedBadge != null ? defaultTier(selectedBadge) : undefined
   const [editMode, setEditMode] = useState(false)
@@ -378,6 +409,7 @@ export function ProfilePassport({
   // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
   const theyBlockedYou = blockedBy && relationship !== 'blocked'
   const [menuOpen, setMenuOpen] = useState(false)
+  const [panel, setPanel] = useState<HTMLDivElement | null>(null)
   // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
   const options: ContextMenuItem[] = []
   const pick = (fn: (address: string) => void) => (): void => {
@@ -397,6 +429,7 @@ export function ProfilePassport({
   if (inviteEntry != null) options.push(inviteEntry)
   if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
   const menuRef = useRef<HTMLDivElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!menuOpen) return
     const onDown = (e: MouseEvent): void => {
@@ -468,12 +501,29 @@ export function ProfilePassport({
   const hasEmotes = (profile.equippedEmotes?.length ?? 0) > 0
   const hasEquipped = hasWearables || hasEmotes
   const hasOverview = hasBadges || hasAbout || hasEquipped
+  const startEdit = (): void => {
+    setTab('overview')
+    setEditMode(true)
+  }
 
   return (
     // The dimmed scrim + click-outside-to-close are owned by the popup layer (openPassport →
     // PopupHost); this is just the panel. stopPropagation keeps a click inside it (tabs, copy, links)
     // from reaching the scrim and closing the passport.
-    <div className={styles.panel} onClick={(e) => e.stopPropagation()}>
+    <div ref={setPanel} className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
+          {/* --- left: the avatar — the catalyst full-body snapshot,
+                  falling back to the 2D face if the body render isn't available. --- */}
+          <div className={styles.avatarCol} data-passport-avatar={tab === 'badges' && !editMode && selectedBadge != null ? undefined : ''}>
+            {tab === 'badges' && !editMode && selectedBadge != null ? (
+              <BadgeDetail badge={selectedBadge} tierId={selectedTier} isSelf={isSelf} onSelectTier={(tier) => setPicked({ badge: selectedBadge.id, tier })} />
+            ) : profile.bodyImage ? (
+              <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
+            ) : (
+              <Avatar src={profile.picture} name={base} color={nameColor} size={180} status="online" />
+            )}
+          </div>
+
+          <div className={styles.main}>
         {/* --- header --- */}
         <header className={styles.head}>
           <div className={styles.idblock}>
@@ -483,8 +533,16 @@ export function ProfilePassport({
               {tag && <span className={styles.tag}>{tag}</span>}
               <CopyButton value={profile.name} label="name" />
               {canEdit && (
-                <button type="button" className={styles.iconBtn} aria-label="Edit name" onClick={editing.editName}>
-                  <Pencil size={16} />
+                <button type="button" className={styles.squareBtn} aria-label="Edit name" onClick={editing.editName}>
+                  <Pencil size={20} />
+                </button>
+              )}
+              {/* CLAIM NAME shows beside an unclaimed name; it opens the name
+                  editor, which is where a claimed name is picked. */}
+              {canEdit && !claimed && (
+                <button type="button" className={styles.claimBtn} onClick={editing.editName}>
+                  <NameSeal />
+                  CLAIM NAME
                 </button>
               )}
               {/* A claimed name's colour, as unity-explorer offers it: own passport only, since an
@@ -497,7 +555,7 @@ export function ProfilePassport({
               <span className={styles.addr}>{shortAddr(profile.address)}</span>
               <CopyButton value={profile.address} label="address" />
             </div>
-            {profile.mutuals != null && profile.mutuals > 0 && (
+            {!isSelf && profile.mutuals != null && profile.mutuals > 0 && (
               <div className={styles.mutual}>{profile.mutuals} Mutual</div>
             )}
           </div>
@@ -565,7 +623,9 @@ export function ProfilePassport({
                 CANCEL
               </Button>
             ) : (
-              <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
+              <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>
+                <Close size={22} strokeWidth={3.2} />
+              </button>
             )}
           </div>
         </header>
@@ -580,21 +640,9 @@ export function ProfilePassport({
           <Tabs variant="underline" className={styles.tabs} items={EDIT_TAB} value="edit" onChange={() => {}} aria-label="Passport sections" />
         )}
 
-        <div className={styles.body}>
-          {/* --- left: the avatar — the catalyst full-body snapshot (Unity-style hero),
-                  falling back to the 2D face if the body render isn't available. --- */}
-          <div className={styles.avatarCol}>
-            {tab === 'badges' && !editMode && selectedBadge != null ? (
-              <BadgeDetail badge={selectedBadge} tierId={selectedTier} isSelf={isSelf} onSelectTier={(tier) => setPicked({ badge: selectedBadge.id, tier })} />
-            ) : profile.bodyImage ? (
-              <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
-            ) : (
-              <Avatar src={profile.picture} name={base} color={nameColor} size={180} status="online" />
-            )}
-          </div>
-
           {/* --- right: tab content --- */}
-          <div className={styles.content}>
+          <div className={styles.scrollWrap}>
+          <div ref={scroller} className={styles.content}>
             {/* Edit mode replaces the About card (name, bio, fields and links are exactly what it
                 covers) and leaves the equipped/badges sections below it — those are the Backpack's
                 to change, not the passport's. */}
@@ -618,26 +666,15 @@ export function ProfilePassport({
                     profile editing is reached, so an untouched profile still has a way in. */}
                 {(hasAbout || canEdit) && !editMode && (
                 <section className={styles.card}>
-                  {canEdit && (
-                    <button
-                      type="button"
-                      className={styles.cardEdit}
-                      aria-label="Edit profile"
-                      onClick={() => {
-                        setTab('overview')
-                        setEditMode(true)
-                      }}
-                    >
-                      <Pencil size={16} />
-                    </button>
-                  )}
-                  {!hasAbout && <p className={styles.about}>Nothing here yet — the pencil adds your details.</p>}
-                  {profile.description && (
-                    <>
-                      <h2 className={styles.cardTitle}>About Me</h2>
-                      <p className={styles.about}>{profile.description}</p>
-                    </>
-                  )}
+                  <div className={styles.cardHead}>
+                    <h2 className={styles.cardTitle}>About Me</h2>
+                    {canEdit && (
+                      <button type="button" className={`${styles.squareBtn} ${styles.cardEdit}`} aria-label="Edit profile" onClick={startEdit}>
+                        <Pencil size={20} />
+                      </button>
+                    )}
+                  </div>
+                  <p className={styles.about}>{profile.description || (canEdit ? 'No intro.' : '')}</p>
                   {fields.length > 0 && (
                     <div className={styles.fields}>
                       {fields.map(({ key, label }) => (
@@ -648,34 +685,36 @@ export function ProfilePassport({
                       ))}
                     </div>
                   )}
-                  {profile.links && profile.links.length > 0 && (
+                  {((profile.links?.length ?? 0) > 0 || canEdit) && (
                     <>
-                      <h2 className={styles.cardTitle}>Links</h2>
-                      <div className={styles.links}>
-                        {profile.links.map((l) => (
-                          <a key={l.url} className={styles.link} href={l.url} target="_blank" rel="noreferrer">
-                            🔗 {l.title}
-                          </a>
-                        ))}
+                      <div className={styles.cardHead}>
+                        <h2 className={styles.cardTitle}>Links</h2>
+                        {canEdit && (
+                          <button type="button" className={`${styles.squareBtn} ${styles.cardEdit}`} aria-label="Edit links" onClick={startEdit}>
+                            <Pencil size={20} />
+                          </button>
+                        )}
                       </div>
+                      {profile.links != null && profile.links.length > 0 ? (
+                        <div className={styles.links}>
+                          {profile.links.map((l) => (
+                            <a key={l.url} className={styles.link} href={l.url} target="_blank" rel="noreferrer">
+                              {l.title}
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className={styles.about}>No links.</p>
+                      )}
                     </>
                   )}
                 </section>
                 )}
                 {hasEquipped && (
                   <section className={styles.card}>
-                    {hasWearables && (
-                      <>
-                        <h2 className={styles.cardTitle}>Equipped Wearables</h2>
-                        <EquippedRow tiles={wearables.map(wearableTile)} />
-                      </>
-                    )}
-                    {hasEmotes && (
-                      <>
-                        <h2 className={styles.cardTitle}>Equipped Emotes</h2>
-                        <EquippedRow tiles={(profile.equippedEmotes ?? []).map(emoteTile)} />
-                      </>
-                    )}
+                    {/* One grid, wearables then emotes. */}
+                    <h2 className={styles.cardTitle}>Equipped Items</h2>
+                    <EquippedRow tiles={[...wearables.map(wearableTile), ...(profile.equippedEmotes ?? []).map(emoteTile)]} />
                   </section>
                 )}
                 {hasBadges && (
@@ -691,7 +730,29 @@ export function ProfilePassport({
 
             {tab === 'badges' && (
               <section className={styles.card}>
-                {badges.length > 0 ? (
+                {badgeGroups.length > 0 ? (
+                  <>
+                    <div className={styles.badgePills} role="group" aria-label="Badge categories">
+                      {['All', ...BADGE_CATEGORIES].map((c) => (
+                        <button key={c} type="button" aria-pressed={c === shownCategory} className={styles.badgePill} onClick={() => setBadgeCategory(c)}>
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                    {badgeGroups
+                      .filter((g) => shownCategory === 'All' || g.category === shownCategory)
+                      .map((g) => (
+                        <div key={g.category} className={styles.badgeGroup}>
+                          <h3 className={styles.badgeGroupTitle}>{g.category}</h3>
+                          <div className={styles.badgeGrid}>
+                            {g.badges.map((b) => (
+                              <BadgeCard key={b.id} badge={b} isSelf={isSelf} selected={b.id === selectedBadge?.id} onSelect={(badge) => setPicked({ badge })} />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                  </>
+                ) : badges.length > 0 ? (
                   <div className={styles.badgeGrid}>
                     {badges.map((b) => (
                       <BadgeCard key={b.id} badge={b} isSelf={isSelf} selected={b.id === selectedBadge?.id} onSelect={(badge) => setPicked({ badge })} />
@@ -703,13 +764,34 @@ export function ProfilePassport({
               </section>
             )}
 
-            {tab === 'photos' && <PassportPhotos key={profile.address.toLowerCase()} address={profile.address} isSelf={isSelf} actions={photoActions} />}
+            {tab === 'photos' && (
+              <PassportPhotos
+                key={profile.address.toLowerCase()}
+                address={profile.address}
+                isSelf={isSelf}
+                actions={photoActions}
+                viewerHost={panel}
+                empty={
+                  <section className={`${styles.card} ${styles.cardFill}`}>
+                    <div className={styles.emptyState}>
+                      <span className={styles.emptyIcon}>
+                        <Icon name="gallery" size={34} />
+                      </span>
+                      <p className={styles.emptyTitle}>No photos here yet!</p>
+                      {isSelf && <p className={styles.emptySub}>✨ Set your photos as public to make them visible in your Profile &amp; Communities ✨</p>}
+                    </div>
+                  </section>
+                }
+              />
+            )}
 
             {/* Keyed on the lowercased address: the passport opens with the address it was given, then
                 switches to the stored profile's lowercase one, which is the same creator. */}
             {tab === 'creations' && <CreationsSection key={profile.address.toLowerCase()} address={profile.address.toLowerCase()} />}
           </div>
-        </div>
+          <ScrollThumb target={scroller} className={styles.thumb} />
+          </div>
+          </div>
       </div>
   )
 }

@@ -61,6 +61,11 @@ import {
 import { analytics, Event } from '../../lib/logic/analytics';
 import { checkAssetCompatibility } from '../../lib/sdk/operations/add-asset/compatibility';
 import type { IncompatibleComponent } from '../../lib/sdk/operations/add-asset/compatibility';
+import {
+  canUpdateSceneSdk,
+  getSdkRequirement,
+  updateSceneSdk,
+} from '../../lib/sdk/operations/add-asset/scene-sdk';
 import { IncompatibleAssetModal } from '../IncompatibleAssetModal';
 import { Warnings } from '../Warnings';
 import { CameraSpeed } from './CameraSpeed';
@@ -111,7 +116,13 @@ const Renderer: React.FC = () => {
   const [incompatibleAssetInfo, setIncompatibleAssetInfo] = useState<{
     assetName: string;
     incompatibleComponents: IncompatibleComponent[];
+    minSdkVersion?: string;
   } | null>(null);
+  const requiredSdkVersion = incompatibleAssetInfo?.minSdkVersion;
+  const handleUpdateSdk =
+    requiredSdkVersion && canUpdateSceneSdk()
+      ? () => updateSceneSdk(requiredSdkVersion)
+      : undefined;
 
   useEffect(() => {
     if (sdk) {
@@ -326,11 +337,14 @@ const Renderer: React.FC = () => {
 
   const importCatalogAsset = async (asset: Asset) => {
     if (sdk) {
-      const compat = checkAssetCompatibility(asset.composite, sdk.engine);
+      const sdkRequirement = await getSdkRequirement(asset.minSdkVersion);
+      if (!isMounted()) return;
+      const compat = checkAssetCompatibility(asset.composite, sdk.engine, sdkRequirement);
       if (!compat.compatible) {
         setIncompatibleAssetInfo({
           assetName: asset.name,
           incompatibleComponents: compat.incompatibleComponents,
+          minSdkVersion: asset.minSdkVersion,
         });
         return;
       }
@@ -534,6 +548,7 @@ const Renderer: React.FC = () => {
         <IncompatibleAssetModal
           assetName={incompatibleAssetInfo.assetName}
           incompatibleComponents={incompatibleAssetInfo.incompatibleComponents}
+          onUpdateSdk={handleUpdateSdk}
           onClose={() => setIncompatibleAssetInfo(null)}
         />
       )}

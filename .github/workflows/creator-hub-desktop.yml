@@ -136,7 +136,7 @@ jobs:
               echo "@dcl/inspector@${{ inputs.inspector_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/inspector versions --json | tail -5 || true
+            pnpm view @dcl/inspector versions --json | tail -5 || true
             exit 1
           elif [[ -n "$INSPECTOR_S3_KEY" ]]; then
             echo "Installing inspector version from S3 bucket: $INSPECTOR_S3_KEY"
@@ -179,9 +179,16 @@ jobs:
           if [ ! -e "$DIR/parser.darwin-$OTHER.node" ]; then
             echo "Host arch $HOST -> fetching @oxc-parser/binding-darwin-$OTHER@$OXC"
             TMP=$(mktemp -d)
-            ( cd "$TMP" && npm pack "@oxc-parser/binding-darwin-$OTHER@$OXC" >/dev/null )
+            SPEC="@oxc-parser/binding-darwin-$OTHER@$OXC"
+            curl -fsSL "$(pnpm view "$SPEC" dist.tarball)" -o "$TMP/binding.tgz"
+            # The registry's sha512 for that tarball, which npm pack checked on its own.
+            INTEGRITY="sha512-$(openssl dgst -sha512 -binary "$TMP/binding.tgz" | base64 | tr -d '\n')"
+            if [ "$INTEGRITY" != "$(pnpm view "$SPEC" dist.integrity)" ]; then
+              echo "::error::$SPEC does not match the registry's integrity"
+              exit 1
+            fi
             mkdir -p "$DIR"
-            tar -xzf "$TMP"/*.tgz -C "$DIR" --strip-components=1
+            tar -xzf "$TMP/binding.tgz" -C "$DIR" --strip-components=1
             rm -rf "$TMP"
           fi
           for A in arm64 x64; do

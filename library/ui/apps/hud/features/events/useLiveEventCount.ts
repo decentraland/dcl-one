@@ -8,7 +8,7 @@ export function useLiveEventCount(): number {
   useEffect(() => {
     const ctrl = new AbortController()
     const load = (): void => {
-      fetchEvents('live', ctrl.signal).then(
+      fetchEvents('live', { signal: ctrl.signal }).then(
         (list) => setCount(list.length),
         () => !ctrl.signal.aborted && setCount(0)
       )

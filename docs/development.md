@@ -170,11 +170,12 @@ the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
 time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
 the other shards check that the tests are present. A run that sets neither
-variable runs them. When the dependency cache is restored from its exact key,
-the jobs compile through a compiler cache (`sccache` on the GitHub cache) that
-holds what that entry does not: the results of the workspace crates and of the
-separate `rusty_enet` workspace. Without that hit, without the tool, or when its
-server does not start, they compile as before. A PR that changes a build or dev-stack input gets a
+variable runs them. When the dependency cache restores anything, from its exact
+key or a partial match, the jobs compile through a compiler cache (`sccache` on
+the GitHub cache) that holds what that entry does not: the results of the
+workspace crates, of dependencies the entry lacks and of the separate
+`rusty_enet` workspace. Without a restore, without the tool, or when its server
+does not start, they compile as before. A PR that changes a build or dev-stack input gets a
 notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and
