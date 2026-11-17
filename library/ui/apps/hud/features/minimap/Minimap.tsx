@@ -59,17 +59,22 @@ const MAP_SIZE = 240
 /** Zoom easing, in seconds. Interpolated in log space so each step feels the same. */
 const ZOOM_TIME = 0.2
 
-/** A marker's place in the map layer: the centre of its parcel, not its corner. */
-function atlasPxAt(parcel: { x: number; y: number }): { left: number; top: number } {
-  const at = atlasPx(parcel.x * PARCEL_METERS + PARCEL_METERS / 2, parcel.y * PARCEL_METERS + PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
+/** A world point's place in the map layer, by the rule the player's own position follows (the
+ *  frame loop's `here`), so a pin's tip and the arrow agree on where a spot is. */
+function layerPx(worldX: number, worldZ: number): { left: number; top: number } {
+  const at = atlasPx(worldX - PARCEL_METERS / 2, worldZ - PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
   return { left: at.x, top: at.y }
 }
 
-/** A full-map position in the map layer; a player's, like the minimap's own, by its corner. */
+/** A parcel marker's place in the map layer: the centre of its parcel, not its corner. */
+function atlasPxAt(parcel: { x: number; y: number }): { left: number; top: number } {
+  return layerPx(parcel.x * PARCEL_METERS + PARCEL_METERS / 2, parcel.y * PARCEL_METERS + PARCEL_METERS / 2)
+}
+
+/** A full-map position in the map layer. */
 function atlasPxOf(pos: Vec2): { left: number; top: number } {
   const m = mapUnitsToMeters(pos)
-  const at = atlasPx(m.x - PARCEL_METERS / 2, m.z - PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
-  return { left: at.x, top: at.y }
+  return layerPx(m.x, m.z)
 }
 
 export const Minimap = memo(function Minimap({

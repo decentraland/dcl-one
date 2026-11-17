@@ -13,8 +13,6 @@ export interface Destination {
 
 const EMPTY_PARCEL_NAME = 'Empty parcel'
 const ARRIVAL_TOLERANCE_SQUARED = 50
-/** The player has to move this far, in squared distance from the origin, for the route to be checked again. */
-const MOVE_TOLERANCE = 300
 
 export interface NavigationStore {
   subscribe: (listener: () => void) => () => void
@@ -32,7 +30,6 @@ export function destinationParcel(place: DiscoverPlace | null): Vec2 {
 
 export function createNavigationStore(): NavigationStore {
   let destination: Destination | null = null
-  let lastSqrMagnitude = 0
   const listeners = new Set<() => void>()
   const commit = (next: Destination | null): void => {
     destination = next
@@ -52,9 +49,8 @@ export function createNavigationStore(): NavigationStore {
       if (destination != null) commit(null)
     },
     playerMoved: (position) => {
-      const sqrMagnitude = position.x * position.x + position.y * position.y
-      if (lastSqrMagnitude !== 0 && Math.abs(sqrMagnitude - lastSqrMagnitude) <= MOVE_TOLERANCE) return false
-      lastSqrMagnitude = sqrMagnitude
+      // Checked on every report: a throttle on the change of the distance from the map's origin
+      // can skip the arrival spot, as when the player stops there or comes at it sideways.
       if (destination == null) return false
       const dx = position.x - destination.position.x
       const dy = position.y - destination.position.y

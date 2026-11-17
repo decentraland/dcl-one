@@ -513,6 +513,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
   Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
   reads no `MapPin` and has no such layer.
+- **Arrival is checked on every position report.** unity-explorer checks the route only after
+  the player's squared distance from the map's origin has changed by 300 map units, which can
+  skip the arrival spot when the player stops on it or reaches it sideways, so the route never
+  ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
+  centre, then "You have arrived to your destination" and the pin goes.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
   config, parcel 0,0 of the default realm until one is set, and the place panel's button and the

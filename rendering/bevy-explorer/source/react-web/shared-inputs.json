@@ -6321,7 +6321,7 @@
     },
     {
       "path": "library/explorer-core/features/map/navigation.ts",
-      "sha256": "7d93723ccc10709a251d6411d072dcaa88d72b763673db25f8a9fd0246fbcb21"
+      "sha256": "8af1832432c5da1b5fafa191b44a85f674d93d706af896bb33460b41dd86ab59"
     },
     {
       "path": "library/explorer-core/features/map/navmap.ts",
@@ -6625,7 +6625,7 @@
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "364f3c8e31841856264dd3c6461932d94c0695672d6987323bbac479878811c9"
+      "sha256": "bd4fc1cc49d650edf356f0357efcf616dbc9431d0fed03690c163ee96c1a180a"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -9069,7 +9069,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
-      "sha256": "fc7c9d911edfa838ebe9a15e0f4d6db92a7e09da6d9a94ba9e482c2d15c66f69"
+      "sha256": "b7564921c2b31787b3c796da8c5de6151ff046a22bd864229e4d1faaf4626527"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
@@ -9173,7 +9173,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "897f5afe8326b57c650d4b3dc064511ffd6a198a2bd33baf3266ea91c91009ee"
+      "sha256": "9fd06ca7f12a0e202181ad0248c5dfb5607533842bb7ae49623af26166b2f717"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
