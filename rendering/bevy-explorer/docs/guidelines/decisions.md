@@ -551,6 +551,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
+  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the

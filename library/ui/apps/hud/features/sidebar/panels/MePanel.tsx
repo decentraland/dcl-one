@@ -1,9 +1,9 @@
-// MePanel — the panel the Me button opens: who the player is, the wallet address to copy, the
-// player's own pages, and the ways out. The bar places it and closes it; every action comes in
+// MePanel — the panel the Me button opens: who the player is, the wallet address and the invite link to
+// copy, the player's own pages, and the ways out. The bar places it and closes it; every action comes in
 // by props, and a row whose action the bar does not pass is not drawn.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, MenuList, MenuPanel, MenuRow, showConfirm } from '../../../design'
+import { Avatar, MenuList, MenuPanel, MenuRow, showConfirm, showToast } from '../../../design'
 import { isAddress, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Profile } from '@explorer-core/engine/protocol'
 import backpackIcon from '../../../assets/sidebar-rail/me-backpack.svg?no-inline'
@@ -19,6 +19,8 @@ export interface MePanelProps {
   profile: Pick<Profile, 'address' | 'name' | 'picture' | 'hasClaimedName' | 'nameColor'> | null
   /** The key bound to the Backpack, drawn as "[I]" after the label. */
   backpackKey?: string
+  /** The player's invite link, copied by INVITE FRIENDS; the button is left out without one. */
+  inviteLink?: string
   onBackpack: () => void
   /** Open the player's own passport. */
   onProfile: () => void
@@ -40,7 +42,7 @@ const art = (src: string): React.JSX.Element => <img src={src} alt="" draggable=
 /** "0x10e...a7a92": the first five and the last five characters. */
 const shortWallet = (address: string): string => `${address.slice(0, 5)}...${address.slice(-5)}`
 
-export function MePanel({ profile, backpackKey, onBackpack, onProfile, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
+export function MePanel({ profile, backpackKey, inviteLink, onBackpack, onProfile, onBadges, onSignOut, onExit, onClose }: MePanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(copiedTimer.current), [])
@@ -70,6 +72,13 @@ export function MePanel({ profile, backpackKey, onBackpack, onProfile, onBadges,
     )
   }
 
+  const copyInvite = (link: string): void => {
+    navigator.clipboard?.writeText(link).then(
+      () => showToast('Link copied!', { key: 'invite-link' }),
+      () => {}
+    )
+  }
+
   const color = profile != null ? userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor) : undefined
   const wallet = profile != null && isAddress(profile.address) ? profile.address : null
   const { base, tag } = splitName(profile?.name ?? '')
@@ -95,6 +104,11 @@ export function MePanel({ profile, backpackKey, onBackpack, onProfile, onBadges,
                   <span className={styles.copy} aria-hidden="true">
                     {art(copyIcon)}
                   </span>
+                </button>
+              )}
+              {inviteLink != null && (
+                <button type="button" className={`${styles.wallet} ${styles.invite}`} onClick={() => copyInvite(inviteLink)}>
+                  INVITE FRIENDS
                 </button>
               )}
             </div>
