@@ -35,7 +35,9 @@ pnpm run gpu-probe                     # the GPU the browser gives, started as t
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+The suite serves the web app on loopback at `http://localhost:<port>` (`driver/serve.ts`; the
+events and places services answer a signed read's CORS preflight for a `localhost` origin and not
+for `127.0.0.1`), with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
 the build's root-relative one is no url to the engine and the bridge scene would never load), starts Chrome

@@ -158,9 +158,16 @@ pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
 
 // A scene tick that has been in-flight (sent to the scene, no response yet) for longer than this
 // is treated as "not responding": update_scene_priority marks the scene broken and frees its
-// thread slot, handle_out_of_world stops holding the player behind the loading screen, and the
-// loading UI surfaces a countdown to this timeout.
+// thread slot (a super-user scene has the longer limit below), handle_out_of_world stops
+// holding the player behind the loading screen, and the loading UI surfaces a countdown to this
+// timeout.
 pub const SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+// The not-responding limit for a super-user scene (the HUD's bridge scene). Its first tick on a
+// cold, busy page can take longer than the ordinary timeout, but a wedged one is still marked
+// broken, which terminates its worker and frees its thread slot.
+pub const SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(120);
 
 // Don't surface the "not responding" message until a tick has been in-flight at least this long,
 // so a normal slow frame doesn't flicker the warning.
