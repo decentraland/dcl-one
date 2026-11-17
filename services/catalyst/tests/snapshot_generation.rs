@@ -432,11 +432,14 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         "a reused window keeps its row, generation time included"
     );
 
-    // A late arrival in the week window: active, stamped after the pass. Both
-    // stamps are fixed, an hour apart, so the comparison never reads the wall
-    // clock. A transaction held open across the next pass (an autovacuum
-    // worker does the same) moves the regenerated row's generation time back
-    // to its start, which is still years after the late arrival's stamp.
+    // A late arrival in the week window: active, stamped after the week row's
+    // (backdated) generation time. Both stamps are fixed, an hour apart, so
+    // the outdated probe never compares a pass horizon with a wall-clock
+    // `local_timestamp`; that comparison is left out on purpose, because any
+    // open transaction moves the horizon back. A transaction held open across
+    // the next pass (an autovacuum worker does the same) moves the
+    // regenerated row's generation time back to its start, which is still
+    // years after the late arrival's stamp.
     let week = golden[2].range;
     sqlx::query(
         "UPDATE content.snapshots SET generation_time = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
@@ -448,7 +451,13 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     .await
     .unwrap();
     let mut held = db.pool.begin().await.unwrap();
-    sqlx::query("SELECT 1").execute(&mut *held).await.unwrap();
+    let held_start: i64 = sqlx::query_scalar(
+        "SELECT ceil(EXTRACT(EPOCH FROM xact_start) * 1000)::int8
+         FROM pg_stat_activity WHERE pid = pg_backend_pid()",
+    )
+    .fetch_one(&mut *held)
+    .await
+    .unwrap();
     insert_deployment(
         &db.pool,
         "bafkreilatearrival",
@@ -461,6 +470,10 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     assert_eq!((summary.generated, summary.reused), (1, 3));
     assert_ne!(rows[2].hash, golden[2].hash);
     assert_eq!(rows[2].number_of_entities, 4);
+    assert!(
+        rows[2].generation_timestamp <= held_start,
+        "the held transaction bounds the regenerated row's generation time"
+    );
     assert_eq!(
         rows[2].replaced_snapshot_hashes.as_deref(),
         Some(&[golden[2].hash.clone()][..])
