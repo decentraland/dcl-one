@@ -11,7 +11,7 @@ import { PlacesPage } from "@dcl/one-ui/apps/sites/places/PlacesPage";
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { browseCommunitiesQuery, communityRows, effectiveCommunitySearch } from "@/data/lib/catalyst/social/communities-browse";
-import { communityHref, communityThumbnailUrl } from "@/data/lib/catalyst/social/communities-list";
+import { communityHref } from "@/data/lib/catalyst/social/communities-list";
 import { PlacesTabs } from "@/features/places/PlacesTabs";
 
 import type { Route } from "./+types/places_.communities";
@@ -184,8 +184,7 @@ function CommunitiesExplorer({ unavailable }: { unavailable: boolean }) {
                 name={community.name}
                 href={communityHref(community.id)}
                 linkComponent={CardLink}
-                image={community.thumbnailUrl ?? communityThumbnailUrl(community.id)}
-                fallbackImage={community.thumbnailUrl ? communityThumbnailUrl(community.id) : undefined}
+                image={community.thumbnailUrl}
                 priority={index < PRIORITY_CARDS}
                 ownerName={community.ownerName}
                 privacy={community.privacy}

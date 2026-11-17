@@ -93,12 +93,14 @@ describe("when the communities load", () => {
     expect(within(grid).getByText("Private")).toBeTruthy();
   });
 
-  it("should draw the cover the row names, and the node's thumbnail when it names none", async () => {
+  it("should draw the cover the row names, and request no image when it names none", async () => {
     serve([community("a", { name: "Mirrored", thumbnailUrl: "https://cdn.example/a.png" }), community("b", { name: "Local" })]);
     renderPage();
     await screen.findByRole("link", { name: "Mirrored" });
-    const covers = [...document.querySelectorAll("article img")].map((img) => img.getAttribute("src"));
-    expect(covers).toEqual(["https://cdn.example/a.png", "/social-api/social/communities/b/raw-thumbnail.png"]);
+    const cards = [...document.querySelectorAll("article")];
+    expect(cards).toHaveLength(2);
+    expect(cards[0].querySelector("img")?.getAttribute("src")).toBe("https://cdn.example/a.png");
+    expect(cards[1].querySelector("img")).toBeNull();
   });
 
   it("should name a single member in the singular", async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { communityHref, communityThumbnailUrl, fetchCommunitiesPage } from "./communities-list";
+import { communityHref, fetchCommunitiesPage } from "./communities-list";
 
 const BASE = "http://node.test";
 
@@ -64,12 +64,14 @@ describe("fetchCommunitiesPage", () => {
           row({ id: "a", thumbnailUrl: "https://cdn.example/a.png" }),
           row({ id: "b", thumbnailUrl: "N/A" }),
           row({ id: "c", thumbnailUrl: "  " }),
+          row({ id: "d", thumbnailUrl: null }),
+          { id: "e", name: "No cover field" },
         ],
-        total: 3,
+        total: 5,
       },
     });
     const page = await fetchCommunitiesPage({ offset: 0, search: "" }, { base: BASE });
-    expect(page.rows.map((community) => community.thumbnailUrl)).toEqual(["https://cdn.example/a.png", null, null]);
+    expect(page.rows.map((community) => community.thumbnailUrl)).toEqual(["https://cdn.example/a.png", null, null, null, null]);
   });
 
   it("should leave out a row without an id or a name but still count it as received", async () => {
@@ -91,10 +93,6 @@ describe("fetchCommunitiesPage", () => {
 });
 
 describe("community links", () => {
-  it("should point the cover at the node's thumbnail and encode the id", () => {
-    expect(communityThumbnailUrl("a/b")).toBe("/social-api/social/communities/a%2Fb/raw-thumbnail.png");
-  });
-
   it("should open the community page by id", () => {
     expect(communityHref("c 1")).toBe("/landings/community-detail?id=c%201");
   });

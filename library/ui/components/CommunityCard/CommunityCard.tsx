@@ -28,8 +28,6 @@ export type CommunityCardProps = {
   /** Runs on a click of the name link, before `href` is followed. */
   onOpen?: (event: MouseEvent<HTMLAnchorElement>) => void
   image?: string | null
-  /** Tried when `image` is missing or fails to load. */
-  fallbackImage?: string
   /** Loads the cover eagerly, for the first cards of a page. */
   priority?: boolean
   /** The owner's display name, under the community name. */
@@ -62,7 +60,6 @@ export function CommunityCard({
   href,
   onOpen,
   image,
-  fallbackImage,
   priority = false,
   ownerName,
   privacy = 'public',
@@ -90,13 +87,7 @@ export function CommunityCard({
     <div className={styles.container}>
       <article className={styles.card}>
         <div className={styles.media}>
-          <CardImage
-            className={styles.cover}
-            src={image}
-            fallbackSrc={fallbackImage}
-            alt=""
-            priority={priority}
-          />
+          <CardImage className={styles.cover} src={image} alt="" priority={priority} />
         </div>
         <div className={styles.body}>
           <Heading className={styles.name}>

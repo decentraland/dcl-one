@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { siteUrl } from "../bases";
 import { CatalystError, getJSON } from "../client";
 import { dataOf } from "../envelope";
 
@@ -28,7 +27,7 @@ export type BrowseCommunity = {
   ownerName: string | null;
   privacy: "public" | "private";
   membersCount: number | null;
-  /** The cover the row names, e.g. a mirrored community's upstream CDN image; null when it names none. */
+  /** The cover the row names: the node's own upload or a mirrored community's upstream image; null when it has none. */
   thumbnailUrl: string | null;
 };
 
@@ -79,11 +78,6 @@ export async function fetchCommunitiesPage(
     });
   }
   return { rows, received: page.data.data.results.length, total: page.data.data.total };
-}
-
-/** The cover the node serves for a community (404 without one, and the card shows its placeholder). */
-export function communityThumbnailUrl(id: string): string {
-  return siteUrl(`/social-api/social/communities/${encodeURIComponent(id)}/raw-thumbnail.png`);
 }
 
 /** The community's page, as the profile's Communities tab links it. */
