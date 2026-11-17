@@ -219,11 +219,30 @@ macro_rules! member_exists {
 const MEMBER_EXISTS: &str = member_exists!("$1", "$2");
 
 /// Key-package claims per claimer (sized for opening a large channel) and,
-/// spent only by a package actually handed out, per owner.
+/// spent only by a package actually handed out, per owner and per
+/// (claimer, owner) pair, so one claimer cannot spend an owner's whole budget.
 static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
+static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)));
+
+fn claim_pair(claimer: &str, owner: &str) -> String {
+    format!("{claimer}:{owner}")
+}
+
+/// Whether the owner's or this pair's handed-out budget is spent.
+fn claim_budget_spent(claimer: &str, owner: &str) -> bool {
+    CLAIMS_OF_OWNER.is_rate_limited(owner)
+        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner))
+}
+
+/// Charges one handed-out package to the owner and the pair.
+fn spend_claim(claimer: &str, owner: &str) {
+    CLAIMS_OF_OWNER.check(owner);
+    CLAIMS_OF_PAIR.check(&claim_pair(claimer, owner));
+}
 
 /// Owners with a claim in flight on this node. One claim per owner runs at a
 /// time, so the owner's budget is read and spent atomically; a concurrent
@@ -486,7 +505,7 @@ pub async fn claim_key_package(
     let Some(_slot) = ClaimSlot::take(&owner) else {
         return Err(claim_rate_limited());
     };
-    if CLAIMS_OF_OWNER.is_rate_limited(&owner) {
+    if claim_budget_spent(&claimer, &owner) {
         return Err(claim_rate_limited());
     }
     // A block either way answers as an empty stock.
@@ -507,7 +526,7 @@ pub async fn claim_key_package(
     .fetch_optional(&state.pool)
     .await?;
     if row.is_some() {
-        CLAIMS_OF_OWNER.check(&owner);
+        spend_claim(&claimer, &owner);
     }
     match row {
         Some((ref_hash, kp, cs)) => Ok(Json(
@@ -1403,6 +1422,18 @@ mod tests {
             429
         );
         spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
+    }
+
+    #[test]
+    fn one_claimer_cannot_spend_an_owners_whole_claim_budget() {
+        let owner = address_of(&random_key());
+        let (heavy, other) = (address_of(&random_key()), address_of(&random_key()));
+        for _ in 0..10 {
+            assert!(!claim_budget_spent(&heavy, &owner));
+            spend_claim(&heavy, &owner);
+        }
+        assert!(claim_budget_spent(&heavy, &owner));
+        assert!(!claim_budget_spent(&other, &owner));
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old
