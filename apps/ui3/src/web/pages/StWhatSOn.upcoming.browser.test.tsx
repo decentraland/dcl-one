@@ -145,7 +145,7 @@ describe.each([1920])("when an Upcoming card is hovered at %ipx", (width) => {
 });
 
 // Every width where the hover actions show: each visible action sits inside its card and is what a click there hits.
-describe.each([900, 1024, 1280, 1440, 1920])("when an Upcoming card is hovered at %ipx, where its actions show", (width) => {
+describe.each([900, 1024, 1032, 1280, 1440, 1920])("when an Upcoming card is hovered at %ipx, where its actions show", (width) => {
   it("should keep both visible actions inside the card and hit-testable", async () => {
     await load(width);
     const { x, y } = await evaluate<{ x: number; y: number }>(
