@@ -217,20 +217,34 @@ def newer_tags(tags, ref):
     return sorted(newer, key=tag_order)
 
 
+def named_ref(repo, ref, api):
+    """('tag' or 'branch', commit id) of the tag or branch with exactly this name, or None. GitHub
+    compare also resolves a pull request head and a commit id, and those claim nothing about a pin."""
+    for kind, space in (('tag', 'tags'), ('branch', 'heads')):
+        rows = api(f'repos/{repo}/git/matching-refs/{space}/{urllib.parse.quote(ref)}') or []
+        target = next((row['object'] for row in rows if row['ref'] == f'refs/{space}/{ref}'), None)
+        while target and target['type'] == 'tag':  # an annotated tag names its commit through a tag object
+            target = (api(f'repos/{repo}/git/tags/{target["sha"]}') or {}).get('object')
+        if target:
+            return kind, target['sha']
+    return None
+
+
 def check_source(source, api=gh_api):
     """How far the watched ref is from the pinned commit; for a tag, also the newer tags of its
-    scheme. None when GitHub cannot compare the two."""
+    scheme. None when the repository has no tag or branch of that name, or GitHub cannot compare."""
     repo = github_repo(source['upstream'])
     if repo is None:
         return None
     repo = '/'.join(repo)
     ref = source['ref'] or (api(f'repos/{repo}') or {}).get('default_branch')
-    compare = api(f'repos/{repo}/compare/{source["commit"]}...{urllib.parse.quote(ref, safe="")}') if ref else None
+    kind, head = (named_ref(repo, ref, api) or (None, None)) if source['ref'] else ('branch', ref)
+    compare = api(f'repos/{repo}/compare/{source["commit"]}...{urllib.parse.quote(head, safe="")}') if head else None
     if compare is None:
         return None
-    tags = scheme_tags(repo, ref, api) if source['ref'] else []
+    tags = scheme_tags(repo, ref, api) if kind == 'tag' else []
     return {'ref': ref, 'ahead': compare['ahead_by'], 'behind': compare['behind_by'], 'named': bool(source['ref']),
-            'tag': ref in tags, 'newer_tags': newer_tags(tags, ref) if ref in tags else []}
+            'tag': kind == 'tag', 'newer_tags': newer_tags(tags, ref)}
 
 
 def off_ref(result):
@@ -255,7 +269,7 @@ def check_report(sources, api=gh_api):
         result = check_source(source, api)
         if result is None:
             failed += 1
-            why = f'GitHub cannot compare {source["ref"] or "the default branch"} with {pin}' if repo else 'not a GitHub repository'
+            why = f'GitHub cannot compare {"the tag or branch " + source["ref"] if source["ref"] else "the default branch"} with {pin}' if repo else 'not a GitHub repository'
             lines.append(f'- {source["name"]}: {where} NOT CHECKED: {why}')
             continue
         moved += result['ahead'] > 0

@@ -145,10 +145,14 @@ impl Plugin for InputManagerPlugin {
             ]),
             ..Default::default()
         });
+        // All of them read the frame's keys, buttons and wheel, so they run once bevy has applied
+        // the frame's input events. Left unordered, the multi-threaded executor can run one before
+        // `InputSystem` in one frame and after it in the next: the stream then reads a tap's
+        // `just_pressed` twice (a second press edge, which toggles a HUD page shut again) or never.
         app.add_systems(
             PreUpdate,
             (
-                handle_modifier_keys.after(bevy::input::InputSystem),
+                handle_modifier_keys,
                 update_deltas,
                 handle_native_input,
                 handle_get_bindings,
@@ -156,7 +160,8 @@ impl Plugin for InputManagerPlugin {
                 handle_set_ui_focus,
                 handle_pointer_motion,
                 handle_system_input_stream,
-            ),
+            )
+                .after(bevy::input::InputSystem),
         );
 
         app.add_console_command::<ResetControlsCommand, _>(reset_controls_command);
@@ -1054,6 +1059,44 @@ mod tests {
         std::iter::from_fn(|| receiver.try_recv().ok())
             .map(|event| (event.action, event.pressed))
             .collect()
+    }
+
+    /// A tap as the browser sends it: press and release before the next frame, through bevy's own
+    /// keyboard system and the stream in the plugin's order. One press edge, then one release,
+    /// however many frames follow.
+    #[test]
+    fn a_tap_through_bevys_input_is_one_press() {
+        use bevy::input::{
+            keyboard::{keyboard_input_system, Key, KeyboardFocusLost, KeyboardInput},
+            ButtonState, InputSystem,
+        };
+
+        let (mut world, mut receiver) = world();
+        world.init_resource::<Events<KeyboardInput>>();
+        world.init_resource::<Events<KeyboardFocusLost>>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems((
+            keyboard_input_system.in_set(InputSystem),
+            handle_system_input_stream.after(InputSystem),
+        ));
+
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            world.send_event(KeyboardInput {
+                key_code: KeyCode::KeyB,
+                logical_key: Key::Character("b".into()),
+                state,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        }
+        for _ in 0..4 {
+            schedule.run(&mut world);
+        }
+        assert_eq!(
+            edges(&mut receiver),
+            [(SystemAction::Emote, true), (SystemAction::Emote, false)]
+        );
     }
 
     #[test]

@@ -1067,6 +1067,10 @@ class SourceFileTest(PatchedSourcesCase):
                 ("ref", "v1 beta", "ref must be a tag or branch name"),
                 ("ref", "-v1", "ref must be a tag or branch name"),
                 ("ref", "a/../b", "ref must be a tag or branch name"),
+                ("ref", "pull/123/head", "ref must be a tag or branch name"),
+                ("ref", "refs/pull/123/head", "ref must be a tag or branch name"),
+                ("ref", "refs/heads/main", "ref must be a tag or branch name"),
+                ("ref", "a" * 40, "ref must be a tag or branch name"),
                 ("origin", "git@example.invalid:fork", "origin must be a URL that starts with https:// or file://"),
                 ("origin_rev", "main", "origin_rev must be a full commit id"),
                 ("origin_rev", "", "origin_rev is needed"),
@@ -1354,6 +1358,11 @@ class LinkAndSubmoduleTest(PatchedSourcesCase):
         other = self.sub.commit("newer")
         self.add_source(commits=[self.fork], base=self.linked, extra=self.submodule.replace(self.sub_commit, other))
         self.assertIn(f"the tree has {self.sub_commit} at libs/yuv", self.fails("materialise"))
+
+    def test_a_submodule_needs_its_gitlink_in_the_tree(self):
+        self.add_source(commits=[self.fork], base=self.linked, extra='exclude = ["libs"]\n' + self.submodule,
+                        base_tree=self.up.top_tree(self.linked, drop={"libs"}), tree=self.up.top_tree(self.fork, drop={"libs"}))
+        self.assertIn(f"the tree has no gitlink at libs/yuv, [[submodule]] has {self.sub_commit}", self.fails("materialise"))
 
     def test_export_keeps_links_and_refuses_submodule_edits(self):
         self.materialised(commits=[self.fork], base=self.linked, extra=self.submodule, written=self.up.tree_of(self.expected()))
