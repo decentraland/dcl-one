@@ -16,8 +16,7 @@
   .control,
   .date,
   .create,
-  .cart,
-  .collection select {
+  .cart {
     box-sizing: border-box;
     min-height: 44px;
     border: 0;
@@ -39,6 +38,8 @@
     border: 0;
     background: transparent;
     font: inherit;
+    /* The search box's :focus-within ring is the field's one focus indicator. */
+    outline: none;
   }
   .search input::placeholder {
     color: var(--dcl-neutrals-cloudy-sky);
@@ -47,8 +48,7 @@
   .control:focus-visible,
   .date:focus-visible,
   .create:focus-visible,
-  .cart:focus-visible,
-  .collection select:focus-visible {
+  .cart:focus-visible {
     outline: 2px solid var(--dcl-neutrals-snow);
     outline-offset: 2px;
   }
@@ -89,13 +89,19 @@
     font-size: 15px;
     font-weight: 600;
   }
-  .collection select {
-    min-width: 0;
+  .choice {
     flex: 1;
-    background: var(--dcl-neutrals-snow);
-    color: var(--dcl-neutrals-shadow);
+    min-width: 0;
+    justify-content: space-between;
     font-size: 16px;
+    font-weight: 400;
     padding: 8px 12px;
+  }
+  .value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cart {
     position: relative;
@@ -127,6 +133,10 @@
     width: 240px;
     max-width: calc(100vw - 40px);
     z-index: 1;
+  }
+  .end {
+    left: auto;
+    right: 0;
   }
   .popup {
     box-sizing: border-box;
