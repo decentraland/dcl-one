@@ -32,8 +32,8 @@ than once. Check here before correcting something surprising.
   distance, so its `Aabb` is a cube sized for the far end of its range, not its mesh's bounds.
   A name that should not show is hidden, never despawned. A tag is a transparent mesh that
   tests depth, so it is hidden behind walls and is tonemapped and bloomed with the frame. A
-  player's tag comes from their profile. A scene `AvatarShape` avatar shows its `name` (`NPC`
-  when the scene sets none or the name starts with `#`, no tag for a blank one), the last four
+  player's tag comes from their profile. A scene `AvatarShape` avatar shows its `name` (no
+  tag when the scene sets none or a blank one, `NPC` when it starts with `#`), the last four
   characters of its `id` as the suffix (`#0000` for a shorter id) and the voice bars while
   `talking` is set; it has its tag while it has a built body, so the tag goes while a new
   outfit loads. The HUD's preview avatars and a scene entity that only restyles a player get

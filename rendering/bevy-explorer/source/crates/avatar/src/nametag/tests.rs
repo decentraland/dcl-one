@@ -152,12 +152,14 @@ fn a_scene_avatar_shows_its_name_and_the_end_of_its_id() {
     assert_eq!(named.suffix, "#0001");
     assert!(!named.verified && !named.official);
 
-    // no name given reads NPC; a blank one asks for no tag
-    let unnamed = NametagContent::from_shape(&shape("guide-0001", None)).unwrap();
-    assert_eq!(unnamed.name, "NPC");
-    for blank in ["", "  "] {
-        assert!(NametagContent::from_shape(&shape("guide-0001", Some(blank))).is_none());
+    // no name given, or a blank one, asks for no tag
+    for unnamed in [None, Some(""), Some("  ")] {
+        assert!(NametagContent::from_shape(&shape("guide-0001", unnamed)).is_none());
     }
+
+    // a control character in the id stays off the tag
+    let broken = NametagContent::from_shape(&shape("guide-0\n01", Some("Guide"))).unwrap();
+    assert_eq!(broken.suffix, "#0 01");
 
     // an id too short to end a name shows zeros, and one of four characters shows itself
     for (id, suffix) in [
@@ -261,6 +263,18 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
         app.world().get::<NametagVoice>(guide).unwrap().0,
         Voice::Speaking
     );
+    // as a call's speaker: a scene that turns nearby voice off leaves the bars up
+    assert_eq!(
+        app.world().get::<Speaking>(guide),
+        Some(&Speaking { in_call: true })
+    );
+    app.world_mut().resource_mut::<MicState>().scene_blocked = true;
+    app.update();
+    assert_eq!(
+        app.world().get::<NametagVoice>(guide).unwrap().0,
+        Voice::Speaking
+    );
+    app.world_mut().resource_mut::<MicState>().scene_blocked = false;
 
     // an empty name takes the tag away, and a name brings it back
     for (name, shown) in [("", None), ("Guide", Some("Guide"))] {
@@ -269,6 +283,8 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
             .insert(AvatarShape(shape("guide-0001", Some(name))));
         app.update();
         assert_eq!(name_of(&app, guide).as_deref(), shown, "{name:?}");
+        // the shape no longer says talking
+        assert!(app.world().get::<Speaking>(guide).is_none());
     }
 
     // an avatar with no tag is remembered as such: its shape is read again only once changed
@@ -277,10 +293,7 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
         .insert(AvatarShape(shape("guide-0001", Some(""))));
     app.update();
     app.update();
-    let unnamed = SceneAvatarNametag {
-        named: false,
-        talking: false,
-    };
+    let unnamed = SceneAvatarNametag { named: false };
     assert_eq!(app.world().get::<SceneAvatarNametag>(guide), Some(&unnamed));
     let read = app
         .world()

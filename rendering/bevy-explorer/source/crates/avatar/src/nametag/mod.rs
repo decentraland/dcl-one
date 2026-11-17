@@ -233,20 +233,21 @@ impl NametagContent {
         }
     }
 
-    /// What a scene's avatar shows: its name (`NPC` when the scene gives none) and the end
-    /// of its id. `None` for a blank name, which asks for no tag. As in a player's name,
-    /// whatever follows a `#` is dropped; a name with nothing before one reads `NPC`.
+    /// What a scene's avatar shows: its name and the end of its id. `None` for a name the
+    /// scene leaves unset or blank, which asks for no tag. As in a player's name, whatever
+    /// follows a `#` is dropped; a name with nothing before one reads `NPC`.
     fn from_shape(shape: &PbAvatarShape) -> Option<Self> {
-        let given = shape.name.as_deref().unwrap_or(DEFAULT_SCENE_AVATAR_NAME);
-        if given.trim().is_empty() {
-            return None;
-        }
+        let given = shape
+            .name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())?;
         let name = match given.split('#').next().unwrap_or_default().trim() {
             "" => DEFAULT_SCENE_AVATAR_NAME,
             name => name,
         };
         let name = capped(name, MAX_NAME_CHARS);
         let suffix = match shape.id.char_indices().rev().nth(3) {
+            // never cut: `capped` is here to keep a control character off the tag
             Some((last4, _)) => format!("#{}", capped(&shape.id[last4..], 4)),
             None => "#0000".to_owned(),
         };
@@ -272,8 +273,6 @@ impl NametagContent {
 pub struct SceneAvatarNametag {
     /// The shape gives the avatar a [`NametagContent`]; a blank name gives none.
     pub named: bool,
-    /// The scene marks the avatar as talking: its tag shows the voice bars.
-    pub talking: bool,
 }
 
 /// On a player or a scene avatar: what their nametag's voice badge shows.
@@ -518,7 +517,8 @@ fn resolve_content(
 /// Names the avatars a scene made, while they have a body that is built: without one the tag
 /// would sit at their feet. A scene entity that only restyles a player has no
 /// [`AvatarSelection`] and gets no tag, and nor do the avatars the HUD previews, which a system
-/// scene makes.
+/// scene makes. One the scene marks as talking is [`Speaking`], as in a call: a scene that
+/// turns nearby voice off leaves its bars up.
 #[allow(clippy::type_complexity)]
 fn resolve_scene_avatar_content(
     mut commands: Commands,
@@ -529,6 +529,7 @@ fn resolve_scene_avatar_content(
             Ref<AvatarShape>,
             Option<&NametagContent>,
             Option<&SceneAvatarNametag>,
+            Has<Speaking>,
         ),
         (
             With<AvatarSelection>,
@@ -550,7 +551,7 @@ fn resolve_scene_avatar_content(
         ),
     >,
 ) {
-    for (avatar, scene_entity, shape, current, marker) in &avatars {
+    for (avatar, scene_entity, shape, current, marker, speaking) in &avatars {
         if marker.is_some() && !shape.is_changed() {
             continue;
         }
@@ -560,10 +561,20 @@ fn resolve_scene_avatar_content(
         // an avatar with no tag is marked too: its shape is not read again until it changes
         let resolved = SceneAvatarNametag {
             named: content.is_some(),
-            talking: content.is_some() && shape.0.talking == Some(true),
         };
         if marker != Some(&resolved) {
             commands.entity(avatar).try_insert(resolved);
+        }
+        match content.is_some() && shape.0.talking == Some(true) {
+            true if !speaking => {
+                commands
+                    .entity(avatar)
+                    .try_insert(Speaking { in_call: true });
+            }
+            false if speaking => {
+                commands.entity(avatar).try_remove::<Speaking>();
+            }
+            _ => {}
         }
         match content {
             Some(content) if current != Some(&content) => {
@@ -578,7 +589,7 @@ fn resolve_scene_avatar_content(
     for avatar in &dropped {
         commands
             .entity(avatar)
-            .try_remove::<(NametagContent, SceneAvatarNametag)>();
+            .try_remove::<(NametagContent, SceneAvatarNametag, Speaking)>();
     }
 }
 
@@ -647,20 +658,15 @@ fn resolve_voice(
         Option<&Speaking>,
         Option<&ForeignPlayer>,
         Has<PrimaryUser>,
-        Option<&SceneAvatarNametag>,
     )>,
 ) {
-    for (mut voice, speaking, foreign, is_local, scene_avatar) in &mut players {
-        let badge = if scene_avatar.is_some_and(|avatar| avatar.talking) {
-            Voice::Speaking
-        } else {
-            voice_badge(
-                speaking.copied(),
-                foreign.is_some_and(|player| mutes.is_muted(player.address)),
-                is_local && mic.enabled,
-                mic.scene_blocked,
-            )
-        };
+    for (mut voice, speaking, foreign, is_local) in &mut players {
+        let badge = voice_badge(
+            speaking.copied(),
+            foreign.is_some_and(|player| mutes.is_muted(player.address)),
+            is_local && mic.enabled,
+            mic.scene_blocked,
+        );
         voice.set_if_neq(NametagVoice(badge));
     }
 }

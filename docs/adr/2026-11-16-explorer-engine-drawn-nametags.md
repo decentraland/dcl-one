@@ -52,7 +52,7 @@ scene draws none.
   there is no pool: a tag is a handful of components, and reusing one saved nothing, since its
   name was shaped and its mesh uploaded again for the next player.
 - **A scene avatar is named from its `AvatarShape`.** Once the avatar is built it carries the
-  same `NametagContent`, marked `SceneAvatarNametag`: its `name` (`NPC` when unset; a blank
+  same `NametagContent`, marked `SceneAvatarNametag`: its `name` (an unset or blank
   name asks for no tag), `#` and the last four characters of its `id` as the suffix (`#0000` for
   a shorter id), never the verified or official badge, and the voice bars while `talking` is
   set. As in a player's name, what follows a `#` in the name is dropped; a name with nothing

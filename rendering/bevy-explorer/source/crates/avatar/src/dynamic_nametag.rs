@@ -70,8 +70,7 @@ pub struct NametagHeadOffset(pub f32);
 
 impl NametagHeadOffset {
     /// From how far the avatar's meshes reach above the head bone, in the avatar's units. A
-    /// reach that
-    /// doesn't clear a bare head is not a measurement of one: the default stands in.
+    /// reach that doesn't clear a bare head is not a measurement of one: the default stands in.
     pub fn above_head(top: f32) -> Self {
         let offset = top + HEAD_OFFSET_BUFFER;
         Self(if !offset.is_finite() || top < HEAD_TOP_MIN {
