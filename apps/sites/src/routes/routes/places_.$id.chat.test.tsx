@@ -104,7 +104,7 @@ it("Genesis place: join as guest, never as the visitor's wallet", async () => {
   expect(signedFetch).toHaveBeenCalledTimes(1);
   const [guest, url, init] = signedFetch.mock.calls[0] as [AuthIdentity, string, { metadata: unknown }];
   expect(url).toBe("https://node.test/comms-gatekeeper/get-scene-adapter");
-  expect(init.metadata).toEqual({ sceneId: "bafyscene", parcel: "34,17", realmName: "node-realm", signer: "decentraland-kernel-scene" });
+  expect(init.metadata).toEqual({ sceneId: "bafyscene", parcel: "34,17", realmName: "node-realm", signer: "dcl:explorer" });
   expect(guest.signer).toMatch(/^0x[0-9a-f]{40}$/);
   expect(guest.signer).not.toBe(IDENTITY.signer);
   expect(requested).toEqual(["https://node.test/content/entities/active", "https://node.test/about"]);

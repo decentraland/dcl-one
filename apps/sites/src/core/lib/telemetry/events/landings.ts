@@ -91,9 +91,6 @@ export type LandingsEvents = {
     stub: true;
   };
   lp_community_gate_viewed: Record<string, never>;
-  lp_community_private_gated: {
-    community_id: string;
-  };
   lp_community_review_reached: {
     places: number;
     privacy: "private" | "public";
@@ -106,12 +103,6 @@ export type LandingsEvents = {
   };
   lp_community_submit_failed: {
     error?: string;
-  };
-  lp_community_viewed: {
-    community_id: string;
-    members_count: null | number;
-    privacy: "private" | "public";
-    source: "fixture" | "live";
   };
   lp_creatorhub_download_clicked: {
     arch: string;

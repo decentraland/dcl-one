@@ -4,9 +4,14 @@
 //! [`claim_broker_purchase`]) was reset to 'pending', otherwise the pre-existing row's
 //! `status`/`tx_hash`. Both `None` with nothing claimed means another claim
 //! landed concurrently, read as in flight. `$now` is the request clock.
+//!
+//! Credits shares two SQL edges with the broker claim: the claim reads
+//! `credits.checkouts` (`FOR SHARE`, by the id in a `checkout:{id}:{line}`
+//! key) and refuses a frozen checkout's line, and credits fences a frozen
+//! checkout's unrecorded claims through [`fence_unrecorded`].
 
 use chrono::NaiveDateTime;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Claim {
@@ -97,18 +102,26 @@ pub const BROKER_PENDING_TAKEOVER_SECS: i64 = 120;
 /// `pending` for [`BROKER_PENDING_TAKEOVER_SECS`] (its caller stopped before
 /// recording). A re-armed row takes this request's columns, so the row
 /// describes the transaction it will record. The claimant fences its writes
-/// on `updated_at = $now`.
+/// on `updated_at = $now`. A key naming a credits checkout line
+/// (`checkout:{checkout_id}:{outbox_id}`) is neither claimed nor re-armed once
+/// that checkout is frozen (`reversing`, `reversed`, `failed`); the checkout
+/// row is read under `FOR SHARE`, so the check orders against the freeze.
 pub async fn claim_broker_purchase(
     pool: &PgPool,
     claim: &BrokerPurchaseClaim<'_>,
     now: NaiveDateTime,
 ) -> Result<Claim, sqlx::Error> {
     sqlx::query_as(
-        "WITH claim AS (\
+        "WITH frozen AS (\
+           SELECT status FROM credits.checkouts \
+           WHERE id = substring($1 from '^checkout:([0-9]{1,18}):[0-9]+$')::bigint \
+           FOR SHARE\
+         ), claim AS (\
            INSERT INTO shop.broker_purchases \
            (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, \
             trade_hashed_signature, usd_amount_wei, mana_usd_rate_wei, status, write_ahead, created_at, updated_at) \
-           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending', true, $13, $13) \
+           SELECT $1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending', true, $13, $13 \
+           WHERE NOT EXISTS (SELECT 1 FROM frozen WHERE status IN ('reversing', 'reversed', 'failed')) \
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
            RETURNING id\
          ), rearm AS (\
@@ -119,6 +132,7 @@ pub async fn claim_broker_purchase(
            WHERE idempotency_key = $1 AND write_ahead AND tx_hash IS NULL \
              AND (status = 'error' OR (status = 'pending' AND updated_at < $13 - make_interval(secs => $14))) \
              AND NOT EXISTS (SELECT 1 FROM claim) \
+             AND NOT EXISTS (SELECT 1 FROM frozen WHERE status IN ('reversing', 'reversed', 'failed')) \
            RETURNING id\
          ) \
          SELECT EXISTS (SELECT 1 FROM claim) AS claimed, EXISTS (SELECT 1 FROM rearm) AS rearmed, \
@@ -142,6 +156,40 @@ pub async fn claim_broker_purchase(
     .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
     .fetch_one(pool)
     .await
+}
+
+/// Whether `key` names a line of a frozen credits checkout (`reversing`,
+/// `reversed`, `failed`), whose claims [`claim_broker_purchase`] refuses.
+pub async fn checkout_frozen(pool: &PgPool, key: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM credits.checkouts \
+         WHERE id = substring($1 from '^checkout:([0-9]{1,18}):[0-9]+$')::bigint \
+           AND status IN ('reversing', 'reversed', 'failed'))",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+}
+
+/// Marks the unrecorded write-ahead claims under `keys` `error`. Credits runs
+/// it once their checkout is frozen, after the statement that froze it: the
+/// claimant's record (fenced on `pending`) then matches no row, and
+/// [`claim_broker_purchase`] neither takes nor re-arms the keys again.
+pub async fn fence_unrecorded(
+    conn: &mut PgConnection,
+    keys: &[String],
+) -> Result<u64, sqlx::Error> {
+    if keys.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = ANY($1) AND status = 'pending' AND write_ahead AND tx_hash IS NULL",
+    )
+    .bind(keys)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 pub struct NameTransferClaim<'a> {

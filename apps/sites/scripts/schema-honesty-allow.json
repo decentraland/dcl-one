@@ -48,12 +48,6 @@
     "why": "Every value this batch fallback invents is null, which is the answer the rule endorses -- it is flagged only because null-valued fields arrive inside an object literal. `credits: null` means \"no credit price is known for this item\", and `tryQuoteCreditItems` copies exactly that into `(string | null)[]`; its callers show a MANA price and no credit option, the same as for an item the endpoint answered about with no credit price. `amounts: []` matches the request, which asks for items only and never amounts, and the reader loops over `res.items` alone. A quote that failed therefore reduces credit availability, never invents one, and never moves a price."
   },
   {
-    "file": "src/data/lib/catalyst/social/communities.ts",
-    "rule": "fabricated-default",
-    "text": "z.boolean().nullish().transform((v) => v ?? false)",
-    "why": "isLive asserts that a community currently has a live voice room. Its only reader adds a 'Live' chip to the header; nothing routes, counts or gates on it. A community the API does not declare live is not shown as live either way."
-  },
-  {
     "file": "src/data/lib/fs/disk.ts",
     "rule": "fabricating-catch",
     "text": "return [];",
