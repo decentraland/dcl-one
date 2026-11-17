@@ -488,6 +488,7 @@ ash = { workspace = true }
 windows = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+ipfs = { workspace = true, features = ["web-worker"] }
 cap = { workspace = true }
 # parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
 # `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
