@@ -443,6 +443,104 @@ fn a_collider_turned_off_removed_and_replaced_before_the_next_query_leaves_no_tr
 }
 
 #[test]
+fn a_collider_that_leaves_and_returns_between_two_queries_is_hit() {
+    let mut colliders = scene(&[(0, 0)]);
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+    place(&mut colliders, &id, Vec3::new(8.0, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+
+    place(&mut colliders, &id, Vec3::new(24.0, 1.0, -8.0), size);
+    place(&mut colliders, &id, Vec3::new(4.0, 1.0, -4.0), size);
+    assert!(hit_at(&mut colliders, 4.0, -4.0));
+    assert!(!hit_at(&mut colliders, 8.0, -8.0));
+}
+
+#[test]
+fn a_scene_on_negative_parcels_is_bounded_where_it_lies() {
+    // parcel (-2, -3): x from -32 to -16, z from 32 to 48
+    let mut colliders = scene(&[(-2, -3)]);
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+
+    place(&mut colliders, &id, Vec3::new(-24.0, 1.0, 40.0), size);
+    assert!(hit_at(&mut colliders, -24.0, 40.0));
+    // past each edge in turn
+    for (x, z) in [(-34.0, 40.0), (-14.0, 40.0), (-24.0, 30.0), (-24.0, 50.0)] {
+        place(&mut colliders, &id, Vec3::new(x, 1.0, z), size);
+        assert!(!hit_at(&mut colliders, x, z), "{x}, {z}");
+    }
+}
+
+#[test]
+fn a_turned_mesh_is_tested_by_its_local_box_turned_with_it() {
+    let mut colliders = scene(&[(0, 0)]);
+    // a strip along the diagonal of its own 10 m square
+    let strip = SharedShape::trimesh(
+        vec![
+            Point::new(-5.0, 0.0, -4.9),
+            Point::new(-4.9, 0.0, -5.0),
+            Point::new(5.0, 0.0, 4.9),
+            Point::new(4.9, 0.0, 5.0),
+        ],
+        vec![[0, 1, 2], [0, 2, 3]],
+    )
+    .unwrap();
+    let id = ColliderId::new(entity_id(0), None, 0);
+    let collider = ColliderBuilder::new(strip)
+        .collision_groups(InteractionGroups::new(
+            Group::from_bits_truncate(MASK),
+            Group::from_bits_truncate(MASK),
+            InteractionTestMode::And,
+        ))
+        .build();
+    colliders.set_collider(&id, collider, Some(Entity::from_raw(1)));
+
+    // as authored, its square is inside the scene
+    colliders.update_collider_transform(
+        &id,
+        &GlobalTransform::from_translation(Vec3::new(8.0, 1.0, -8.0)),
+    );
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+
+    // turned an eighth of a circle the strip runs along x, a metre inside the edge at z = 0,
+    // but its square, turned with it, reaches six metres past that edge
+    colliders.update_collider_transform(
+        &id,
+        &GlobalTransform::from(
+            Transform::from_translation(Vec3::new(8.0, 1.0, -1.0))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)),
+        ),
+    );
+    assert!(!hit_at(&mut colliders, 8.0, -1.0));
+}
+
+#[test]
+fn the_avatar_and_triggers_do_not_meet_a_collider_outside_its_scene() {
+    let mut colliders = scene(&[(0, 0)]);
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+    let trigger = |centre: Vec3| {
+        ColliderBuilder::ball(0.5)
+            .translation(centre.as_dvec3().into())
+            .build()
+    };
+
+    place(&mut colliders, &id, Vec3::new(8.0, 1.0, -8.0), size);
+    assert!(colliders.get_ground(Vec3::new(8.0, 3.0, -8.0)).is_some());
+    assert_eq!(
+        colliders.intersect_collider(&trigger(Vec3::new(8.0, 1.0, -8.0)), MASK),
+        std::slice::from_ref(&id)
+    );
+
+    place(&mut colliders, &id, Vec3::new(24.0, 1.0, -8.0), size);
+    assert!(colliders.get_ground(Vec3::new(24.0, 3.0, -8.0)).is_none());
+    assert!(colliders
+        .intersect_collider(&trigger(Vec3::new(24.0, 1.0, -8.0)), MASK)
+        .is_empty());
+}
+
+#[test]
 fn the_colliders_off_for_bounds_are_counted() {
     let mut colliders = scene(&[(0, 0)]);
     let size = Vec3::splat(2.0);

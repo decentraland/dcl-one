@@ -497,6 +497,7 @@ impl SceneColliderData {
                     collider.set_enabled(enabled);
                     // the bvh skips a collider that is off, so one turned off has to leave it
                     if enabled {
+                        self.removed_colliders.remove(&handle);
                         self.changed_colliders.insert(handle);
                     } else {
                         self.removed_colliders.insert(handle);
