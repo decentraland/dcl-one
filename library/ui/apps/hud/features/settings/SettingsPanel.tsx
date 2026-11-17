@@ -3,7 +3,7 @@
 // (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
@@ -131,28 +131,42 @@ function ChatFields(): React.JSX.Element {
   )
 }
 
-export function SettingsPanel({
-  settings,
-  bindings,
-  profile,
-  lobbyStage,
-  onNavigate
-}: {
+// The full page and the lobby's compact Settings open on the tab last picked in either.
+let lastTab: string | null = null
+
+/** Forget the last tab: for tests. */
+export function resetSettingsTab(): void {
+  lastTab = null
+}
+
+type SettingsPanelProps = {
   settings: SettingsState
   bindings: BindingsState
   profile: ProfileState
   lobbyStage: EngineSession['lobbyStage']
-  onNavigate: (page: string) => void
-}): React.JSX.Element | null {
+} & ({ compact?: undefined; onNavigate: (page: string) => void } | { compact: true; onNavigate?: undefined })
+
+/** `compact`: the body alone, for the lobby's section modal, which owns the close control. */
+export function SettingsPanel({ settings, bindings, profile, lobbyStage, compact, onNavigate }: SettingsPanelProps): React.JSX.Element | null {
   const categories = useMemo(
     () => [...new Set([...settings.list.map((s) => s.category), CHAT_TAB, LOBBY_TAB]), KEY_BINDINGS_TAB],
     [settings.list]
   )
-  const [tab, setTab] = useState<string | null>(null)
+  // The full page stays mounted while closed, so the shared value is read on each render.
+  const [, rerender] = useState(0)
+  const setTab = (next: string): void => {
+    lastTab = next
+    rerender((n) => n + 1)
+  }
+  const { refresh } = settings
+  // The engine changes settings itself, so each compact open re-reads them.
+  useEffect(() => {
+    if (compact) refresh()
+  }, [compact, refresh])
 
-  if (!settings.open) return null
+  if (!settings.open && !compact) return null
 
-  const activeTab = tab && categories.includes(tab) ? tab : categories[0]
+  const activeTab = lastTab && categories.includes(lastTab) ? lastTab : categories[0]
   const items = settings.list.filter((s) => s.category === activeTab)
   const resetAll = (): void => {
     if (activeTab === KEY_BINDINGS_TAB) {
@@ -173,6 +187,43 @@ export function SettingsPanel({
     }
   }
 
+  const head = (
+    <div className={styles.head}>
+      <h1 className={styles.title}>Settings</h1>
+      <Tabs items={categories.map((c) => ({ id: c, label: humanize(c) }))} value={activeTab} onChange={setTab} aria-label="Settings categories" />
+      <button type="button" className={styles.reset} onClick={resetAll}>
+        ↺ Reset all defaults
+      </button>
+    </div>
+  )
+  const card = (
+    <div className={styles.card}>
+      {activeTab === KEY_BINDINGS_TAB ? (
+        <KeyBindingsTab bindings={bindings} />
+      ) : activeTab === LOBBY_TAB ? (
+        <LobbyStageTab preset={lobbyStage.preset} onPick={(preset) => lobbyStage.set({ preset })} />
+      ) : items.length === 0 && activeTab !== CHAT_TAB ? (
+        <div className={styles.empty}>No settings available.</div>
+      ) : (
+        <div className={styles.grid}>
+          {items.map((s) => (
+            <SettingField key={s.name} s={s} onSet={settings.set} />
+          ))}
+          {activeTab === CHAT_TAB && <ChatFields />}
+        </div>
+      )}
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <div className={styles.compact}>
+        {head}
+        {card}
+      </div>
+    )
+  }
+
   const p = profile.data
   return (
     <MainMenuShell
@@ -184,30 +235,8 @@ export function SettingsPanel({
       onNavigate={onNavigate}
       onClose={settings.toggle}
     >
-      <div className={styles.head}>
-        <h1 className={styles.title}>Settings</h1>
-        <Tabs items={categories.map((c) => ({ id: c, label: humanize(c) }))} value={activeTab} onChange={setTab} aria-label="Settings categories" />
-        <button type="button" className={styles.reset} onClick={resetAll}>
-          ↺ Reset all defaults
-        </button>
-      </div>
-
-      <div className={styles.card}>
-        {activeTab === KEY_BINDINGS_TAB ? (
-          <KeyBindingsTab bindings={bindings} />
-        ) : activeTab === LOBBY_TAB ? (
-          <LobbyStageTab preset={lobbyStage.preset} onPick={(preset) => lobbyStage.set({ preset })} />
-        ) : items.length === 0 && activeTab !== CHAT_TAB ? (
-          <div className={styles.empty}>No settings available.</div>
-        ) : (
-          <div className={styles.grid}>
-            {items.map((s) => (
-              <SettingField key={s.name} s={s} onSet={settings.set} />
-            ))}
-            {activeTab === CHAT_TAB && <ChatFields />}
-          </div>
-        )}
-      </div>
+      {head}
+      {card}
     </MainMenuShell>
   )
 }

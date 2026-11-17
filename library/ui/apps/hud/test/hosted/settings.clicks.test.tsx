@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SettingsPanel } from '../../features/settings/SettingsPanel'
+import { SettingsPanel, resetSettingsTab } from '../../features/settings/SettingsPanel'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { SettingsState } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
@@ -44,6 +44,7 @@ function renderPanel(): SettingsState {
 describe('settings panel controls', () => {
   let settings: SettingsState
   beforeEach(() => {
+    resetSettingsTab()
     settings = renderPanel()
   })
 
@@ -114,5 +115,30 @@ describe('settings panel unset controls', () => {
     expect(select).toBeDisabled()
     await userEvent.click(select)
     expect(vi.mocked(settings.set)).not.toHaveBeenCalled()
+  })
+})
+
+describe('compact settings', () => {
+  beforeEach(() => resetSettingsTab())
+
+  const compact = (settings: SettingsState): React.JSX.Element => (
+    <SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} compact />
+  )
+
+  it('shows the same tabs without the menu bar, even while the full page is closed, and re-reads the settings', () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: false, list: [TOGGLE, SELECT], refresh: vi.fn() }
+    render(compact(settings))
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['General', 'Graphics', 'Chat', 'Lobby', 'Key Bindings'])
+    expect(screen.queryByRole('button', { name: /close/i })).toBeNull()
+    expect(settings.refresh).toHaveBeenCalledOnce()
+  })
+
+  it('opens on the tab last picked in the other form', async () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [TOGGLE, SELECT] }
+    render(compact(settings))
+    await userEvent.click(screen.getByRole('tab', { name: 'Graphics' }))
+    cleanup()
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    expect(screen.getByRole('tab', { name: 'Graphics' })).toHaveAttribute('aria-selected', 'true')
   })
 })

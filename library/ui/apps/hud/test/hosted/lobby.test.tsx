@@ -626,6 +626,30 @@ describe('lobby profile menu and visit', () => {
     expect(dispatchCancelLayer()).toBe(false)
   })
 
+  it('opens Settings compact in the section modal, re-reading the settings, and closes it', () => {
+    const session = fakeSession()
+    render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Profile menu' })).getByRole('menuitem', { name: 'Settings' }))
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    expect(within(dialog).getByRole('tablist', { name: 'Settings categories' })).toBeInTheDocument()
+    expect(session.settings.toggle).not.toHaveBeenCalled()
+    expect(session.settings.refresh).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Close Settings' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('hands compact Settings over to the full page when it opens under the modal', () => {
+    const session = fakeSession()
+    const { rerender } = render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Profile menu' })).getByRole('menuitem', { name: 'Settings' }))
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument()
+    session.settings.open = true
+    rerender(lobbyWithPopups({ ...session }))
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+  })
+
   it("fills the top bar's picture with the player's name colour", () => {
     const session = fakeSession()
     session.profile.data = { address: '0xme', name: 'Tester', hasClaimedName: true, nameColor: { r: 0, g: 1, b: 0 }, isGuest: false }

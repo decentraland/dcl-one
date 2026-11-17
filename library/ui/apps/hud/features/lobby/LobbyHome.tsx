@@ -594,7 +594,7 @@ export function LobbyHome({
           withClose={onClose != null}
           onClose={() => setMenuOpen(false)}
           onProfile={() => profile && openPassport(profile.address)}
-          onSettings={() => session.settings.toggle()}
+          onSettings={() => openSection('settings')}
           onReportBug={() => window.open(bugReportUrl(), '_blank', 'noopener')}
           onSignOut={session.logout}
           onExit={isNativeHud() ? session.quit : null}

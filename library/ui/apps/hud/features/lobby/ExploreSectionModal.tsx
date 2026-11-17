@@ -11,11 +11,12 @@ import { MapPage } from '../map/MapPage'
 import { PlacesPage } from '../places/PlacesPage'
 import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
+import { SettingsPanel } from '../settings/SettingsPanel'
 import styles from './ExploreSectionModal.module.css'
 
-export type ExploreSection = 'map' | 'places' | 'events' | 'communities' | 'gallery'
+export type ExploreSection = 'map' | 'places' | 'events' | 'communities' | 'gallery' | 'settings'
 
-const LABEL: Record<ExploreSection, string> = { map: 'Map', places: 'Places', events: 'Events', communities: 'Communities', gallery: 'Gallery' }
+const LABEL: Record<ExploreSection, string> = { map: 'Map', places: 'Places', events: 'Events', communities: 'Communities', gallery: 'Gallery', settings: 'Settings' }
 
 let shown: ExploreSection | null = null
 
@@ -24,7 +25,7 @@ const ignore = (): void => undefined
 function ExploreSectionModal({ section, onClose }: { section: ExploreSection; onClose: () => void }): React.JSX.Element {
   const session = useSession()
   const compact = { onTravel: onClose }
-  const pageOpen = session.map.open || session.places.open || session.events.open || session.communities.open || session.gallery.open
+  const pageOpen = session.map.open || session.places.open || session.events.open || session.communities.open || session.gallery.open || session.settings.open
   useEffect(() => {
     if (pageOpen) onClose()
   }, [pageOpen, onClose])
@@ -61,6 +62,7 @@ function ExploreSectionModal({ section, onClose }: { section: ExploreSection; on
             onViewProfile={(u) => openPassport(u.address)}
           />
         )}
+        {section === 'settings' && <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} lobbyStage={session.lobbyStage} compact />}
       </div>
       <Button size="bare" radius="md" variant="shade" className={styles.close} aria-label={`Close ${LABEL[section]}`} onClick={onClose}>
         <MaskIcon src={closeIcon} size={14} />

@@ -200,7 +200,8 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       lobby region): after sign-in the page's stand-in (the chosen look's backdrop + snapshot)
       crossfades to the engine's 3D stage: backdrop, floor dissolving into it, podium, props, mist,
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
-      turns when dragged. Settings → Lobby switches the look at once (Halloween 2026, Game World).
+      turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
+      the look at once (Halloween 2026, Game World).
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
@@ -209,7 +210,9 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
       where the world starts. VIEW ALL opens Places, Events, Communities and Gallery compact in the
       lobby's section modal: Communities four cards a row, Gallery five columns of 292x219, and a
-      photo opened there covers the whole screen, its Jump In closing the photo and the modal.
+      photo opened there covers the whole screen, its Jump In closing the photo and the modal. The
+      profile menu's Settings opens there too: the full page's tabs and fields under its own header,
+      on the tab last picked in either.
 - [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
       show its avatar on the golden podium at the right, over the sign-in background (vignette and
       drifting logo pattern) drawn by the engine across the whole screen. The page's background fades

@@ -610,6 +610,8 @@ export interface SettingsState {
   set: (name: string, value: number) => void
   /** Fetch the settings without opening the page (once per session). */
   load: () => void
+  /** Re-read the settings without opening the page. */
+  refresh: () => void
 }
 
 export interface BindingsState {
@@ -3023,6 +3025,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     friendsOpen || profileOpen || notificationsOpen || emotesOpen || skyboxOpen
   const toggleFriends = useCallback(() => exclusive(setFriendsOpen), [exclusive])
   const loadSettings = useCallback(() => ensure('getSettings'), [ensure])
+  const refreshSettings = useCallback(() => send('getSettings'), [send])
   // Re-read on every open: the engine changes settings itself (the DM privacy slot follows the
   // social service), and settings are local, so there is nothing to spare by caching.
   const toggleSettings = useCallback(() => exclusive(setSettingsOpen, () => send('getSettings')), [exclusive, send])
@@ -4985,7 +4988,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       mutuals: mutualFriends,
       loadMutuals: loadMutualFriends
     },
-    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings },
+    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings, refresh: refreshSettings },
     bindings: { list: bindings, set: bindingsSet, reset: bindingsReset, capture: captureBinding },
     profile: {
       data: profile,

@@ -8942,7 +8942,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
-      "sha256": "f4fd62f9479f01e1e17cf613733ecd348ad71c7efae5ea74d2767a5c81cb759c"
+      "sha256": "72cddd0fb9ba6514e56353a81c3537cc4b54ce416221458fc99abb6aa09edbcd"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
@@ -8966,7 +8966,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "13e668af22da12ec1b5b5ba5e4b917a19ee3f17e8de5dfcad83379f80857bdfd"
+      "sha256": "f96a26902a55e3ee5c40fd61304b593f6cba4e01fa4e9435e0a93d2857e1b82e"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -9346,7 +9346,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "8eb20e30f15e57325eae765d29b404dfe38e5c1e20081d7abf61ef4ee21dd3b1"
+      "sha256": "d5bfd6d149e11f2e0e43a2420e278a9a3331a5d73f59e794deb95dc625b452e4"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9366,11 +9366,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
-      "sha256": "7211ee60bcc1f0c3ebb2e001d0ba77cd0d315d16873f2ae1c4d03e3e139a4573"
+      "sha256": "d89835b1feb99e4aeac31b73d4bb71a05663754befd9344f5aee9817f5593463"
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "1bb98abccc082d0281a5acf35a63fe5a1a1cd5becc039378613678a43b6b5f42"
+      "sha256": "b9cebcc19350e61209c7d095d10c248f51d4fca19bd90296b0f97135ccc1f7e1"
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.module.css",
@@ -9630,7 +9630,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "1e0b8674667bf0f118895548ea2077df9fd65f236d6b580b6fc35ea33fef5131"
+      "sha256": "b9031b752b0040d34a9ae3f65c5ee3f3d8856a6e7ce3c81f28acd7e0b00f21b6"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -9834,7 +9834,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "047f197a64119091525f96ac3e5bfb15c02af32adf1a376f09a1f8b1d5732115"
+      "sha256": "d7ba08f937f4d7bb9ddd7266d3247453d6a2aeaccc8dfcddcfc925f5d8c2eef7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
@@ -9950,7 +9950,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "285863aebf4f2567e2c4610f8c944f1bab1a129f347ebd7e7271221b2fe539ec"
+      "sha256": "c83b7d60d1602573ee9d8a16b40d856710b87c547a858d3b1d044d34fa7bbc0b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
@@ -23067,6 +23067,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/ExploreSectionModal.tsx",
+      "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
       "kind": "test:runtime"
     },
     {
