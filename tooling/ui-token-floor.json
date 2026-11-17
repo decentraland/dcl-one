@@ -1,13 +1,17 @@
 {
   "apps/sites/src/features/account/AccountLayout.module.css": {
     "primitives": 0,
-    "tokens": 23
+    "tokens": 24
   },
   "apps/sites/src/features/account/AccountSidebar.module.css": {
     "primitives": 0,
-    "tokens": 33
+    "tokens": 34
   },
   "apps/sites/src/features/account/CreditsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 14
+  },
+  "apps/sites/src/features/account/LeaveCreditsDialog.module.css": {
     "primitives": 0,
     "tokens": 21
   },

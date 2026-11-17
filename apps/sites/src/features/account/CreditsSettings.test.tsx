@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,14 +45,34 @@ function show() {
 
 async function askToLeave(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "Leave Program" }));
-  return screen.getByRole("group", { name: "Leave Marketplace Credits?" });
+  return screen.getByRole("dialog", { name: "Leave Marketplace Credits?" });
 }
+
+/** The confirmation's own Leave Program, not the card's one behind it. */
+function confirmLeave(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) {
+  return user.click(within(dialog).getByRole("button", { name: "Leave Program" }));
+}
+
+// jsdom has no modal dialogs: opening and closing only toggle `open`, so the dialog's role shows.
+const showModal = vi.fn(function (this: HTMLDialogElement) {
+  this.open = true;
+});
+const closeDialog = vi.fn(function (this: HTMLDialogElement) {
+  this.open = false;
+});
+
+const nativeShowModal = HTMLDialogElement.prototype.showModal;
+const nativeClose = HTMLDialogElement.prototype.close;
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  HTMLDialogElement.prototype.showModal = showModal;
+  HTMLDialogElement.prototype.close = closeDialog;
 });
 afterEach(() => {
   cleanup();
+  HTMLDialogElement.prototype.showModal = nativeShowModal;
+  HTMLDialogElement.prototype.close = nativeClose;
   client.clear();
   vi.resetAllMocks();
 });
@@ -104,8 +124,7 @@ describe("CreditsSettings", () => {
     api.optOutOfCredits.mockResolvedValue(undefined);
     show();
 
-    await askToLeave(user);
-    await user.click(screen.getAllByRole("button", { name: "Leave Program" }).at(-1)!);
+    await confirmLeave(user, await askToLeave(user));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("We couldn't load your credits status");
@@ -115,19 +134,102 @@ describe("CreditsSettings", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
   });
 
-  it("leaves nothing changed when the member cancels, and returns focus to Leave", async () => {
+  it("opens a modal confirmation that locks the page's scroll", async () => {
     const user = userEvent.setup();
     api.fetchCreditsStatus.mockResolvedValue(enrolled);
     show();
 
-    const confirm = await askToLeave(user);
-    expect(document.activeElement).toBe(confirm);
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await askToLeave(user);
 
-    expect(screen.queryByRole("group", { name: "Leave Marketplace Credits?" })).toBeNull();
+    expect(showModal).toHaveBeenCalledTimes(1);
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(screen.getByRole("dialog").getAttribute("aria-describedby")).toBeTruthy();
+  });
+
+  it.each([
+    ["Cancel", (dialog: HTMLElement, user: ReturnType<typeof userEvent.setup>) => user.click(within(dialog).getByRole("button", { name: "Cancel" }))],
+    ["Close", (dialog: HTMLElement, user: ReturnType<typeof userEvent.setup>) => user.click(within(dialog).getByRole("button", { name: "Close" }))],
+    ["Escape", async (dialog: HTMLElement) => void fireEvent.keyDown(dialog, { key: "Escape" })],
+    ["the browser's cancel request", async (dialog: HTMLElement) => void fireEvent(dialog, new Event("cancel", { cancelable: true }))],
+    ["a close the browser forces", async (dialog: HTMLElement) => {
+      (dialog as HTMLDialogElement).open = false;
+      fireEvent(dialog, new Event("close"));
+    }],
+    ["a backdrop click", async (dialog: HTMLElement) => {
+      fireEvent.pointerDown(dialog, { clientX: -10, clientY: -10 });
+      fireEvent.click(dialog, { clientX: -10, clientY: -10 });
+    }],
+  ])("dismisses with %s, changing nothing and returning focus to Leave", async (_how, dismiss) => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockResolvedValue(enrolled);
+    show();
+
+    const dialog = await askToLeave(user);
+    await dismiss(dialog, user);
+
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Leave Program" }));
+    expect(document.documentElement.style.overflow).toBe("");
     expect(api.optOutOfCredits).not.toHaveBeenCalled();
     expect(screen.getByText("Enrolled")).toBeTruthy();
+  });
+
+  it("stays open on a click on its own padding, or a drag that ends on the backdrop", async () => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockResolvedValue(enrolled);
+    show();
+
+    const dialog = await askToLeave(user);
+    vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, right: 100, bottom: 100 } as DOMRect);
+    fireEvent.pointerDown(dialog, { clientX: 50, clientY: 50 });
+    fireEvent.click(dialog, { clientX: 50, clientY: 50 });
+    fireEvent.pointerDown(dialog, { clientX: 50, clientY: 50 });
+    fireEvent.click(dialog, { clientX: 150, clientY: 150 });
+
+    expect(screen.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("returns focus to Leave Program even when the click did not focus it", async () => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockResolvedValue(enrolled);
+    show();
+
+    const dialog = await askToLeave(user);
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Leave Program" }));
+  });
+
+  it("cannot be dismissed while leaving is in flight", async () => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockResolvedValue(enrolled);
+    let settle!: () => void;
+    api.optOutOfCredits.mockReturnValue(new Promise<void>((resolve) => (settle = resolve)));
+    show();
+
+    const dialog = await askToLeave(user);
+    await confirmLeave(user, dialog);
+    await waitFor(() => expect(api.optOutOfCredits).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    fireEvent.pointerDown(dialog, { clientX: -10, clientY: -10 });
+    fireEvent.click(dialog, { clientX: -10, clientY: -10 });
+    showModal.mockClear();
+    (dialog as HTMLDialogElement).open = false;
+    fireEvent(dialog, new Event("close"));
+
+    expect(showModal).toHaveBeenCalledTimes(1);
+    expect((dialog as HTMLDialogElement).open).toBe(true);
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect((within(dialog).getByRole("button", { name: "Close" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(dialog).getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+
+    settle();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.documentElement.style.overflow).toBe("");
   });
 
   it("opts out on confirm and shows the status the server reads back", async () => {
@@ -136,13 +238,12 @@ describe("CreditsSettings", () => {
     api.optOutOfCredits.mockResolvedValue(undefined);
     show();
 
-    await askToLeave(user);
-    await user.click(screen.getAllByRole("button", { name: "Leave Program" }).at(-1)!);
+    await confirmLeave(user, await askToLeave(user));
 
     await waitFor(() => expect(api.optOutOfCredits).toHaveBeenCalledWith(identity));
     expect(await screen.findByText("Opted Out")).toBeTruthy();
     expect(document.activeElement?.textContent).toContain("Opted Out");
-    expect(screen.queryByRole("group", { name: "Leave Marketplace Credits?" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: "Leave Program" })).toBeNull();
   });
 
@@ -152,13 +253,12 @@ describe("CreditsSettings", () => {
     api.optOutOfCredits.mockRejectedValue(new CatalystError("Cannot unregister with credits claimed this week", "u", 400, true));
     show();
 
-    await askToLeave(user);
-    await user.click(screen.getAllByRole("button", { name: "Leave Program" }).at(-1)!);
+    await confirmLeave(user, await askToLeave(user));
 
     expect((await screen.findByRole("alert")).textContent).toContain("You can't leave this week because you've already claimed credits");
     expect(screen.getByText("Enrolled")).toBeTruthy();
     expect(api.fetchCreditsStatus).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("group", { name: "Leave Marketplace Credits?" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Leave Marketplace Credits?" })).toBeTruthy();
   });
 
   it("shows a generic retry message for any other failure, cleared by cancelling", async () => {
@@ -167,14 +267,13 @@ describe("CreditsSettings", () => {
     api.optOutOfCredits.mockRejectedValue(new CatalystError("database exploded", "u", 500, true));
     show();
 
-    await askToLeave(user);
-    await user.click(screen.getAllByRole("button", { name: "Leave Program" }).at(-1)!);
+    await confirmLeave(user, await askToLeave(user));
 
     const alert = await screen.findByRole("alert");
     expect((alert).textContent).toContain("Couldn't leave the program right now. Please try again.");
     expect(alert.textContent).not.toContain("database exploded");
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
     await askToLeave(user);
     expect(screen.queryByRole("alert")).toBeNull();
   });

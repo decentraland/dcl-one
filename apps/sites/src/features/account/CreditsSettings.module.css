@@ -86,24 +86,3 @@
   gap: var(--dcl-space-12);
   margin-top: var(--dcl-space-8);
 }
-
-.confirm {
-  display: flex;
-  flex-direction: column;
-  gap: var(--dcl-space-8);
-  margin-top: var(--dcl-space-8);
-  padding: var(--dcl-space-16);
-  border: 1px solid var(--dcl-border-default);
-  border-radius: var(--dcl-radius-md);
-  background: var(--dcl-bg-surface-raised);
-}
-
-.confirm:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
-.confirmTitle {
-  composes: text626f64792f6d642d7374726f6e67 from '@dcl/one-ui/text-styles.module.css';
-  margin: 0;
-}

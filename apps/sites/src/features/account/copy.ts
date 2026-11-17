@@ -104,5 +104,6 @@ export const CREDITS_COPY = {
   confirmTitle: "Leave Marketplace Credits?",
   confirmDescription: "You'll stop earning weekly credits. You can rejoin at any time.",
   cancel: "Cancel",
+  close: "Close",
   confirm: "Leave Program",
 } as const;

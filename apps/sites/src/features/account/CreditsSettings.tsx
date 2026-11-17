@@ -8,23 +8,21 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CREDITS_COPY } from "./copy";
 import styles from "./CreditsSettings.module.css";
 import { useCreditsStatus, useOptOutOfCredits } from "./hooks";
+import { LeaveCreditsDialog } from "./LeaveCreditsDialog";
 
 const COPY = CREDITS_COPY;
 
 /**
  * `/account/credits`: the member's status in the Marketplace Credits program. Joining happens in-world,
- * so the web offers only leaving, behind a confirmation the member can cancel.
+ * so the web offers only leaving, behind a confirmation dialog the member can dismiss.
  */
 export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
   const titleId = useId();
-  const confirmTitleId = useId();
   const status = useCreditsStatus(identity);
   const optOut = useOptOutOfCredits();
   const [confirming, setConfirming] = useState(false);
-  const confirmRef = useRef<HTMLDivElement>(null);
-  const leaveRef = useRef<HTMLButtonElement>(null);
-  const returnFocus = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
+  const leaveRef = useRef<HTMLButtonElement>(null);
 
   // After leaving, focus moves to what the re-read shows once it renders: the new status or its failure.
   const [left, setLeft] = useState(0);
@@ -32,18 +30,11 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
     if (left) statusRef.current?.focus();
   }, [left]);
 
-  useEffect(() => {
-    if (confirming) confirmRef.current?.focus();
-    else if (returnFocus.current) leaveRef.current?.focus();
-    returnFocus.current = false;
-  }, [confirming]);
-
   // A failed read, the re-read after leaving included, shows the failure, not the last status it held.
   const current = status.isError ? undefined : status.data?.status;
   const enrolled = current === "enrolled";
 
   const cancel = () => {
-    returnFocus.current = true;
     optOut.reset();
     setConfirming(false);
   };
@@ -93,42 +84,23 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
           </a>
         </p>
 
-        {enrolled && !confirming ? (
+        {enrolled ? (
           <div className={styles.actions}>
             <Button ref={leaveRef} size="md" onClick={() => setConfirming(true)}>
               {COPY.leave}
             </Button>
           </div>
         ) : null}
-
-        {enrolled && confirming ? (
-          <div
-            ref={confirmRef}
-            className={styles.confirm}
-            role="group"
-            aria-labelledby={confirmTitleId}
-            tabIndex={-1}
-          >
-            <h3 id={confirmTitleId} className={styles.confirmTitle}>
-              {COPY.confirmTitle}
-            </h3>
-            <p className={styles.description}>{COPY.confirmDescription}</p>
-            {optOut.isError ? (
-              <p className={styles.error} role="alert">
-                {optOutFailureMessage(optOut.error)}
-              </p>
-            ) : null}
-            <div className={styles.actions}>
-              <Button variant="secondary" size="md" onClick={cancel} disabled={optOut.isPending}>
-                {COPY.cancel}
-              </Button>
-              <Button size="md" onClick={confirm} loading={optOut.isPending}>
-                {COPY.confirm}
-              </Button>
-            </div>
-          </div>
-        ) : null}
       </div>
+      {enrolled && confirming ? (
+        <LeaveCreditsDialog
+          pending={optOut.isPending}
+          error={optOut.isError ? optOutFailureMessage(optOut.error) : undefined}
+          onConfirm={confirm}
+          onClose={cancel}
+          returnFocusRef={leaveRef}
+        />
+      ) : null}
     </section>
   );
 }
