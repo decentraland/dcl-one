@@ -258,7 +258,11 @@ fn demo_command(
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
     mut config: ResMut<AppConfig>,
-    (children, processed): (Query<&Children>, Query<(), With<AvatarProcessed>>),
+    (children, processed, drawn_meshes): (
+        Query<&Children>,
+        Query<&InheritedVisibility, With<AvatarProcessed>>,
+        Query<&ViewVisibility, With<Mesh3d>>,
+    ),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     let mut count = demos.iter().len();
@@ -407,16 +411,30 @@ fn demo_command(
         }
         None => {}
     }
-    // demo avatars with a finished build: a measurement waits for these to reach the count
-    let built = demos
-        .iter()
-        .filter(|(entity, _)| {
-            children
-                .get(*entity)
-                .is_ok_and(|children| children.iter().any(|child| processed.contains(child)))
-        })
-        .count();
-    cmd.reply_ok(json!({"count":count, "built":built, "cap":config.max_avatars, "layout":creator.layout.name(), "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    // demo avatars with a finished build: a measurement waits for these to reach the count.
+    // Of those, `shown` are not hidden (by the cap, say) and `drawn` have a mesh in some view
+    // this frame, the camera's or a shadow's
+    let (mut built, mut shown, mut drawn) = (0, 0, 0);
+    for (entity, _) in &demos {
+        let Some(build) = children
+            .get(entity)
+            .ok()
+            .and_then(|children| children.iter().find(|child| processed.contains(*child)))
+        else {
+            continue;
+        };
+        built += 1;
+        if processed.get(build).is_ok_and(InheritedVisibility::get) {
+            shown += 1;
+            if children
+                .iter_descendants(build)
+                .any(|mesh| drawn_meshes.get(mesh).is_ok_and(ViewVisibility::get))
+            {
+                drawn += 1;
+            }
+        }
+    }
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":config.max_avatars, "layout":creator.layout.name(), "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.

@@ -129,7 +129,8 @@ pnpm run avatar-sweep --url http://localhost:8080/            # an app served al
 | `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
-within `--load-timeout`), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
+within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
+a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
 `emote`, `nametags`, `layout`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by

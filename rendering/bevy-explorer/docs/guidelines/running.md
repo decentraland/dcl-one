@@ -235,7 +235,8 @@ State, in every build:
   stands new ones in a 32-wide grid in front of the player; `layout around` fills a disc centred
   on the player, nearest first, so part of the crowd is behind the camera.
   `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range and
-  never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `cap`,
+  never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
+  hidden) and `drawn` (a mesh in some view this frame), `cap`,
   `layout`, `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
   bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar

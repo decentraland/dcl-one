@@ -10,7 +10,7 @@
 //     [--window 10] [--settle 3] [--load-timeout 180]
 //     [--realm <url>] [--position x,y] [--web-app <dir> | --url <served app>] [--out <file>]
 //
-// Each line: {"step", "count", "built", "loadSeconds", "cap", "emote", "nametags", "layout", "samples",
+// Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "samples",
 // "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
 // are {median, p95, max} over the window's samples. The session's Max Avatars is restored at the
 // end. `/avatar_demo cap` is session-only, so the stored setting never changes.
@@ -94,6 +94,8 @@ function stats(samples: (number | null | undefined)[]): Stats {
 interface DemoReply {
   count: number
   built: number
+  shown: number
+  drawn: number
   cap: number
 }
 
@@ -184,10 +186,13 @@ try {
             await sleep(SAMPLE_MS)
           }
           const last = samples[samples.length - 1]
+          const after = await run<DemoReply>('/avatar_demo')
           const record = {
             step,
             count,
             built,
+            shown: after.shown,
+            drawn: after.drawn,
             loadSeconds,
             cap: cap === CAP_ALL ? 'all' : cap,
             emote,
