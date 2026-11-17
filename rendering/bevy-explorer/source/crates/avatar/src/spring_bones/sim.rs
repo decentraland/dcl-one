@@ -87,34 +87,27 @@ impl AnchorPose {
 }
 
 /// Mean over the axes of the anchor's scale against its scale at rest. An axis with no rest
-/// scale counts as unchanged.
+/// scale counts as unchanged; a mirrored (negative) rest scale keeps its ratio.
 pub fn scale_factor(scale: Vec3, rest_scale: Vec3) -> f32 {
-    let ratio = |now: f32, rest: f32| if rest > EPSILON { now / rest } else { 1.0 };
+    let ratio = |now: f32, rest: f32| {
+        if rest.abs() > EPSILON {
+            now / rest
+        } else {
+            1.0
+        }
+    };
     (ratio(scale.x, rest_scale.x) + ratio(scale.y, rest_scale.y) + ratio(scale.z, rest_scale.z))
         / 3.0
 }
 
 /// The shortest rotation turning `from` onto `to`. Identity when either has no direction, which
-/// is any vector shorter than 0.01 (see [`DIRECTION_EPSILON_SQ`]).
+/// is any vector shorter than 0.01 (see [`DIRECTION_EPSILON_SQ`]). Opposite directions have no
+/// shortest turn; `Quat::from_rotation_arc` picks the perpendicular for that half turn.
 pub fn from_to(from: Vec3, to: Vec3) -> Quat {
     if from.length_squared() < DIRECTION_EPSILON_SQ || to.length_squared() < DIRECTION_EPSILON_SQ {
         return Quat::IDENTITY;
     }
-    let from = from.normalize();
-    let to = to.normalize();
-    let dot = from.dot(to);
-
-    // opposite directions have no shortest turn: take a half turn about any perpendicular
-    if dot <= -0.999999 {
-        let mut axis = from.cross(Vec3::X);
-        if axis.length_squared() < DIRECTION_EPSILON_SQ {
-            axis = from.cross(Vec3::Y);
-        }
-        return Quat::from_axis_angle(axis.normalize(), std::f32::consts::PI);
-    }
-
-    let cross = from.cross(to);
-    Quat::from_xyzw(cross.x, cross.y, cross.z, 1.0 + dot).normalize()
+    Quat::from_rotation_arc(from.normalize(), to.normalize())
 }
 
 /// What moves for a joint, all in world space.
@@ -438,6 +431,14 @@ mod tests {
             (scale_factor(Vec3::new(2.0, 1.0, 3.0), Vec3::new(1.0, 1.0, 0.0)) - 4.0 / 3.0).abs()
                 < 1e-6
         );
+    }
+
+    #[test]
+    fn scale_factor_takes_the_ratio_of_a_mirrored_rest_scale() {
+        let mirrored = Vec3::new(-1.0, 1.0, 1.0);
+        assert!((scale_factor(mirrored, mirrored) - 1.0).abs() < 1e-6);
+        assert!((scale_factor(Vec3::new(-2.0, 2.0, 2.0), mirrored) - 2.0).abs() < 1e-6);
+        assert!((scale_factor(Vec3::ONE, mirrored) - 1.0 / 3.0).abs() < 1e-6);
     }
 
     #[test]
