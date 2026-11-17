@@ -76,7 +76,7 @@ export async function action({ request }: { request: Request }) {
       ephemeral.toLowerCase(),
       new Date(exp),
     );
-    const session = pairStore.create({
+    const session = await pairStore.create({
       ephemeral: ephemeral.toLowerCase(),
       expiration: new Date(exp).toISOString(),
       message,
@@ -100,7 +100,7 @@ export async function action({ request }: { request: Request }) {
     if (typeof signature !== "string" || !SIG_RE.test(signature)) {
       return json(400, { error: "bad signature" });
     }
-    const session = pairStore.get(id);
+    const session = await pairStore.get(id);
     if (!session) return json(404, { error: "unknown session" });
     let recovered: string;
     try {
@@ -115,7 +115,7 @@ export async function action({ request }: { request: Request }) {
     if (recovered.toLowerCase() !== signer.toLowerCase()) {
       return json(400, { error: "signature does not match signer" });
     }
-    const result = pairStore.complete(id, signer.toLowerCase(), signature);
+    const result = await pairStore.complete(id, signer.toLowerCase(), signature);
     if (result === "missing") return json(404, { error: "unknown session" });
     if (result === "expired") return json(410, { error: "session expired" });
     if (result === "already") return json(409, { error: "already completed" });
@@ -131,13 +131,13 @@ export async function action({ request }: { request: Request }) {
       return json(400, { error: "bad pollToken" });
     }
     if (body.kind === "cancel") {
-      pairStore.cancel(id, pollToken);
+      await pairStore.cancel(id, pollToken);
       return new Response(null, {
         status: 204,
         headers: { "cache-control": "no-store" },
       });
     }
-    const result = pairStore.poll(id, pollToken);
+    const result = await pairStore.poll(id, pollToken);
     if (result.state === "missing") return json(404, { error: "unknown session" });
     if (result.state === "forbidden") return json(403, { error: "bad token" });
     if (result.state === "expired") return json(410, { state: "expired" });

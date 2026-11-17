@@ -80,3 +80,21 @@ CREATE TABLE explore_api.map_grid (
     body_gzip bytea NOT NULL,
     fetched_at timestamp without time zone NOT NULL
 );
+
+-- Sites' phone pairing sessions (/auth/pair, /internal/pair), shared by every
+-- Sites replica: written and read only by apps/sites
+-- (src/data/lib/auth/pair-store.server.ts). A row lives five minutes; the
+-- desktop's poll that releases a completed row deletes it, and every create
+-- first deletes the expired rows. The poll token is kept as its sha256.
+CREATE TABLE explore_api.pair_sessions (
+    id text PRIMARY KEY CHECK (id ~ '^[A-Za-z0-9_-]{20,64}$'),
+    poll_token_sha256 bytea NOT NULL CHECK (length(poll_token_sha256) = 32),
+    ephemeral text NOT NULL,
+    expiration text NOT NULL,
+    message text NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    completed_signer text,
+    completed_signature text,
+    CHECK ((completed_signer IS NULL) = (completed_signature IS NULL))
+);
