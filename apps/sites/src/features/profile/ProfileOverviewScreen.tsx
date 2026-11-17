@@ -1,11 +1,7 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router";
 
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
-import SitesChrome from "@ui/web/frames/SitesChrome";
-
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
 import {
+  GeneralLink,
   ProfileCountry,
   ProfileGender,
   ProfileHobbies,
@@ -15,20 +11,15 @@ import {
   ProfileRealName,
   ProfileRelationship,
 } from "@dcl/one-ui/foundations/icons";
-import { ProfileAvatarBody } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileAvatarBody";
-import { ProfileHeader } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileHeader";
-import { ProfileLayout } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileLayout";
-import { ProfileOverview } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileOverview";
-import {
-  ProfileTabs,
-  type TabLinkProps,
-} from "@dcl/one-ui/apps/sites/provisional/profile/ProfileTabs";
 
+import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-/** A NAME is bought in the Shop; worlds are managed in the Builder, both served by path. */
-export const GET_A_NAME_HREF = "/shop/items?category=names";
-export const MANAGE_WORLD_HREF = "/builder/worlds";
+import { useProfileBadges } from "./hooks";
+import { ProfileBadges } from "./ProfileBadges";
+import styles from "./ProfileOverviewScreen.module.css";
+import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
+import { useBrokenImage } from "./useBrokenImage";
 
 const INFO_ICONS: Record<string, ReactNode> = {
   country: <ProfileCountry size={20} />,
@@ -41,84 +32,118 @@ const INFO_ICONS: Record<string, ReactNode> = {
   favorite_hobby: <ProfileHobbies size={20} />,
 };
 
-function TabLink({ to, ...props }: TabLinkProps) {
-  return <Link to={to} {...props} />;
-}
-
 export type ProfileOverviewScreenProps = {
   profile: ProfileVM;
+  /** Whether the wallet has a profile at all; badges are read only then. */
+  hasProfile: boolean;
   own: boolean;
-  tabs: { id: string; label: string; href: string }[];
+  tabs: ProfileShellTab[];
   onTab: (id: string) => void;
 };
 
-/** Overview with the profile site's look: header, tab bar, avatar column, About and Links. */
-/**
- * The name and avatar color every Decentraland client derives from the display name (the
- * explorer's NameColorHelper), not the profile's stored color.
- */
-export function profileNameColor(profile: ProfileVM): string {
-  return getAvatarBackgroundColor(getDisplayName(profile.name, profile.hasClaimedName, profile.address));
+/** The site is in English; a fixed locale keeps the server and browser renders the same. */
+const UNLOCKED = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+
+export function badgeItems(badges: readonly ProfileBadge[]) {
+  return badges.map(({ unlockedAt, ...badge }) => ({
+    ...badge,
+    unlocked: unlockedAt === undefined ? undefined : `Unlocked on ${UNLOCKED.format(unlockedAt)}`,
+  }));
 }
 
+/** A second safety net for any caller: only http(s) links are rendered. */
+function isHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** The avatar's full-body snapshot, as the source shows when its 3D preview cannot load. */
+function AvatarBody({ imageUrl, name }: { imageUrl?: string; name: string }) {
+  const { broken, ref, onError } = useBrokenImage(imageUrl);
+  return (
+    <div className={styles.body}>
+      {imageUrl && !broken ? (
+        <img ref={ref} className={styles.bodyImage} src={imageUrl} alt={`${name}'s avatar`} onError={onError} />
+      ) : null}
+    </div>
+  );
+}
+
+/** Overview with the profile site's look: header, tab bar, avatar column, About and Links. */
 export function ProfileOverviewScreen({
   profile,
+  hasProfile,
   own,
   tabs,
   onTab,
 }: ProfileOverviewScreenProps) {
-  const nameColor = profileNameColor(profile);
-  const actions = own ? (
-    profile.hasClaimedName ? (
-      <Button href={MANAGE_WORLD_HREF}>Manage World</Button>
-    ) : (
-      <Button href={GET_A_NAME_HREF}>Get a Unique Name</Button>
-    )
-  ) : null;
+  const badges = useProfileBadges(profile.address, hasProfile);
+  const bio = profile.bio.trim();
+  const emptyBio = own ? "No information yet. Jump in world and complete your bio!" : "This member has not added a bio yet.";
+  // The profile read decides each link's shown title; this only refuses a non-http(s) one.
+  const links = profile.links.filter((link) => isHttpUrl(link.url));
 
-  // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
   return (
-    <SitesChrome active="play" overlayNav>
-      <ProfileLayout
-        header={
-          <ProfileHeader
-            address={profile.address}
-            name={profile.name}
-            nameColor={nameColor}
-            hasClaimedName={profile.hasClaimedName}
-            avatarUrl={profile.avatarUrl || undefined}
-            actions={actions}
-          />
-        }
-        tabs={
-          <ProfileTabs
-            tabs={tabs}
-            active="overview"
-            onSelect={onTab}
-            LinkComponent={TabLink}
-          />
-        }
-        aside={
-          <ProfileAvatarBody
-            imageUrl={profile.bodyUrl || undefined}
-            name={profile.name}
-          />
-        }
-      >
-        <ProfileOverview
-          bio={profile.bio}
-          emptyBio={
-            own
-              ? "No information yet. Jump in world and complete your bio!"
-              : "This member has not added a bio yet."
-          }
-          info={profile.info.map((item) => ({
-            ...item,
-            icon: INFO_ICONS[item.key],
-          }))}
-          links={profile.links}
-        />
-      </ProfileLayout>
-    </SitesChrome>
+    <ProfileShell
+      profile={profile}
+      own={own}
+      tabs={tabs}
+      active="overview"
+      onTab={onTab}
+      aside={<AvatarBody imageUrl={profile.bodyUrl || undefined} name={profile.name} />}
+    >
+      <div className={styles.root}>
+        <section className={styles.surface}>
+          <div className={styles.section}>
+            <ProfileBadges
+              badges={badgeItems(badges.data ?? [])}
+              loading={hasProfile && badges.isPending}
+              emptyText="No badges yet. Jump in world and start collecting badges!"
+              // A failed background re-read keeps the badges already shown.
+              errorText={badges.isError && !badges.data ? "Badges are unavailable right now." : undefined}
+            />
+          </div>
+          <div className={styles.section}>
+            <h2 className={styles.title}>About</h2>
+            {bio ? <p className={styles.bio}>{bio}</p> : <p className={styles.empty}>{emptyBio}</p>}
+            {profile.info.length > 0 ? (
+              <dl className={styles.info}>
+                {profile.info.map((item) => {
+                  const icon = INFO_ICONS[item.key];
+                  return (
+                    <div key={item.key} className={styles.infoItem}>
+                      <dt className={styles.infoLabel}>
+                        {icon ? <span className={styles.infoIcon}>{icon}</span> : null}
+                        {item.label}
+                      </dt>
+                      <dd className={styles.infoValue}>{item.value}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : null}
+          </div>
+          {links.length > 0 ? (
+            <div className={styles.section}>
+              <h2 className={styles.title}>Links</h2>
+              <ul className={styles.links}>
+                {links.map((link, index) => (
+                  <li key={`${index}-${link.url}`}>
+                    <a className={styles.link} href={link.url} target="_blank" rel="noopener noreferrer">
+                      <GeneralLink size={22} aria-hidden="true" />
+                      {link.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </ProfileShell>
   );
 }

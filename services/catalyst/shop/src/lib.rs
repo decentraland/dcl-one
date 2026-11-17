@@ -25,18 +25,17 @@
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
+#[cfg(test)]
 pub(crate) use catalyst_comms as comms;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
-pub(crate) use catalyst_explore as explore;
 pub(crate) use catalyst_fed as fed;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;
 pub(crate) use catalyst_price as price;
 pub(crate) use catalyst_shared as shared;
-pub(crate) use catalyst_social as social;
 pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
@@ -156,13 +155,10 @@ fn pending(source: &'static str) -> MethodRouter {
 /// never shadowed.
 pub fn pending_router() -> Router {
     Router::new()
-        .route("/v1/users/{address}", pending("shop-credits-users"))
         .route(
             "/v1/users/{address}/credits/stream",
             pending("shop-credits-users"),
         )
-        .route("/v1/users/{address}/status", pending("shop-credits-users"))
-        .route("/v1/credit-program/season", pending("shop-credits-program"))
         .route(
             "/v2/credit-program/seasons",
             pending("shop-credits-program"),

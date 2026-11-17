@@ -10,8 +10,11 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use super::sink::{self, PresenceEvent};
-use super::{Flow, Occupancy, Settings, SweepSummary, apply_pending, drain, sweep};
-use crate::comms::gatekeeper::events::RoomEventSink;
+use super::{
+    Flow, Occupancy, Retries, Settings, SweepSummary, Wait, apply_pending, drain,
+    oldest_not_waiting_ms, sweep,
+};
+use crate::comms::gatekeeper::events::RoomEventStore;
 use crate::comms::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
 
 const T0: i64 = 1_800_000_000_000;
@@ -136,7 +139,7 @@ impl T {
             &self.settings,
             CDN,
             &|| self.now,
-            &mut HashMap::new(),
+            &mut Retries::default(),
         )
         .await
         .unwrap();
@@ -164,6 +167,7 @@ impl T {
             settings: &self.settings,
             now,
             asset_base: CDN,
+            wait_for_scenes: false,
         };
         sweep(&self.pool, &flow, occupancy).await.unwrap()
     }
@@ -304,7 +308,19 @@ async fn a_late_leave_of_an_earlier_session_does_not_close_the_new_one() {
     t.join(ALICE, "s2", T0 + 100 * SEC, At::Scene(SCENE)).await;
     t.leave(ALICE, "s1", T0 + 90 * SEC, At::Scene(SCENE)).await;
     assert_eq!(t.visits().await[0].2, ["s2"]);
+    let persisted: (Vec<i64>, Vec<String>, i64) = sqlx::query_as(
+        "SELECT joins, sessions, opened_at FROM social.presence_visits WHERE wallet = $1",
+    )
+    .bind(ALICE)
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        persisted,
+        (vec![T0 + 100 * SEC], vec!["s2".into()], T0 + 100 * SEC)
+    );
     t.leave(ALICE, "s2", T0 + 400 * SEC, At::Scene(SCENE)).await;
+    assert!(t.visits().await.is_empty());
     let (_, doc, completed) = t.progress("stay", ALICE).await.unwrap();
     assert_eq!(doc["intervals"], proven(&[(0, 90), (100, 400)]));
     assert_eq!(completed, Some(T0 + 310 * SEC));
@@ -416,7 +432,7 @@ async fn a_long_drain_reads_the_clock_per_event() {
     // a slow backlog: the clock moves two minutes per event, past the skew bound
     let ticks = AtomicI64::new(0);
     let clock = || T0 + ticks.fetch_add(1, Ordering::Relaxed) * 2 * min;
-    drain(&t.pool, &t.settings, CDN, &clock, &mut HashMap::new())
+    drain(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
         .await
         .unwrap();
     assert_eq!(ticks.load(Ordering::Relaxed), 6, "one reading per event");
@@ -535,22 +551,22 @@ async fn an_event_failing_transiently_past_the_grace_is_dropped_and_the_queue_mo
     )
     .await
     .unwrap();
-    let mut failures = HashMap::new();
+    let mut retries = Retries::default();
     let clock = move || now;
     for _ in 0..5 {
-        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
         assert!(pass.is_err(), "a fresh event waits out the timeout");
     }
-    assert!(failures.is_empty());
+    assert!(retries.failures.is_empty());
     sqlx::query("UPDATE social.presence_events SET received_at = received_at - interval '2 hours'")
         .execute(&t.pool)
         .await
         .unwrap();
     for _ in 0..2 {
-        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+        let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
         assert!(pass.is_err());
     }
-    let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut failures).await;
+    let pass = apply_pending(&t.pool, &t.settings, CDN, &clock, &mut retries).await;
     assert_eq!(
         pass.unwrap(),
         1,
@@ -664,15 +680,277 @@ async fn scenes_match_by_their_deployed_parcels_and_worlds_by_name() {
     let Some(t) = T::new().await else { return };
     t.badge("scene_visit", At::Scene(PARCEL), 0).await;
     t.badge("world_visit", At::World(None), 0).await;
-    // a world room never counts for a Genesis parcel, an unknown scene matches nothing
+    // a world room never counts for a Genesis parcel
     t.join(ALICE, "s1", T0, At::World(Some(SCENE))).await;
-    t.join(BOB, "s2", T0, At::Scene("bafkreiunknownscene"))
-        .await;
     t.join(BOB, "s3", T0, At::Scene(OTHER_SCENE)).await;
     assert!(t.progress("scene_visit", ALICE).await.is_none());
     assert!(t.progress("world_visit", ALICE).await.is_some());
     assert!(t.progress("scene_visit", BOB).await.is_none());
     assert!(t.progress("world_visit", BOB).await.is_none());
+}
+
+#[tokio::test]
+async fn an_unsynced_scene_waits_for_its_sync_and_holds_only_its_wallet() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let unsynced = "bafkreiunsyncedsceneddddddddddddddd";
+    let events = [
+        t.event(true, BOB, "s1", T0, At::Scene(unsynced)),
+        t.event(true, ALICE, "s2", T0, At::Scene(SCENE)),
+        t.event(false, BOB, "s1", T0 + 60_000, At::Scene(unsynced)),
+        t.event(true, BOB, "s9", T0 + 120_000, At::World(None)),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let clock = || t.now;
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
+            .await
+            .unwrap(),
+        1,
+        "the other wallet's join goes on"
+    );
+    assert!(t.progress("scene_visit", ALICE).await.is_some());
+    let queued: Vec<String> =
+        sqlx::query_scalar("SELECT wallet FROM social.presence_events ORDER BY seq")
+            .fetch_all(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        queued,
+        [BOB, BOB, BOB],
+        "the wallet's leave and world join keep their order"
+    );
+
+    // synced on the badge parcel: the join is a visit
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, \
+           entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'scene', $2, '{}', now(), ARRAY['10,20'], now(), '[]')",
+    )
+    .bind(ALICE)
+    .bind(unsynced)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
+            .await
+            .unwrap(),
+        3
+    );
+    assert!(t.progress("scene_visit", BOB).await.is_some());
+}
+
+#[tokio::test]
+async fn a_waiting_event_is_tried_again_with_backoff() {
+    let Some(mut t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let unsynced = "bafkreibackoffsceneeeeeeeeeeeeeeeeee";
+    let events = [t.event(true, BOB, "s1", T0, At::Scene(unsynced))];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let mut retries = Retries::default();
+    let start = t.now;
+    let clock = || start;
+    drain(&t.pool, &t.settings, CDN, &clock, &mut retries)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, \
+           entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'scene', $2, '{}', now(), ARRAY['10,20'], now(), '[]')",
+    )
+    .bind(ALICE)
+    .bind(unsynced)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    // synced, but not tried again before its backoff
+    drain(&t.pool, &t.settings, CDN, &clock, &mut retries)
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", BOB).await.is_none());
+    t.now = start + 5_000;
+    let later = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| later, &mut retries)
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", BOB).await.is_some());
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn waiting_events_filling_a_batch_do_not_hold_the_next_one() {
+    let Some(mut t) = T::new().await else { return };
+    t.settings.event_batch = 2;
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let wallets = [
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+        "0x00000000000000000000000000000000000000c3",
+    ];
+    let mut events: Vec<_> = wallets
+        .iter()
+        .map(|w| {
+            t.event(
+                true,
+                w,
+                "s",
+                T0,
+                At::Scene("bafkreinotsyncedfullbatchfffffffff"),
+            )
+        })
+        .collect();
+    events.push(t.event(true, ALICE, "a", T0, At::Scene(SCENE)));
+    sink::insert(&t.pool, &events).await.unwrap();
+    let now = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut Retries::default())
+        .await
+        .unwrap();
+    assert!(t.progress("scene_visit", ALICE).await.is_some());
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_events")
+        .fetch_one(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(queued, 3, "the three waiting joins stay queued");
+}
+
+#[tokio::test]
+async fn the_oldest_age_skips_waiting_wallets_across_the_whole_queue() {
+    let Some(t) = T::new().await else { return };
+    let (c1, c2) = (
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+    );
+    let unsynced = At::Scene("bafkreinotsyncedgaugeeeeeeeeeeeeeee");
+    let events = [
+        t.event(true, c1, "s", T0, unsynced),
+        t.event(true, c2, "s", T0, unsynced),
+        t.event(true, ALICE, "a", T0, At::Scene(SCENE)),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    // the waiting wallets' rows come first and are newer than Alice's
+    sqlx::query(
+        "UPDATE social.presence_events SET received_at = timezone('UTC', now()) - \
+         CASE WHEN wallet = $1 THEN interval '10 minutes' ELSE interval '1 minute' END",
+    )
+    .bind(ALICE)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    let seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq")
+        .fetch_all(&t.pool)
+        .await
+        .unwrap();
+    let mut retries = Retries::default();
+    let age = oldest_not_waiting_ms(&t.pool, &retries)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        (50_000..120_000).contains(&age),
+        "the first queued row: {age}"
+    );
+    for (seq, wallet) in [(seqs[0], c1), (seqs[1], c2)] {
+        let wait = Wait {
+            wallet: wallet.into(),
+            next_ms: 0,
+            tries: 0,
+        };
+        retries.waits.insert(seq, wait);
+    }
+    let age = oldest_not_waiting_ms(&t.pool, &retries)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        (590_000..700_000).contains(&age),
+        "Alice's row past them: {age}"
+    );
+    let wait = Wait {
+        wallet: ALICE.into(),
+        next_ms: 0,
+        tries: 0,
+    };
+    retries.waits.insert(seqs[2], wait);
+    assert_eq!(
+        oldest_not_waiting_ms(&t.pool, &retries).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_wait_held_behind_its_wallet_is_kept_across_drains() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let events = [
+        t.event(
+            true,
+            BOB,
+            "s1",
+            T0,
+            At::Scene("bafkreinotsyncedfirstaaaaaaaaaaaaaa"),
+        ),
+        t.event(
+            true,
+            BOB,
+            "s2",
+            T0,
+            At::Scene("bafkreinotsyncedsecondbbbbbbbbbbbbb"),
+        ),
+    ];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM social.presence_events ORDER BY seq")
+        .fetch_all(&t.pool)
+        .await
+        .unwrap();
+    let mut retries = Retries::default();
+    let now = t.now;
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut retries)
+        .await
+        .unwrap();
+    assert!(retries.waits.contains_key(&seqs[0]));
+    // the later event already waited (a lower seq committed after it started)
+    let wait = Wait {
+        wallet: BOB.into(),
+        next_ms: now + 60_000,
+        tries: 3,
+    };
+    retries.waits.insert(seqs[1], wait);
+    drain(&t.pool, &t.settings, CDN, &|| now, &mut retries)
+        .await
+        .unwrap();
+    let kept = retries.waits.get(&seqs[1]).expect("the held wait is kept");
+    assert_eq!(kept.tries, 3, "its backoff does not restart");
+}
+
+#[tokio::test]
+async fn a_scene_never_synced_matches_nothing_after_the_grace() {
+    let Some(t) = T::new().await else { return };
+    t.badge("scene_visit", At::Scene(PARCEL), 0).await;
+    let events = [t.event(true, BOB, "s1", T0, At::Scene("bafkreiunknownscene"))];
+    sink::insert(&t.pool, &events).await.unwrap();
+    let clock = || t.now;
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE social.presence_events SET received_at = received_at - interval '2 hours'")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        apply_pending(&t.pool, &t.settings, CDN, &clock, &mut Retries::default())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(t.progress("scene_visit", BOB).await.is_none());
 }
 
 #[tokio::test]
@@ -718,6 +996,51 @@ async fn an_archived_badge_is_not_granted_and_its_open_visit_is_dropped() {
     assert_eq!(t.progress("stay", ALICE).await, None);
     assert_eq!(t.progress("visit", ALICE).await, None);
     assert!(t.visits().await.is_empty());
+    assert!(t.notifications(ALICE).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_badge_whose_steps_differ_from_its_rule_is_not_counted() {
+    let Some(t) = T::new().await else { return };
+    t.badge("stay", At::Scene(PARCEL), 300).await;
+    sqlx::query("UPDATE social.badge_definitions SET criteria_steps = 100 WHERE id = 'stay'")
+        .execute(&t.pool)
+        .await
+        .unwrap();
+    t.join(ALICE, "s1", T0, At::Scene(SCENE)).await;
+    t.leave(ALICE, "s1", T0 + 200 * SEC, At::Scene(SCENE)).await;
+    assert_eq!(t.progress("stay", ALICE).await, None);
+    assert!(t.visits().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_presence_row_on_an_evaluated_badge_leaves_its_progress_alone() {
+    let Some(t) = T::new().await else { return };
+    sqlx::query(
+        "INSERT INTO social.presence_badges (badge_id, location_kind, world_name, \
+           window_start, window_end, mode, required_seconds) \
+         VALUES ('profile_pro', 'world', $1, $2, $3, 'visit', 0)",
+    )
+    .bind(WORLD)
+    .bind(super::engine::naive(T0))
+    .bind(super::engine::naive(T0 + 2 * HOUR))
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO social.user_badge_progress (address, badge_id, steps_done, progress) \
+         VALUES ($1, 'profile_pro', 0, '{\"steps\": 0, \"filled\": [\"name\"]}')",
+    )
+    .bind(ALICE)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    t.join(ALICE, "s1", T0, At::World(None)).await;
+    t.leave(ALICE, "s1", T0 + 10 * SEC, At::World(None)).await;
+    assert_eq!(
+        t.progress("profile_pro", ALICE).await,
+        Some((0, json!({"steps": 0, "filled": ["name"]}), None))
+    );
     assert!(t.notifications(ALICE).await.is_empty());
 }
 
@@ -841,6 +1164,19 @@ async fn connections_past_the_maximum_age_are_forgotten_and_old_facts_pruned() {
     let s = t.sweep(at, None).await;
     assert_eq!(s.expired, 1);
     assert_eq!(t.visits().await[0].2, ["live"]);
+    let persisted: (Vec<i64>, Vec<String>, i64) = sqlx::query_as(
+        "SELECT joins, sessions, opened_at FROM social.presence_visits WHERE wallet = $1",
+    )
+    .bind(ALICE)
+    .fetch_one(&t.pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted, (vec![T0 + HOUR], vec!["live".into()], T0 + HOUR));
+    assert_eq!(
+        t.progress("stay", ALICE).await,
+        None,
+        "expiry grants no badge time"
+    );
     let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM social.presence_applied_events")
         .fetch_one(&t.pool)
         .await
@@ -934,21 +1270,26 @@ fn only_wallet_joins_and_leaves_of_scene_and_world_rooms_are_inputs() {
     }
 }
 
+async fn stored_events(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT event_id FROM social.presence_events ORDER BY event_id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
-async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
+async fn the_sink_stores_each_webhook_event_once_before_it_is_acknowledged() {
     let Some(t) = T::new().await else { return };
     t.badge("world", At::World(None), 0).await;
     t.window_around_now("world", -1, 1).await;
-    let sink = super::EventSink::with_capacity(2, Settings::default());
-    sink.observe_room_event(&room_event(ALICE, "EV_a"));
-    sink.observe_room_event(&room_event(ALICE, "EV_a"));
-    sink.observe_room_event(&room_event(ALICE, "EV_dropped"));
-    sink.observe_room_event(&room_event("authoritative-server", "EV_b"));
-    assert_eq!(
-        sink.flush(&t.pool).await.unwrap(),
-        1,
-        "the redelivery is one row"
-    );
+    let sink = super::EventSink::new(t.pool.clone(), Settings::default());
+    for event in [
+        room_event(ALICE, "EV_a"),
+        room_event(ALICE, "EV_a"),
+        room_event("authoritative-server", "EV_b"),
+    ] {
+        sink.store_room_event(&event).await.unwrap();
+    }
     let rows: Vec<(String, String, String, String)> =
         sqlx::query_as("SELECT event_id, kind, room_type, session_id FROM social.presence_events")
             .fetch_all(&t.pool)
@@ -956,7 +1297,23 @@ async fn the_sink_stores_each_webhook_event_once_and_drops_past_its_queue() {
             .unwrap();
     assert_eq!(
         rows,
-        [("EV_a".into(), "join".into(), "world".into(), "PA_1".into())]
+        [("EV_a".into(), "join".into(), "world".into(), "PA_1".into())],
+        "the redelivery is one row"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_insert_fails_the_webhook() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(50))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+        .unwrap();
+    let sink = super::EventSink::new(pool, Settings::default());
+    assert!(
+        sink.store_room_event(&room_event(ALICE, "EV_a"))
+            .await
+            .is_err(),
+        "LiveKit delivers it again"
     );
 }
 
@@ -968,7 +1325,7 @@ async fn the_sink_stores_only_events_in_places_a_badge_could_count() {
     // a world badge whose window closed days ago counts nothing now
     t.badge("world", At::World(None), 0).await;
     t.window_around_now("world", -240, -216).await;
-    let sink = super::EventSink::new(Settings::default());
+    let sink = super::EventSink::new(t.pool.clone(), Settings::default());
     let scene = |id: &str, scene: &str| RoomEvent {
         room: format!("scene-{scene}"),
         room_type: RoomType::Scene as i32,
@@ -982,42 +1339,50 @@ async fn the_sink_stores_only_events_in_places_a_badge_could_count() {
         scene("EV_redeployed", SCENE_REDEPLOYED),
         scene("EV_other", OTHER_SCENE),
     ] {
-        sink.observe_room_event(&event);
+        sink.store_room_event(&event).await.unwrap();
     }
-    assert_eq!(sink.flush(&t.pool).await.unwrap(), 2);
-    let stored: Vec<String> =
-        sqlx::query_scalar("SELECT event_id FROM social.presence_events ORDER BY event_id")
-            .fetch_all(&t.pool)
-            .await
-            .unwrap();
-    assert_eq!(stored, ["EV_redeployed", "EV_scene"]);
+    assert_eq!(stored_events(&t.pool).await, ["EV_redeployed", "EV_scene"]);
 }
 
+/// Every join and leave the gatekeeper verified reaches the store, so the
+/// sessions of a reconnect each count from their own join to their own leave.
 #[tokio::test]
-async fn a_failed_insert_is_tried_once_more() {
-    let backoff = std::time::Duration::from_millis(1);
-    let mut calls = 0;
-    let stored = sink::retry_once(backoff, || {
-        calls += 1;
-        let first = calls == 1;
-        async move {
-            if first {
-                Err(sqlx::Error::PoolTimedOut)
-            } else {
-                Ok(7_u64)
-            }
-        }
-    })
-    .await;
-    assert_eq!((stored.unwrap(), calls), (7, 2));
-    let mut calls = 0;
-    let stored = sink::retry_once(backoff, || {
-        calls += 1;
-        async { Err::<u64, _>(sqlx::Error::PoolTimedOut) }
-    })
-    .await;
-    assert!(stored.is_err());
-    assert_eq!(calls, 2, "one retry, then the batch is dropped");
+async fn a_reconnect_credits_the_old_session_when_its_leave_follows_the_new_join() {
+    let Some(mut t) = T::new().await else { return };
+    t.badge("stay", At::World(None), 1000).await;
+    // the sink's snapshot reads the real clock
+    t.window_around_now("stay", -2, 1).await;
+    t.now = chrono::Utc::now().timestamp_millis();
+    let b = t.now - HOUR;
+    let sink = super::EventSink::new(t.pool.clone(), Settings::default());
+    let event = |id: &str, join: bool, sid: &str, at: i64| RoomEvent {
+        kind: if join {
+            RoomEventKind::Joined
+        } else {
+            RoomEventKind::Left
+        } as i32,
+        participant_sid: sid.into(),
+        event_time_ms: at as u64,
+        ..room_event(ALICE, id)
+    };
+    for e in [
+        event("EV_old_join", true, "PA_old", b),
+        event("EV_new_join", true, "PA_new", b + 10 * SEC),
+        event("EV_old_leave", false, "PA_old", b + 400 * SEC),
+        // the leave of a third session arrives before its join and still pairs
+        event("EV_late_leave", false, "PA_late", b + 700 * SEC),
+        event("EV_late_join", true, "PA_late", b + 600 * SEC),
+    ] {
+        sink.store_room_event(&e).await.unwrap();
+    }
+    t.deliver(&[]).await;
+    let (steps, doc, completed) = t.progress("stay", ALICE).await.unwrap();
+    assert_eq!((steps, completed), (500, None));
+    assert_eq!(
+        doc["intervals"],
+        json!([[b, b + 400 * SEC], [b + 600 * SEC, b + 700 * SEC]])
+    );
+    assert_eq!(t.visits().await[0].2, ["PA_new"]);
 }
 
 #[tokio::test]
@@ -1025,7 +1390,7 @@ async fn the_sink_keeps_events_of_a_scene_redeployed_after_its_snapshot() {
     let Some(t) = T::new().await else { return };
     t.badge("scene", At::Scene(PARCEL), 0).await;
     t.window_around_now("scene", -1, 1).await;
-    let sink = super::EventSink::new(Settings::default());
+    let sink = super::EventSink::new(t.pool.clone(), Settings::default());
     let scene = |id: &str, scene: &str| RoomEvent {
         room: format!("scene-{scene}"),
         room_type: RoomType::Scene as i32,
@@ -1033,9 +1398,10 @@ async fn the_sink_keeps_events_of_a_scene_redeployed_after_its_snapshot() {
         scene_id: scene.into(),
         ..room_event(ALICE, id)
     };
-    sink.observe_room_event(&scene("EV_before", SCENE));
     assert_eq!(
-        sink.flush(&t.pool).await.unwrap(),
+        sink.record(PresenceEvent::from_room_event(&scene("EV_before", SCENE)).unwrap())
+            .await
+            .unwrap(),
         1,
         "the snapshot is read"
     );
@@ -1064,9 +1430,8 @@ async fn the_sink_keeps_events_of_a_scene_redeployed_after_its_snapshot() {
         // a scene this node has not synced yet: the engine decides
         scene("EV_unsynced", "bafkreinotsyncedyetfffffffffffffffff"),
     ] {
-        sink.observe_room_event(&event);
+        sink.store_room_event(&event).await.unwrap();
     }
-    assert_eq!(sink.flush(&t.pool).await.unwrap(), 2);
     let stored: Vec<String> = sqlx::query_scalar(
         "SELECT event_id FROM social.presence_events WHERE event_id <> 'EV_before' ORDER BY event_id",
     )

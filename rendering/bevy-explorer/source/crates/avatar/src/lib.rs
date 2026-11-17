@@ -9,7 +9,10 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{
-        mesh::{skinning::SkinnedMesh, MeshTag},
+        mesh::{
+            skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
+            MeshAabb, MeshTag,
+        },
         primitives::Aabb,
         view::RenderLayers,
     },
@@ -47,9 +50,11 @@ mod ik_debug;
 pub mod jump_marker;
 pub mod mask_material;
 pub mod material_cache;
+pub mod nametag;
 pub mod npc_dynamics;
 pub mod point_at_ik;
 pub mod point_at_marker;
+pub mod spring_bones;
 mod two_bone_ik;
 
 #[cfg(test)]
@@ -57,7 +62,6 @@ mod tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
-    sets::SetupSets,
     structs::{AppConfig, AttachPoints, EmoteCommand, EmoteMask, MonotonicTimestamp, PrimaryUser},
     util::{JoinRelativeExt, SceneSpawnerPlus, TaskExt, TryPushChildrenEx},
 };
@@ -79,7 +83,7 @@ use dcl_component::{
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    EntityDefinition, IpfsAssetServer,
+    EntityDefinition, IpfsAssetServer, IpfsResource,
 };
 use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
@@ -88,16 +92,16 @@ use scene_runner::{
     util::ConsoleRelay,
     ContainingScene, SceneEntity,
 };
-use world_ui::spawn_world_ui_view;
 
 use crate::{
     animate::{AvatarAnimPlayer, LOWER_BODY_BONES, LOWER_BODY_MASK_GROUP},
-    dynamic_nametag::DynamicNametagPlugin,
+    dynamic_nametag::{DynamicNametagPlugin, NametagHeadOffset},
     foot_ik::FootIkPlugin,
     ghost::GhostAvatarPlugin,
     head_ik::HeadIkPlugin,
     jump_marker::JumpMarkerPlugin,
     material_cache::{bounds_bits, AvatarMaskKey, AvatarMatKey, BoundsBits},
+    nametag::NametagPlugin,
     point_at_ik::PointAtIkPlugin,
     point_at_marker::PointAtMarkerPlugin,
 };
@@ -134,11 +138,12 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(AvatarColliderPlugin);
         app.add_plugins(AvatarTexturePlugin);
         app.add_plugins(DynamicNametagPlugin);
+        app.add_plugins(NametagPlugin);
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
         app.add_plugins(HeadIkPlugin);
-        ik_debug::register(app);
-        debug_avatars::register(app);
+        app.add_plugins(ik_debug::IkDebugPlugin);
+        app.add_plugins(debug_avatars::DebugAvatarsPlugin);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(JumpMarkerPlugin);
@@ -164,47 +169,17 @@ impl Plugin for AvatarPlugin {
             ),
         );
 
-        app.insert_resource(AvatarWorldUi {
-            view: Entity::PLACEHOLDER,
-            ui_root: Entity::PLACEHOLDER,
-        });
-        app.add_systems(Startup, setup.in_set(SetupSets::Main));
-
         app.add_crdt_lww_component::<PbAvatarShape, AvatarShape>(
             SceneComponentId::AVATAR_SHAPE,
             ComponentPosition::Any,
         );
 
         app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
-        avatar_state::register(app);
+        app.add_plugins(avatar_state::AvatarStatePlugin);
 
         app.add_observer(add_attach_points_to_avatar_shape);
         app.add_observer(remove_attach_points_from_avatar_shape);
     }
-}
-
-#[derive(Resource)]
-struct AvatarWorldUi {
-    view: Entity,
-    ui_root: Entity,
-}
-
-fn setup(mut commands: Commands, images: ResMut<Assets<Image>>, mut view: ResMut<AvatarWorldUi>) {
-    view.view = spawn_world_ui_view(&mut commands, images.into_inner(), None).0;
-    view.ui_root = commands
-        .spawn((
-            Node {
-                width: Val::Px(0.0),
-                min_width: Val::Px(0.0),
-                max_width: Val::Px(0.0),
-                max_height: Val::Px(0.0),
-                flex_direction: FlexDirection::Row,
-                flex_wrap: FlexWrap::Wrap,
-                ..Default::default()
-            },
-            UiTargetCamera(view.view),
-        ))
-        .id();
 }
 
 /// Send player avatar info into scene crdts — a foreign player's into their own context,
@@ -944,10 +919,12 @@ fn update_render_avatar(
         }
 
         if let Some(attach_points) = maybe_attach_points {
-            // reparent attach points
+            // reparent attach points. they leave the bones the nametag's offset was measured
+            // on: it is measured again on the new body
             commands
                 .entity(entity)
-                .try_push_children(&attach_points.entities());
+                .try_push_children(&attach_points.entities())
+                .try_remove::<NametagHeadOffset>();
         }
 
         if let Some(scene_ent) = maybe_scene_ent {
@@ -1054,6 +1031,8 @@ fn spawn_scenes(
     scene_ents: Query<&SceneEntity>,
     mut contexts: Query<&mut RendererSceneContext>,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    // absent without the asset pipeline (tests): nothing reloads
+    ipfs: Option<Res<IpfsResource>>,
 ) {
     for (ent, def, parent) in query.iter() {
         let def = &def.render;
@@ -1079,10 +1058,18 @@ fn spawn_scenes(
             )
             .any(|model| {
                 let h_model = &model.gltf;
-                matches!(
-                    asset_server.get_load_state(h_model),
-                    Some(bevy::asset::LoadState::Loading)
-                )
+                match asset_server.get_load_state(h_model) {
+                    Some(bevy::asset::LoadState::Loading) => true,
+                    // a model whose `glb` variant failed loads again from its original: wait
+                    // for it rather than build the avatar without that piece
+                    Some(bevy::asset::LoadState::Failed(_)) => ipfs
+                        .as_ref()
+                        .zip(h_model.path())
+                        .is_some_and(|(ipfs, path)| {
+                            ipfs.bevy_variant_model_reload_pending(path.path())
+                        }),
+                    _ => false,
+                }
             });
 
         if any_loading {
@@ -1234,15 +1221,25 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
         Res<AppConfig>,
+        Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+    (
+        name_and_parent,
+        local_transforms,
+        previous_avatar,
+        scene_ent,
+        previous_animator,
+        mut contexts,
+        timestamp,
+    ): (
         Query<(&Name, &ChildOf)>,
+        Query<(&Transform, &ChildOf)>,
         Query<&PreviousAvatar>,
         Query<&SceneEntity>,
         Query<
@@ -1299,6 +1296,10 @@ fn process_avatar(
         let body_outline_tag = def.body.model.as_ref().map(outline_tag).unwrap_or(0);
 
         let bounds_key = bounds_bits(&def.bounds);
+        // how far the visible meshes reach above the head bone, along it and in its own units:
+        // the nametag clears them. read from each skin's bind pose, so the pose the avatar is
+        // built in does not matter
+        let mut meshes_top = f32::NEG_INFINITY;
         let mut instance_scene_materials = HashMap::new();
         let mut armature_node = None;
         let mut target_armature_entities = HashMap::new();
@@ -1384,6 +1385,19 @@ fn process_avatar(
                 }
 
                 upload_cpu_mesh(&mut meshes, h_mesh);
+
+                let hidden = def.hides.contains(&WearableCategory::BODY_SHAPE)
+                    || (name.contains("head") && def.hides.contains(&WearableCategory::HEAD));
+                if !hidden {
+                    meshes_top = meshes_top.max(top_above_head(
+                        scene_ent,
+                        h_mesh,
+                        &skins,
+                        &named_ents,
+                        &inverse_bindposes,
+                        &meshes,
+                    ));
+                }
 
                 commands.entity(scene_ent).try_insert(calculate_local_aabb(
                     aabb_bounds.0,
@@ -1687,6 +1701,14 @@ fn process_avatar(
 
                 if let Some(h_mesh) = maybe_h_mesh {
                     upload_cpu_mesh(&mut meshes, h_mesh);
+                    meshes_top = meshes_top.max(top_above_head(
+                        scene_ent,
+                        h_mesh,
+                        &skins,
+                        &named_ents,
+                        &inverse_bindposes,
+                        &meshes,
+                    ));
                     commands.entity(scene_ent).try_insert(calculate_local_aabb(
                         aabb_bounds.0,
                         aabb_bounds.1,
@@ -1795,11 +1817,18 @@ fn process_avatar(
             .entity(avatar_ent)
             .try_insert((AvatarProcessed, Visibility::Inherited));
 
-        commands
-            .entity(root_player_entity.parent())
-            .try_insert(AvatarMaterials(
-                instance_scene_materials.values().map(|h| h.id()).collect(),
-            ));
+        // the head bone's units, in the avatar's own: the nametag's anchor applies a scene's
+        // scale of the avatar, which the local transforms below the avatar leave out. A scene
+        // may hold the avatar at a scale of nothing while it is built
+        let head_scale = target_armature_entities
+            .get("avatar_head")
+            .and_then(|head| scale_below(*head, avatar_ent, &local_transforms));
+        commands.entity(root_player_entity.parent()).try_insert((
+            AvatarMaterials(instance_scene_materials.values().map(|h| h.id()).collect()),
+            NametagHeadOffset::above_head(
+                head_scale.map_or(f32::NEG_INFINITY, |scale| meshes_top * scale),
+            ),
+        ));
 
         // remove previous
         if let Ok(prev) = previous_avatar.get(root_player_entity.parent()) {
@@ -1913,6 +1942,57 @@ fn reparent_attach_point(
     }
 }
 
+/// The height scale of `entity` in the units of its ancestor `root`: its own and that of each
+/// entity between them. Nothing for an entity not below `root`.
+fn scale_below(
+    entity: Entity,
+    root: Entity,
+    transforms: &Query<(&Transform, &ChildOf)>,
+) -> Option<f32> {
+    let mut scale = 1.0;
+    let mut current = entity;
+    while current != root {
+        let (transform, parent) = transforms.get(current).ok()?;
+        scale *= transform.scale.y;
+        current = parent.parent();
+    }
+    Some(scale)
+}
+
+/// How far a skinned mesh reaches above the head bone, along that bone and in its units, read
+/// from the skin's bind pose. Nothing for a mesh not skinned to a head bone.
+fn top_above_head(
+    mesh_ent: Entity,
+    mesh: &Mesh3d,
+    skins: &Query<&mut SkinnedMesh>,
+    names: &Query<&Name>,
+    inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+    meshes: &Assets<Mesh>,
+) -> f32 {
+    let top = || {
+        let skin = skins.get(mesh_ent).ok()?;
+        let head = skin.joints.iter().position(|joint| {
+            names
+                .get(*joint)
+                .is_ok_and(|name| name.eq_ignore_ascii_case("avatar_head"))
+        })?;
+        let from_mesh = *inverse_bindposes.get(&skin.inverse_bindposes)?.get(head)?;
+        let aabb = meshes.get(mesh)?.compute_aabb()?;
+        let (center, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+        (0..8)
+            .map(|corner| {
+                let sign = Vec3::new(
+                    if corner & 1 == 0 { -1.0 } else { 1.0 },
+                    if corner & 2 == 0 { -1.0 } else { 1.0 },
+                    if corner & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                from_mesh.transform_point3(center + half * sign).y
+            })
+            .reduce(f32::max)
+    };
+    top().unwrap_or(f32::NEG_INFINITY)
+}
+
 fn calculate_local_aabb(
     global_min: Vec3,
     global_max: Vec3,
@@ -1950,8 +2030,22 @@ fn calculate_local_aabb(
     }
 }
 
+/// On a player whose avatar is hidden for being farther than the `max_avatars` nearest.
+#[derive(Component)]
+pub struct BeyondMaxAvatars;
+
 fn set_avatar_visibility(
-    mut q: Query<(&GlobalTransform, &mut Visibility, Option<&RenderLayers>), With<AvatarProcessed>>,
+    mut commands: Commands,
+    mut q: Query<
+        (
+            &GlobalTransform,
+            &mut Visibility,
+            Option<&RenderLayers>,
+            &ChildOf,
+        ),
+        With<AvatarProcessed>,
+    >,
+    beyond_max: Query<(), With<BeyondMaxAvatars>>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
 ) {
@@ -1962,7 +2056,7 @@ fn set_avatar_visibility(
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
-        .filter(|(_, _, maybe_layer)| {
+        .filter(|(_, _, maybe_layer, _)| {
             maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
         })
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
@@ -1978,7 +2072,7 @@ fn set_avatar_visibility(
         f32::MAX
     };
 
-    for (t, mut vis, maybe_layer) in q.iter_mut() {
+    for (t, mut vis, maybe_layer, player) in q.iter_mut() {
         let is_root_layer = maybe_layer.is_none_or(|layer| layer.intersects(&default_layer));
         let new_vis = if is_root_layer && (t.translation() - player_pos).length_squared() >= cutoff
         {
@@ -1988,6 +2082,15 @@ fn set_avatar_visibility(
         };
         // avoid dirtying Visibility (and the propagation pass) when unchanged
         vis.set_if_neq(new_vis);
+        let hidden = new_vis == Visibility::Hidden;
+        if hidden != beyond_max.contains(player.parent()) {
+            let mut player = commands.entity(player.parent());
+            if hidden {
+                player.try_insert(BeyondMaxAvatars);
+            } else {
+                player.try_remove::<BeyondMaxAvatars>();
+            }
+        }
     }
 }
 
@@ -2166,7 +2269,11 @@ fn remove_attach_points_from_avatar_shape(
         for attach_point in attach_points.entities() {
             commands.entity(attach_point).try_despawn();
         }
-        commands.entity(entity).try_remove::<AttachPoints>();
+        // the offset was measured on the body that goes with the shape: the next body's
+        // nametag waits for its own
+        commands
+            .entity(entity)
+            .try_remove::<(AttachPoints, NametagHeadOffset)>();
     }
 }
 

@@ -17,6 +17,7 @@ export interface NearbyVoice {
   talking: boolean
   micAvailable: boolean
   toggleSpeak: () => void
+  blocked: boolean
 }
 
 export function useNearbyVoice(session: EngineSession): NearbyVoice {
@@ -50,5 +51,5 @@ export function useNearbyVoice(session: EngineSession): NearbyVoice {
     toggle()
   }, [enabled, toggle])
 
-  return { hearing, setHearing, volume, setVolume, speaking: enabled, talking, micAvailable: session.mic.available, toggleSpeak }
+  return { hearing, setHearing, volume, setVolume, speaking: enabled, talking, micAvailable: session.mic.available, toggleSpeak, blocked: session.mic.sceneBlocked }
 }

@@ -1,4 +1,4 @@
-//! The `SocialService` module: the 35 procedures of
+//! The `SocialService` module: the procedures of
 //! `social_service_v2.proto`, registered on every port the client creates.
 //! The old crate generated a trait and this registration from the `.proto`
 //! at build time; the same shape is written out here once, so the procedure
@@ -100,24 +100,22 @@ pub const WRITE_PROCEDURES: &[&str] = &[
 ];
 
 fn write_gate(name: &str, context: &ProcedureContext<Context>) -> Result<(), RemoteError> {
-    if WRITE_PROCEDURES.contains(&name)
-        && let Some(refusal) =
-            crate::shared::writes::refusal(context.server_context.writes_enabled())
-    {
-        let message = refusal.message("social", crate::writes::DISABLED_MESSAGE);
-        return Err(SocialError::WritesDisabled(message).into());
+    if WRITE_PROCEDURES.contains(&name) && !context.server_context.writes_enabled() {
+        return Err(SocialError::WritesDisabled(crate::writes::DISABLED_MESSAGE.into()).into());
     }
     Ok(())
 }
 
 macro_rules! unary {
-    ($def:ident, $svc:ident, $name:literal, $req:ty, $method:ident) => {{
+    ($def:ident, $svc:ident, $name:tt, $req:ty, $method:ident) => {{
         let service = Arc::clone(&$svc);
         $def.add_unary($name, move |request, context| {
             let service = service.clone();
             Box::pin(async move {
                 let request =
                     <$req>::decode(request.as_slice()).map_err(|e| malformed($name, e))?;
+                #[cfg(test)]
+                assert_rpc_contract!($name, unary, request, &request);
                 let started = crate::rpc::metrics::rpc_request($name, &request.metrics_json());
                 let result = async {
                     write_gate($name, &context)?;
@@ -129,6 +127,8 @@ macro_rules! unary {
                 .await;
                 match result {
                     Ok(response) => {
+                        #[cfg(test)]
+                        assert_rpc_contract!($name, unary, response, &response);
                         crate::rpc::metrics::rpc_response($name, &response.metrics_json(), started);
                         Ok(response.encode_to_vec())
                     }
@@ -140,14 +140,18 @@ macro_rules! unary {
             })
         });
     }};
-    ($def:ident, $svc:ident, $name:literal, $method:ident) => {{
+    ($def:ident, $svc:ident, $name:tt, $method:ident) => {{
         let service = Arc::clone(&$svc);
         $def.add_unary($name, move |_request, context| {
             let service = service.clone();
             Box::pin(async move {
+                #[cfg(test)]
+                assert_rpc_contract!($name, unary, request, &());
                 let started = crate::rpc::metrics::rpc_request($name, &serde_json::json!({}));
                 match service.$method(context).await {
                     Ok(response) => {
+                        #[cfg(test)]
+                        assert_rpc_contract!($name, unary, response, &response);
                         crate::rpc::metrics::rpc_response($name, &response.metrics_json(), started);
                         Ok(response.encode_to_vec())
                     }
@@ -162,11 +166,13 @@ macro_rules! unary {
 }
 
 macro_rules! server_stream {
-    ($def:ident, $svc:ident, $name:literal, $method:ident, $update:ident, $event:literal) => {{
+    ($def:ident, $svc:ident, $name:tt, $method:ident, $update:ident, $event:literal) => {{
         let service = Arc::clone(&$svc);
         $def.add_server_streams($name, move |_request, context| {
             let service = service.clone();
             Box::pin(async move {
+                #[cfg(test)]
+                assert_rpc_contract!($name, server_stream, request, &());
                 let mut observation = crate::rpc::metrics::RpcStream::new($name);
                 if let Err(error) = SocialServiceImpl::caller(&context) {
                     observation.failed();
@@ -194,6 +200,8 @@ macro_rules! server_stream {
                         }),
                         ..Default::default()
                     };
+                    #[cfg(test)]
+                    assert_rpc_contract!($name, server_stream, response, &notice);
                     let _ = yielder.r#yield(notice.encode_to_vec()).await;
                     return Ok(Generator::from_generator(generator, move |item| {
                         observation.update($event);
@@ -204,6 +212,8 @@ macro_rules! server_stream {
                     Ok(generator) => Ok(Generator::from_generator(generator, move |item| {
                         let _ = &guard;
                         observation.update($event);
+                        #[cfg(test)]
+                        assert_rpc_contract!($name, server_stream, response, &item);
                         Some(item.encode_to_vec())
                     })),
                     Err(err) => { observation.failed(); Err(err.into()) },
@@ -474,16 +484,9 @@ mod tests {
     /// nothing else is: the client resolves procedures by name.
     #[test]
     fn the_registration_matches_the_proto_service() {
-        let proto = include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/library/protocol/proto/decentraland/social_service/v2/social_service_v2.proto"
-        ));
-        let declared: Vec<&str> = proto
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("rpc "))
-            .map(|l| l.split('(').next().unwrap().trim())
-            .collect();
-        assert_eq!(declared, PROCEDURES);
+        // Request/response types and stream modes are asserted inside the
+        // registration macros from this same generated descriptor.
+        assert_eq!(crate::rpc::proto::v2::RPC_PROCEDURES, PROCEDURES);
 
         let mut def = ServiceModuleDefinition::<Context>::new();
         let svc = Arc::new(SocialServiceImpl);
@@ -559,20 +562,7 @@ mod tests {
             "subscriptions stay open"
         );
 
-        // on, a mutating procedure still waits for the restore stamps
         ctx.set_writes_enabled(true);
-        let lab = crate::shared::writes::restore::lab::StampLab::fresh();
-        crate::shared::writes::restore::scoped(lab.stamps.clone(), async {
-            assert!(write_gate("UpsertFriendship", &pctx).is_ok());
-            lab.advance(27 * crate::shared::writes::restore::lab::HOUR);
-            let err = write_gate("UpsertFriendship", &pctx).unwrap_err();
-            assert_eq!(err.error_code, 503);
-            assert_eq!(
-                err.error_message,
-                "social writes are held on this node: the last complete backup (backup.json) is 28 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            assert!(write_gate("GetFriends", &pctx).is_ok(), "reads stay open");
-        })
-        .await;
+        assert!(write_gate("UpsertFriendship", &pctx).is_ok());
     }
 }

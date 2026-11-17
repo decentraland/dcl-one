@@ -153,46 +153,6 @@
   text-align: center;
 }
 
-/* Announcements. */
-.post {
-  display: flex;
-  gap: 12px;
-  padding: 14px;
-  margin-bottom: 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-}
-.postBody {
-  flex: 1;
-  min-width: 0;
-}
-.postHead {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-}
-.postAuthor {
-  font-weight: 800;
-  color: var(--text);
-}
-.postDate {
-  color: var(--ink-45);
-}
-.postLikes {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  color: var(--ink-6);
-}
-.postText {
-  margin: 6px 0 0;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink-85);
-}
-
 /* Members — two columns. */
 .memberGrid {
   display: grid;

@@ -106,6 +106,9 @@ pub async fn get_scene_adapter(
     .map_err(|_| unauthorized("Access denied, invalid signed-fetch request"))?;
     let body: SceneAdapterRequest = serde_json::from_slice(&raw_body).unwrap_or_default();
     let identity = sf.signer;
+    if state.deny_list.is_denied(identity.as_str()).await {
+        return Err(unauthorized(super::world_mint::DENY_LISTED));
+    }
     let realm_name = realm_name_from(&sf.metadata, &body)
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
     let scene_id = scene_id_from(&sf.metadata, &body).ok_or_else(|| {
@@ -138,16 +141,19 @@ pub async fn get_scene_adapter(
     } else {
         &caller_ip
     };
-    let record = crate::writes::side_refusal(switch).is_none();
-    let ((), gate, world_allowed) = tokio::join!(
+    let record = crate::writes::side_writes_on(switch);
+    let (gate, world_allowed) = tokio::join!(
         async {
-            if record {
+            // Record only an admitted connection: a refused one must not replace the recorded device.
+            let gate = state
+                .moderation
+                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .await;
+            if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;
             }
+            gate
         },
-        state
-            .moderation
-            .connection_gate(&identity, device_id.as_deref(), resolved_scene_id),
         async {
             if !is_world {
                 return Ok(true);
@@ -350,32 +356,27 @@ pub async fn participants(
     Ok(addresses)
 }
 
-/// The destinations feed's connected wallets (`explore::places::live`): the
-/// same room resolution as `/scene-participants` (a Genesis scene by its
-/// pointer in realm `main`, a world by its room), `None` without LiveKit or
-/// when no scene stands at the pointer (the old route's 400/404, which the
-/// places client read as unknown).
-impl crate::explore::places::live::Participants for CommsState {
-    fn participants<'a>(
-        &'a self,
-        world: bool,
-        key: &'a str,
-    ) -> futures::future::BoxFuture<'a, Option<Vec<String>>> {
-        Box::pin(async move {
-            if !self.livekit.configured {
-                return None;
-            }
-            participants(
-                self,
-                ParticipantsQuery {
-                    pointer: (!world).then(|| key.to_string()),
-                    realm_name: Some(if world { key } else { "main" }.to_string()),
-                    room: None,
-                },
-            )
-            .await
-            .ok()
-        })
+impl CommsState {
+    /// The destinations feed's connected wallets (`serve` hands them to
+    /// Explore's live counts): the same room resolution as
+    /// `/scene-participants` (a Genesis scene by its pointer in realm `main`,
+    /// a world by its room), `None` without LiveKit or when no scene stands at
+    /// the pointer (the old route's 400/404, which the places client read as
+    /// unknown).
+    pub async fn live_participants(&self, world: bool, key: &str) -> Option<Vec<String>> {
+        if !self.livekit.configured {
+            return None;
+        }
+        participants(
+            self,
+            ParticipantsQuery {
+                pointer: (!world).then(|| key.to_string()),
+                realm_name: Some(if world { key } else { "main" }.to_string()),
+                room: None,
+            },
+        )
+        .await
+        .ok()
     }
 }
 

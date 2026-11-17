@@ -17,6 +17,10 @@ SCENE_SUITE = 'apps/bevy-explorer/scene-tests.txt'
 SNAPSHOT_SCENES = ('52,-62', '52,-64', '52,-66')
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
+# On a draft these jobs on larger runners wait for ready for review or this label. The web job is on a
+# larger runner too, but it is not held: the development smoke job and the images need its output.
+HELD_ON_DRAFT = ('test', 'headless')
+ENGINE_LABEL = 'ci:engine'
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'library/explorer-core/engine/generated/serviceTable.ts')
@@ -27,10 +31,15 @@ _ARTIFACT.loader.exec_module(_artifact)
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
+PATCHES = 'rendering/bevy-explorer/patches'
+PATCH_TOOL = 'tooling/patched-sources.py'
+# The in-tree exact-bytes crates and the tools that prove them against their public repositories.
+PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenance.py', 'tooling/enet-provenance.py')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
-INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/hashing', 'tooling/check-local-hashing.mjs',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -46,7 +55,7 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/bevy/**',
+    'rendering/bevy-explorer/vendor/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -74,6 +83,22 @@ IMAGES_INPUTS = (
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
+    '.github/workflows/apis-sites-compile.yml',
+)
+# How the images are built and published, and what the fixed dependency hashes in infra/packages
+# follow (manifests, lockfiles, toolchain). A PR builds the images only for these; main builds
+# them for every input above. The architecture choice in apis-sites-images.yml reads a subset.
+IMAGES_PACKAGING = (
+    'flake.*', 'rust-toolchain*', 'infra/packages/**', 'infra/containers/**', '.cargo/**',
+    'services/catalyst/rust-toolchain*', 'services/catalyst/Cargo.*', 'services/catalyst/**/Cargo.toml',
+    'library/**/Cargo.toml', 'apps/dcl-scene-cli/Cargo.toml',
+    'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
+    'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
+    'tooling/tests/check_hud_manifest_nix.py',
+    'tooling/tests/test_ci_publication.py', 'tooling/tests/test_image_publish.py',
+    '.github/workflows/bevy-explorer-ci.yml', '.github/workflows/apis-sites-images.yml',
+    '.github/workflows/apis-sites-compile.yml',
 )
 IMAGES_JOBS = {'APIs + Sites / build (amd64, ubuntu-26.04)',
                'APIs + Sites / build (arm64, ubuntu-26.04-arm)'}
@@ -95,8 +120,10 @@ APP_INPUTS = {
     'install-web-tools.py': ('web',),
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
+    # The Test Suite on each platform and the graphical scenes link CEF.
+    'install-cef.py': ('test', 'native-matrix', 'scenes'),
     'install-tools.sh': (*LANES, 'native-matrix'),
-    'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'prepare-native-cache.py': ('headless', 'native-matrix', 'scenes'),
     'scene-tests.txt': ('scenes',),
 }
 
@@ -116,11 +143,38 @@ def tested_base(merge, pr_head, fallback):
     return parents[0] if len(parents) == 2 and parents[1] == pr_head else fallback
 
 
+def event_pull_request():
+    try:
+        pull_request = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']
+        return pull_request if isinstance(pull_request, dict) else {}
+    except (KeyError, OSError, TypeError, ValueError):
+        return {}
+
+
 def event_pr_head():
     try:
-        return json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']['head']['sha']
-    except (KeyError, OSError, TypeError, ValueError):
+        return event_pull_request()['head']['sha']
+    except (KeyError, TypeError):
         return None
+
+
+def hold_for_draft(result, pull_request):
+    """A draft does not run the held jobs; they wait until it is ready for review or labelled.
+
+    An unreadable event holds nothing.
+    """
+    try:
+        draft = pull_request.get('draft') is True
+        labelled = any(label.get('name') == ENGINE_LABEL for label in pull_request.get('labels') or [])
+    except (AttributeError, TypeError):
+        return result
+    held = [lane for lane in HELD_ON_DRAFT if result.get(lane) is True]
+    if not draft or labelled or not held:
+        return result
+    print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
+          f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False),
+            'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 
 def api(path):
@@ -256,6 +310,10 @@ def select(base, head):
             affected = ('web', 'headless')
         elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
+        elif path.startswith('library/hashing/') or path == 'tooling/check-local-hashing.mjs':
+            # The bridge scene's SDK commands load library/hashing, and play-artifact.py
+            # fingerprints both paths with the web app.
+            affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
             # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
@@ -266,6 +324,10 @@ def select(base, head):
                 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
+            # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
+            # on each system. Every build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)
@@ -333,6 +395,41 @@ def plan(event, base, head, repo):
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative full build: {exc}')
         return full_selection('Comparison unavailable; full run')
+
+
+def pin_names(paths):
+    """The patched sources whose pin file, patches/<name>/source.toml, is among the paths."""
+    pin = re.compile(re.escape(PATCHES) + r'/([A-Za-z0-9_.-]+)/source\.toml')
+    return sorted({match.group(1) for match in map(pin.fullmatch, paths) if match})
+
+
+def guards_plan(event, base, head):
+    """The online guards of the `source` job that a change needs. `pins`: the patched sources whose
+    source.toml the change adds or edits; each is then proved to be on the ref it names.
+    `verify`: the patched sources to rebuild from their upstream commit and patch series, which
+    proves the `tree` and the `rev` that Cargo takes: each source with a change under
+    patches/<name>/, and every source when the tool that rebuilds them changes.
+    `provenance`: whether the change touches an in-tree crate or the tools that prove them against
+    their public repositories. Without a comparison every guard runs; the daily upstream workflow
+    runs them for the whole tree."""
+    sources = pin_names(git('ls-files', '--', PATCHES).splitlines())
+    try:
+        if event not in ('push', 'pull_request', 'local'):
+            raise ValueError('No comparison for this event')
+        ensure_commit(base)
+        ensure_commit(head)
+        pins = pin_names(git('diff', '--name-only', '--no-renames', '--diff-filter=d', '-z', base, head, '--', PATCHES).split('\0'))
+        changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', PATCHES, PATCH_TOOL).split('\0')
+        touched = {path.removeprefix(PATCHES + '/').split('/', 1)[0] for path in changed if path.startswith(PATCHES + '/')}
+        verify = sources if PATCH_TOOL in changed else [name for name in sources if name in touched]
+        provenance = bool(git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *PROVENANCE_INPUTS).strip('\0'))
+        reason = (f'{len(pins)} changed pin(s) to prove on their refs; {len(verify)} patch series to prove; '
+                  f'in-tree crates {"changed" if provenance else "unchanged"}')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f'Every online guard runs: {exc}')
+        pins = verify = sources
+        provenance, reason = True, 'Comparison unavailable; every online source guard runs'
+    return {'pins': ' '.join(pins), 'verify': ' '.join(verify), 'provenance': provenance, 'reason': reason}
 
 
 def scenes_plan(event, base, head):
@@ -413,7 +510,7 @@ def scene_summary(suite, outcome, log):
 
 def image_matrix(products):
     return {'include': [
-        {'product': product, 'arch': arch, 'runner': 'ubuntu-24.04' + ('-arm' if arch == 'arm64' else '')}
+        {'product': product, 'arch': arch, 'runner': 'ubuntu-26.04' + ('-arm' if arch == 'arm64' else '')}
         for product in products for arch in (('amd64', 'arm64') if product == 'web' else ('amd64',))]}
 
 
@@ -463,7 +560,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = changed_inputs(base, head, IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS if event == 'push' else IMAGES_PACKAGING)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')
@@ -500,7 +597,7 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan',
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan', 'guards-plan',
                                             'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
@@ -526,8 +623,13 @@ def main():
         if args.command == 'consumer-plan':
             write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
             return
+        if args.command == 'guards-plan':
+            write_outputs(guards_plan(event, base, head))
+            return
         result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
                   plan(event, base, head, os.environ.get('GH_REPO', '')))
+        if args.command == 'plan' and event == 'pull_request':
+            result = hold_for_draft(result, event_pull_request())
         write_outputs(result)
     else:
         repo, run_id = os.environ['GH_REPO'], os.environ['SOURCE_RUN']

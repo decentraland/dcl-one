@@ -17,7 +17,7 @@ defaults:
 # rebuilding. A source-hash cache skips the build when inputs are unchanged.
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/creator-hub-setup
@@ -56,6 +56,7 @@ jobs:
               'apps/creator-hub/packages/asset-packs/package.json',
               'apps/creator-hub/packages/inspector/src/**',
               'apps/creator-hub/packages/inspector/build.js',
+              'apps/creator-hub/packages/inspector/build-externals.js',
               'apps/creator-hub/packages/inspector/scripts/**',
               'apps/creator-hub/packages/inspector/tsconfig*.json',
               'apps/creator-hub/packages/inspector/package.json',
@@ -68,7 +69,8 @@ jobs:
               'apps/creator-hub/packages/creator-hub/shared/**',
               'apps/creator-hub/packages/creator-hub/types/**',
               'apps/creator-hub/packages/creator-hub/package.json',
-              'apps/creator-hub/package-lock.json',
+              'apps/creator-hub/pnpm-lock.yaml',
+              'apps/creator-hub/pnpm-workspace.yaml',
               'apps/creator-hub/Makefile',
               '.github/actions/creator-hub-setup/action.yml',
               '.github/workflows/creator-hub-build.yml') }}

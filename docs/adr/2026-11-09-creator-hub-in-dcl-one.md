@@ -15,12 +15,13 @@ that loaded the web Creator Hub and that nothing shipped.
 ## Decision
 
 `apps/creator-hub` is a first-party snapshot of `decentraland/creator-hub` `main` (`7a68e6a`,
-2026-11-11) and replaces the Tauri shell. It keeps its npm layout (one root `package-lock.json`,
+2026-11-11) and replaces the Tauri shell. It keeps its layout (one root lockfile,
 `packages/asset-packs`, `packages/inspector`, `packages/creator-hub`, `file:` links between
 them), its `Makefile` and its agent files, and is run from that folder: like
-`library/js-sdk-toolchain`, it is its own npm project and dcl-one has no JavaScript workspace at
+`library/js-sdk-toolchain`, it is its own JavaScript project and dcl-one has no JavaScript workspace at
 its root. Splitting the three packages across `apps/` and `library/` waits until a second
-deliverable builds one of them from source.
+deliverable builds one of them from source. It installs with pnpm
+([decision](2026-11-13-pnpm-default-package-manager.md)).
 
 Three changes were made in the snapshot:
 
@@ -57,14 +58,17 @@ What else changes:
   `creator-hub-drop.yml` their token. The desktop workflow tags `creator-hub@X.Y.Z` here, from
   which `semantic-version` (`change_path: apps/creator-hub`) computes the next version. That
   repository is not archived: an archived repository takes no new releases.
-- **Promotion.** Every merge publishes a pre-release, which no installed app sees. A person makes
-  it Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
+- **Promotion.** A merge publishes a pre-release, which no installed app sees, only when its pull
+  request has the `release:creator-hub` label; a manual run of `creator-hub-ci.yml` on `main` with
+  `release` set publishes one too. Every other run on `main` builds the unsigned test installers
+  and publishes nothing. A person makes a pre-release Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
   back into a pre-release. Both run in the `creator-hub-promote` environment, which requires a
   reviewer. Promotion needs the `creator-hub@X.Y.Z` tag here, which the desktop workflow creates
   only after both installers built and passed the signature check: the installers upload before
   those checks end, so a pre-release alone may be half-built. A newer merge never cancels a
   release in progress on `main`, but GitHub keeps only one *queued* run per concurrency group: when
-  several merges land during a release, only the newest of them gets a pre-release. Older
+  several merges land during a release, only the newest of them runs, and it releases only if its
+  own pull request has the label; the manual run covers a labelled merge that lost its place. Older
   pre-releases are pruned only after a new one is fully published, so the last finished one, and
   any rolled-back release, stays promotable.
 - **Windows update signatures.** Installed Windows apps check each update's signature against

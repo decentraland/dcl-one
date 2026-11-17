@@ -12,7 +12,7 @@ import type { PageToScene, SceneToPage } from './protocol'
 // because the two implementations drive it differently (console vs rpc).
 
 /** What a first-time login's new profile starts as: a name and one of the curated default looks
- *  by number (`default<look>`), picked before the account existed (the guest start page). */
+ *  by number (`default<look>`), picked before the account existed. */
 export interface NewAccountPick {
   name: string
   look: number
@@ -34,6 +34,16 @@ export interface LoginDriver {
    *  with it, replacing any earlier guest. Absent where there is no engine to take the identity;
    *  `loginGuest` stays the throwaway guest (?guest=1, scene previews). */
   loginPersistentGuest?(pick?: NewAccountPick): Promise<void>
+  /** Email sign-in, in three steps so a wrong code is told before the lobby: send the code to
+   *  `email`; check it, which makes the account's identity where its key is kept (the web shell, or
+   *  this page on native) and fails with an EmailLoginError code (features/auth/thirdweb.ts) for a
+   *  wrong code or a refused address; then sign in with that identity. Absent where there is no
+   *  page to make the thirdweb calls. */
+  /** False where the methods exist but can't work (a page outside the shell has nowhere to keep the key). */
+  emailAvailable?: boolean
+  emailSendCode?(email: string): Promise<void>
+  emailVerify?(email: string, code: string): Promise<AuthIdentity>
+  loginEmail?(identity: AuthIdentity): Promise<void>
   loginCancel(): Promise<void>
   /** Sign out of the current account → back to the login screen. */
   logout(): Promise<void>
