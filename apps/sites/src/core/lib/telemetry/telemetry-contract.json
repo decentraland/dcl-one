@@ -2568,15 +2568,6 @@
       "loose": false,
       "props": {}
     },
-    "lp_community_private_gated": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
     "lp_community_review_reached": {
       "loose": false,
       "props": {
@@ -2633,35 +2624,6 @@
         "error": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "lp_community_viewed": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "members_count": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "fixture",
-            "live"
-          ],
-          "optional": false
         }
       }
     },

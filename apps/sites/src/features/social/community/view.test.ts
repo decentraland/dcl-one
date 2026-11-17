@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { canViewContent, faceUrl, membersLabel, membershipState, readAction, roleLabel, signInReturnHref, thumbnailUrl } from "./view";
 
@@ -127,6 +127,26 @@ describe("faceUrl", () => {
 
   it("accepts this site's own absolute https face URL as its path", () => {
     expect(faceUrl(`https://decentraland.org/profile-images/entities/${entity}/face.png`)).toBe(`/profile-images/entities/${entity}/face.png`);
+  });
+
+  it("accepts the face a profile read prefixed with the node's own origin, even on http", () => {
+    // The creator profile read prefixes faces with the node's origin, which is http on a local node.
+    vi.stubEnv("CATALYST_URL", "http://localhost:5414");
+    try {
+      expect(faceUrl(`http://localhost:5414/profile-images/entities/${entity}/face.png`)).toBe(`/profile-images/entities/${entity}/face.png`);
+      expect(faceUrl("http://localhost:5414/elsewhere/face.png")).toBeUndefined();
+      expect(faceUrl(`http://localhost:5415/profile-images/entities/${entity}/face.png`)).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("resolves dot segments before checking the path, so none climbs out of the face paths", () => {
+    expect(faceUrl("/content/contents/../../x")).toBeUndefined();
+    expect(faceUrl("../../x")).toBeUndefined();
+    expect(faceUrl(`/profile-images/entities/../../api/x`)).toBeUndefined();
+    expect(faceUrl("/content/contents/%2e%2e/%2e%2e/x")).toBeUndefined();
+    expect(faceUrl(`https://decentraland.org/profile-images/entities/../../api/x`)).toBeUndefined();
   });
 
   it("rejects http, other hosts' images, data URLs and malformed values", () => {

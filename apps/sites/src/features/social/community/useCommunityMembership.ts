@@ -61,7 +61,9 @@ export function useCommunityMembership(community: CommunityInfo, identity: AuthI
   const viewer = useQuery(viewerCommunityQuery(identity, id));
   const wantsRequests = Boolean(identity) && community.privacy === "private";
   const requests = useQuery(joinRequestsQuery(wantsRequests ? identity : null));
-  const [failed, setFailed] = useState<Write["kind"] | null>(null);
+  // Keyed to the account that wrote, so a failure never shows under another account or signed out.
+  const [failure, setFailure] = useState<{ kind: Write["kind"]; signer: string } | null>(null);
+  const failed = failure && identity && failure.signer === identity.signer.toLowerCase() ? failure.kind : null;
 
   const mutation = useMutation({
     mutationFn: async (write: Write): Promise<JoinRequest | null> => {
@@ -73,8 +75,8 @@ export function useCommunityMembership(community: CommunityInfo, identity: AuthI
       await cancelJoinRequest(write.identity, id, write.requestId);
       return null;
     },
-    onMutate: () => setFailed(null),
-    onError: (_error, write) => setFailed(write.kind),
+    onMutate: () => setFailure(null),
+    onError: (_error, write) => setFailure({ kind: write.kind, signer: write.identity.signer.toLowerCase() }),
     onSuccess: async (created, write) => {
       const signer = write.identity.signer;
       if (write.kind === "request" && created) {

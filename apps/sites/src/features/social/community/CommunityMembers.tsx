@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useId } from "react";
+import { useId, useRef } from "react";
 
 import { Button, Spinner } from "@dcl/one-ui";
 import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
@@ -27,9 +27,11 @@ export function CommunityMembers({ community }: { community: CommunityInfo }) {
   const query = useMembers(community);
   const members = query.data?.pages.flatMap((page) => page.members) ?? [];
   const total = query.data?.pages[0]?.total ?? community.membersCount;
-  const sentinel = useLoadMore(
+  // The list scrolls inside a fixed height, as source, and its next page loads as it nears the end.
+  const scroller = useRef<HTMLDivElement>(null);
+  const loader = useLoadMore(
     Boolean(query.hasNextPage) && !query.isFetchNextPageError,
-    query.isFetchingNextPage, () => void query.fetchNextPage());
+    query.isFetchingNextPage, () => void query.fetchNextPage(), scroller);
   return (
     <section className={styles.section} aria-labelledby={titleId} aria-busy={query.isPending || undefined}>
       <h2 id={titleId} className={styles.title}>
@@ -40,30 +42,42 @@ export function CommunityMembers({ community }: { community: CommunityInfo }) {
           <Spinner variant="light" label="Loading members" />
         </div>
       ) : query.isError && members.length === 0 ? (
-        <p className={styles.empty} role="alert">
-          We couldn't load the members right now.
-        </p>
-      ) : members.length === 0 ? (
-        <p className={styles.empty}>No members found</p>
-      ) : (
-        <ul className={styles.members}>
-          {members.map((member) => (
-            <MemberRow key={member.memberAddress} member={member} />
-          ))}
-        </ul>
-      )}
-      {query.isFetchNextPageError ? (
-        <div className={styles.loadMoreError} role="alert">
-          <p className={styles.empty}>We couldn't load more members.</p>
-          <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+        <div className={styles.retry} role="alert">
+          <p className={styles.empty}>We couldn't load the members right now.</p>
+          <Button variant="secondary" size="sm" onClick={() => void query.refetch()}>
             Try again
           </Button>
         </div>
-      ) : query.hasNextPage ? (
-        <div ref={sentinel} className={styles.sentinel}>
-          {query.isFetchingNextPage ? <Spinner variant="light" label="Loading more members" /> : null}
+      ) : members.length === 0 ? (
+        <p className={styles.empty}>No members found</p>
+      ) : (
+        // Focusable so a keyboard can scroll it: its rows hold no control.
+        <div ref={scroller} className={styles.membersScroller} role="group" aria-labelledby={titleId} tabIndex={0}>
+          <ul className={styles.members}>
+            {members.map((member) => (
+              <MemberRow key={member.memberAddress} member={member} />
+            ))}
+          </ul>
+          {query.isFetchNextPageError ? (
+            <div className={styles.retry} role="alert">
+              <p className={styles.empty}>We couldn't load more members.</p>
+              <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+                Try again
+              </Button>
+            </div>
+          ) : query.hasNextPage ? (
+            <div ref={loader.ref} className={styles.sentinel}>
+              {query.isFetchingNextPage ? (
+                <Spinner variant="light" label="Loading more members" />
+              ) : loader.manual ? (
+                <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+                  Load more
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      )}
     </section>
   );
 }

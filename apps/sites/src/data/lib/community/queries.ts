@@ -97,8 +97,9 @@ export const eventsQuery = (id: string) =>
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }): Promise<EventsPage> => fetchCommunityEvents(id, pageParam, { signal }),
     getNextPageParam: (last: EventsPage, pages: EventsPage[]) => {
-      const loaded = pages.reduce((sum, page) => sum + page.events.length, 0);
-      return last.events.length > 0 && loaded < last.total ? pages.length * EVENTS_PAGE_SIZE : undefined;
+      // Rows the API sent, valid or not: a page whose rows all failed validation still moves the offset on.
+      const loaded = pages.reduce((sum, page) => sum + page.received, 0);
+      return last.received > 0 && loaded < last.total ? pages.length * EVENTS_PAGE_SIZE : undefined;
     },
   });
 

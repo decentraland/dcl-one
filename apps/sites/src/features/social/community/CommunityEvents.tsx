@@ -43,7 +43,7 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
   const groups = useMemo(() => [creatorWallets(events)], [events]);
   const profiles = useCreatorProfiles(groups);
   const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
-  const sentinel = useLoadMore(
+  const loader = useLoadMore(
     Boolean(query.hasNextPage) && !query.isFetchNextPageError,
     query.isFetchingNextPage, () => void query.fetchNextPage());
   const { zone, origin, now } = useViewer(initialNow);
@@ -62,12 +62,15 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
           <Spinner variant="light" label="Loading events" />
         </div>
       ) : query.isError && events.length === 0 ? (
-        <p className={styles.empty} role="alert">
-          We couldn't load the events right now.
-        </p>
+        <div className={styles.retry} role="alert">
+          <p className={styles.empty}>We couldn't load the events right now.</p>
+          <Button variant="secondary" size="sm" onClick={() => void query.refetch()}>
+            Try again
+          </Button>
+        </div>
       ) : events.length === 0 ? (
         <div className={styles.emptyEvents}>
-          <GeneralCalendar size={48} aria-hidden="true" />
+          <GeneralCalendar size={64} aria-hidden="true" />
           <p>No Upcoming Events</p>
         </div>
       ) : (
@@ -86,15 +89,21 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
         </ul>
       )}
       {query.isFetchNextPageError ? (
-        <div className={styles.loadMoreError} role="alert">
+        <div className={styles.retry} role="alert">
           <p className={styles.empty}>We couldn't load more events.</p>
           <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
             Try again
           </Button>
         </div>
       ) : query.hasNextPage ? (
-        <div ref={sentinel} className={styles.sentinel}>
-          {query.isFetchingNextPage ? <Spinner variant="light" label="Loading more events" /> : null}
+        <div ref={loader.ref} className={styles.sentinel}>
+          {query.isFetchingNextPage ? (
+            <Spinner variant="light" label="Loading more events" />
+          ) : loader.manual ? (
+            <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+              Load more
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </section>

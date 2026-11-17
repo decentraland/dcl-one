@@ -1,5 +1,6 @@
 import { profileFaceUrl } from "@/data/lib/auth/profile-face-url";
 import { siteUrl } from "@/data/lib/catalyst/bases";
+import { catalystBase } from "@/data/lib/catalyst/client";
 import type { CommunityInfo, JoinRequest } from "@/data/lib/catalyst/social/community-detail";
 
 export const COMMUNITY_PATH = "/social/communities";
@@ -54,21 +55,35 @@ export function thumbnailUrl(community: { id: string; thumbnailUrl: string | nul
 /** Paths of this site that serve profile faces: the profile image cache and the node's content store. */
 const FACE_PATH = /^\/(profile-images\/entities|content\/contents)\//;
 
+/** The origin the profile reads prefix their faces with (`profileFaceUrl`), http on a local node. */
+function profileBaseOrigin(): string | undefined {
+  try {
+    return new URL(catalystBase()).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * A member's or owner's face as a path on this site, or undefined (the initial shows instead). Faces
- * come from profile data anyone can write, so no other host is ever requested: an https URL counts
- * only for its path on this site's profile image cache or content store.
+ * come from profile data anyone can write, so no other host is ever requested: an https URL, or one on
+ * the origin the profile read itself prefixed, counts only for its path on this site's profile image
+ * cache or content store.
  */
 export function faceUrl(value: string | undefined | null): string | undefined {
   const local = profileFaceUrl(value ?? undefined, "");
   if (!local) return undefined;
-  if (local.startsWith("/") && !local.startsWith("//")) return FACE_PATH.test(local) ? local : undefined;
+  let url: URL;
   try {
-    const url = new URL(local);
-    return url.protocol === "https:" && FACE_PATH.test(url.pathname) ? url.pathname : undefined;
+    // Resolved, so dot segments (`/content/contents/../../x`, `%2e%2e`) cannot climb out of the paths below.
+    url = new URL(local, "https://site.invalid");
   } catch {
     return undefined;
   }
+  const relative = url.origin === "https://site.invalid" && local.startsWith("/") && !local.startsWith("//");
+  const trusted = relative || url.protocol === "https:" || url.origin === profileBaseOrigin();
+  // Through siteUrl, as the thumbnail, so a page served under PUBLIC_CATALYST_URL reads it there.
+  return trusted && FACE_PATH.test(url.pathname) ? siteUrl(url.pathname) : undefined;
 }
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", compactDisplay: "short" });

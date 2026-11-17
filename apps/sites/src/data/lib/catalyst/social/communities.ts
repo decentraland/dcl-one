@@ -30,7 +30,6 @@ export const CommunitySchema = z.object({
   privacy: z.enum(["public", "private"]),
   visibility: z.enum(["all", "unlisted"]).nullish().transform((v) => v ?? null),
   membersCount: z.number().nullish().transform((v) => v ?? null),
-  isLive: z.boolean().nullish().transform((v) => v ?? false),
   role: z.string().nullish().transform((v) => v ?? null),
 });
 export type Community = z.infer<typeof CommunitySchema>;

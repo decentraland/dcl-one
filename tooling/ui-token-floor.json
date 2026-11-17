@@ -187,10 +187,6 @@
     "primitives": 16,
     "tokens": 0
   },
-  "apps/ui3/src/web/pages/stsocialcommunitydetail.css": {
-    "primitives": 18,
-    "tokens": 0
-  },
   "apps/ui3/src/web/pages/ststorageenvironment.css": {
     "primitives": 5,
     "tokens": 0

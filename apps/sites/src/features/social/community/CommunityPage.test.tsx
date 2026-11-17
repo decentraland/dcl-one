@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -454,6 +454,89 @@ describe("CommunityPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Bob")).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the members in their own scroller and watches its end, not the page's, for the next page", async () => {
+    const roots: (Element | Document | null | undefined)[] = [];
+    class Recorded {
+      constructor(_cb: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        roots.push(options?.root);
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", Recorded);
+    serve(community());
+    const first = { memberAddress: ME, role: "owner", name: "Alice", profilePictureUrl: null, hasClaimedName: true };
+    net.fetchCommunityMembers.mockResolvedValue({ members: [first], total: 2, hasMore: true });
+    show();
+
+    const list = await screen.findByRole("group", { name: "Members (2)" });
+    expect(list.tabIndex).toBe(0);
+    expect(within(list).getByText("Alice")).toBeTruthy();
+    await waitFor(() => expect(roots).toContain(list));
+    vi.unstubAllGlobals();
+  });
+
+  it("shows no members scroller when the community has no members", async () => {
+    serve(community());
+    net.fetchCommunityMembers.mockResolvedValue({ members: [], total: 0, hasMore: false });
+    show();
+
+    expect(await screen.findByText("No members found")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: /Members/ })).toBeNull();
+  });
+
+  it("offers Try again when the first members page fails, and shows them once it loads", async () => {
+    serve(community());
+    net.fetchCommunityMembers.mockRejectedValueOnce(new Error("502"));
+    show();
+
+    expect(await screen.findByText("We couldn't load the members right now.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Alice")).toBeTruthy();
+  });
+
+  it("offers Try again when the first events page fails", async () => {
+    serve(community());
+    net.fetchCommunityEvents.mockRejectedValueOnce(new Error("502"));
+    show();
+
+    expect(await screen.findByText("We couldn't load the events right now.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("No Upcoming Events")).toBeTruthy();
+  });
+
+  it("offers Load more instead of loading on scroll when the browser has no IntersectionObserver", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    serve(community());
+    const first = { memberAddress: ME, role: "owner", name: "Alice", profilePictureUrl: null, hasClaimedName: true };
+    net.fetchCommunityMembers.mockImplementation(async (_id: string, offset: number) =>
+      offset === 0
+        ? { members: [first], total: 2, hasMore: true }
+        : { members: [{ ...first, memberAddress: "0x2222222222222222222222222222222222222222", name: "Bob", role: "member" }], total: 2, hasMore: false },
+    );
+    show();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("Bob")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("drops a failed join's message once another account is signed in", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    net.joinCommunity.mockRejectedValue(new Error("500"));
+    const router = show();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Join" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Failed to join community");
+
+    auth.identity = { signer: "0x3333333333333333333333333333333333333333" };
+    await router.navigate(`/social/communities/${ID}?again=1`);
+
+    await waitFor(() => expect(screen.queryByText("Failed to join community")).toBeNull());
   });
 
   it("says so when a Remind me toggle fails", async () => {

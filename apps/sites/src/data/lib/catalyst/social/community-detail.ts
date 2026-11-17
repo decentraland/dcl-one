@@ -65,7 +65,8 @@ export type JoinRequest = z.infer<typeof RequestSchema>;
 
 const RequestsSchema = z.object({ data: z.object({ results: z.array(z.unknown()) }) });
 
-export type EventsPage = { events: Event[]; total: number };
+/** `received` counts the rows the page held before invalid ones were dropped, which is what paging advances by. */
+export type EventsPage = { events: Event[]; total: number; received: number };
 
 /** The ids the social API accepts; anything else is a page that cannot exist. */
 const COMMUNITY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -145,11 +146,11 @@ export async function fetchCommunityEvents(
   offset: number,
   opts: { signal?: AbortSignal } = {},
 ): Promise<EventsPage> {
-  const { data, total } = await fetchEvents(
+  const { data, total, received } = await fetchEvents(
     { community_id: id, limit: EVENTS_PAGE_SIZE, offset },
     { signal: opts.signal },
   );
-  return { events: data, total };
+  return { events: data, total, received: received ?? data.length };
 }
 
 /** The member's own pending requests to join a private community. */

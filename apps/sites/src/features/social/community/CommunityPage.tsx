@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { Button, Skeleton, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
-import { GeneralCheck, GeneralLock, GeneralPlayers, GeneralPrivate } from "@dcl/one-ui/foundations/icons";
+import { GeneralCheck, GeneralLock, GeneralPlayers, GeneralPrivate, GeneralPublic } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
@@ -96,12 +96,13 @@ function CommunityCard({
   const owner = profiles[community.ownerAddress.toLowerCase()];
   const ownerFace = faceUrl(owner?.avatarUrl);
   const ownerName = community.ownerName || owner?.name || shortAddress(community.ownerAddress);
+  // The card is a grid, so the description moves under the image row on a tablet, as source.
   return (
     <section className={styles.info} aria-labelledby={titleId}>
       <CommunityThumbnail community={community} />
-      <div className={styles.details}>
-        <div className={styles.heading}>
-          <p className={styles.eyebrow}>Decentraland Community</p>
+      <div className={styles.heading}>
+        <p className={styles.eyebrow}>Decentraland Community</p>
+        <div className={styles.titleBlock}>
           <h1 id={titleId} className={styles.title}>
             {community.name}
           </h1>
@@ -110,36 +111,36 @@ function CommunityCard({
               {community.privacy === "private" ? (
                 <GeneralPrivate size={14} aria-hidden="true" />
               ) : (
-                <GeneralPlayers size={14} aria-hidden="true" />
+                <GeneralPublic size={14} aria-hidden="true" />
               )}
               {community.privacy === "private" ? "Private" : "Public"}
             </span>
             <span className={styles.divider} aria-hidden="true" />
             <span>{membersLabel(community.membersCount)}</span>
           </p>
-          <p className={styles.owner}>
-            {ownerFace ? (
-              <img className={styles.ownerAvatar} src={ownerFace} alt="" loading="lazy" />
-            ) : (
-              <span className={styles.ownerAvatar} aria-hidden="true">
-                {ownerName.charAt(0).toUpperCase()}
-              </span>
-            )}
-            By <span className={styles.ownerName}>{ownerName}</span>
-          </p>
-          <div className={styles.actions}>
-            <MembershipAction membership={membership} />
-          </div>
-          {membership.failed ? (
-            <p className={styles.error} role="alert">
-              {FAILED_COPY[membership.failed]}
-            </p>
-          ) : null}
         </div>
-        {showDescription && community.description ? (
-          <p className={styles.description}>{community.description}</p>
+        <p className={styles.owner}>
+          {ownerFace ? (
+            <img className={styles.ownerAvatar} src={ownerFace} alt="" loading="lazy" />
+          ) : (
+            <span className={styles.ownerAvatar} aria-hidden="true">
+              {ownerName.charAt(0).toUpperCase()}
+            </span>
+          )}
+          By <span className={styles.ownerName}>{ownerName}</span>
+        </p>
+        <div className={styles.actions}>
+          <MembershipAction membership={membership} />
+        </div>
+        {membership.failed ? (
+          <p className={styles.error} role="alert">
+            {FAILED_COPY[membership.failed]}
+          </p>
         ) : null}
       </div>
+      {showDescription && community.description ? (
+        <p className={styles.description}>{community.description}</p>
+      ) : null}
     </section>
   );
 }
@@ -163,26 +164,26 @@ function MembershipAction({ membership }: { membership: Membership }) {
   switch (state.kind) {
     case "joined":
       return (
-        <Button variant="outline" size="md" disabled startIcon={<GeneralCheck size={16} aria-hidden="true" />}>
+        <Button className={styles.cta} variant="outline" size="md" disabled startIcon={<GeneralCheck size={16} aria-hidden="true" />}>
           Joined
         </Button>
       );
     case "signed-out":
       return (
-        <Button size="md" onClick={membership.signIn}>
+        <Button className={styles.cta} size="md" onClick={membership.signIn}>
           Sign in to join
         </Button>
       );
     case "loading":
       return (
-        <Button variant="secondary" size="md" disabled loading>
+        <Button className={styles.cta} variant="secondary" size="md" disabled loading>
           Loading...
         </Button>
       );
     case "error":
       return (
         <>
-          <Button variant="secondary" size="md" onClick={membership.retry}>
+          <Button className={styles.cta} variant="secondary" size="md" onClick={membership.retry}>
             Try again
           </Button>
           <p className={styles.error} role="alert">
@@ -192,19 +193,19 @@ function MembershipAction({ membership }: { membership: Membership }) {
       );
     case "join":
       return (
-        <Button size="md" onClick={membership.join} disabled={pending} loading={pending}>
+        <Button className={styles.cta} size="md" onClick={membership.join} disabled={pending} loading={pending}>
           Join
         </Button>
       );
     case "request":
       return (
-        <Button variant="secondary" size="md" onClick={membership.requestToJoin} disabled={pending} loading={pending}>
+        <Button className={styles.cta} variant="secondary" size="md" onClick={membership.requestToJoin} disabled={pending} loading={pending}>
           Request to join
         </Button>
       );
     case "cancel":
       return (
-        <Button variant="secondary" size="md" onClick={membership.cancelRequest} disabled={pending} loading={pending}>
+        <Button className={styles.cta} variant="secondary" size="md" onClick={membership.cancelRequest} disabled={pending} loading={pending}>
           Cancel request
         </Button>
       );
@@ -215,7 +216,7 @@ function PrivateNotice() {
   const titleId = useId();
   return (
     <section className={styles.private} aria-labelledby={titleId}>
-      <GeneralLock className={styles.privateIcon} size={64} aria-hidden="true" />
+      <GeneralLock className={styles.privateIcon} size={72} aria-hidden="true" />
       <h2 id={titleId} className={styles.privateTitle}>
         This is a Private Community
       </h2>
@@ -234,11 +235,12 @@ function CommunitySections({ community, now }: { community: CommunityInfo; now: 
       id={tabId(value)}
       label={label}
       selected={section === value}
+      device="desktop"
       aria-controls={panelId(value)}
       onClick={() => setSection(value)}
     />
   );
-  // Side by side from 1024px; below that, the tabs pick which one shows.
+  // Side by side from 991px; below that, the tabs pick which one shows.
   const panelClass = (value: Section) =>
     [styles.panel, styles[value], section === value ? undefined : styles.inactive].filter(Boolean).join(" ");
   return (
