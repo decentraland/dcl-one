@@ -11,6 +11,9 @@ DO $capability$ BEGIN
                    AND column_name = 'image_content_type') THEN
     RAISE EXCEPTION 'camera import requires images.image_content_type schema capability';
   END IF;
+  IF to_regclass('camera_reel.imported_images') IS NULL THEN
+    RAISE EXCEPTION 'camera import requires the camera_reel.imported_images schema capability';
+  END IF;
 END $capability$;
 
 CREATE TEMP TABLE camera_import ON COMMIT DROP AS
@@ -70,6 +73,13 @@ RETURNING id, is_public
 )
 INSERT INTO dcl_migration.camera_reel_image_loaded (id, is_public)
 SELECT id, is_public FROM inserted
+ON CONFLICT (id) DO NOTHING;
+
+-- Mark every row this import owns as imported, so `catalyst camera-reel import` may refresh and
+-- prune it; rows that predate the importer stay unmarked.
+INSERT INTO camera_reel.imported_images (id)
+SELECT l.id FROM camera_import s
+JOIN dcl_migration.camera_reel_image_loaded l USING (id)
 ON CONFLICT (id) DO NOTHING;
 
 -- Check after INSERT so a concurrent insert is also compared. Moderation is

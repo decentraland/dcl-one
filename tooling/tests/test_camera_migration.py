@@ -332,6 +332,8 @@ CREATE TABLE camera_reel.images (id uuid PRIMARY KEY, user_address text NOT NULL
 CREATE TABLE images (id uuid PRIMARY KEY, user_address text, url text, thumbnail_url text,
  is_public boolean, metadata jsonb, created_at timestamp);
 CREATE TABLE camera_reel.photo_events (id bigint);
+CREATE TABLE camera_reel.imported_images (id uuid PRIMARY KEY REFERENCES camera_reel.images (id) ON DELETE CASCADE,
+ imported_at timestamp NOT NULL DEFAULT timezone('UTC', now()));
 ''')
         vals = row()
         self.sql('INSERT INTO images VALUES (' + ','.join(migrate.literal(v) for v in vals) + ');')
@@ -570,6 +572,32 @@ FROM images CROSS JOIN (SELECT '00000000-0000-0000-0000-' || lpad(g::text, 12, '
             self.run_import()
         self.sql('ALTER TABLE camera_reel.images DROP COLUMN image_content_type;')
         with self.assertRaisesRegex(migrate.MigrationError, 'image_content_type schema capability'):
+            self.run_import()
+        self.assertEqual(self.sql('SELECT count(*) FROM camera_reel.images;').strip(), '0')
+        self.assertEqual(self.sql('SELECT count(*) FROM dcl_migration.checkpoint;').strip(), '0')
+
+    def imported_marks(self):
+        return self.sql('SELECT count(*) FROM camera_reel.imported_images;').strip()
+
+    def test_when_importing_a_photo_it_should_mark_it_as_imported(self):
+        self.run_import()
+        self.assertEqual(self.sql('SELECT id FROM camera_reel.imported_images;').strip(), PHOTO)
+
+    def test_when_a_tracked_photo_lacks_its_mark_it_should_regain_it_on_replay(self):
+        self.run_import()
+        self.sql('DELETE FROM camera_reel.imported_images;')
+        self.run_import()
+        self.assertEqual(self.imported_marks(), '1')
+
+    def test_when_an_untracked_photo_is_replayed_it_should_stay_unmarked(self):
+        self.run_import()
+        self.sql('DELETE FROM camera_reel.imported_images; DELETE FROM dcl_migration.camera_reel_image_loaded;')
+        self.run_import()
+        self.assertEqual(self.imported_marks(), '0')
+
+    def test_when_the_imported_images_relation_is_missing_it_should_stop_before_publishing(self):
+        self.sql('DROP TABLE camera_reel.imported_images;')
+        with self.assertRaisesRegex(migrate.MigrationError, 'imported_images schema capability'):
             self.run_import()
         self.assertEqual(self.sql('SELECT count(*) FROM camera_reel.images;').strip(), '0')
         self.assertEqual(self.sql('SELECT count(*) FROM dcl_migration.checkpoint;').strip(), '0')

@@ -113,7 +113,10 @@ abort the batch without updates. The importer records the last visibility it
 wrote in `dcl_migration.camera_reel_image_loaded`. Later source visibility changes
 follow only while the target still matches that recorded value; local visibility
 edits remain intact. Existing UUIDs without an import marker require exact facts
-and visibility and are never silently adopted or overwritten. Existing moderation
+and visibility and are never silently adopted or overwritten. Every row the importer
+tracks also gets a `camera_reel.imported_images` row in the same batch, so
+`catalyst camera-reel import` treats it as imported (refresh and `--prune`); untracked
+rows stay unmarked. The target must have that relation. Existing moderation
 remains untouched, including when source visibility changes. Historical rows explicitly set
 `ranking_published=true`, without new photo events, ranking increments or rewards.
 A failed batch rolls back its rows and checkpoint together.
