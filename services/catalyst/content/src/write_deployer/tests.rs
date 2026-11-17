@@ -1025,6 +1025,60 @@ async fn persist_statement_writes_everything_off_one_insert() {
     pool.close().await;
 }
 
+/// An entity older than an already superseded deployment's deleter takes over only its own
+/// pointers: a pointer of the superseded deployment that a newer entity holds stays with it.
+#[tokio::test]
+async fn persist_statement_keeps_pointers_a_newer_entity_holds() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let scope = Scope::new();
+    let (first_id, newest_id, middle_id) =
+        (scope.id("first"), scope.id("newest"), scope.id("middle"));
+    let p = |names: &[&str]| scope.pointers(names);
+
+    let mut tx = pool.begin().await.unwrap();
+    run_persist(&mut tx, false, &first_id, 1_000.0, &p(&["0,0", "1,0"]), &[])
+        .await
+        .dep_id
+        .expect("first inserts");
+    let newest = run_persist(&mut tx, false, &newest_id, 10_000.0, &p(&["1,0"]), &[]).await;
+    assert_eq!((newest.overwrote, newest.cleared), (1, 1));
+
+    let middle = run_persist(&mut tx, false, &middle_id, 5_000.0, &p(&["0,0"]), &[]).await;
+    let middle_dep = middle.dep_id.expect("no newer entity on 0,0");
+    assert_eq!(
+        (middle.newer, middle.overwrote, middle.cleared),
+        (false, 1, 0)
+    );
+
+    let pointers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT pointer, entity_id FROM content.active_pointers
+         WHERE pointer = ANY($1) ORDER BY pointer",
+    )
+    .bind(p(&["0,0", "1,0"]))
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        pointers,
+        vec![
+            (p(&["0,0"]).remove(0), middle_id.clone()),
+            (p(&["1,0"]).remove(0), newest_id.clone()),
+        ]
+    );
+    let deleter: Option<i32> = sqlx::query_scalar(
+        "SELECT deleter_deployment FROM content.deployments WHERE entity_id = $1",
+    )
+    .bind(&first_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(deleter, Some(middle_dep));
+    tx.rollback().await.unwrap();
+    pool.close().await;
+}
+
 /// The installed function and the raw statement are the same SQL; a deploy through the
 /// function must produce the same outcome and rows, and a stale deploy the same rejection.
 #[tokio::test]
