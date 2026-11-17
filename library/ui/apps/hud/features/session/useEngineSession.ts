@@ -1192,6 +1192,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [error, setError] = useState<string | null>(null)
   // Engine boots (autostart) while the login screen is up; this flips true once it can take commands.
   const [engineReady, setEngineReady] = useState(false)
+  // The bridge scene has answered the page (or was reported unreachable): Verifying's clock waits
+  // for it, since the welcome answer comes from that scene and a busy cold boot can start it well
+  // after the sign-in is submitted.
+  const [bridgeAnswered, setBridgeAnswered] = useState(false)
   const [avatarLoaded, setAvatarLoaded] = useState(false)
   // Real WASM-download/boot progress surfaced from the engine (0–100) + the active step id,
   // for the login footer bar. The engine's own loader is hidden (hideLoader=1).
@@ -1965,7 +1969,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'systemAction':
           systemActionRef.current(msg.action, msg.pressed)
           break
+        case 'bridgeReady':
+          setBridgeAnswered(true)
+          break
         case 'bridgeUnavailable':
+          // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
+          setBridgeAnswered(true)
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
           // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
@@ -2545,6 +2554,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
       }
     })
+    // a bridge that answered before this subscription (or a driver with no bridge to wait for)
+    if (typeof driver.bridgeReady !== 'function' || driver.bridgeReady()) setBridgeAnswered(true)
 
     // Same-domain SSO: an identity in this origin's localStorage (written by the auth site)
     // means the user is already signed in — no engine query, no polling. Returning from the
@@ -4501,13 +4512,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Verifying your account: signed in to the lobby's held world, waiting for the sign-in and the
   // account's welcome answer (and an existing account's terms, answered for it). It gives up after
-  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept.
+  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept. The
+  // welcome answer is the bridge scene's, so the clock starts once that scene has answered the page
+  // (or is reported unreachable): on a cold, busy boot it can start long after the sign-in.
   const verifying = phase === 'welcome' && welcome == null
   useEffect(() => {
-    if (!verifying) return
+    if (!verifying || !bridgeAnswered) return
     const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), VERIFY_TIMEOUT_MS)
     return () => clearTimeout(id)
-  }, [verifying, cancelSignIn])
+  }, [verifying, bridgeAnswered, cancelSignIn])
 
   const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page

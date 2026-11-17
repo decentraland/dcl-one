@@ -270,10 +270,18 @@ struct VoiceState {
     call: Option<Value>,
 }
 
+/// The call's fields that are null with no call, each with what the debug panel shows instead.
+const CALL_UNSET: [(&str, &str); 4] = [
+    ("callId", "No private call."),
+    ("communityId", "No community stream."),
+    ("peer", "No private call."),
+    ("error", "No call error."),
+];
+
 impl VoiceState {
     fn to_json(&self) -> Value {
         let livekit = self.livekit.as_ref();
-        json!({
+        let mut report = json!({
             "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked },
             "call": self.call,
             "livekit": livekit.is_some(),
@@ -285,7 +293,18 @@ impl VoiceState {
             "speakers": livekit.map(|livekit| livekit.speakers.iter()
                 .map(|address| format!("{address:#x}"))
                 .collect::<Vec<_>>()),
-        })
+        });
+        if let Some(call) = self.call.as_ref().and_then(Value::as_object) {
+            let unavailable: serde_json::Map<String, Value> = CALL_UNSET
+                .iter()
+                .filter(|(field, _)| call.get(*field).is_none_or(Value::is_null))
+                .map(|(field, reason)| (format!("call.{field}"), Value::from(*reason)))
+                .collect();
+            if !unavailable.is_empty() {
+                report["unavailable"] = Value::Object(unavailable);
+            }
+        }
+        report
     }
 }
 
@@ -593,6 +612,36 @@ mod tests {
                     { "scene": true, "state": "connecting" },
                 ],
                 "speakers": [format!("{:#x}", address(0xab))],
+                "unavailable": {
+                    "call.callId": "No private call.",
+                    "call.communityId": "No community stream.",
+                    "call.peer": "No private call.",
+                    "call.error": "No call error.",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn a_call_reading_that_is_set_needs_no_explanation() {
+        let state = VoiceState {
+            mic: MicState {
+                available: true,
+                enabled: false,
+                scene_blocked: false,
+                refusals: 0,
+            },
+            livekit: None,
+            call: Some(json!({
+                "status": "connected", "callId": "c1", "communityId": null,
+                "peer": "0x01", "error": null,
+            })),
+        };
+        assert_eq!(
+            state.to_json()["unavailable"],
+            json!({
+                "call.communityId": "No community stream.",
+                "call.error": "No call error.",
             })
         );
     }
