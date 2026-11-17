@@ -633,7 +633,7 @@ jobs:
         with:
           node-version: 24
       - name: Stamp snapshot version
-        uses: decentraland/oddish-action@63936a214f96407ff9878a98260fa73a026f3981 # decentraland/oddish-action#14
+        uses: decentraland/oddish-action@4af4a5110a9bb98400f52ec05db1b29de5995e98 # decentraland/oddish-action#14
         with:
           package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
@@ -1008,7 +1008,7 @@ jobs:
       # Upstream's publish steps: the version is stamped into the working tree's deploy/web and
       # the page is rebuilt for its versioned CDN base. Nothing is committed.
       - name: Set package.json version
-        uses: decentraland/oddish-action@63936a214f96407ff9878a98260fa73a026f3981 # decentraland/oddish-action#14
+        uses: decentraland/oddish-action@4af4a5110a9bb98400f52ec05db1b29de5995e98 # decentraland/oddish-action#14
         with:
           package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/web
@@ -1100,7 +1100,7 @@ jobs:
       - name: Publish
         id: publish
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        uses: decentraland/oddish-action@63936a214f96407ff9878a98260fa73a026f3981 # decentraland/oddish-action#14
+        uses: decentraland/oddish-action@4af4a5110a9bb98400f52ec05db1b29de5995e98 # decentraland/oddish-action#14
         with:
           package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/web

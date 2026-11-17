@@ -75,7 +75,7 @@ jobs:
       - name: Record the path dependencies' file times for the cache
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stamp snapshot version
-        uses: decentraland/oddish-action@63936a214f96407ff9878a98260fa73a026f3981 # decentraland/oddish-action#14
+        uses: decentraland/oddish-action@4af4a5110a9bb98400f52ec05db1b29de5995e98 # decentraland/oddish-action#14
         with:
           package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
