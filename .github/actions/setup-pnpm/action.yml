@@ -12,7 +12,7 @@ runs:
     - if: runner.os != 'Windows'
       shell: bash
       env:
-        PNPM_VERSION: 12.18.0
+        PNPM_VERSION: 12.21.0
       run: |
         set -euo pipefail
         case "$RUNNER_OS/$RUNNER_ARCH" in
@@ -38,7 +38,7 @@ runs:
       # powershell, not pwsh: Windows PowerShell 5.1 is on every Windows runner, self-hosted included.
       shell: powershell
       env:
-        PNPM_VERSION: 12.18.0
+        PNPM_VERSION: 12.21.0
       run: |
         $ErrorActionPreference = 'Stop'
         $ProgressPreference = 'SilentlyContinue'

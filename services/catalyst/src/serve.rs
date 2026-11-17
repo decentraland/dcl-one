@@ -1294,7 +1294,7 @@ pub async fn serve(
         })
         .transpose()
         .context("ABGEN_ADMIN_URL")?;
-    let ops_admin = Arc::new(
+    let ops_admin = ops::admin::SharedState::from(
         ops::admin::State::new(
             pool.clone(),
             ops::admin::Settings::parse(ops::admin::RawSettings {
