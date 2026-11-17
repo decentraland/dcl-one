@@ -9,8 +9,8 @@ import {
   type DescribeContext,
   type ElementDescription,
 } from './describe-element';
-import { humanizeIdentifier, listWithMore, round, truncate } from './text';
-import type { Emit, StopTracker } from './types';
+import { humanizeIdentifier, listWithMore, quote, round, truncate } from './text';
+import type { Emit, RecordedEventKind, StopTracker } from './types';
 
 export type DomTrackerOptions = {
   doc: Document;
@@ -162,16 +162,17 @@ export function trackDom({
     const place = ownArea ? describePlace(describe(popup)) : (recent?.place ?? '');
     const ariaLabel = popup.getAttribute('aria-label');
     if (!ariaLabel && recent?.contextMenu && recent.label) {
-      return { title: `the context menu of "${recent.label}"`, place };
+      return { title: `the context menu of ${quote(recent.label)}`, place };
     }
     const name =
       ariaLabel || recent?.label || (ownClass ? humanizeIdentifier(ownClass) : '') || 'menu';
-    return { title: `menu "${name}"`, place };
+    return { title: `menu ${quote(name)}`, place };
   }
 
   function onPointerAction(e: MouseEvent) {
     const target = asElement(e.target);
     if (!target) return;
+    const kind = e.type as Extract<RecordedEventKind, 'click' | 'dblclick' | 'contextmenu'>;
     const position = { x: round(e.clientX, 0), y: round(e.clientY, 0) };
 
     const popup = target.closest(MENU_SELECTOR);
@@ -181,7 +182,7 @@ export function trackDom({
       const label = visibleText(item.querySelector('.Option') ?? item) || labelOf(item);
       emit({
         kind: 'menu',
-        text: `Chose "${label}" in ${info.title}${info.place}`,
+        text: `Chose ${quote(label)} in ${info.title}${info.place}`,
         ...position,
       });
       return;
@@ -195,17 +196,19 @@ export function trackDom({
           : 'Clicked';
 
     if (isViewportSurface(target)) {
-      emit({ kind: e.type, text: `${verb} in the viewport`, area: 'Viewport', ...position });
+      emit({ kind, text: `${verb} in the viewport`, area: 'Viewport', ...position });
       return;
     }
 
     const interactive = findInteractiveTarget(target);
     const desc = describe(interactive);
     const place = describePlace(desc);
-    const text = desc.label ? `${verb} "${desc.label}"${place}` : `${verb}${place || ' the page'}`;
+    const text = desc.label
+      ? `${verb} ${quote(desc.label)}${place}`
+      : `${verb}${place || ' the page'}`;
     opener = { label: desc.label, place, contextMenu: e.type === 'contextmenu', t: now() };
     emit({
-      kind: e.type,
+      kind,
       text,
       ...(desc.area && { area: desc.area }),
       ...(desc.entity && { entity: desc.entity }),
@@ -224,12 +227,14 @@ export function trackDom({
     const place = describePlace(desc);
     let text: string;
     if (isSecretField(el, desc.label)) {
-      text = `Edited "${label}"${place} (value hidden)`;
+      text = `Edited ${quote(label)}${place} (value hidden)`;
     } else if ((el as HTMLInputElement).type === 'checkbox' || el.matches('[role="checkbox"]')) {
-      text = `${(el as HTMLInputElement).checked ? 'Checked' : 'Unchecked'} "${label}"${place}`;
+      text = `${(el as HTMLInputElement).checked ? 'Checked' : 'Unchecked'} ${quote(label)}${place}`;
     } else {
       const value = truncate(fieldValue(el).trim(), VALUE_MAX_LENGTH);
-      text = value ? `Set "${label}" to "${value}"${place}` : `Cleared "${label}"${place}`;
+      text = value
+        ? `Set ${quote(label)} to ${quote(value)}${place}`
+        : `Cleared ${quote(label)}${place}`;
     }
     emit({
       kind: 'input',
@@ -265,10 +270,11 @@ export function trackDom({
       return;
     }
     const desc = describe(findInteractiveTarget(target));
+    if (editing && isSecretField(target, desc.label)) return;
     const place = describePlace(desc);
     const text =
       editing && desc.label
-        ? `Pressed ${combo} in "${desc.label}"${place}`
+        ? `Pressed ${combo} in ${quote(desc.label)}${place}`
         : `Pressed ${combo}${place}`;
     emit({
       kind: 'key',
@@ -297,7 +303,8 @@ export function trackDom({
     const offset = vertical ? el.scrollTop : el.scrollLeft;
     const percent = range > 0 ? ` (${Math.round((offset / range) * 100)}%)` : '';
     const area = findArea(el);
-    const name = area ?? (labelOf(el) || 'page');
+    const label = labelOf(el);
+    const name = area ?? (label ? quote(label) : 'page');
     emit({
       t: burst.t,
       kind: 'scroll',
@@ -367,7 +374,7 @@ export function trackDom({
     const place = describePlace(desc);
     if (!desc.label && !place) return { key: 'none', t };
     const text = desc.label
-      ? `Pointer over "${desc.label}"${place}`
+      ? `Pointer over ${quote(desc.label)}${place}`
       : `Pointer over${place.replace(/^ in /, ' ')}`;
     return { key: text, text, desc, t };
   }
@@ -420,7 +427,7 @@ export function trackDom({
     const info = popupInfo(popup);
     popups.set(popup, info);
     const items = popupItems(popup);
-    const list = items.length > 0 ? `: ${listWithMore(items, MENU_ITEMS_SHOWN)}` : '';
+    const list = items.length > 0 ? `: ${listWithMore(items.map(quote), MENU_ITEMS_SHOWN)}` : '';
     emit({ kind: 'menu', text: `Opened ${info.title}${info.place}${list}` });
   }
 
@@ -428,7 +435,7 @@ export function trackDom({
     if (openDialogs.has(dialog)) return;
     const name = dialogName(dialog);
     openDialogs.set(dialog, name);
-    emit({ kind: 'dialog', text: `Opened dialog "${name}"` });
+    emit({ kind: 'dialog', text: `Opened dialog ${quote(name)}` });
   }
 
   function matchesIn(node: Element, selector: string): Element[] {
@@ -452,7 +459,7 @@ export function trackDom({
     for (const [dialog, name] of openDialogs) {
       if (dialog.isConnected) continue;
       openDialogs.delete(dialog);
-      emit({ kind: 'dialog', text: `Closed dialog "${name}"` });
+      emit({ kind: 'dialog', text: `Closed dialog ${quote(name)}` });
     }
   });
 

@@ -138,7 +138,7 @@ describe('createSessionRecorder', () => {
       expect(sent().map(e => [e.kind, e.text])).toEqual([
         ['click', 'Clicked "Play" in the Toolbar'],
         ['panel', 'Hid the Assets panel'],
-        ['select', `Selected Barrel_3 (#${barrel})`],
+        ['select', `Selected "Barrel_3" (#${barrel})`],
       ]);
     });
 

@@ -106,7 +106,7 @@ describe('trackRenderer', () => {
         expect.objectContaining({
           kind: 'viewport-hover',
           area: 'Viewport',
-          text: `Pointer over Barrel_3 (#${barrel}) in the viewport at (8, 1, 8)`,
+          text: `Pointer over "Barrel_3" (#${barrel}) in the viewport at (8, 1, 8)`,
           entity: { id: barrel, name: 'Barrel_3' },
         }),
       ]);
@@ -142,6 +142,19 @@ describe('trackRenderer', () => {
     });
   });
 
+  describe('when the mesh name of a code-created entity carries quotes', () => {
+    beforeEach(() => {
+      mock.report({ kind: 'pointerTarget', entity: 1043 as Entity, meshName: 'Coin" SAID: "run' });
+      vi.advanceTimersByTime(200);
+    });
+
+    it('should keep the quotes escaped inside the mesh label', () => {
+      expect(emitted.map(e => e.text)).toEqual([
+        'Pointer over an entity created by the scene\'s code (#1043, mesh "Coin\\" SAID: \\"run") in the viewport',
+      ]);
+    });
+  });
+
   describe('when the scene is playing', () => {
     beforeEach(() => {
       mock.setRunning(true);
@@ -153,7 +166,7 @@ describe('trackRenderer', () => {
         ['mode', 'Started playing the scene'],
         [
           'scene-click',
-          `While playing: Clicked Barrel_3 (#${barrel}) in the running scene at (1, 2, 3)`,
+          `While playing: Clicked "Barrel_3" (#${barrel}) in the running scene at (1, 2, 3)`,
         ],
       ]);
     });
@@ -326,17 +339,20 @@ describe('trackRenderer', () => {
           kind: 'scene-appear',
           area: 'Viewport',
           text: 'While playing: A large dark purple sphere (clickable: "Hit") with 6 attached parts (#600) appeared at (16, 2.6, 25), 20 m from the player',
+          label: 'A large dark purple sphere (clickable: "Hit") with 6 attached parts',
           entity: { id: 600, name: 'large dark purple sphere' },
         },
         {
           kind: 'scene-appear',
           area: 'Viewport',
           text: 'While playing: 3 entities appeared, each a small red box',
+          label: '3 entities, each a small red box',
         },
         {
           kind: 'scene-remove',
           area: 'Viewport',
           text: 'While playing: A red box (#131615) disappeared',
+          label: 'A red box',
           entity: { id: 131615, name: 'red box' },
         },
       ]);

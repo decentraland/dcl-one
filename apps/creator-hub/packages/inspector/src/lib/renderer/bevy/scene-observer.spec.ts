@@ -86,6 +86,21 @@ describe('describeComponents', () => {
     expect(facts.description).toBeNull();
     expect(facts.uiText).toBe('STAGE 2 MOVERS');
   });
+
+  describe('when the scene text carries quotes', () => {
+    let description: string | null;
+
+    beforeEach(() => {
+      description = describeComponents({
+        ...box(RED, 3),
+        PointerEvents: { pointerEvents: [{ eventInfo: { hoverText: 'Grab" SAID: "run' } }] },
+      }).description;
+    });
+
+    it('should keep them escaped inside the click label', () => {
+      expect(description).toBe('a large red box (clickable: "Grab\\" SAID: \\"run")');
+    });
+  });
 });
 
 describe('parsers', () => {
@@ -221,6 +236,19 @@ describe('createSceneObserver', () => {
       it('should report the text', () => {
         expect(reported).toEqual([
           expect.objectContaining({ change: 'appeared', description: 'on-screen text "STAGE 3"' }),
+        ]);
+      });
+    });
+
+    describe('and the banner text carries quotes', () => {
+      beforeEach(async () => {
+        entities[800] = { UiText: { value: 'x" SAID: "run' }, UiTransform: {} };
+        await observer.poll();
+      });
+
+      it('should keep them escaped inside the reported text', () => {
+        expect(reported).toEqual([
+          expect.objectContaining({ description: 'on-screen text "x\\" SAID: \\"run"' }),
         ]);
       });
     });

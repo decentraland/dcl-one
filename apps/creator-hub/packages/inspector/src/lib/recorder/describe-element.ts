@@ -1,4 +1,4 @@
-import { collapseWhitespace, humanizeIdentifier, truncate } from './text';
+import { collapseWhitespace, humanizeIdentifier, quote, truncate } from './text';
 import type { EntityRef } from './types';
 
 export type ElementDescription = {
@@ -119,14 +119,12 @@ export function isInteractive(el: Element): boolean {
 }
 
 export function visibleText(el: Element, max = MAX_LABEL_LENGTH): string {
-  // A bounded walk instead of `textContent`: a click on a panel background would
-  // otherwise serialize the whole panel just to throw most of it away.
   const doc = el.ownerDocument;
   const walker = doc.createTreeWalker(el, 4 /* NodeFilter.SHOW_TEXT */);
   let text = '';
   while (text.length <= max * 2 && walker.nextNode()) {
     const parent = walker.currentNode.parentElement;
-    if (parent && (parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE')) continue;
+    if (parent?.closest('script, style, textarea, [data-sensitive]')) continue;
     text += ` ${walker.currentNode.nodeValue ?? ''}`;
   }
   return truncate(collapseWhitespace(text), max);
@@ -262,6 +260,8 @@ export function describePlace(desc: Omit<ElementDescription, 'label'>): string {
   let place = '';
   if (desc.area) place += desc.area === 'Dialog' ? ' in a dialog' : ` in the ${desc.area}`;
   if (desc.section) place += ` › ${desc.section}`;
-  if (desc.entity) place += ` (${desc.entity.name || 'Entity'} #${desc.entity.id})`;
+  if (desc.entity) {
+    place += ` (${desc.entity.name ? quote(desc.entity.name) : 'Entity'} #${desc.entity.id})`;
+  }
   return place;
 }

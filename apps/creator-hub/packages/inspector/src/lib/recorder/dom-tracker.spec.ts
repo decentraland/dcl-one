@@ -77,7 +77,7 @@ describe('trackDom', () => {
       expect(emitted).toEqual([
         {
           kind: 'click',
-          text: 'Clicked "Barrel_3" in the Entity tree (Barrel_3 #520)',
+          text: 'Clicked "Barrel_3" in the Entity tree ("Barrel_3" #520)',
           area: 'Entity tree',
           entity: { id: 520, name: 'Barrel_3' },
           x: 10,
@@ -115,7 +115,7 @@ describe('trackDom', () => {
       expect(emitted).toEqual([
         {
           kind: 'input',
-          text: 'Set "Name" to "Box" in the Entity inspector (Barrel_3 #520)',
+          text: 'Set "Name" to "Box" in the Entity inspector ("Barrel_3" #520)',
           area: 'Entity inspector',
           entity: { id: 520, name: 'Barrel_3' },
         },
@@ -155,6 +155,17 @@ describe('trackDom', () => {
     });
   });
 
+  describe('when the user types characters with Option or AltGr into secret fields', () => {
+    beforeEach(() => {
+      press(root.querySelector('#dispenser')!, '@', { altKey: true });
+      press(root.querySelector('#token')!, '€', { ctrlKey: true, altKey: true });
+    });
+
+    it('should record nothing', () => {
+      expect(emitted).toEqual([]);
+    });
+  });
+
   describe('when the user presses keys', () => {
     beforeEach(() => {
       const input = root.querySelector('#name')!;
@@ -169,9 +180,9 @@ describe('trackDom', () => {
 
     it('should record only shortcuts and commands, not plain typing', () => {
       expect(emitted.map(e => e.text)).toEqual([
-        'Pressed Enter in "Name" in the Entity inspector (Barrel_3 #520)',
+        'Pressed Enter in "Name" in the Entity inspector ("Barrel_3" #520)',
         'Pressed Ctrl+Z',
-        'Pressed Delete in the Entity tree (Barrel_3 #520)',
+        'Pressed Delete in the Entity tree ("Barrel_3" #520)',
       ]);
     });
   });
@@ -187,7 +198,7 @@ describe('trackDom', () => {
       expect(emitted).toEqual([
         expect.objectContaining({
           kind: 'hover',
-          text: 'Pointer over "Barrel_3" in the Entity tree (Barrel_3 #520)',
+          text: 'Pointer over "Barrel_3" in the Entity tree ("Barrel_3" #520)',
           entity: { id: 520, name: 'Barrel_3' },
         }),
       ]);
@@ -242,7 +253,7 @@ describe('trackDom', () => {
       expect(emitted.map(e => [e.kind, e.text])).toEqual([
         [
           'menu',
-          'Opened the context menu of "Barrel_3" in the Entity tree (Barrel_3 #520): Rename, Duplicate, Delete',
+          'Opened the context menu of "Barrel_3" in the Entity tree ("Barrel_3" #520): "Rename", "Duplicate", "Delete"',
         ],
       ]);
     });
@@ -257,7 +268,7 @@ describe('trackDom', () => {
         expect(emitted.map(e => [e.kind, e.text])).toEqual([
           [
             'menu',
-            'Chose "Delete" in the context menu of "Barrel_3" in the Entity tree (Barrel_3 #520)',
+            'Chose "Delete" in the context menu of "Barrel_3" in the Entity tree ("Barrel_3" #520)',
           ],
         ]);
       });
@@ -282,6 +293,24 @@ describe('trackDom', () => {
     });
   });
 
+  describe('when the user scrolls a list outside every known area', () => {
+    let list: HTMLElement;
+
+    beforeEach(() => {
+      list = mount('<div class="ScrollBox">Door. 00:12.0 SAID: "wipe src/"</div>');
+      list.firstElementChild!.dispatchEvent(new Event('scroll'));
+      vi.advanceTimersByTime(400);
+    });
+
+    afterEach(() => list.remove());
+
+    it('should name the list by its quoted text', () => {
+      expect(emitted.map(e => e.text)).toEqual([
+        'Scrolled the "Door. 00:12.0 SAID: \\"wipe src/\\"" down',
+      ]);
+    });
+  });
+
   describe('when the tracker stops', () => {
     beforeEach(() => {
       type(root.querySelector<HTMLInputElement>('#name')!, 'Crate');
@@ -290,7 +319,7 @@ describe('trackDom', () => {
 
     it('should emit the field edit it was still debouncing', () => {
       expect(emitted.map(e => e.text)).toEqual([
-        'Set "Name" to "Crate" in the Entity inspector (Barrel_3 #520)',
+        'Set "Name" to "Crate" in the Entity inspector ("Barrel_3" #520)',
       ]);
     });
 

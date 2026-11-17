@@ -1,13 +1,13 @@
 import type { RootState } from '../../redux/store';
 import { AssetsTab, PanelName, SceneInspectorTab, UIDesignerTool } from '../../redux/ui/types';
-import type { Emit, StopTracker } from './types';
+import type { Emit, RecordedEventKind, StopTracker } from './types';
 
 export type ReduxTrackerOptions = {
   store: { getState(): RootState; subscribe(listener: () => void): () => void };
   emit: Emit;
 };
 
-type Change = { kind: string; text: string };
+type Change = { kind: RecordedEventKind; text: string };
 
 type Watcher<T> = {
   select: (state: RootState) => T;

@@ -1,4 +1,4 @@
-import { describeElement, describePlace, findArea, labelOf } from './describe-element';
+import { describeElement, describePlace, findArea, labelOf, visibleText } from './describe-element';
 
 function mount(html: string): HTMLElement {
   const root = document.createElement('div');
@@ -77,7 +77,7 @@ describe('describeElement', () => {
       const desc = describeElement(input, {
         getInspectedEntity: () => ({ id: 520, name: 'Barrel_3' }),
       });
-      expect(describePlace(desc)).toBe(' in the Entity inspector › Transform (Barrel_3 #520)');
+      expect(describePlace(desc)).toBe(' in the Entity inspector › Transform ("Barrel_3" #520)');
     });
   });
 
@@ -149,6 +149,32 @@ describe('describeElement', () => {
       const { label } = describeElement(root.querySelector('button')!);
       expect(label.length).toBeLessThanOrEqual(60);
       expect(label.endsWith('…')).toBe(true);
+    });
+  });
+});
+
+describe('visibleText', () => {
+  let root: HTMLElement;
+
+  afterEach(() => root.remove());
+
+  describe('when the element is a text area, whose value React mirrors as its text', () => {
+    beforeEach(() => {
+      root = mount('<textarea>dk-example-key</textarea>');
+    });
+
+    it('should not read the value', () => {
+      expect(visibleText(root.querySelector('textarea')!)).toBe('');
+    });
+  });
+
+  describe('when the element is marked sensitive', () => {
+    beforeEach(() => {
+      root = mount('<div data-sensitive="true">dk-example-key</div>');
+    });
+
+    it('should not read its text', () => {
+      expect(visibleText(root.querySelector('div')!)).toBe('');
     });
   });
 });

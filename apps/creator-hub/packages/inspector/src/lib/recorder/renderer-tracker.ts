@@ -63,11 +63,11 @@ export function describeRendererEntity(
   if (!isCodeCreated(engine, entity)) {
     const name = nameOf(engine, entity);
     return {
-      text: entityLabel(name ?? 'Unnamed entity', entity),
+      text: entityLabel(name, entity),
       ref: entityRef(engine, entity, name),
     };
   }
-  const mesh = meshName ? `, mesh "${meshName}"` : '';
+  const mesh = meshName ? `, mesh ${JSON.stringify(meshName)}` : '';
   return {
     text: `an entity created by the scene's code (#${entity}${mesh})`,
     ref: meshName ? { id: entity, name: meshName } : { id: entity },
@@ -179,15 +179,20 @@ export function trackRenderer({
         where += `, ${Math.round(distance(change.position, playerPosition))} m from the player`;
       }
     }
+    const label =
+      change.count > 1
+        ? `${change.count} entities, each ${change.description}`
+        : capitalize(change.description);
     const text =
       change.count > 1
         ? `${prefix()}${change.count} entities ${verb}, each ${change.description}`
-        : `${prefix()}${capitalize(change.description)}${change.entity !== null ? ` (#${change.entity})` : ''} ${verb}${where}`;
+        : `${prefix()}${label}${change.entity !== null ? ` (#${change.entity})` : ''} ${verb}${where}`;
     emit({
       ...(change.at !== undefined && { t: change.at }),
       kind: change.change === 'appeared' ? 'scene-appear' : 'scene-remove',
       area: 'Viewport',
       text,
+      label,
       ...(change.entity !== null && {
         entity: { id: change.entity, name: shortName(change.description) },
       }),

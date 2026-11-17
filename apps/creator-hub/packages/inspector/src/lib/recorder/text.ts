@@ -72,8 +72,13 @@ export function shortJson(value: unknown, max = 120): string {
   return truncate(json ?? String(value), max);
 }
 
-export function entityLabel(name: string, id: number): string {
-  return `${name} (#${id})`;
+/** Scene and UI text as a JSON string literal, so its own quotes can't end the quotation. */
+export function quote(text: string): string {
+  return JSON.stringify(text);
+}
+
+export function entityLabel(name: string | undefined, id: number): string {
+  return name ? `${quote(name)} (#${id})` : `Unnamed entity (#${id})`;
 }
 
 export function listWithMore(items: string[], max: number): string {

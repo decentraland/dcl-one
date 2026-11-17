@@ -165,11 +165,11 @@ export function describeComponents(c: Components): EntityFacts {
 
   let noun: string | null = null;
   if (c.GltfContainer?.src) {
-    noun = `model "${c.GltfContainer.src.split('/').pop()}"`;
+    noun = `model ${JSON.stringify(c.GltfContainer.src.split('/').pop())}`;
   } else if (c.MeshRenderer) {
     noun = shapeOf(c.MeshRenderer.mesh);
   } else if (c.TextShape?.text) {
-    noun = `3D text "${clip(c.TextShape.text)}"`;
+    noun = `3D text ${JSON.stringify(clip(c.TextShape.text))}`;
   }
   if (!noun) return facts;
 
@@ -183,7 +183,7 @@ export function describeComponents(c: Components): EntityFacts {
   let description = article(words.join(' '));
   const hover = c.PointerEvents?.pointerEvents?.find(p => p.eventInfo?.hoverText)?.eventInfo
     ?.hoverText;
-  if (hover) description += ` (clickable: "${clip(hover)}")`;
+  if (hover) description += ` (clickable: ${JSON.stringify(clip(hover))})`;
   facts.description = description;
   return facts;
 }
@@ -382,7 +382,7 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
               change: 'appeared',
               entity: null,
               count: 1,
-              description: `on-screen text "${p.uiText}"`,
+              description: `on-screen text ${JSON.stringify(p.uiText)}`,
             });
           }
         }

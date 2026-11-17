@@ -11,7 +11,7 @@ import { EditorComponentNames } from '../sdk/components';
 import type { SdkContextEvents } from '../sdk/context';
 import { GizmoType } from '../utils/gizmo';
 import { describeEntity, entityRef } from './entity-names';
-import { listWithMore, shortJson, summariseTransform, truncate } from './text';
+import { listWithMore, quote, shortJson, summariseTransform, truncate } from './text';
 import type { Emit, StopTracker } from './types';
 
 export type EcsTrackerOptions = {
@@ -64,16 +64,18 @@ export function isSensitiveField(base: string, field: string): boolean {
   );
 }
 
-// A copy with every sensitive top-level field blanked, for anything that renders the value.
+/** A copy with every sensitive field blanked at any depth, for anything that renders the value. */
 export function redactValue(base: string, value: unknown): unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  const copy: Record<string, unknown> = { ...(value as Record<string, unknown>) };
-  for (const key of Object.keys(copy)) {
-    if (isSensitiveField(base, key) && copy[key] !== undefined && copy[key] !== '') {
-      copy[key] = HIDDEN;
-    }
-  }
-  return copy;
+  if (Array.isArray(value)) return value.map(item => redactValue(base, item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, field]) => [
+      key,
+      isSensitiveField(base, key) && field !== undefined && field !== ''
+        ? HIDDEN
+        : redactValue(base, field),
+    ]),
+  );
 }
 
 const GIZMO_NAMES: Record<number, string> = {
@@ -91,7 +93,8 @@ export function baseComponentName(componentName: string): string {
 export function shortComponentName(componentName: string): string {
   const base = baseComponentName(componentName);
   if (base === SCENE_METADATA) return 'Scene settings';
-  return base.split('::').pop() ?? base;
+  const short = base.split('::').pop() ?? base;
+  return /^[\w-]+$/.test(short) ? short : quote(short);
 }
 
 type StructuralChange = {
@@ -131,7 +134,10 @@ function topLevelDiff(
   );
   if (changed.length === 0) return undefined;
   return changed
-    .map(key => `${key} ${isSensitiveField(base, key) ? HIDDEN : shortJson(next[key], 60)}`)
+    .map(
+      key =>
+        `${key} ${isSensitiveField(base, key) ? HIDDEN : shortJson(redactValue(base, next[key]), 60)}`,
+    )
     .join(', ');
 }
 
@@ -254,7 +260,7 @@ export function trackEcs({
       emit({
         t,
         kind: 'entity',
-        text: `Renamed "${change.oldName ?? 'Unnamed entity'}" to "${next}" (#${entity})`,
+        text: `Renamed ${quote(change.oldName ?? 'Unnamed entity')} to ${quote(next)} (#${entity})`,
         entity: ref(entity),
       });
       return;

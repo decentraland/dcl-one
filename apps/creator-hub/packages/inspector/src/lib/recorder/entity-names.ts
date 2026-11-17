@@ -20,5 +20,5 @@ export function entityRef(engine: IEngine, entity: Entity, knownName?: string): 
 }
 
 export function describeEntity(engine: IEngine, entity: Entity, knownName?: string): string {
-  return entityLabel(knownName ?? nameOf(engine, entity) ?? 'Unnamed entity', entity as number);
+  return entityLabel(knownName ?? nameOf(engine, entity), entity as number);
 }
