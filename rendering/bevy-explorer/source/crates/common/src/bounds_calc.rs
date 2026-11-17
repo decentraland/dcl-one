@@ -11,8 +11,8 @@ const NEIGHBOURS: [IVec2; 4] = [IVec2::X, IVec2::Y, IVec2::NEG_X, IVec2::NEG_Y];
 
 /// Splits a parcel set into its contiguous regions, each decomposed into rects. `count` on every
 /// rect is the parcel count of the contiguous region it belongs to. Regions come out in the order
-/// of their first parcel in `parcels`; duplicate parcels are ignored. Linear in the parcel count
-/// (plus a sort per non-rectangular region).
+/// of their first parcel in `parcels`. A repeated parcel is covered once and counted once, so the
+/// rects never overlap. Linear in the parcel count (plus a sort per non-rectangular region).
 pub fn scene_regions(parcels: impl Iterator<Item = IVec2>) -> Vec<Region> {
     let parcels: Vec<IVec2> = parcels.collect();
     let mut unvisited: HashSet<IVec2> = parcels.iter().copied().collect();
@@ -252,6 +252,8 @@ mod test {
         regions.iter().map(|r| (r.min, r.max, r.count)).collect()
     }
 
+    /// The reference only handles distinct parcels, so it gets the input with repeats dropped
+    /// (first occurrence kept, which is what region order follows).
     #[test]
     fn matches_reference_in_any_order() {
         let mut rng = thread_rng();
@@ -263,29 +265,54 @@ mod test {
                 .flat_map(|x| (0..y_dim).map(move |y| IVec2::new(x, y)))
                 .filter(|_| rng.gen_bool(fill))
                 .collect();
+            if !parcels.is_empty() && rng.gen_bool(0.5) {
+                for _ in 0..rng.gen_range(1..=parcels.len()) {
+                    parcels.push(parcels[rng.gen_range(0..parcels.len())]);
+                }
+            }
             parcels.shuffle(&mut rng);
+            let distinct: Vec<IVec2> = parcels.iter().copied().unique().collect();
             assert_eq!(
                 rects(&scene_regions(parcels.iter().copied())),
-                rects(&reference_regions(parcels.iter().copied())),
+                rects(&reference_regions(distinct.into_iter())),
                 "{parcels:?}"
             );
         }
     }
 
-    /// ~21k parcels: one region with a grid of holes, fed checkerboard-first so a quadratic
-    /// merge would first build ~10k single-parcel regions.
-    fn large_parcels() -> Vec<IVec2> {
-        let mut parcels: Vec<IVec2> = (0..160)
-            .flat_map(|x| (0..160).map(move |y| IVec2::new(x, y)))
+    #[test]
+    fn a_repeated_parcel_is_covered_once() {
+        let p = |x, y| IVec2::new(x, y);
+        assert_eq!(
+            rects(&scene_regions([p(0, 0), p(0, 0)].into_iter())),
+            vec![(p(0, 0), p(0, 0), 1)]
+        );
+        // a repeat that arrives before its neighbour still joins the same region
+        assert_eq!(
+            rects(&scene_regions(
+                [p(0, 0), p(0, 0), p(0, 1), p(0, 0)].into_iter()
+            )),
+            vec![(p(0, 0), p(0, 1), 2)]
+        );
+    }
+
+    /// One region of `side`² parcels less a grid of holes (12%), fed checkerboard-first so a
+    /// quadratic merge would first build `side`²/2 single-parcel regions.
+    fn large_parcels(side: i32) -> Vec<IVec2> {
+        let mut parcels: Vec<IVec2> = (0..side)
+            .flat_map(|x| (0..side).map(move |y| IVec2::new(x, y)))
             .filter(|p| !(p.x % 10 >= 7 && p.y % 10 >= 4))
             .collect();
         parcels.sort_by_key(|p| ((p.x + p.y) % 2, p.x, p.y));
         parcels
     }
 
+    /// ~90k parcels. Linear takes well under a second even unoptimised; the quadratic merge takes
+    /// seconds at a quarter of this size optimised and grows 16x here, so the loose bound only
+    /// trips on a complexity regression, not on a slow runner.
     #[test]
     fn large_scene_is_fast() {
-        let parcels = large_parcels();
+        let parcels = large_parcels(320);
         let start = std::time::Instant::now();
         let regions = scene_regions(parcels.iter().copied());
         let elapsed = start.elapsed();
@@ -296,18 +323,17 @@ mod test {
             .sum();
         assert_eq!(total as usize, parcels.len());
         assert!(regions.iter().all(|r| r.count as usize == parcels.len()));
-        // linear runs in milliseconds; the quadratic merge took seconds on this input
         assert!(
-            elapsed.as_secs_f64() < 1.0,
+            elapsed.as_secs_f64() < 10.0,
             "{} parcels took {elapsed:?}",
             parcels.len()
         );
     }
 
     #[test]
-    #[ignore = "measures the quadratic reference against the bound above"]
+    #[ignore = "times the quadratic reference on ~21k parcels, a quarter of the bound's input"]
     fn large_scene_reference_is_slow() {
-        let parcels = large_parcels();
+        let parcels = large_parcels(160);
         let start = std::time::Instant::now();
         reference_regions(parcels.iter().copied());
         println!("reference: {:?}", start.elapsed());
