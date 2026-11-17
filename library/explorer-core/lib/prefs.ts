@@ -18,6 +18,7 @@ export const PREF = {
   chatClosedCommunities: 'chat.communities.closed',
   chatKnownCommunities: 'chat.communities.known',
   lobbyRecents: 'lobby.recentPlaces',
+  lobbyHiddenWidgets: 'dcl.lobby.hiddenWidgets',
   minimapPlaces: 'dcl-minimap-places',
   minimapStyle: 'dcl-minimap-style',
   minimapRotation: 'dcl-minimap-rotation',
@@ -27,12 +28,14 @@ export const PREF = {
   minimapWorldOpen: 'dcl-minimap-open-world',
   loadingLastTip: 'loadingLastTip',
   sidebarAutoHide: 'hud.sidebarAutoHide',
+  sidebarMap: 'hud.sidebarMap',
   analyticsQueue: 'dcl-analytics-queue',
   voiceDisabled: 'nearbyVoiceDisabled',
   voiceVolume: 'nearbyVoiceVolume',
   voiceUsed: 'nearbyVoiceUsed',
   launchCount: 'launchCount',
-  gpuGuideSeen: 'hud.gpuGuideSeen'
+  gpuGuideSeen: 'hud.gpuGuideSeen',
+  loginMusicMuted: 'hud.loginMusicMuted'
 } as const
 
 const DB = 'hud-prefs'

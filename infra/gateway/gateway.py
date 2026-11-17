@@ -15,6 +15,9 @@ WORLDS_SETTINGS_CAP = "12m"
 # The badges backfill body (social badges `MAX_BACKFILL_BODY_BYTES`); a
 # gateway test pins it.
 BADGES_BACKFILL_CAP = "64m"
+# One uploaded badge art file (social badges `MAX_ASSET_BODY_BYTES`); a
+# gateway test pins it.
+BADGES_ASSET_CAP = "16m"
 # One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
 # gateway test pins it.
 REPORT_EVIDENCE_CAP = "5m"
@@ -99,14 +102,22 @@ def upstream(value):
     return f"{host}:{int(port)}"
 
 
+ESCAPE_LITERAL = str.maketrans({".": "\0", "_": "\1", "$": "\2"})
+RESTORE_LITERAL = str.maketrans({"\0": ".", "\1": "_", "\2": "$"})
+
+
 def site_prefixes(files):
     prefixes = set()
     for name in files:
-        parts = re.sub(r"\.tsx?$", "", name).split(".")
+        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its ".", "_" and "$"
+        # neither split segments nor end the prefix.
+        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).translate(ESCAPE_LITERAL),
+                      re.sub(r"\.tsx?$", "", name))
+        parts = stem.split(".")
         if parts[0].startswith(("$", "_")):
             continue
         parts = parts[:2] if parts[0] == "api" else parts[:1]
-        parts = [re.split(r"[_$]", part)[0] for part in parts]
+        parts = [re.split(r"[_$]", part)[0].translate(RESTORE_LITERAL) for part in parts]
         if all(parts):
             prefixes.add("/" + "/".join(parts))
     return sorted(prefixes)
@@ -303,6 +314,11 @@ def render(table, cfg, mime):
     # concurrent uploads are capped as on the deploy routes.
     locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
         f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
+    # The admin art upload (PUT) shares its path with the public read: only a PUT
+    # counts toward its own connection cap ($badge_asset_upload_key).
+    locations += location('~ "^/badges/assets/.+$"', proxy("apis",
+        f"client_max_body_size {BADGES_ASSET_CAP}; "
+        f"limit_conn badge_asset_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
@@ -311,11 +327,19 @@ def render(table, cfg, mime):
     for prefix in prefixes:
         if prefix in ("/admin", "/server"):
             continue
-        # The Cast not-found page is the exact /cast; /cast/ stays the gatekeeper's (root-aliases.nix).
-        locations += location("= /cast", proxy("sites")) if prefix == "/cast" else pair(prefix, "sites")
+        # The Cast pages are the exact /cast and the stream and watch links (/cast/s/, /cast/w/,
+        # longer than the gatekeeper's ^~ /cast/); the rest of /cast/ stays the gatekeeper's
+        # (root-aliases.nix).
+        if prefix == "/cast":
+            locations += location("= /cast", proxy("sites"))
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
+        else:
+            locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
+                 "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
+                 "/brand"):
         locations += location("= " + path, proxy("sites"))
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.
@@ -501,6 +525,9 @@ http {{
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
     limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    # An empty key is not counted: badge art reads share no upload cap.
+    map $request_method $badge_asset_upload_key {{ PUT $binary_remote_addr; default ""; }}
+    limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;
     limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;

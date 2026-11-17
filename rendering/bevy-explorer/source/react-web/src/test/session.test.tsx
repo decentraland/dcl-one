@@ -86,13 +86,11 @@ describe('session domain', () => {
     expect(driver.launches).toHaveLength(1)
   })
 
-  it('jump-in reuses the stored login', async () => {
+  it('a stored login goes in by itself, then the lobby', async () => {
     const h = renderSession({ userId: '0xabc' })
     await waitFor(() => expect(h.session().login.status).toBe('reuse-login-or-new'))
-    act(() => h.session().login.jumpIn())
-    // Jump in signs in and shows the lobby.
-    await waitFor(() => expect(h.session().phase).toBe('lobby'))
     await waitFor(() => expect(h.driver.calls).toContain('jumpIn'))
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
   })
 
   // A ?realm/?position launch goes straight in — never the Places picker. The /about probe blocks
@@ -114,7 +112,7 @@ describe('session domain', () => {
       await waitFor(() => expect(driver.launches).toHaveLength(1))
       expect(h.session().phase).toBe('entering')
       expect(driver.launches[0]).toEqual(['http://127.0.0.1:8000', '0,0'])
-      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about')
+      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)
@@ -180,7 +178,7 @@ describe('session domain', () => {
         })
       )
       expect(driver.launches).toHaveLength(0)
-      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about')
+      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)

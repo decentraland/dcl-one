@@ -114,7 +114,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-creator-hub
+        run: make install-creator-hub
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -129,22 +129,24 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.inspector_changed }} == "false" ]]; then
             echo "Installing latest inspector version: ${{ inputs.inspector_version }}"
-            # The inspector job published this version seconds ago and npm serves a CDN-cached
-            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            # The inspector job published this version seconds ago and the registry serves a
+            # CDN-cached packument for 300s, so resolution retries for longer than that.
             for ((i = 1; i <= 10; i++)); do
-              npm install --prefer-online "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
+              pnpm add "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
               echo "@dcl/inspector@${{ inputs.inspector_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/inspector versions --json | tail -5 || true
+            pnpm view @dcl/inspector versions --json | tail -5 || true
             exit 1
           elif [[ -n "$INSPECTOR_S3_KEY" ]]; then
             echo "Installing inspector version from S3 bucket: $INSPECTOR_S3_KEY"
-            npm install "$S3_BASE_URL/$INSPECTOR_S3_KEY"
+            # A pull request's inspector package can name its asset-packs by S3 link, which pnpm
+            # refuses in a dependency's own dependencies unless told otherwise.
+            pnpm add --config.blockExoticSubdeps=false "$S3_BASE_URL/$INSPECTOR_S3_KEY"
           else
             # No S3 package (fork or Dependabot PR): build against the last published inspector.
             echo "::warning::No inspector package for this PR; building against @dcl/inspector@latest"
-            npm install @dcl/inspector@latest
+            pnpm add @dcl/inspector@latest
           fi
 
       - name: build
@@ -164,8 +166,8 @@ jobs:
       # native binding. electron-builder then packs BOTH the arm64 and x64 dmgs from that single
       # node_modules, leaving the Intel build with no loadable parser ("Failed to load native
       # binding"). Fetch the cross-arch binding straight from its tarball into node_modules
-      # (npm install --force would reconcile/prune the whole workspace right before packaging)
-      # so both dmgs ship a working parser.
+      # (an install would reconcile the whole workspace right before packaging) so both dmgs
+      # ship a working parser.
       - name: Provision cross-arch macOS oxc-parser binding
         if: matrix.os == 'macos-latest'
         run: |
@@ -177,9 +179,16 @@ jobs:
           if [ ! -e "$DIR/parser.darwin-$OTHER.node" ]; then
             echo "Host arch $HOST -> fetching @oxc-parser/binding-darwin-$OTHER@$OXC"
             TMP=$(mktemp -d)
-            ( cd "$TMP" && npm pack "@oxc-parser/binding-darwin-$OTHER@$OXC" >/dev/null )
+            SPEC="@oxc-parser/binding-darwin-$OTHER@$OXC"
+            curl -fsSL "$(pnpm view "$SPEC" dist.tarball)" -o "$TMP/binding.tgz"
+            # The registry's sha512 for that tarball, which npm pack checked on its own.
+            INTEGRITY="sha512-$(openssl dgst -sha512 -binary "$TMP/binding.tgz" | base64 | tr -d '\n')"
+            if [ "$INTEGRITY" != "$(pnpm view "$SPEC" dist.integrity)" ]; then
+              echo "::error::$SPEC does not match the registry's integrity"
+              exit 1
+            fi
             mkdir -p "$DIR"
-            tar -xzf "$TMP"/*.tgz -C "$DIR" --strip-components=1
+            tar -xzf "$TMP/binding.tgz" -C "$DIR" --strip-components=1
             rm -rf "$TMP"
           fi
           for A in arm64 x64; do
@@ -246,9 +255,9 @@ jobs:
           retry_wait_seconds: 15
           retry_on: error
           shell: 'bash'
-          command: cd apps/creator-hub && npx electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
+          command: cd apps/creator-hub && pnpm exec electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
         env:
-          # Disable hard links to avoid issues with npm
+          # Disable hard links to avoid issues with the installed packages
           USE_HARD_LINKS: false
           # Fix C++ standard for native dependencies
           CXXFLAGS: "-std=gnu++17"
@@ -332,7 +341,7 @@ jobs:
           S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          npx @dcl/cdn-uploader@next \
+          pnpm dlx @dcl/cdn-uploader@next \
             --bucket "$S3_BUCKET" \
             --local-folder dist/upload \
             --bucket-folder "creator-hub/branch/${HEAD_REF}"

@@ -41,6 +41,22 @@ describe('chat chrome clicks', () => {
 })
 
 describe('chat focus', () => {
+  it('a focused control that unmounts lets go of the chat: Back in the members list, then the pointer leaves', async () => {
+    const { container } = renderActiveChat({ members: [{ address: '0x1', name: 'Alice' }] })
+    const root = container.firstChild as HTMLElement
+    const idle = (): boolean => !root.className.split(' ').some((c) => /(^|_)active(_|$)/.test(c))
+    await userEvent.click(screen.getByRole('button', { name: '1 nearby' }))
+    const back = screen.getByRole('button', { name: /back/i })
+    back.focus()
+    expect(document.activeElement).toBe(back)
+    await userEvent.click(back)
+    expect(back.isConnected).toBe(false)
+    expect(idle()).toBe(false) // the pointer is still over the panel
+    fireEvent.mouseLeave(root)
+    expect(idle()).toBe(true)
+  })
+
+
   it('mounting idle-open leaves the keyboard to the engine; opening or a focus request takes it', () => {
     const { rerender } = render(<Chat chat={chatState({ open: true, focusTick: 0 })} />)
     const input = screen.getByRole('textbox')

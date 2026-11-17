@@ -101,6 +101,9 @@ pub enum SystemApi {
     LoginLocalGuest(RpcResultSender<Result<(), String>>),
     LoginCancel,
     Logout,
+    /// Drop the stored login, so the next start opens on sign-in: a person signing out. A guest
+    /// account stays reachable through the wallet session the bridge scene keeps.
+    ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated
@@ -221,9 +224,15 @@ pub enum SystemApi {
     // Social / Communities
     /// A community member came online or went offline, until dropped.
     GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
-    /// The community channels the local user listens to (member of, chat not closed), as
-    /// community ids; replaces the previous set.
-    SetCommunityChannels(Vec<String>),
+    /// The communities whose chat channels the local user listens to (member of, chat not
+    /// closed); replaces the previous set.
+    SetCommunityChannels(Vec<ListenedCommunity>),
+    /// Replaces the text of the chat bubble still showing the message `message_id`: its
+    /// translation, or the original back. A message no bubble shows is ignored.
+    SetChatBubbleText {
+        message_id: String,
+        message: String,
+    },
     // Voice chat (private calls and community streams)
     /// Emits the voice chat state now and whenever it changes, until dropped.
     GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),

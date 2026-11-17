@@ -26,6 +26,11 @@ vi.mock('@explorer-core/features/auth/guest', () => ({
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
 }))
 
+vi.mock('@explorer-core/shell/emailLogin', () => ({
+  startEmailSignIn: vi.fn(async () => undefined),
+  completeEmailSignIn: vi.fn(async () => ({ identity: identity(ACCOUNT, 7), wallet: { token: 'tok', walletAddress: ACCOUNT } }))
+}))
+
 async function shell() {
   vi.resetModules()
   return import('../shell/login')
@@ -34,9 +39,30 @@ async function shell() {
 describe('shell login requests', () => {
   beforeEach(() => localStorage.clear())
 
+  it('emailLogin keeps the email account like the sign-in page does and hands the app the public identity', async () => {
+    const { request } = await shell()
+    expect(await request('emailStart', { email: 'player@example.com' })).toBeNull()
+    const login = (await request('emailLogin', { email: 'player@example.com', code: '123456' })) as { address: string; identity: AuthIdentity; guest?: boolean }
+    expect(login.address).toBe(ACCOUNT)
+    expect(login.guest).toBeUndefined()
+    expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(`single-sign-on-${ACCOUNT}`) ?? 'null').ephemeralIdentity.privateKey).toBe(KEY)
+    // the session state the sign-in page leaves for an email account, for the Shop
+    expect(JSON.parse(localStorage.getItem('dcl:auth:thirdweb:v1') ?? 'null')).toEqual({ token: 'tok', address: ACCOUNT })
+    expect(JSON.parse(localStorage.getItem('dcl:auth:signin-kind:v1') ?? 'null')).toEqual({ signer: ACCOUNT, kind: 'managed' })
+    // it is now the current login, and the shell signs with it
+    expect(await request('identity', undefined)).toEqual(login)
+    expect(await request('sign', { signer: EPHEMERAL, message: 'Some data' })).toBe(personalSign(KEY, 'Some data'))
+    // sign-out drops the in-app session with it
+    await request('logout', undefined)
+    expect(localStorage.getItem('dcl:auth:thirdweb:v1')).toBeNull()
+    expect(localStorage.getItem('dcl:auth:signin-kind:v1')).toBeNull()
+  })
+
   it('createGuest keeps the guest with its key and hands the app the public identity', async () => {
     const { request } = await shell()
-    const login = (await request('createGuest', undefined)) as { address: string; identity: AuthIdentity; guest?: boolean }
+    const { wallet, ...login } = (await request('createGuest', undefined)) as { address: string; identity: AuthIdentity; guest?: boolean; wallet: string | null }
+    expect(wallet).toBe('new')
     expect(login.address).toBe(GUEST)
     expect(login.guest).toBe(true)
     expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
@@ -59,16 +85,36 @@ describe('shell login requests', () => {
     expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
   })
 
-  it('signing with an account replaces the guest', async () => {
-    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 1)))
+  it('a guest that signs out is not signed in again on its own, and PLAY AS GUEST brings it back with no new wallet', async () => {
+    const { request } = await shell()
+    const first = (await request('createGuest', undefined)) as { address: string; wallet: string | null }
+    expect(first).toMatchObject({ address: GUEST, wallet: 'new' })
+    await request('logout', undefined)
+    // the next page load finds no sign-in to start with
+    expect(await (await shell()).request('identity', undefined)).toBeNull()
+
+    const { request: again } = await shell()
+    expect(await again('createGuest', undefined)).toMatchObject({ address: GUEST, guest: true, wallet: null })
+    expect(await again('identity', undefined)).toMatchObject({ address: GUEST, guest: true })
+  })
+
+  it('an account signing in keeps the guest, not signed in on its own, for Play as guest', async () => {
+    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 20)))
     localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 30)))
     localStorage.setItem(`thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f`, 'session')
     const { request } = await shell()
     expect(await request('identity', undefined)).toMatchObject({ address: ACCOUNT })
-    expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
 
     await request('sign', { signer: EPHEMERAL, message: 'hello' })
-    expect(localStorage.getItem('dcl-guest-identity')).toBeNull()
-    expect(localStorage.getItem('thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f')).toBeNull()
+    expect(localStorage.getItem('dcl-guest-identity')).not.toBeNull()
+    expect(localStorage.getItem('thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f')).toBe('session')
+    // the next start is the account's, though the guest's sign-in runs longer than the account's now does
+    localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 10)))
+    expect(await (await shell()).request('identity', undefined)).toMatchObject({ address: ACCOUNT })
+
+    // signed out of the account, Play as guest brings the same guest back
+    const { request: again } = await shell()
+    await again('logout', undefined)
+    expect(await again('createGuest', undefined)).toMatchObject({ address: GUEST, guest: true, wallet: null })
   })
 })

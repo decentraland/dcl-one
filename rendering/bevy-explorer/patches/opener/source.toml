@@ -6,7 +6,8 @@ origin     = "https://github.com/robtfm/opener"
 origin_rev = "973658fe4501ad9d9b4338e4fe192036277ba0fb"
 license    = "(MIT OR Apache-2.0) AND MIT"
 paths      = ["."]
-exclude    = []
-base_tree  = "8deaa3cf81a500dbcfde9b0ee18239453fd1a8ba"
-tree       = "5d17479415a540477f8eed7e0c16a18d6c8eeeba"
+exclude    = [".github"]
+base_tree  = "0685c02978c61efba819b9c83a87468b3f011bef"
+tree       = "dd333eea2e983b5cabaf04f503a7dd38b44e171b"
+rev        = "9fec930b69093f45e4a75e21d8a51d864639dc62"
 nix_hash   = "sha256-OcsNiHBN0I18Rc0uT575xrLm6dIRdGA7t9V6Q3rdgig="

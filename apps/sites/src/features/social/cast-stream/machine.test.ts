@@ -18,6 +18,7 @@ import {
   type ResolveTokenFn,
   type RequestPermissionsFn,
   type EndCastFn,
+  type GoLiveFn,
   type ShareScreenFn,
   type TokenResult,
   type TrackFn,
@@ -139,7 +140,8 @@ describe("castMachine \u{2014} happy path (token -> devices -> permissions -> pr
     actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES });
     await waitFor(actor, (s) => s.matches("preview"));
     actor.send({ type: "JOIN" });
-    expect(actor.getSnapshot().matches("live")).toBe(true);
+    expect(actor.getSnapshot().matches("joining")).toBe(true);
+    await waitFor(actor, (s) => s.matches("live"));
 
     let events = names(track);
     for (const e of [
@@ -271,9 +273,9 @@ describe("simulateResolveToken / simulateGrant / simulateShareScreen", () => {
     vi.useFakeTimers();
     const r = await settle(simulateResolveToken({ token: "abc", identity: "Eve" }));
     expect(r.info.placeName).toBeTruthy();
-    expect(r.credentials.url).toMatch(/^wss:/);
-    expect(r.credentials.token).toContain("SIMULATED.");
-    expect(r.credentials.identity).toBe("Eve");
+    expect(r.credentials?.url).toMatch(/^wss:/);
+    expect(r.credentials?.token).toContain("SIMULATED.");
+    expect(r.credentials?.identity).toBe("Eve");
     await settle(
       expect(simulateResolveToken({ token: "   ", identity: "" })).rejects.toThrow(
         /Invalid streaming key/,
@@ -284,5 +286,108 @@ describe("simulateResolveToken / simulateGrant / simulateShareScreen", () => {
     );
     expect(await settle(simulateGrant({ devices: DEFAULT_DEVICES }))).toEqual({ granted: true });
     expect(await settle(simulateShareScreen({}))).toEqual({ published: true });
+  });
+});
+
+describe("castMachine \u{2014} a real session (goLive, stopShare, SHARE_ENDED)", () => {
+  const CREDS = { url: "wss://lk.test", token: "jwt", roomId: "scene-room" };
+
+  async function toPreview(goLive: GoLiveFn, track: TrackFn, extra: object = {}) {
+    const actor = createActor(castMachine, {
+      input: { ...inputFor(async () => ({ info: RESULT.info }), grant, track), identity: "", goLive, ...extra },
+    }).start();
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name: "  Ada  " });
+    await waitFor(actor, (s) => s.matches("preview"));
+    return actor;
+  }
+
+  it("mints at JOIN with the typed name, keeps the credentials and reports a real (not stub) session", async () => {
+    const track = vi.fn();
+    const goLive = vi.fn<GoLiveFn>(async () => CREDS);
+    const actor = await toPreview(goLive, track);
+    expect(actor.getSnapshot().context.credentials).toBeUndefined();
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    expect(goLive).toHaveBeenCalledTimes(1);
+    expect(goLive.mock.calls[0][0]).toMatchObject({ token: "stream-key-123", identity: "Ada" });
+    expect(actor.getSnapshot().context.credentials).toEqual(CREDS);
+    const liveCall = track.mock.calls.find((c) => c[0] === CAST_EVENTS.wentLive);
+    expect(liveCall?.[1]).toEqual({ room_id: "scene-room", stub: false });
+  });
+
+  it("a refused join returns to preview with the reason, and a retry joins", async () => {
+    const track = vi.fn();
+    const goLive = vi
+      .fn<GoLiveFn>()
+      .mockRejectedValueOnce(new Error("Streaming token has expired"))
+      .mockResolvedValueOnce(CREDS);
+    const actor = await toPreview(goLive, track);
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches("preview") && !!s.context.joinError);
+    expect(actor.getSnapshot().context.joinError).toBe("Streaming token has expired");
+    expect(names(track)).toContain(CAST_EVENTS.joinFailed);
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches("live"));
+    expect(actor.getSnapshot().context.joinError).toBeUndefined();
+  });
+
+  it("a lost room ends a live cast as disconnected, and an old join error does not come back", async () => {
+    const track = vi.fn();
+    const goLive = vi
+      .fn<GoLiveFn>()
+      .mockRejectedValueOnce(new Error("Streaming token has expired"))
+      .mockResolvedValue(CREDS);
+    const actor = await toPreview(goLive, track);
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches("preview") && !!s.context.joinError);
+    actor.send({ type: "BACK" });
+    await waitFor(actor, (s) => s.matches("deviceSelect"));
+    expect(actor.getSnapshot().context.joinError).toBeUndefined();
+    actor.send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES });
+    await waitFor(actor, (s) => s.matches("preview"));
+    expect(actor.getSnapshot().context.joinError).toBeUndefined();
+
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+    actor.send({ type: "CONNECTION_LOST" });
+    expect(actor.getSnapshot().matches("ended")).toBe(true);
+    expect(actor.getSnapshot().context.connectionLost).toBe(true);
+    const lost = track.mock.calls.find((c) => c[0] === CAST_EVENTS.connectionLost);
+    expect(lost?.[1]).toEqual({ room_id: "scene-room" });
+  });
+
+  it("stopping a share calls stopShare; the browser ending it does not, and both leave sharing", async () => {
+    const stopShare = vi.fn();
+    const shareScreen: ShareScreenFn = async () => ({ published: true });
+    const actor = await toPreview(async () => CREDS, vi.fn(), { stopShare, shareScreen });
+    actor.send({ type: "JOIN" });
+    await waitFor(actor, (s) => s.matches({ live: "idle" }));
+
+    actor.send({ type: "TOGGLE_SCREENSHARE" });
+    await waitFor(actor, (s) => s.matches({ live: "sharing" }));
+    actor.send({ type: "TOGGLE_SCREENSHARE" });
+    expect(actor.getSnapshot().matches({ live: "idle" })).toBe(true);
+    expect(stopShare).toHaveBeenCalledTimes(1);
+
+    actor.send({ type: "TOGGLE_SCREENSHARE" });
+    await waitFor(actor, (s) => s.matches({ live: "sharing" }));
+    actor.send({ type: "SHARE_ENDED" });
+    expect(actor.getSnapshot().matches({ live: "idle" })).toBe(true);
+    expect(actor.getSnapshot().context.screenSharing).toBe(false);
+    expect(stopShare).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("castMachine \u{2014} a stopped invocation", () => {
+  it("never reports its abort as an invalid key", async () => {
+    const resolveToken: ResolveTokenFn = ({ signal }) =>
+      new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("signal is aborted without reason"))));
+    const track = vi.fn();
+    const actor = createActor(castMachine, { input: inputFor(resolveToken, grant, track) }).start();
+    actor.stop();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(actor.getSnapshot().matches("invalid")).toBe(false);
+    expect(names(track)).not.toContain(CAST_EVENTS.invalidToken);
   });
 });

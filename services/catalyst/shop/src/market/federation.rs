@@ -46,9 +46,9 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 
 use super::{MarketplaceState, SharedState};
-use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::fed::{FedError, Signed, TypedMessage};
 use crate::jobs::{Jobs, PeriodicCfg};
+use crate::shared::limits::{RateLimitDecision, RateLimiter};
 use crate::shared::signed_fetch::{self, PayloadPolicy};
 
 pub const NONCES: &str = "shop.fed_seen_nonces";

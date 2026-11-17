@@ -154,11 +154,11 @@ export const ProfileEmploymentStatus = ({ size, ...props }: IconProps) => {
       {...props}
     >
       <g clipPath={`url(#${svgId}-a)`}>
-        <path stroke="#fcfcfc" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.467" d="M0 10.261h2.151L4.303 4l3.055 11L10.11 4l2.754 11 1.85-4.739h2.152" />
+        <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.467" d="M0 10.261h2.151L4.303 4l3.055 11L10.11 4l2.754 11 1.85-4.739h2.152" />
       </g>
       <defs>
         <clipPath id={`${svgId}-a`}>
-          <path fill="#fff" d="M0 0h20v20H0z" />
+          <path fill="currentColor" d="M0 0h20v20H0z" />
         </clipPath>
       </defs>
     </svg>

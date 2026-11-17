@@ -1,11 +1,13 @@
 // Events — a full-screen MainMenuShell page: the calendar of the coming days with the highlighted
 // events beside it, and one day's events in a grid. Every visit opens on the calendar at today.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Button, MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
+import { MenuPresentationContext } from '../menu/MenuPresentation'
 import type { EventsState, FriendsState, ProfileState } from '../session/useEngineSession'
 import addIcon from '../../assets/events/add-icn.png'
 import { openEventDetail } from './EventDetail'
@@ -18,6 +20,8 @@ import styles from './EventsPage.module.css'
 
 /** The days a calendar shows; the highlighted carousel takes the last one's place. */
 export const CALENDAR_DAYS = 5
+/** A card over the lobby is one day column narrower than the page. */
+const CARD_CALENDAR_DAYS = 4
 
 type View = { kind: 'calendar' } | { kind: 'day'; day: Date }
 
@@ -37,14 +41,15 @@ export function EventsPage({
   const actions = useEventActions()
   const [view, setView] = useState<View>({ kind: 'calendar' })
   const [startDay, setStartDay] = useState(() => startOfDay(new Date()))
+  const calendarDays = useContext(MenuPresentationContext) === 'lobbyCard' ? CARD_CALENDAR_DAYS : CALENDAR_DAYS
 
   const showCalendar = useCallback(
     (from: Date) => {
       setView({ kind: 'calendar' })
       setStartDay(from)
-      loadCalendar(from, CALENDAR_DAYS, true)
+      loadCalendar(from, calendarDays, true)
     },
-    [loadCalendar]
+    [loadCalendar, calendarDays]
   )
   const showDay = useCallback(
     (day: Date) => {
@@ -60,7 +65,7 @@ export function EventsPage({
 
   const highlightedStatus = store.queries.highlighted.status
   const highlighted = useMemo(() => highlightedEvents(store), [store])
-  const days = highlighted.length > 0 ? CALENDAR_DAYS - 1 : CALENDAR_DAYS
+  const days = highlighted.length > 0 ? calendarDays - 1 : calendarDays
   const columns = useMemo(() => calendarColumns(store, startDay, days), [store, startDay, days])
   const dayList = useMemo(() => dayEvents(store), [store])
 
@@ -90,7 +95,7 @@ export function EventsPage({
       transparentBody
     >
       <div className={styles.page}>
-        <div className={styles.backdrop} />
+        <MenuBackdrop />
         <header className={styles.header}>
           <div className={styles.headerFrame}>
             <h1 className={styles.title}>Events</h1>
@@ -116,7 +121,7 @@ export function EventsPage({
                 context={context}
                 onStartDay={(day) => {
                   setStartDay(day)
-                  loadCalendar(day, CALENDAR_DAYS, false)
+                  loadCalendar(day, calendarDays, false)
                 }}
                 onDay={showDay}
                 onRetry={() => showCalendar(startDay)}

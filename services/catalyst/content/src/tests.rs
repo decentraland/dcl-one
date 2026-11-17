@@ -514,8 +514,7 @@ async fn about_carries_the_comms_block_and_its_health_gates_the_realm() {
             "protocol": "v3",
             "commitHash": "abc",
             "usersCount": 4,
-            "adapter": "fixed-adapter:archipelago:wss://realm.example/ws",
-            "fixedAdapter": "archipelago:wss://realm.example/ws"
+            "adapter": "archipelago:archipelago:wss://realm.example/ws"
         })
     );
     assert_eq!(body["acceptingUsers"], true);

@@ -433,6 +433,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -582,6 +609,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -595,6 +624,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -649,6 +679,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -662,6 +693,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1155,6 +1187,32 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct IVec2Arg(pub IVec2);
 
@@ -1267,8 +1325,8 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
-    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
-    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences`
+    /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
 }
@@ -1282,6 +1340,16 @@ impl SceneMeta {
             .and_then(serde_json::Value::as_str)
             .map(|value| value.parse().unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    /// Whether nearby voice stays on while the player stands in this scene: `nearbyVoiceChat`
+    /// absent, not a string, empty or `enabled` (any case); any other string turns it off.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("nearbyVoiceChat"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
     }
 }
 
@@ -1307,6 +1375,9 @@ impl std::str::FromStr for PortableExperiencesToggle {
         }
     }
 }
+
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1553,7 +1624,7 @@ pub struct EngineMovementControl {
     pub penetration_bounds: (DVec3, DVec3),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
     #[default]
     Idle,
@@ -1686,6 +1757,8 @@ pub struct SceneGlobalLight {
     /// setting unless a scene overrides it, as a tint and a multiplier
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 
@@ -1794,6 +1867,34 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(default)]
+    pub scene_blocked: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl MicState {
+    /// Leaving the scene does not reopen the mic.
+    pub fn set_scene_blocked(&mut self, blocked: bool) {
+        self.scene_blocked = blocked;
+        if blocked {
+            self.enabled = false;
+        }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -1998,6 +2099,15 @@ pub enum PointAtMarkerVisibility {
     None,
 }
 
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
+    None,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraSmoothing {
     Raw,
@@ -2039,6 +2149,17 @@ mod tests {
     use crate::inputs::CommonInputAction;
 
     #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
+
+    #[test]
     fn sun_cascades_split_the_shadow_distance() {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
@@ -2069,6 +2190,74 @@ mod tests {
                 avatar: 10,
             }
         );
+    }
+
+    #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: false,
+            refusals: 0,
+        };
+        mic.set_scene_blocked(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_blocked(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            scene_blocked: true,
+            refusals: 0,
+        };
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.scene_blocked = false;
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.nearby_voice_chat_enabled()
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
     }
 
     #[test]

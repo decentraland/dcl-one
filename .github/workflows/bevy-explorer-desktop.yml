@@ -8,8 +8,22 @@ name: Bevy Explorer / Desktop
         type: boolean
         default: false
 jobs:
+  # The build below compiles each patched source that Cargo takes by `rev`, and its job holds the
+  # signing secrets. This job rebuilds every source from its upstream commit and patch series and
+  # proves each `rev` first.
+  source:
+    name: Patched sources
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the pinned revisions of the patched sources
+        run: python3 tooling/patched-sources.py pins
+      - name: Prove each patch series against its upstream commit, tree and revision
+        run: python3 tooling/patched-sources.py verify
   build:
     name: Build ${{ matrix.build_name }}
+    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -36,24 +50,27 @@ jobs:
         with:
           python-version: '3.12'
       - name: Reserve disk space on the hosted Linux runner
+        # The delete takes one to two minutes and frees 25 GB. A hosted runner starts with more than
+        # 80 GB free, so the delete runs only when less than 40 GB is free.
         if: runner.os == 'Linux'
         working-directory: .
         run: |-
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
           df -h /
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-desktop-${{ matrix.build_name }}
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: add darwin target
         if: runner.os == 'macos'
@@ -72,10 +89,10 @@ jobs:
         shell: bash
       - name: Bundle react HUD (page + bridge scene -> assets/)
         run: |-
-          cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-          cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.27.0 --filter @dcl/hashing build && cd ..
-          corepack pnpm@11.27.0 run bundle:native
+          cd react-web && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts
+          cd bridge-scene && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts
+          corepack pnpm@12.21.0 --filter @dcl/hashing build && cd ..
+          corepack pnpm@12.21.0 run bundle:native
         shell: bash
       - name: Install ninja (macos)
         if: runner.os == 'macos'
@@ -148,7 +165,7 @@ jobs:
       - name: Cargo build (linux)
         if: runner.os == 'linux'
         run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Package common
         run: |-

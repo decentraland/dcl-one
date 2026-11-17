@@ -66,7 +66,9 @@ export type RpcMethod =
   | 'logout'
   | 'guestLogin'
   | 'guestSign'
-  | 'guestDiscard'
+  | 'guestSession'
+  | 'emailStart'
+  | 'emailComplete'
 
 // ---- page -> scene ---------------------------------------------------------
 
@@ -96,8 +98,8 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
-/** Redraw a Nearby chat bubble with other words (its translation), if that message is still the
- *  sender's bubble; its timer starts again. */
+/** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
+ *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
   kind: 'chatBubbleText'
   sender: string
@@ -251,13 +253,17 @@ export type PageToScene =
   | GetEventsRequest
   | SetEventAttendingRequest
   | GetEventPlacesRequest
+  | GetPlacesAtRequest
+  | SearchPlacesRequest
+  | SetPlaceLikeRequest
+  | SetPlaceFavoriteRequest
+  | GetPlacePhotosRequest
   | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
+  | SetHomeSceneRequest
   | GetWelcomeRequest
-  | ExpectLookRequest
   | ShowLookRequest
-  | PreloadLookRequest
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | OpenExternalUrlRequest
@@ -273,6 +279,7 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -836,6 +843,10 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
+  /** The scene the player stands in turns nearby voice off. */
+  sceneBlocked?: boolean
+  /** Counts the mic opens the scene refused. */
+  refusals?: number
 }
 
 export interface SetMicRequest {
@@ -862,6 +873,13 @@ export interface HomeSceneMessage extends HomeScene {
   kind: 'homeScene'
 }
 
+/** Pin the home scene: a parcel of `realm` (answered with `homeScene`). */
+export interface SetHomeSceneRequest {
+  kind: 'setHomeScene'
+  realm: string
+  parcel: { x: number; y: number }
+}
+
 /** What the welcome page must show for the signed-in account (answered with `welcome`). */
 export interface GetWelcomeRequest {
   kind: 'getWelcome'
@@ -876,25 +894,11 @@ export interface WelcomeMessage extends WelcomeState {
 }
 
 /** Put the curated default look `default<look>` on the lobby stage's avatar, as the page fetched it
- *  (the scene's own fetches are signed, so it can't before sign-in): the guest start page's pick, or
- *  the welcome page's RANDOMIZE. Signed in it is the Backpack's unsaved look, deployed on
- *  `acceptWelcome`; before sign-in the stage wears it as a stand-in. */
+ *  (the scene's own fetches are signed, so it can't before sign-in): a new account's starting look.
+ *  Signed in it is the Backpack's unsaved look, deployed on `acceptWelcome`; before sign-in the
+ *  stage wears it as a stand-in. */
 export interface ShowLookRequest {
   kind: 'showLook'
-  look: number
-  avatar: AvatarLook
-}
-
-/** A `showLook` is on its way (RANDOMIZE was hit; the page is fetching the look): the lobby stage's
- *  avatar turns away now rather than when the look arrives. */
-export interface ExpectLookRequest {
-  kind: 'expectLook'
-}
-
-/** The look the next RANDOMIZE will show: the stage loads it out of sight once the one on show has
- *  loaded, so the swap is instant. */
-export interface PreloadLookRequest {
-  kind: 'preloadLook'
   look: number
   avatar: AvatarLook
 }
@@ -963,11 +967,10 @@ export interface LobbyStageReadyMessage {
   kind: 'lobbyStageReady'
 }
 
-/** The look `default<look>` (a `showLook`) is on the lobby stage, loaded and facing front (scene →
- *  page): the next RANDOMIZE can go. */
-export interface LookShownMessage {
-  kind: 'lookShown'
-  look: number
+/** The sign-in stage (its background and the new account's avatar podium) has been drawn (scene →
+ *  page), so the page's own background can fade out. */
+export interface SigninStageReadyMessage {
+  kind: 'signinStageReady'
 }
 
 export interface SceneInfoMessage {
@@ -1182,6 +1185,11 @@ export interface PermissionResolveRequest {
   realm: string
 }
 
+/** The engine-backed views a page can open: the rich map, the Backpack's avatar preview, the lobby
+ *  stage, and the sign-in stage (the whole screen's background, with a new account's avatar in the
+ *  rect). */
+export type EngineViewportRegion = 'map' | 'avatarPreview' | 'lobby' | 'signin'
+
 /**
  * Tells the scene to render an engine-backed view (the rich map, or the avatar
  * preview) into a screen rectangle that a React page has carved out as transparent.
@@ -1189,7 +1197,7 @@ export interface PermissionResolveRequest {
  */
 export interface EngineViewportRequest {
   kind: 'engineViewport'
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   rect: { x: number; y: number; width: number; height: number } | null
   /** `devicePixelRatio` at the time the rect was measured. The rect is in CSS pixels, so this is
    *  what turns it into the physical pixels the scene should actually render — without it a
@@ -1859,6 +1867,25 @@ export interface DeleteGalleryPhotoRequest {
   id: string
 }
 
+/** Another player the engine has in the world, in world metres. */
+export interface MapPlayer {
+  address: string
+  x: number
+  z: number
+}
+
+/** The page's map starts or stops showing the other players; while it does the scene reports them. */
+export interface WatchMapPlayersRequest {
+  kind: 'watchMapPlayers'
+  on: boolean
+}
+
+/** The players near enough for the engine to hold (scene → page), while the page watches. */
+export interface MapPlayersMessage {
+  kind: 'mapPlayers'
+  players: MapPlayer[]
+}
+
 /** Make one of the local player's photos public or private (signed PATCH). Answered by a
  *  GalleryWriteMessage. */
 export interface SetGalleryPhotoPublicRequest {
@@ -2015,6 +2042,8 @@ export interface PreviewEmoteRequest {
 export interface PreviewRotateRequest {
   kind: 'previewRotate'
   degrees: number
+  /** The stage whose avatar turns: the lobby's when named, else the preview's (the Backpack's, the Shop's). */
+  stage?: 'lobby'
 }
 
 /** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
@@ -2385,6 +2414,11 @@ export type SceneToPage =
   | EventsMessage
   | EventAttendingMessage
   | EventPlacesMessage
+  | PlacesAtMessage
+  | PlaceSearchMessage
+  | PlaceLikeMessage
+  | PlaceFavoriteMessage
+  | PlacePhotosMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage
@@ -2394,8 +2428,9 @@ export type SceneToPage =
   | RealmInfoMessage
   | SceneInfoMessage
   | LobbyStageReadyMessage
-  | LookShownMessage
+  | SigninStageReadyMessage
   | GalleryMessage
+  | MapPlayersMessage
   | GalleryPhotoMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
@@ -2440,6 +2475,8 @@ export interface EventData {
   connected_addresses: string[]
   community_id: string | null
   place_id: string | null
+  /** The parcel the event is held at when it differs from `x`,`y`; null when it doesn't. */
+  coordinates?: [number, number] | null
 }
 
 /** A list of events (page → scene → events service, signed so each event carries `attending`).
@@ -2452,6 +2489,8 @@ export interface GetEventsRequest {
   from?: string
   to?: string
   list?: 'live' | 'highlight'
+  /** Only the events held at these parcels. */
+  positions?: { x: number; y: number }[]
   limit?: number
   offset?: number
 }
@@ -2503,3 +2542,133 @@ export interface EventPlacesMessage {
 export type Envelope =
   | { to: 'scene'; msg: PageToScene }
   | { to: 'page'; msg: SceneToPage }
+
+// ---- places ----------------------------------------------------------------
+
+/** A place as the places service lists it (places, destinations). */
+export interface DiscoverPlace {
+  id: string
+  title: string
+  description: string
+  image: string
+  positions: string[]
+  base_position?: string
+  owner: string | null
+  contact_name?: string
+  categories?: string[]
+  favorites?: number
+  likes?: number
+  dislikes?: number
+  user_count?: number
+  user_name?: string
+  world?: boolean
+  world_name?: string
+  /** In the places API's curated set — the Featured rail. */
+  highlighted?: boolean
+  live?: boolean
+  live_event_name?: string | null
+  /** Share of likes among the votes, 0..1; the service sends it as a number or a string. */
+  like_rate?: number | string | null
+  creator_address?: string | null
+  /** The signed-in user's own vote and favourite (signed reads only). */
+  user_like?: boolean
+  user_dislike?: boolean
+  user_favorite?: boolean
+}
+
+// The full-screen map's reads and writes on places (page → scene → places service). Signed, so
+// each place carries the signed-in user's own like, dislike and favourite. Every request is
+// answered, a failed one with `failed`.
+
+/** The places covering these `x,y` parcels. */
+export interface GetPlacesAtRequest {
+  kind: 'getPlacesAt'
+  /** Echoed in the answer. */
+  request: number
+  positions: string[]
+}
+export interface PlacesAtMessage {
+  kind: 'placesAt'
+  request: number
+  places: DiscoverPlace[]
+  failed?: boolean
+}
+
+export type PlaceSearchOrder = 'most_active' | 'like_score' | 'created_at'
+
+/** A page of the destinations search: places and worlds, by text, category or the user's favourites. */
+export interface SearchPlacesRequest {
+  kind: 'searchPlaces'
+  request: number
+  search: string
+  /** Lowercase category name; '' for none. */
+  category: string
+  favorites: boolean
+  orderBy: PlaceSearchOrder
+  offset: number
+  limit: number
+}
+export interface PlaceSearchMessage {
+  kind: 'placeSearch'
+  request: number
+  places: DiscoverPlace[]
+  /** How many places match in all. */
+  total: number
+  failed?: boolean
+}
+
+/** Like (true), dislike (false) or clear (null) the signed-in user's vote on a place. */
+export interface SetPlaceLikeRequest {
+  kind: 'setPlaceLike'
+  request: number
+  placeId: string
+  like: boolean | null
+}
+export interface PlaceLikeMessage {
+  kind: 'placeLike'
+  request: number
+  likes: number
+  dislikes: number
+  user_like: boolean
+  user_dislike: boolean
+  failed?: boolean
+}
+
+export interface SetPlaceFavoriteRequest {
+  kind: 'setPlaceFavorite'
+  request: number
+  placeId: string
+  favorite: boolean
+}
+export interface PlaceFavoriteMessage {
+  kind: 'placeFavorite'
+  request: number
+  favorites: number
+  user_favorite: boolean
+  failed?: boolean
+}
+
+/** A photo taken at a place (camera-reel). */
+export interface PlacePhoto {
+  id: string
+  url: string
+  thumbnailUrl?: string
+  dateTime?: string
+}
+
+/** A page of the photos taken at a place (page → scene → camera-reel). */
+export interface GetPlacePhotosRequest {
+  kind: 'getPlacePhotos'
+  request: number
+  placeId: string
+  offset: number
+  limit: number
+}
+export interface PlacePhotosMessage {
+  kind: 'placePhotos'
+  request: number
+  images: PlacePhoto[]
+  /** How many photos the place has in all. */
+  total: number
+  failed?: boolean
+}

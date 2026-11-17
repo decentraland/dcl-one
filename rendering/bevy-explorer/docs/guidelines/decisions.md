@@ -76,7 +76,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
   downloads of a scene that has left.
@@ -134,6 +135,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
+  when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
+  standing in that parcel scene. An empty parcel and a portable experience never do.
+  - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
+    and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
+    toasts "Nearby voice chat unavailable in this scene." when the count goes up.
+  - Don't play nearby players or show their speaking badge there. Their tracks stay subscribed, so
+    hearing returns on the way out.
+  - Don't touch calls and community streams: their mic, audio, badges and mic on/off sounds are
+    unaffected.
+  - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
+    hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
+  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -424,8 +438,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
   goes to, is the deployer of the place's scene here.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
-  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
+  markers with a camera into a texture; here the atlas and every marker are elements of the HUD
+  page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
+  each, the clustering grid, the draw order and the hover and appear timings are the same. Culling
+  and pooling have no counterpart, and a click goes to the topmost marker under the pointer.
+  The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
+  under the satellite map like its tiles; its water stands still, where unity-explorer animates
+  it every frame. Nothing on the map is drawn per frame.
+- **The map's layers are on the full map only.** unity-explorer draws live events, points of
+  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
+  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
+  full map alone, and a route shows no pin on the minimap's edge.
+- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
+  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
+  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
+  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
+  reads no `MapPin` and has no such layer.
+- **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
+  takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
+  sets it.
+- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
+  menu and from Places cards; neither has that control here.
+- **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
+  (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
+  starts from the player's saved interest and keeps working after the list is rebuilt; a like or
+  a dislike refreshes the rating shown; a like, a favourite or an interest the service refuses
+  goes back to what it was; a place without photos says so; closing the map forgets the whole
+  back history; "Link copied!" is a toast of its own instead of replacing the worlds warning's
+  text; and the text of a post on X and of a calendar entry is url-encoded.
+- **Escape in the map's search field clears it first.** The next press leaves the field and the
+  one after closes the map, as on the HUD's other pages.
 - **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
   while the player travels. Here a jump reconnects the realm under the loading screen, and every
   other page closes on a jump, so Events does too.
@@ -463,12 +509,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m), read at startup and held to 500 to 7000 m.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
   floor would never be seen and is not shipped.
 
 ## Deliberate choices that look like mistakes
 
+- **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
+  A place of several parcels is marked on the parcel a walk over them stops at, which depends on
+  their order and is not always the middle one; a cluster stands half a parcel south-west of the
+  average of its markers; the clustering grid is coarser at zoom level 2 (27 parcels) than at
+  level 1 (25); the other players are read when the People layer comes on and after a teleport,
+  not on a timer; a route keeps its destination across a teleport; and an empty search says "No results
+  founds".
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
@@ -540,6 +614,52 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **The HUD scales with the window, with no legibility floor.** `--ui-scale` is
+  `min(width / 1920, height / 1080)` (`library/explorer-core/lib/hudScale.ts`), the same rule
+  the Unity client's canvas follows, so one layout holds at every size: nothing wraps, hides or
+  collides in a small window, and a 4K window gets a proportionally larger HUD. The 0.25 and 4
+  bounds only keep the value finite for the layout boxes that divide by it. Known limitation:
+  text shrinks with everything else. A 16 px label is about 10.7 px in a 1280x720 window and
+  about 5 px at 640x480, which is not legible. A floor on the scale would trade that for a
+  layout that no longer fits the window at those sizes.
+- **The open chat does not fade out when idle.** Its message column stays tinted and the
+  conversation rail is on screen for as long as the chat is open, with Nearby's tab on it even
+  when there is no other conversation, so the chat's controls stay reachable without first
+  waking the panel. Only the title bar and its navigation wait for hover or focus.
+- **Places is one grid.** The page has no separate Live Now or Featured sections: every
+  destination appears once, in the order of the chosen sort, and a featured place carries a
+  ribbon on its card. The layout is the Unity client's, so a place is found the same way in
+  either client; search, the category chips and the sort all act on the one grid.
+- **Settings tabs are Graphics, Sounds, Controls, Chat; key bindings sit under Controls.** The
+  row is the Unity client's, so a setting is found in the same place in either client; any other
+  category the engine sends follows in the engine's order. Key bindings are (action, keys) rows
+  from the bindings relay, not engine settings, so they get a card of their own below the
+  Controls rows instead of a tab, and the Controls tab is there even when the engine sends no
+  Controls category.
+- **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
+  Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
+  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
+  and Badges, then Sign Out (a sign-in on the web, a guest's included) and Exit (where the page can
+  close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
+  and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
+  a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and
+  Gallery.
+  The end-to-end suite reads these buttons by name
+  (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
+- **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
+  guest, and so does an account signing in. The next start does not sign the guest in on its own,
+  and Play as guest brings the same guest back: on the web its kept sign-in, or its kept wallet
+  session once that sign-in has run out; on the desktop client its kept wallet session, since
+  Sign Out drops the sign-in the engine keeps (`/logout --forget`). The desktop client signs out
+  from the start lobby only: the engine refuses a sign-out once the world is entered.
+- **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
+  a destination of this HUD, and matching another client's tab row is not grounds for dropping
+  it.
+- **A control without a function is hidden, not shown disabled.** The HUD renders a button, tab
+  or menu row only when it does something. A dead or greyed control promises a function the
+  HUD does not have and reads as a fault; the control appears when its function exists. The
+  Portable experiences button follows the same rule and shows only while an experience is
+  active.
 - **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
   is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
   have to be pulled by every Explorer build and matched by every check that hashes the build's

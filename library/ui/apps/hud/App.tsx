@@ -8,6 +8,7 @@ import { setPublicReelFetcher } from './features/gallery/publicReels'
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
 import { FriendsPanel } from './features/friends/FriendsPanel'
+import { jumpToFriend } from './features/friends/jumpToFriend'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { NotificationsPanel } from './features/notifications/NotificationsPanel'
@@ -20,17 +21,18 @@ import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { PlacesPicker } from './features/places/PlacesPicker'
+import { MenuPresentationContext } from './features/menu/MenuPresentation'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
-import { WelcomePage } from './features/welcome/WelcomePage'
+import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
-import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
+import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
@@ -40,8 +42,8 @@ import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrus
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
-import { LoadingAndLogin } from './features/login/LoadingAndLogin'
-import { GuestStartPage } from './features/login/GuestStartPage'
+import { StartupFlow } from './features/startup/StartupFlow'
+import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
@@ -117,6 +119,8 @@ const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
 const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
+// The menu pages the startup lobby mounts (its own buttons, and the tabs that lead between them).
+const LOBBY_PAGES = new Set(['backpack', 'settings', 'map', 'places', 'events', 'profile'])
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
 const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, [
   ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : []),
@@ -364,16 +368,20 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [session.backpack.open])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
-  const viewMyProfile = (): void => {
+  const viewMyProfile = (tab?: PassportTab): void => {
     const me = session.profile.data
-    if (me) openPassport(me.address)
+    if (me) openPassport(me.address, tab)
   }
 
   // Top-nav navigation between the full-screen menu pages (Settings/Backpack/Map)
   // and the Communities panel. Each toggle is mutually exclusive.
   const goToMenuPage = (page: string): void => {
-    // the startup lobby mounts only the Backpack; other pages wait for the world
-    if (session.phase === 'lobby' && page !== 'backpack') return
+    // the startup lobby is the page under its menus: LOBBY closes them, and the pages it does
+    // not mount (Communities, Shop, Gallery, Create) wait for the world
+    if (session.phase === 'lobby') {
+      if (page === 'lobby') return session.closeAllPanels()
+      if (!LOBBY_PAGES.has(page)) return
+    }
     if (page === 'lobby') session.lobbyPage.toggle()
     else if (page === 'settings') session.settings.toggle()
     else if (page === 'backpack') session.backpack.toggle()
@@ -401,6 +409,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
   useHudInsetReport(session.setInteractableArea, session.phase === 'world' && !session.menuOpen && !pageOpen)
+  // the sign-in music, from the first screen until the player is first in the world
+  const loginMusic = useLoginMusic(useBeforeWorld(session.phase) && !HIDE_HUD)
 
   // Embedded mode: mount only the engine (+ the error surfaces so a crash isn't silently blank).
   // No sidebar / chat / pointer / panels / sign-in UI. PopupHost renders nothing while the stack is
@@ -421,13 +431,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
-      {session.phase === 'login' &&
-        (session.login.status === 'sign-in-or-guest' && !session.login.authPending ? (
-          <GuestStartPage flow={session.login} />
-        ) : (
-          <LoadingAndLogin flow={session.login} />
-        ))}
-      {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
+      {(session.phase === 'login' || session.phase === 'welcome') && <StartupFlow flow={session.login} music={loginMusic} />}
       {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>
@@ -438,6 +442,28 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
           </SurfaceBoundary>
+          {/* the startup lobby presents the pages it opens as cards over itself */}
+          <MenuPresentationContext.Provider value="lobbyCard">
+          <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
+            <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
+            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
+            <PlacesPage
+              account={discoveryAccount}
+              places={session.places}
+              profile={session.profile}
+              onNavigate={goToMenuPage}
+              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
+              onVisitWorld={(realm) => session.map.changeRealm(realm)}
+            />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
+            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          </MenuPresentationContext.Provider>
         </>
       )}
       {session.phase === 'entering' && editorMode === 'off' && !session.create.open && (
@@ -458,14 +484,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
-          {chrome && (
-            <Minimap
-              minimap={session.minimap}
-              map={session.map}
-              sceneTitle={session.minimap.sceneTitle}
-              setEngineViewport={session.setEngineViewport}
-            />
-          )}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
           {!pageOpen && editorMode !== 'edit' && (
             <Pointer
@@ -483,7 +501,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
-            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} />
+            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} onJump={(address) => jumpToFriend(session.map, address)} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
             <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
@@ -518,7 +536,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} profile={session.profile} onNavigate={goToMenuPage} />
+            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
             <PlacesPage
@@ -575,6 +593,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
       <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />
+      <NearbyVoiceRefusals />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

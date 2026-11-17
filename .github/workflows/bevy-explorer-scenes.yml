@@ -13,8 +13,6 @@ on:
       - tooling/bevy-ci.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
-      - tooling/patched-sources.py
-      - .github/actions/bevy-explorer-sources/**
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
   workflow_dispatch:
@@ -74,18 +72,21 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
       - name: Reserve disk space on the hosted Linux runner
+        # The delete takes one to two minutes and frees 25 GB. A hosted runner starts with more than
+        # 80 GB free, so the delete runs only when less than 40 GB is free.
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
           df -h /
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         with:
           toolchain: 1.99.1
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - name: Name the release of the runner image for the cache key
         id: image
         run: |
@@ -100,7 +101,7 @@ jobs:
           # The bindings to the image's libraries (FFmpeg, ALSA, udev) are built for one release, and
           # Cargo keeps them while the header paths and file times stay: another release starts cold.
           key: bevy-explorer-native-${{ steps.image.outputs.release }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
@@ -124,7 +125,7 @@ jobs:
         # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
         # Desktop and Headless packaging build their sidecars in separate invocations.
         run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Configure virtual audio for graphical tests
         run: |

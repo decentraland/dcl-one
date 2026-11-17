@@ -134,7 +134,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-inspector
+        run: make install-inspector
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -149,22 +149,23 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.asset_packs_changed }} == "false" ]]; then
             echo "Installing latest asset-packs version: ${{ inputs.asset_packs_version }}"
-            # The asset-packs job published this version seconds ago and npm serves a CDN-cached
-            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
+            # The asset-packs job published this version seconds ago and the registry serves a
+            # CDN-cached packument for 300s, so resolution retries for longer than that.
             for ((i = 1; i <= 10; i++)); do
-              npm install --prefer-online "@dcl/asset-packs@${{ inputs.asset_packs_version }}" && exit 0
+              # The caret range goes in the published manifest and in the lockfile alike, so the build's dependency check passes.
+              pnpm add "@dcl/asset-packs@^${{ inputs.asset_packs_version }}" && exit 0
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/asset-packs versions --json | tail -5 || true
+            pnpm view @dcl/asset-packs versions --json | tail -5 || true
             exit 1
           elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
             echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
-            npm install "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
+            pnpm add "$S3_BASE_URL/$ASSET_PACKS_S3_KEY"
           else
             # No S3 package (fork or Dependabot PR): build against the last published asset-packs.
             echo "::warning::No asset-packs package for this PR; building against @dcl/asset-packs@latest"
-            npm install @dcl/asset-packs@latest
+            pnpm add @dcl/asset-packs@latest
           fi
 
       - name: protoc
@@ -173,7 +174,7 @@ jobs:
       - name: build
         run: make build-inspector
 
-      - name: npm version
+      - name: version
         working-directory: apps/creator-hub/packages/inspector
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -181,14 +182,15 @@ jobs:
           else
             VERSION="${{ needs.version.outputs.version }}-commit-${{ github.sha }}"
           fi
-          npm version "$VERSION" --force --no-git-tag-version --allow-same-version
+          # pnpm has no --force; skipping its git checks is what --force did for npm.
+          pnpm version "$VERSION" --no-git-checks --no-git-tag-version --allow-same-version
 
-      - name: npm pack
+      - name: pack
         working-directory: apps/creator-hub/packages/inspector
         id: npm-pack
         run: |
-          PACK_OUTPUT=$(npm pack --json)
-          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.[0].filename')
+          PACK_OUTPUT=$(pnpm pack --json)
+          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.filename')
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3

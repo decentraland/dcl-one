@@ -3,7 +3,7 @@ import { resolve, relative } from 'path'
 import { existsSync, readFileSync, writeFileSync, lstatSync, removeSync, copySync } from 'fs-extra'
 import { rmSync, globSync } from 'fs'
 
-export const PNPM = process.env.PNPM || 'corepack pnpm@11.27.0'
+export const PNPM = process.env.PNPM || 'corepack pnpm@12.21.0'
 
 /**
  * @returns the resolved absolute path

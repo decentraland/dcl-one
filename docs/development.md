@@ -155,6 +155,13 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
+The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
+`foundation-dev` initializes with it set runs without durability (`fsync`,
+`synchronous_commit` and `full_page_writes` off, `wal_level=minimal`), because
+every scratch database a test drops forces a checkpoint. The flag has no effect
+on a cluster created without it, so it never weakens a stack that holds data.
+Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
+
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
@@ -185,10 +192,9 @@ input of the Rust job goes on that list and on the path list of
 `development.yml` in the change that adds it; pushes to `main` always run the
 Rust tests. The Rust tests run in three shards. Each shard sorts the test
 binaries by source file and kind, so the three take one list on any runner
-(`tooling/catalyst-test.sh`). Two more labels work the same way:
+(`tooling/catalyst-test.sh`). One more label works the same way:
 `ci:desktop` builds the Creator Hub desktop app on a PR and attaches its test
-builds, and `ci:preview` publishes the Explorer web preview that the CI status
-comment links. `release:creator-hub` is read after the merge: the push to
+builds. `release:creator-hub` is read after the merge: the push to
 `main` publishes the Creator Hub installers as a pre-release only when its PR
 has the label. A draft PR does not run the Explorer test suite and the headless
 smoke test; they start when the PR is marked ready for review, or on the next
@@ -240,7 +246,8 @@ variables name. A job with no permissions block counts as one that holds a write
 `tooling/tests/test_dev_workflow.py` fails on a job that breaks this rule.
 
 A step that removes the SDK directories of the hosted image to free disk space runs only on a
-GitHub-hosted runner (`runner.environment == 'github-hosted'`).
+GitHub-hosted runner (`runner.environment == 'github-hosted'`), and only when the free space is
+below the limit that the step names: the delete takes one to two minutes.
 
 `BEVY_E2E_WINDOWS_RUNNER` stays the separate switch for the GPU scenarios job, the one
 privileged job on a variable because GitHub hosts no such machine; its runner must serve no
@@ -254,8 +261,8 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04` | `ubuntu-22.04` | 1 | bevy-explorer-headless-build |
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
-| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 2 | bevy-explorer-ci (2) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 46 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (2), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 47 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |

@@ -138,8 +138,10 @@ fn load_priority_orders_tier_then_parcel_then_facing_then_distance() {
         sqr_distance: FloatOrd(sqr_distance),
     };
     let ordered = [
+        // the player's own avatar before the scenes they stand in
+        LoadPriority::OWN_AVATAR,
         LoadPriority::TOP,
-        // every avatar before every other scene, nearest avatar first
+        // every other avatar before every other scene, nearest avatar first
         key(Tier::Avatar, 0, false, 0.0),
         key(Tier::Avatar, 5, true, 6400.0),
         key(Tier::Scene, 0, true, 0.0),

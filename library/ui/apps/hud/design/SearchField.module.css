@@ -36,7 +36,8 @@
 
 .light {
   gap: 9px;
-  width: 396px;
+  /* a host with a narrower header row sets --search-light-width */
+  width: var(--search-light-width, 396px);
   height: 42px;
   padding: 0 8px 0 11.5px;
   border: none;
