@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { NavBar } from '@dcl/one-ui'
+import { Button, NavBar, NavCreditsBalance } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 import { nativeNavBarCases } from './navbar-bounds-cases'
 const requested = new URLSearchParams(location.search).get('case')
@@ -55,16 +55,19 @@ root.render(
     surface={example.surface}
     balanceAction={
       example.composition ? (
-        <a href="/shop/credits" id="balance-slot">
-          Credits
-        </a>
+        <NavCreditsBalance
+          id="balance-slot"
+          href="/shop/credits"
+          label="30"
+          aria-label="30 credits"
+        />
       ) : undefined
     }
     accountControl={
       example.composition ? (
-        <button id="account-slot" type="button">
+        <Button id="account-slot" variant="secondary" size="sm">
           Wallet
-        </button>
+        </Button>
       ) : undefined
     }
     mobileSecondaryNavigation={
