@@ -22,7 +22,7 @@ describe("download action links", () => {
       "+400K",
     );
     expect(actions.primary).toBeUndefined();
-    expect(actions.alternatives?.[0]?.href).toBe(
+    expect(actions.alternativeGroups?.[0]?.[0]?.href).toBe(
       "/download_success?os=macos&arch=arm64",
     );
   });

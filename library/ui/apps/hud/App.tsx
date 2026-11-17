@@ -16,11 +16,13 @@ import { NotificationToastHost } from './features/notifications/NotificationToas
 import { SkyboxMenu } from './features/skybox/SkyboxMenu'
 import { EmotesWheel } from './features/emotes/EmotesWheel'
 import { BackpackPage } from './features/backpack/BackpackPage'
+import { setGiftBackpackOpener } from './features/gifting/GiftReceivedPopup'
 import { CommunitiesPage } from './features/communities/CommunitiesPage'
 import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { PlacesPicker } from './features/places/PlacesPicker'
+import { MenuPresentationContext } from './features/menu/MenuPresentation'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
@@ -28,10 +30,10 @@ import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
-import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
+import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
@@ -118,6 +120,8 @@ const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
 const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
+// The menu pages the startup lobby mounts (its own buttons, and the tabs that lead between them).
+const LOBBY_PAGES = new Set(['backpack', 'settings', 'map', 'places', 'events', 'profile'])
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
 const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, [
   ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : []),
@@ -363,18 +367,33 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   useEffect(() => {
     if (!session.backpack.open) setBackpackTab('wearables')
   }, [session.backpack.open])
+  // A gift-received popup's GO TO BACKPACK opens the Backpack on the gift's tab.
+  // Read through a ref: the session's backpack is a new object each render, and the opener is set once.
+  const backpackRef = useRef(session.backpack)
+  backpackRef.current = session.backpack
+  useEffect(() => {
+    setGiftBackpackOpener((tab) => {
+      setBackpackTab(tab)
+      if (!backpackRef.current.open) backpackRef.current.toggle()
+    })
+    return () => setGiftBackpackOpener(null)
+  }, [])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
-  const viewMyProfile = (): void => {
+  const viewMyProfile = (tab?: PassportTab): void => {
     const me = session.profile.data
-    if (me) openPassport(me.address)
+    if (me) openPassport(me.address, tab)
   }
 
   // Top-nav navigation between the full-screen menu pages (Settings/Backpack/Map)
   // and the Communities panel. Each toggle is mutually exclusive.
   const goToMenuPage = (page: string): void => {
-    // the startup lobby mounts only the Backpack; other pages wait for the world
-    if (session.phase === 'lobby' && page !== 'backpack') return
+    // the startup lobby is the page under its menus: LOBBY closes them, and the pages it does
+    // not mount (Communities, Shop, Gallery, Create) wait for the world
+    if (session.phase === 'lobby') {
+      if (page === 'lobby') return session.closeAllPanels()
+      if (!LOBBY_PAGES.has(page)) return
+    }
     if (page === 'lobby') session.lobbyPage.toggle()
     else if (page === 'settings') session.settings.toggle()
     else if (page === 'backpack') session.backpack.toggle()
@@ -435,6 +454,28 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
           </SurfaceBoundary>
+          {/* the startup lobby presents the pages it opens as cards over itself */}
+          <MenuPresentationContext.Provider value="lobbyCard">
+          <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
+            <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
+            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
+            <PlacesPage
+              account={discoveryAccount}
+              places={session.places}
+              profile={session.profile}
+              onNavigate={goToMenuPage}
+              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
+              onVisitWorld={(realm) => session.map.changeRealm(realm)}
+            />
+          </SurfaceBoundary>
+          <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
+            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
+          </SurfaceBoundary>
+          </MenuPresentationContext.Provider>
         </>
       )}
       {session.phase === 'entering' && editorMode === 'off' && !session.create.open && (
@@ -455,14 +496,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
-          {chrome && (
-            <Minimap
-              minimap={session.minimap}
-              map={session.map}
-              sceneTitle={session.minimap.sceneTitle}
-              setEngineViewport={session.setEngineViewport}
-            />
-          )}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
           {!pageOpen && editorMode !== 'edit' && (
             <Pointer

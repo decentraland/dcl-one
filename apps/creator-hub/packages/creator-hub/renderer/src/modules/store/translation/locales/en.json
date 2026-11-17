@@ -622,6 +622,7 @@
             "invalid_app_extension": "Invalid application selected. Please select a valid .app bundle",
             "invalid_app_bundle": "Invalid application bundle structure",
             "invalid_exe_file": "Invalid application selected. Please select a valid .exe file",
+            "invalid_executable": "Invalid application selected. Please select a file that you can run",
             "unknown": "Failed to set default editor"
           }
         },
@@ -1570,6 +1571,10 @@
         "label": "Day 7 Retention",
         "tooltip": "The percentage of new users who returned to your place within 7 days of their first visit."
       },
+      "total_playtime": {
+        "label": "Total Playtime",
+        "tooltip": "All the time users spent in your place, summed over every visit."
+      },
       "median_playtime": {
         "label": "Median Playtime",
         "tooltip": "Median time each user spends in your place per day: half of the daily visits are longer, half shorter."
@@ -1811,9 +1816,9 @@
           "d3_retention": "D3 Retention",
           "d3_retention_info_label": "About D3 Retention",
           "playtime": "Total Playtime",
-          "playtime_info": "Average time each player spent in your place over the last 30 days.",
+          "playtime_info": "Total time players spent in your place over the last 30 days.",
           "playtime_info_label": "About Total Playtime",
-          "minutes": "{value} min",
+          "minutes": "{value} {minutes, plural, one {minute} other {minutes}}",
           "no_data": "No data"
         },
         "empty_body": "Once you publish a scene, it shows up here with its performance for the current cycle.",

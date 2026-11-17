@@ -137,6 +137,13 @@ jobs:
           shared-key: dev-tests-${{ hashFiles('flake.lock') }}
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && matrix.shard == 1 }}
           cache-on-failure: true
+      # cache-hit is false for a partial match too, which is every PR whose manifests differ
+      # from main's last save; the restored target directory tells it apart from a miss.
+      - name: Check whether the dependency cache restored an entry
+        id: deps-restored
+        run: |
+          if [ -d services/catalyst/target/debug/deps ]; then restored=true; else restored=false; fi
+          echo "restored=$restored" >> "$GITHUB_OUTPUT"
       # Optional: without the tool, or without its server, the tests compile as before.
       - name: Install the optional compiler cache
         id: compiler-cache
@@ -151,10 +158,10 @@ jobs:
           SCCACHE_GHA_VERSION: dcl-dev-rust-tests-v1
           # The server stays until the job ends, so the statistics after the tests are complete.
           SCCACHE_IDLE_TIMEOUT: '0'
-          # Only with the dependencies restored from an exact key: the compiler cache then holds
-          # only what that entry does not, the workspace crates and the separate rusty_enet
-          # workspace (about 40 results), not every dependency.
-          USE_COMPILER_CACHE: ${{ steps.deps.outputs.cache-hit == 'true' && steps.compiler-cache.outcome == 'success' }}
+          # Only with the dependencies restored, from an exact or a partial key: the compiler cache
+          # then holds what that entry does not, the workspace crates, the separate rusty_enet
+          # workspace (about 40 results) and usually only the few changed dependencies.
+          USE_COMPILER_CACHE: ${{ steps.deps-restored.outputs.restored == 'true' && steps.compiler-cache.outcome == 'success' }}
         run: |
           # The wrapper is set here, not in the job environment, so the dependency cache key stays
           # unchanged, and only after the server starts against the GitHub cache.

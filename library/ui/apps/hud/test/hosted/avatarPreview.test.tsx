@@ -36,5 +36,7 @@ describe('avatarPreview domain', () => {
     expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: -20 })
     act(() => h.session().backpack.zoom(1.5, 0.25))
     expect(h.driver.last('previewZoom')).toEqual({ kind: 'previewZoom', zoom: 1.5, anchor: 0.25 })
+    act(() => h.session().turnLobbyAvatar(12))
+    expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: 12, stage: 'lobby' })
   })
 })

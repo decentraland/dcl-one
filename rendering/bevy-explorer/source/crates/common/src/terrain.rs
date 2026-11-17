@@ -204,7 +204,7 @@ fn union(rect: Option<(IVec2, IVec2)>, min: IVec2, max: IVec2) -> Option<(IVec2,
 }
 
 impl TerrainTargets {
-    /// Drop all state, e.g. on realm change. Consumers should snap rather than ease.
+    /// Drop all state, e.g. on realm change.
     pub fn reset(&mut self, world: bool) {
         let epoch = self.epoch.wrapping_add(1);
         *self = Self {

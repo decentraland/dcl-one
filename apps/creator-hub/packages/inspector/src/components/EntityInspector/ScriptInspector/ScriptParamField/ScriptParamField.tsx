@@ -2,28 +2,76 @@ import type { Entity } from '@dcl/ecs';
 import type { ActionRef } from '@dcl/asset-packs';
 
 import { TextField, CheckboxField, RangeField } from '../../../ui';
+import { ColorPicker } from '../../../ui/ColorPicker';
+import { toColor3, toHex } from '../../../ui/ColorField/utils';
 import { Dropdown } from '../../../ui/Dropdown';
 import { WalletField } from '../../../ui/WalletField';
 import { Message, MessageType } from '../../../ui/Message';
+import { toColorOfKind } from '../../../../lib/sdk/script-params/color';
+import type { ScriptColor } from '../types';
 import { fromNumber, toNumber, isValidNumber } from '../utils';
 import ActionField from './ActionField';
 import { ObjectField } from './ObjectField';
 import { ArrayField } from './ArrayField';
 import { EntityParamField } from './EntityParamField';
 import { ActionNameField } from './ActionNameField';
+import { FileParamField } from './FileParamField';
 import { formatLabel, labelWithTooltip } from './labels';
 
 import type { Props } from './types';
 
+import styles from './ScriptParamField.module.css';
+
 const asEntity = (value: unknown) =>
   typeof value === 'number' && value > 0 ? (value as Entity) : undefined;
 
-export function ScriptParamField({ name, param, siblings, getError, onUpdate }: Props) {
+// the picker only edits RGB, so a Color4 keeps the alpha it already had
+const fromHex = (hex: string, previous: ScriptColor): ScriptColor =>
+  toColorOfKind({ ...toColor3(hex), a: previous.a }, previous.a !== undefined);
+
+// `@enabledIf key` reads the sibling's current value, `@enabledIf !key` its opposite. A key with no
+// sibling (a typo, or a field shown without its siblings) leaves the field enabled rather than
+// locking it for good.
+export function isParamEnabled(enabledIf: string | undefined, siblings?: Record<string, unknown>) {
+  if (!enabledIf) return true;
+  const negated = enabledIf.startsWith('!');
+  const key = negated ? enabledIf.slice(1) : enabledIf;
+  if (!siblings || !Object.prototype.hasOwnProperty.call(siblings, key)) return true;
+  const on = !!siblings[key];
+  return negated ? !on : on;
+}
+
+export function ScriptParamField(props: Props) {
+  if (isParamEnabled(props.param.enabledIf, props.siblings)) return <ParamInput {...props} />;
+  // Every field takes `disabled` and draws its own disabled look, so the fieldset adds no styling;
+  // it still natively locks any plain input a nested editor renders without the prop.
+  return (
+    <fieldset
+      className={styles.disabled}
+      disabled
+    >
+      <ParamInput
+        {...props}
+        disabled
+      />
+    </fieldset>
+  );
+}
+
+function ParamInput({
+  name,
+  param,
+  siblings,
+  getError,
+  onUpdate,
+  disabled,
+}: Props & { disabled?: boolean }) {
   switch (param.type) {
     case 'number':
       return (
         <TextField
           type="number"
+          disabled={disabled}
           label={labelWithTooltip(name, param.tooltip)}
           value={fromNumber(param.value)}
           onChange={e => onUpdate(toNumber(e.target.value))}
@@ -35,6 +83,7 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
     case 'slider':
       return (
         <RangeField
+          disabled={disabled}
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
           min={param.min}
@@ -47,6 +96,7 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
     case 'boolean':
       return (
         <CheckboxField
+          disabled={disabled}
           label={labelWithTooltip(name, param.tooltip)}
           checked={param.value}
           onChange={e => onUpdate(e.target.checked)}
@@ -56,10 +106,21 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
     case 'enum':
       return (
         <Dropdown
+          disabled={disabled}
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
           options={param.options.map(option => ({ value: option, label: option }))}
           onChange={e => onUpdate(String(e.target.value))}
+        />
+      );
+
+    case 'color':
+      return (
+        <ColorPicker
+          disabled={disabled}
+          label={labelWithTooltip(name, param.tooltip)}
+          value={toHex(param.value)}
+          onChange={e => onUpdate(fromHex((e.target as HTMLInputElement).value, param.value))}
         />
       );
 
@@ -69,6 +130,7 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
           components={param.components}
+          disabled={disabled}
           onChange={onUpdate}
         />
       );
@@ -78,6 +140,7 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
         <ActionField
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
+          disabled={disabled}
           onChange={(value: ActionRef) => onUpdate(value)}
         />
       );
@@ -109,6 +172,7 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
             label={labelWithTooltip(name, param.tooltip)}
             value={param.value}
             entity={asEntity(siblings?.[param.actionsOf])}
+            disabled={disabled}
             onChange={onUpdate}
           />
         );
@@ -121,12 +185,26 @@ export function ScriptParamField({ name, param, siblings, getError, onUpdate }: 
             key={param.value}
             label={labelWithTooltip(name, param.tooltip)}
             value={param.value}
+            disabled={disabled}
             onChange={e => onUpdate(e.target.value)}
+          />
+        );
+      }
+      if (param.format) {
+        return (
+          <FileParamField
+            label={labelWithTooltip(name, param.tooltip)}
+            value={param.value}
+            format={param.format}
+            error={getError?.(param)}
+            disabled={disabled}
+            onChange={onUpdate}
           />
         );
       }
       return (
         <TextField
+          disabled={disabled}
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
           onChange={e => onUpdate(e.target.value)}

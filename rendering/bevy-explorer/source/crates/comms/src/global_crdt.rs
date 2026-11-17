@@ -1508,7 +1508,11 @@ fn remove_transport_from_foreign_audio_source(
 
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
-    mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    mut q: Query<(
+        &mut ForeignAudioSource,
+        &ForeignPlayer,
+        Has<crate::BlockedOrBanned>,
+    )>,
     #[cfg(feature = "livekit")] call_rooms: Query<
         &crate::livekit::participant::ParticipantIndex,
         With<crate::voice_chat::VoiceRoom>,
@@ -1519,26 +1523,7 @@ fn handle_foreign_audio(
         .filter_map(|(e, transport)| transport.control.as_ref().map(|t| (e, t)))
         .collect::<HashMap<_, _>>();
 
-    for (mut source, player) in q.iter_mut() {
-        // a call's peers are heard flat through the call, not spatially as well
-        #[cfg(feature = "livekit")]
-        let in_call_with = call_rooms.iter().any(|index| {
-            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
-                &format!("{:#x}", player.address),
-            ))
-        });
-        #[cfg(not(feature = "livekit"))]
-        let in_call_with = false;
-        if in_call_with {
-            if let Some(current) = source.current_transport.take() {
-                if let Some(control) = transports.get(&current) {
-                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
-                }
-                source.audio_receiver = None;
-            }
-            continue;
-        }
-
+    for (mut source, player, blocked_or_banned) in q.iter_mut() {
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1568,8 +1553,25 @@ fn handle_foreign_audio(
             source.audio_receiver = None;
         }
 
-        // request a new source
-        if source.current_transport.is_none() {
+        // A call's peers are heard flat through the call, not spatially as well. Skipping after
+        // the availability events are read keeps a long skip from filling their channel.
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with || blocked_or_banned {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+        } else if source.current_transport.is_none() {
+            // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
@@ -2031,5 +2033,90 @@ mod tests {
             foreign_players(&mut app),
             vec![HashSet::from_iter([other, socket])]
         );
+    }
+
+    fn voice_app() -> (App, Entity, Entity, mpsc::Receiver<ChannelControl>) {
+        let mut app = App::new();
+        app.add_systems(Update, handle_foreign_audio);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _) = mpsc::channel(1);
+        let (control, control_rx) = mpsc::channel(8);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::Livekit,
+                sender,
+                control: Some(control),
+                context,
+            })
+            .id();
+        let peer = Address::repeat_byte(0xab);
+        let (audio_sender, audio_receiver) = mpsc::channel(10);
+        audio_sender
+            .try_send(ForeignAudioData::TransportAvailable(transport))
+            .unwrap();
+        let player = app
+            .world_mut()
+            .spawn((
+                ForeignPlayer {
+                    address: peer,
+                    context,
+                    transports: HashSet::from_iter([transport]),
+                    scene_id: SceneEntityId::new(*SceneEntityId::FOREIGN_PLAYER_RANGE.start(), 0),
+                    profile_version: 0,
+                    audio_sender,
+                },
+                ForeignAudioSource {
+                    audio_available_receiver: audio_receiver,
+                    audio_receiver: None,
+                    available_transports: Default::default(),
+                    current_transport: None,
+                },
+            ))
+            .id();
+        (app, player, transport, control_rx)
+    }
+
+    fn voice_controls(rx: &mut mpsc::Receiver<ChannelControl>) -> Vec<&'static str> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|control| match control {
+                ChannelControl::VoiceSubscribe(..) => "subscribe",
+                ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_unsubscribed_and_heard_again_once_cleared() {
+        let (mut app, player, _, mut controls) = voice_app();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["unsubscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::BlockedOrBanned>();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_never_subscribed_and_keeps_its_streams_known() {
+        let (mut app, player, transport, mut controls) = voice_app();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        assert!(voice_controls(&mut controls).is_empty());
+        let mut sources = app.world_mut().query::<&ForeignAudioSource>();
+        let source = sources.single(app.world()).unwrap();
+        assert!(source.available_transports.contains(&transport));
+        assert!(source.current_transport.is_none());
     }
 }

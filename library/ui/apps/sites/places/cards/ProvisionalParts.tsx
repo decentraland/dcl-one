@@ -1,6 +1,6 @@
 // TODO(shared-card): provisional pieces of the two /places cards. Delete this file and its module
 // when PlaceCardSlot and LiveEventCardSlot render the shared design-system cards.
-import { useState, type MouseEvent } from 'react'
+import { useState, type CSSProperties, type MouseEvent } from 'react'
 import {
   GeneralFeatured,
   GeneralJumpIn,
@@ -8,6 +8,7 @@ import {
   GeneralPlayers
 } from '../../../../foundations/icons'
 import dclLogo from '../../assets/dcl-logo.svg'
+import { cssUrl } from '../../shared/cssUrl'
 import type { PlaceCardData, PlaceCardHandlers, PlaceCardLabels } from './types'
 import styles from './ProvisionalParts.module.css'
 
@@ -23,11 +24,10 @@ function Badges({ card, labels }: { card: PlaceCardData; labels: PlaceCardLabels
           </span>
         ) : null}
         {users > 0 ? (
-          <span className={styles.users}>
+          <span className={styles.users} role="img" aria-label={card.usersLabel ?? String(users)}>
             <span className={styles.dot} aria-hidden="true" />
             <GeneralPlayers size={14} aria-hidden="true" />
-            <span aria-hidden="true">{users}</span>
-            <span className={styles.visuallyHidden}>{card.usersLabel ?? String(users)}</span>
+            {users}
           </span>
         ) : null}
       </div>
@@ -45,10 +45,14 @@ function Avatar({ creator }: { creator: NonNullable<PlaceCardData['creator']> })
   const src = creator.foundation ? dclLogo : creator.avatarUrl
   // A face the CDN no longer serves falls back to the initial instead of a broken image.
   const [failed, setFailed] = useState<string | null>(null)
+  const style = creator.avatarBackground
+    ? ({ '--avatar-bg': creator.avatarBackground } as CSSProperties)
+    : undefined
   if (src && failed !== src)
     return (
       <img
         className={styles.avatar}
+        style={style}
         src={src}
         alt=""
         loading="lazy"
@@ -56,7 +60,7 @@ function Avatar({ creator }: { creator: NonNullable<PlaceCardData['creator']> })
       />
     )
   return (
-    <span className={styles.avatar} aria-hidden="true">
+    <span className={styles.avatar} style={style} aria-hidden="true">
       {creator.name.charAt(0).toUpperCase()}
     </span>
   )
@@ -128,10 +132,16 @@ function JumpIn({
   )
 }
 
-function Cover({ card, priority = false }: { card: PlaceCardData; priority?: boolean }) {
-  return card.image ? (
-    <img className={styles.cover} src={card.image} alt="" loading={priority ? 'eager' : 'lazy'} />
-  ) : null
+/** The cover is a background image, as the reference's: an <img> resamples and snaps its edges differently. */
+function Cover({ card }: { card: PlaceCardData }) {
+  if (!card.image) return null
+  return (
+    <div
+      className={styles.cover}
+      style={{ backgroundImage: cssUrl(card.image) }}
+      aria-hidden="true"
+    />
+  )
 }
 
 export { Badges, ByLine, Cover, JumpIn, TitleLink }

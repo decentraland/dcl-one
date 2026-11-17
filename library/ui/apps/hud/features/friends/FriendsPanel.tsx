@@ -4,7 +4,7 @@
 // relay of the scene social state (BevyApi.social.*), guest-disabled.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
+import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, MaskIcon, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { BlockedUser as Blocked, Friend, FriendRequest } from '@explorer-core/engine/protocol'
 import type { FriendLocation } from '@explorer-core/features/friends/friendLocation'
@@ -17,8 +17,11 @@ import { openFriendRequest } from './FriendRequestPopup'
 import { useProfile } from '../session/profileStore'
 import { hudInsetRef } from '../../lib/hudInset'
 import { looksClaimed } from '@explorer-core/engine/mention'
+import { FriendsBadge, KebabTab } from './FriendsIcons'
+import closeIcon from '../../assets/chat/close-thin.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import styles from './FriendsPanel.module.css'
+import { getHudScale } from '@explorer-core/lib/hudScale'
 
 type Tab = 'friends' | 'requests' | 'blocked'
 /** Open the user menu for `address` above the element that was clicked. */
@@ -385,7 +388,7 @@ export function FriendsPanel({
   const menuAt: MenuAt = (address, el, context) => {
     const r = el.getBoundingClientRect()
     setMenuFor(address)
-    openProfileCard(address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, { above: true, context, onClose: () => setMenuFor(null) })
+    openProfileCard(address, r.left + r.width / 2 + 5 * (getHudScale() || 1), r.top + r.height / 2 - 10 * (getHudScale() || 1), { above: true, context, onClose: () => setMenuFor(null) })
   }
   const rowProps = (address: string): RowProps => ({ menuOpen: menuFor === address, onMenu: menuAt, pending: friends.pending })
 
@@ -421,7 +424,7 @@ export function FriendsPanel({
       <header className={styles.head}>
         <Tabs variant="underline" fill className={styles.tabs} items={TABS} value={tab} onChange={setTab} aria-label="Friends sections" />
         <ControlButton variant="solid" size="lg" className={styles.closeGlyph} aria-label="Close friends" onClick={friends.toggle}>
-          ×
+          <MaskIcon src={closeIcon} size={12} />
         </ControlButton>
       </header>
 
@@ -437,7 +440,10 @@ export function FriendsPanel({
           </div>
         ) : tab === 'friends' ? (
           friends.list.length === 0 ? (
-            <div className={styles.placeholder}>
+            <div className={`${styles.placeholder} ${styles.phFriends}`}>
+              <span className={styles.phBadge}>
+                <FriendsBadge />
+              </span>
               <div className={styles.phTitle}>Time To Make Some Friends!</div>
               <div className={styles.phText}>
                 View someone’s Profile or click on their name in the Chat to see the <b>‘Add Friend’</b> option.
@@ -485,14 +491,14 @@ export function FriendsPanel({
           </>
         ) : blocked.length === 0 ? (
           <div className={styles.placeholder}>
-            <BlockedUser size={72} className={styles.phIcon} />
+            <BlockedUser size={84} className={styles.phIcon} />
             <div className={styles.phTitle}>No Blocked Accounts</div>
             <div className={styles.phText}>
               If you block someone, you will not be able to see each other in-world or exchange messages. You will also not see each other’s names or messages
               in public chats.
             </div>
             <div className={styles.phHint}>
-              The option to block an account is available in the <Kebab size={16} /> menu on their Profile or when you click on their name in the Chat.
+              The option to block an account is available in the <KebabTab /> menu on their Profile or when you click on their name in the Chat.
             </div>
           </div>
         ) : (

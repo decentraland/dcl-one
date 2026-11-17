@@ -46,9 +46,6 @@ export type LandingsEvents = {
     is_world?: boolean;
     place_name?: string;
   };
-  cast_watch_access_expired: {
-    location: string;
-  };
   cast_watch_chat_opened: Record<string, never>;
   cast_watch_joined: {
     place_name: string;
@@ -60,13 +57,6 @@ export type LandingsEvents = {
     reason: string;
   };
   cast_watch_muted: Record<string, never>;
-  cast_watch_no_stream: {
-    location: string;
-  };
-  cast_watch_opened: {
-    is_world: boolean;
-    location: string;
-  };
   cast_watch_refused: {
     kind: "error" | "waiting";
     reason: string;
@@ -191,21 +181,6 @@ export type LandingsEvents = {
     button: string;
   };
   lp_help_viewed: Record<string, never>;
-  lp_home_download_clicked: {
-    placement: string;
-    store: string;
-  };
-  lp_home_rail_clicked: {
-    rail: string;
-    target: string;
-  };
-  lp_home_rail_viewed: {
-    rail: string;
-  };
-  lp_home_viewed: {
-    live_rail: boolean;
-    rails: number;
-  };
   lp_invite_referrer_resolved: {
     referrer_handle: string;
     resolved: boolean;
@@ -221,11 +196,11 @@ export type LandingsEvents = {
     resolved: boolean;
   };
   lp_legal_section_clicked: {
-    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
     section: string;
   };
   lp_legal_viewed: {
-    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
   lp_rsvp_cancelled: {
     count: number;
@@ -256,31 +231,6 @@ export type LandingsEvents = {
   };
   lp_rsvp_submitting: {
     event_id: string;
-  };
-  lp_schedule_created: {
-    active?: boolean;
-    editing: boolean;
-    schedule_id?: string;
-  };
-  lp_schedule_gate_viewed: Record<string, never>;
-  lp_schedule_list_viewed: {
-    count: number;
-    source: "empty" | "error" | "live";
-  };
-  lp_schedule_review_reached: Record<string, never>;
-  lp_schedule_started: {
-    editing: boolean;
-  };
-  lp_schedule_step_completed: {
-    from: "authGate" | "basics" | "created" | "dates" | "review" | "submitting";
-    to: "authGate" | "basics" | "created" | "dates" | "review" | "submitting";
-  };
-  lp_schedule_submit_attempted: {
-    editing: boolean;
-    theme: null | string;
-  };
-  lp_schedule_submit_failed: {
-    error?: string;
   };
   lp_whatson_viewed: {
     filter: null | string;

@@ -3,8 +3,9 @@
 .modal {
   display: flex;
   flex-direction: column;
-  width: clamp(440px, 38vw, 760px);
-  max-height: min(820px, calc(100dvh - 48px));
+  /* shares of the canvas, which the popup layer scales: not of the window */
+  width: clamp(440px, calc(38vw / var(--ui-scale)), 760px);
+  max-height: min(820px, calc(100dvh / var(--ui-scale) - 48px));
   padding: 34px 40px 26px;
   border-radius: var(--r-panel);
   overflow: hidden;

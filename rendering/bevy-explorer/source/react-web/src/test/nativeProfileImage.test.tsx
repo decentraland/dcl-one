@@ -34,7 +34,9 @@ describe('native HUD snapshot presentation', () => {
       expect(screen.getAllByRole('img').some(img => img.getAttribute('src') === expected && img.getAttribute('alt') !== 'Friend')).toBe(true)
       expect((await fetchStoredProfile('default1'))?.body).toBe(expected)
       expect(profile.bodyImage).toBe(image)
-    }
+    },
+    // Each case loads the HUD modules again; on a busy machine that passes the default limit.
+    20_000
   )
 
   it.each([

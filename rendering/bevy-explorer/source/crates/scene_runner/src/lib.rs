@@ -1770,13 +1770,13 @@ fn update_scene_voice_block(
     let Some(mut mic_state) = mic_state else {
         return;
     };
-    let blocked = player
+    let disabled = player
         .single()
         .ok()
         .and_then(|player| containing_scene.get_parcel(player))
         .is_some_and(|scene| disabling_scenes.contains(scene));
-    if mic_state.scene_blocked != blocked {
-        mic_state.set_scene_blocked(blocked);
+    if mic_state.scene_disabled() != disabled {
+        mic_state.set_scene_disabled(disabled);
     }
 }
 

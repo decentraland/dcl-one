@@ -11,6 +11,7 @@ type Props = {
   value: Entity;
   // Component names from the param's `@components` tag.
   components?: string[];
+  disabled?: boolean;
   onChange: (entity: Entity) => void;
 };
 
@@ -22,7 +23,7 @@ const resolveComponentName = (name: string) =>
 // An Entity param, narrowed to the entities carrying one of `components` when the script names
 // any. A name the scene's engine doesn't know matches nothing, so the list is empty rather than
 // falling back to every entity.
-export function EntityParamField({ label, value, components, onChange }: Props) {
+export function EntityParamField({ label, value, components, disabled, onChange }: Props) {
   const sdk = useSdk();
   const filter = useMemo(() => {
     if (!components?.length || !sdk) return undefined;
@@ -36,6 +37,7 @@ export function EntityParamField({ label, value, components, onChange }: Props) 
       label={label}
       value={value}
       components={filter}
+      disabled={disabled}
       onChange={e => onChange(Number(e.target.value) as Entity)}
     />
   );

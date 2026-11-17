@@ -9,6 +9,7 @@ enum Method {
   BROADCAST_MOBILE_DEBUG_COMMAND = 'broadcast_mobile_debug_command',
   GET_FEATURE_FLAGS = 'get_feature_flags',
   UPDATE_SDK = 'update_sdk',
+  GET_SDK_VERSION = 'get_sdk_version',
   SET_UI_DESIGNER_MODE = 'set_ui_designer_mode',
   INSTALL_MULTIPLAYER = 'install_multiplayer',
   UNINSTALL_MULTIPLAYER = 'uninstall_multiplayer',
@@ -36,6 +37,7 @@ type Params = {
   [Method.BROADCAST_MOBILE_DEBUG_COMMAND]: { cmd: string; args: Record<string, unknown> };
   [Method.GET_FEATURE_FLAGS]: Record<string, never>;
   [Method.UPDATE_SDK]: Record<string, never>;
+  [Method.GET_SDK_VERSION]: Record<string, never>;
   [Method.SET_UI_DESIGNER_MODE]: { open: boolean };
   [Method.INSTALL_MULTIPLAYER]: Record<string, never>;
   [Method.UNINSTALL_MULTIPLAYER]: Record<string, never>;
@@ -67,6 +69,7 @@ type Result = {
   };
   [Method.GET_FEATURE_FLAGS]: { flags: Record<string, boolean> };
   [Method.UPDATE_SDK]: { ok: boolean };
+  [Method.GET_SDK_VERSION]: { version: string | null };
   [Method.SET_UI_DESIGNER_MODE]: void;
   [Method.INSTALL_MULTIPLAYER]: { ok: boolean };
   [Method.UNINSTALL_MULTIPLAYER]: { ok: boolean };
@@ -114,6 +117,14 @@ export class SceneClient extends RPC<Method, Params, Result> {
 
   updateSdk = () => {
     return this.request('update_sdk', {});
+  };
+
+  /**
+   * The `@dcl/sdk` version installed in the scene, or null when the host can't read it. Asked
+   * for on demand, not sent once as a config param, so it is still right after an SDK update.
+   */
+  getSdkVersion = () => {
+    return this.request('get_sdk_version', {});
   };
 
   /**
