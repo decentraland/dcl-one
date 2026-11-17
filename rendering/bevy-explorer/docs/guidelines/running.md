@@ -250,6 +250,8 @@ State, in every build:
   each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
   first, then the avatars nearest the camera and in front of it. The Spring bones debug section
   reads it.
+- `/avatar_shadow_distance [metres]`: how far from the player other avatars cast shadows (20 by
+  default; the player's own always does), as JSON `metres`; with a value, sets it for the session.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

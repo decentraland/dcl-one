@@ -74,6 +74,8 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+#[cfg(feature = "explorer")]
+pub mod shadow_distance;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -217,6 +219,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(JumpMarkerPlugin);
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
+        app.add_plugins(shadow_distance::AvatarShadowDistancePlugin);
         app.add_plugins(HeadIkPlugin);
         app.add_plugins(ik_debug::IkDebugPlugin);
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
