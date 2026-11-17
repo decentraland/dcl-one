@@ -611,3 +611,49 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **The HUD scales with the window, with no legibility floor.** `--ui-scale` is
+  `min(width / 1920, height / 1080)` (`library/explorer-core/lib/hudScale.ts`), the same rule
+  the Unity client's canvas follows, so one layout holds at every size: nothing wraps, hides or
+  collides in a small window, and a 4K window gets a proportionally larger HUD. The 0.25 and 4
+  bounds only keep the value finite for the layout boxes that divide by it. Known limitation:
+  text shrinks with everything else. A 16 px label is about 10.7 px in a 1280x720 window and
+  about 5 px at 640x480, which is not legible. A floor on the scale would trade that for a
+  layout that no longer fits the window at those sizes.
+- **The open chat does not fade out when idle.** Its message column stays tinted and the
+  conversation rail is on screen for as long as the chat is open, with Nearby's tab on it even
+  when there is no other conversation, so the chat's controls stay reachable without first
+  waking the panel. Only the title bar and its navigation wait for hover or focus.
+- **Places is one grid.** The page has no separate Live Now or Featured sections: every
+  destination appears once, in the order of the chosen sort, and a featured place carries a
+  ribbon on its card. The layout is the Unity client's, so a place is found the same way in
+  either client; search, the category chips and the sort all act on the one grid.
+- **Settings tabs are Graphics, Sounds, Controls, Chat; key bindings sit under Controls.** The
+  row is the Unity client's, so a setting is found in the same place in either client; any other
+  category the engine sends follows in the engine's order. Key bindings are (action, keys) rows
+  from the bindings relay, not engine settings, so they get a card of their own below the
+  Controls rows instead of a tab, and the Controls tab is there even when the engine sends no
+  Controls category.
+- **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
+  Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
+  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
+  and Badges, then Sign Out (a sign-in on the web, a guest's included) and Exit (where the page can
+  close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
+  and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
+  a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and
+  Gallery.
+  The end-to-end suite reads these buttons by name
+  (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
+- **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
+  guest, and so does an account signing in. The next start does not sign the guest in on its own,
+  and Play as guest brings the same guest back: on the web its kept sign-in, or its kept wallet
+  session once that sign-in has run out; on the desktop client its kept wallet session, since
+  Sign Out drops the sign-in the engine keeps (`/logout --forget`). The desktop client signs out
+  from the start lobby only: the engine refuses a sign-out once the world is entered.
+- **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
+  a destination of this HUD, and matching another client's tab row is not grounds for dropping
+  it.
+- **A control without a function is hidden, not shown disabled.** The HUD renders a button, tab
+  or menu row only when it does something. A dead or greyed control promises a function the
+  HUD does not have and reads as a fault; the control appears when its function exists. The
+  Portable experiences button follows the same rule and shows only while an experience is
+  active.

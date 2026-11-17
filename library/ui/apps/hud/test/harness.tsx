@@ -56,8 +56,11 @@ export class FakeDriver implements LoginDriver {
   async autopilotFailed(reason: string): Promise<void> {
     this.autopilotFailures.push(reason)
   }
-  async logout(): Promise<void> {
+  /** Each `logout`: whether it dropped the stored sign-in (a Sign Out) or not (a Cancel). */
+  readonly logouts: boolean[] = []
+  async logout(forget?: boolean): Promise<void> {
     this.calls.push('logout')
+    this.logouts.push(forget === true)
   }
   /** What `loginWithIdentity` was handed, in order (a `/hud_login`'s identity and pick). */
   readonly identityLogins: { identity: AuthIdentity; defaultOnError?: boolean; guest?: boolean; pick?: NewAccountPick }[] = []
@@ -195,6 +198,7 @@ export function fakeSession(): EngineSession {
     playerReady: true,
     lobbyStageReady: false,
     signinStageReady: false,
+    turnLobbyAvatar: vi.fn(),
     lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn() },
     homeScene: () => null,
     avatarPreviewRect: null,
@@ -228,8 +232,8 @@ export function fakeSession(): EngineSession {
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
     backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), outfitError: null, dismissOutfitError: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
     communities: { list: [], browse: { search: '', items: [], total: 0, loading: false, loadingMore: false }, loadBrowse: vi.fn(), loadMoreBrowse: vi.fn(), open: false, toggle: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), deleted: null, save: null, clearSave: vi.fn(), placeOptions: null, loadPlaceOptions: vi.fn(), clearPlaceOptions: vi.fn(), removePlace: vi.fn(), memberAction: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn(), invites: null, loadInvites: vi.fn(), pendingCount: null, loadInvitesCount: vi.fn(), manageRequest: vi.fn(), memberSections: {}, cardOpen: vi.fn(), loadMemberSection: vi.fn(), invitable: null, loadInvitable: vi.fn(), invite: vi.fn(), unban: vi.fn(), posts: null, loadPosts: vi.fn(), loadMorePosts: vi.fn(), createPost: vi.fn(), deletePost: vi.fn(), likePost: vi.fn() },
-    map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(), changeRealm: vi.fn(), teleportToPlace: vi.fn(), home: null, setHome: vi.fn() },
-    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, setConfig: vi.fn() },
+    map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), teleportToPlace: vi.fn(() => 'sent' as const), home: null, setHome: vi.fn() },
+    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, linkRealm: null, setConfig: vi.fn() },
     places: { open: false, toggle: vi.fn() },
     events: { open: false, toggle: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), setAttending: vi.fn(), clear: vi.fn() }, memberOf: [] },
     shop: { open: false, toggle: vi.fn() },
@@ -261,6 +265,7 @@ export function fakeSession(): EngineSession {
     login: {
       status: 'sign-in-or-guest',
       account: null,
+      signedInAs: null,
       busy: false,
       error: null,
       engineReady: true,

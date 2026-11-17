@@ -27,6 +27,9 @@
 }
 
 .media {
+  --featured-glyph: min(3.455cqw, 14px);
+
+  box-sizing: border-box;
   position: relative;
   flex: none;
   aspect-ratio: 405.25 / 253;
@@ -51,6 +54,7 @@
   font-size: min(4.935cqw, 20px);
   font-weight: 500;
   line-height: 1.6;
+  letter-spacing: 0.00938em;
 }
 
 .titleLink {
@@ -62,7 +66,13 @@
   height: min(11.764cqw, 47.674px);
 }
 
+/* Source LiveEventCard's by-line: a smaller avatar and a wider gap than the grid card's. */
 .byRow {
+  --avatar-size: min(5.675cqw, 23px);
+  --avatar-border: min(0.405cqw, 1.643px);
+  --creator-gap: min(2.468cqw, 10px);
+  --by-size: min(3.455cqw, 14px);
+
   position: absolute;
   inset: 0;
   display: flex;
@@ -72,8 +82,13 @@
 }
 
 .jumpIn {
+  --jump-gap: min(2.097cqw, 8.496px);
+  --jump-radius: min(2.961cqw, 12px);
+  --jump-glyph: min(6.138cqw, 24.874px);
+
   position: absolute;
   inset: 0;
+  padding: 0 min(5.241cqw, 21.241px);
   font-size: min(4.091cqw, 16.58px);
   opacity: 0;
   transform: translateY(calc(100% + min(3.948cqw, 16px)));
@@ -116,7 +131,6 @@
   .byRow,
   .card:hover .byRow {
     position: static;
-    min-height: 24px;
     opacity: 1;
   }
 

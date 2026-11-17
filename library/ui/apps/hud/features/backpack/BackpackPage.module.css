@@ -46,12 +46,72 @@
   }
 }
 
-/* in the lobby's modal the close button takes the header's right edge */
+/* In the lobby's modal the page is 1600px wide and the close button takes the header's right edge:
+   a narrower search, the avatar's column 576px wide with a larger preview, and the card without the
+   detail column's 380px. The detail panel has no room beside the grid there: it is absent while
+   nothing is selected and lies over the avatar's column, against the card, while something is. */
 .inModal .searchWrap {
-  right: 76px;
+  right: 82px;
+  --search-light-width: 334px;
 }
 .inModal .filterWrap {
-  right: 486px;
+  right: 430px;
+}
+.inModal .backdrop {
+  /* the glow stands under the avatar, bottom left; the card's side is the deep colour */
+  background: radial-gradient(ellipse 65% 95% at 18% 100%, var(--lava-2) 0%, var(--lava-2) 45%, var(--lava-1) 78%);
+  mask:
+    linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
+    linear-gradient(var(--black), var(--black)) calc(50% - 512px) calc(50% + 9px) / 1184px 1184px no-repeat;
+  mask-composite: exclude;
+}
+.inModal .backdrop::before {
+  display: none;
+}
+.inModal .frame {
+  width: 1600px;
+}
+.inModal .preview {
+  left: -304px;
+  top: -146px;
+  width: 1184px;
+  height: 1184px;
+}
+.inModal .avatarDrag {
+  width: 536px;
+}
+.inModal .randomizeBar {
+  left: 288px;
+}
+.inModal .card {
+  left: 576px;
+  width: 984px;
+  padding-right: 0;
+}
+.inModal .contentHead {
+  margin-right: 0;
+}
+.inModal .detail {
+  left: -380px;
+  /* ends 12px above the randomize bar, which a short window lifts (--bar-top, in the frame) */
+  height: min(800px, calc(50cqh + 294px));
+}
+.inModal .cardEmotes .detail {
+  height: min(870px, calc(50cqh + 364px));
+}
+.inModal .detailInfo {
+  min-height: 0;
+  overflow-y: auto;
+}
+.inModal .detailEmpty {
+  display: none;
+}
+/* the saved outfits and the banner under them fit the narrower card as a whole */
+.inModal .outfits {
+  left: 19px;
+  top: 214px;
+  transform: scale(0.722);
+  transform-origin: 0 0;
 }
 .head {
   position: relative;
@@ -75,6 +135,17 @@
   position: absolute;
   left: 214px;
   top: 13px;
+}
+/* the pills: 16px apart, Emotes 116px wide */
+.tabs.tabs {
+  gap: 16px;
+}
+.tabs [role='tab']:nth-child(2) {
+  box-sizing: border-box;
+  width: 116px;
+  padding-left: 0;
+  padding-right: 0;
+  justify-content: center;
 }
 .filterWrap {
   position: absolute;
@@ -101,6 +172,14 @@
   left: 0;
   right: 0;
   bottom: 0;
+  /* its height places the hints and the randomize bar (below) */
+  container-type: size;
+}
+/* 944px down the frame on a 1200-high canvas; on a shorter one they keep 21px above the stage's
+   foot, where the frame's own foot is past the window's. */
+.hints,
+.randomizeBar {
+  --bar-top: min(944px, calc(50cqh + 412px));
 }
 .preview {
   position: absolute;
@@ -129,7 +208,7 @@
 .hints {
   position: absolute;
   left: 20px;
-  top: 884px;
+  top: var(--bar-top);
   z-index: 3;
   pointer-events: auto;
 }
@@ -137,7 +216,7 @@
 .randomizeBar {
   position: absolute;
   left: 260px;
-  top: 884px;
+  top: var(--bar-top);
   z-index: 3;
   display: flex;
   gap: 8px;
@@ -297,10 +376,10 @@
 }
 .slotThumb {
   position: absolute;
-  left: 59px;
-  top: 1px;
-  width: 78px;
-  height: 78px;
+  left: 62px;
+  top: 4px;
+  width: 72px;
+  height: 72px;
   border-radius: var(--r-slot);
   background-size: cover;
   background-position: center;
@@ -313,8 +392,8 @@
 .slotImg {
   position: absolute;
   inset: 5px;
-  width: 68px;
-  height: 68px;
+  width: 62px;
+  height: 62px;
   object-fit: contain;
 }
 .slotHover {
@@ -601,10 +680,10 @@
   top: 53px;
 }
 .gridAreaEmotes .breadcrumb {
-  margin-bottom: 9px;
+  margin-bottom: 41px;
 }
 .gridAreaEmotes .grid {
-  margin-left: -1.5px;
+  margin-left: 2.5px;
 }
 .gridAreaEmotes .pager {
   top: 753px;
@@ -643,6 +722,14 @@
   border-style: solid;
   border-width: 391px 0 200px;
   border-image: var(--panel-art) 391 0 200 fill / 391px 0 200px stretch;
+}
+.detailClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
 }
 .detailEmpty {
   align-items: center;
@@ -805,10 +892,11 @@
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  top: calc(50% + 4px);
+  gap: 19px;
   color: var(--text);
   font-size: var(--type-16);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-bold);
 }
 .outfitFirstEmpty,
 .outfitEmpty:hover {
@@ -847,13 +935,21 @@
   transform: scale(1);
   pointer-events: auto;
 }
-.outfitThumbs {
+.outfitArt {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  border: none;
   border-radius: var(--r-slot);
   background-size: 100% 100%;
+  pointer-events: none;
+}
+.outfitThumbs {
+  position: absolute;
+  inset: 52px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 0 0 var(--r-slot) var(--r-slot);
+  background: none;
   cursor: pointer;
 }
 /* The square picture overflows the card by 80px on every side, so the avatar fills its height. */
@@ -944,41 +1040,49 @@
     radial-gradient(ellipse 40% 60% at 85% 50%, var(--glow-pink) 0%, transparent 70%),
     radial-gradient(ellipse 50% 70% at 10% 0%, var(--glow-pink-faint) 0%, transparent 70%),
     var(--outfit-banner);
-  overflow: hidden;
 }
 .nameBannerText {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
-  width: 560px;
-  padding: 50px 0 0 60px;
+  gap: 20px;
+  width: 720px;
+  padding: 56px 0 0 64px;
 }
 .nameBannerTitle {
   margin: 0;
   color: var(--text);
+  max-width: 600px;
+  margin-bottom: 1px;
   font-size: var(--type-30);
   font-weight: var(--fw-semibold);
   line-height: 36px;
 }
 .nameBannerBody {
   margin: 0;
+  max-width: 624px;
+  margin-left: 2px;
   color: var(--text);
   font-size: var(--type-16);
-  line-height: 20px;
+  line-height: 19px;
+}
+.nameBannerBody em {
+  color: var(--brand);
+  font-style: normal;
 }
 .nameBannerCta {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   width: 300px;
   height: 47px;
-  margin-top: 16px;
+  margin: 19px 0 0 2px;
   border-radius: 10.7px;
   background: var(--cta-flare);
   color: var(--text);
   font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-bold);
   text-decoration: none;
   transition: transform var(--dur-hover) var(--ease-inout);
 }
@@ -987,7 +1091,8 @@
 }
 .nameBannerArt {
   position: absolute;
-  right: 0;
+  /* The art overhangs the banner's right edge. */
+  right: -30px;
   bottom: 0;
   width: 491px;
   height: 360px;

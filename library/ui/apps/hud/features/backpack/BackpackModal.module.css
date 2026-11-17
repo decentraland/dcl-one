@@ -1,4 +1,5 @@
-/* The page's 1920×1012 body, scaled into a centred frame like the parity modal (~1600px wide). */
+/* The page in a centred 1600px card that leaves 100px above and below; the page lays itself out for
+   that width (its own in-modal rules). */
 .root {
   position: fixed;
   inset: 0;
@@ -15,17 +16,22 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 1920px;
-  height: 1012px;
-  transform: translate(-50%, -50%) scale(calc(var(--ui-scale) * 0.84));
+  width: 1600px;
+  height: calc(100vh / var(--ui-scale) - 200px);
+  transform: translate(-50%, -50%) scale(var(--ui-scale));
   border-radius: var(--r-xl);
   overflow: hidden;
   font-family: var(--font-family);
 }
 .close {
   position: absolute;
-  top: 14px;
-  right: 16px;
+  top: 13px;
+  right: 20px;
   z-index: 3;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--scrim-close);
+  border: none;
   pointer-events: auto;
 }

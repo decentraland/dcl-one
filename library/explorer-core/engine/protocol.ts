@@ -18,6 +18,7 @@ import type {
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
+  TextureOptimizationStatus,
   VoiceChatAction,
   VoiceChatState,
   WelcomeState,
@@ -69,7 +70,7 @@ export type RpcMethod =
   | 'logout'
   | 'guestLogin'
   | 'guestSign'
-  | 'guestDiscard'
+  | 'guestSession'
   | 'emailStart'
   | 'emailComplete'
 
@@ -110,9 +111,12 @@ export interface ChatBubbleTextRequest {
   message: string
 }
 
-/** Reload the current scene(s) — the `/reload` chat command (scene calls SystemApi.reload). */
+/** Reload a scene: the one under the player (the `/reload` chat command), or `scene`, a live scene's
+ *  hash such as a preview's scene id (the texture optimization toast's Reload). The scene runs the
+ *  engine's `reload <hash>`, which drops the live scene as a preview file save does. */
 export interface ReloadSceneRequest {
   kind: 'reloadScene'
+  scene?: string
 }
 
 /** Run an engine console command (chat `/commands` → `help`, or any passed-through `/command`);
@@ -328,6 +332,13 @@ export type SceneLoadingState = SceneLoadingUi
 export interface SceneLoadingMessage {
   kind: 'sceneLoading'
   state: SceneLoadingState
+}
+
+/** The preview server's background texture import status for a scene (preview mode only), as the
+ *  engine got it from the preview socket. `replay` marks the server's last status, replayed as the
+ *  socket (re)connected (library/ui/apps/hud/features/preview/textureOptimizationToast.ts). */
+export interface TextureOptimizationMessage extends TextureOptimizationStatus {
+  kind: 'textureOptimization'
 }
 
 /** Mirrors SystemApi ChatMessageDefinition (sender_address → sender). */
@@ -2047,6 +2058,8 @@ export interface PreviewEmoteRequest {
 export interface PreviewRotateRequest {
   kind: 'previewRotate'
   degrees: number
+  /** The stage whose avatar turns: the lobby's when named, else the preview's (the Backpack's, the Shop's). */
+  stage?: 'lobby'
 }
 
 /** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
@@ -2349,6 +2362,7 @@ export type SceneToPage =
   | AnalyticsEventMessage
   | LoginCodeMessage
   | SceneLoadingMessage
+  | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
   | ConsoleReplyMessage
