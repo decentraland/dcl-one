@@ -212,9 +212,14 @@ export function LobbyHome({
   const [share, setShare] = useState<{ event: EventData; x: number; y: number } | null>(null)
   const sharing = share != null
   useEffect(() => (sharing ? registerCancelLayer(() => setShare(null)) : undefined), [sharing])
-  const [avatarTip, setAvatarTip] = useState<{ x: number; y: number } | null>(null)
+  const [avatarTip, setAvatarTip] = useState(false)
   const [friendTip, setFriendTip] = useState<{ name: string; x: number; y: number } | null>(null)
-  const [rotating, setRotating] = useState<{ x: number; y: number } | null>(null)
+  const [rotating, setRotating] = useState(false)
+  // moved on the element itself: a pointer move must not render the whole lobby
+  const tipAt = useRef({ x: 0, y: 0 })
+  const tipRef = useRef<HTMLDivElement>(null)
+  const rotateAt = useRef({ x: 0, y: 0 })
+  const rotateRef = useRef<HTMLImageElement>(null)
 
   const { warm } = session.lobbyData
   const setStage = session.lobbyStage.set
@@ -244,8 +249,10 @@ export function LobbyHome({
   const onlineByAddress = useMemo(() => new Map(online.map((f) => [f.address.toLowerCase(), f])), [online])
 
   const busy = session.login.busy
-  // moves on with every pick and on unmount: a lookup answering later does not travel
+  // moves on with every pick, every modal opened over the lobby and on unmount: a lookup
+  // answering later neither travels nor reports a failure
   const travels = useRef(0)
+  const moveOn = (): void => void travels.current++
   useEffect(() => () => void travels.current++, [])
   /** False when the pick was refused (sign-in still finishing, or nowhere to go). */
   const pick = useCallback(
@@ -259,7 +266,13 @@ export function LobbyHome({
   )
   const afterLookup = <T,>(lookup: Promise<T>): Promise<T | typeof STALE> => {
     const seq = travels.current
-    return lookup.then((value) => (seq === travels.current ? value : STALE))
+    return lookup.then(
+      (value) => (seq === travels.current ? value : STALE),
+      (error: unknown) => {
+        if (seq !== travels.current) return STALE
+        throw error
+      }
+    )
   }
 
   const friendsAt = useCallback(
@@ -273,6 +286,7 @@ export function LobbyHome({
 
   const openSection = (section: ExploreSection): void => {
     if (section === 'places' || section === 'events') lobbyAnalytics.sectionOpened(section)
+    moveOn()
     openExploreSection(section)
   }
 
@@ -286,6 +300,7 @@ export function LobbyHome({
   }
   const openPlace = (p: LobbyPlace, origin: lobbyAnalytics.CardOrigin): void => {
     lobbyAnalytics.placeCardClicked(p, origin)
+    moveOn()
     openPlaceDetail({ place: p, onJumpIn: (place) => jumpPlace(place, origin) })
   }
 
@@ -335,6 +350,7 @@ export function LobbyHome({
     },
     openEvent: (e: EventData, origin) => {
       lobbyAnalytics.eventCardClicked(e, origin)
+      moveOn()
       openEventDetail(e.id, (event) => {
         const jump = jumpEvent(event, origin)
         if (jump == null) {
@@ -355,7 +371,10 @@ export function LobbyHome({
       const p = toCanvas(box.left + box.width / 2, box.top + box.height / 2)
       setShare({ event: e, x: p.x, y: p.y })
     },
-    openFriend: (f: Friend) => openPassport(f.address),
+    openFriend: (f: Friend) => {
+      moveOn()
+      openPassport(f.address)
+    },
     joinFriend: (f: Friend) => {
       afterLookup(refreshWhere(f.address))
         .then((where) => {
@@ -371,9 +390,13 @@ export function LobbyHome({
         .catch(() => showToast(FRIEND_UNKNOWN))
     },
     viewCommunity: (c: Community) => {
+      moveOn()
       openCommunityModal(c.id, () => undefined)
     },
-    openPhoto: (index) => setPhotoIndex(index),
+    openPhoto: (index) => {
+      moveOn()
+      setPhotoIndex(index)
+    },
     goTo: async (text) => {
       const target = parseGotoTarget(text)
       if (target.world != null) {
@@ -425,8 +448,23 @@ export function LobbyHome({
 
   // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar.
   const hole = session.backpack.open ? clipToModal(session.avatarPreviewRect) : null
-  const scale = rootRef.current != null ? rootRef.current.getBoundingClientRect().width / (rootRef.current.offsetWidth || 1) || 1 : 1
-  const backpackHole = hole == null ? undefined : holeClip({ x: hole.x / scale, y: hole.y / scale, width: hole.width / scale, height: hole.height / scale })
+  const canvasScale = (): number => {
+    const el = rootRef.current
+    return el != null ? el.getBoundingClientRect().width / (el.offsetWidth || 1) || 1 : 1
+  }
+  const holeScale = hole == null ? 1 : canvasScale()
+  const backpackHole = hole == null ? undefined : holeClip({ x: hole.x / holeScale, y: hole.y / holeScale, width: hole.width / holeScale, height: hole.height / holeScale })
+
+  const placeAt = (el: HTMLElement | null, at: { x: number; y: number }): void => {
+    if (el == null) return
+    el.style.left = `${at.x}px`
+    el.style.top = `${at.y}px`
+  }
+  const showAvatarTip = (at: { x: number; y: number }): void => {
+    tipAt.current = { x: at.x + AVATAR_TOOLTIP_OFFSET, y: at.y }
+    placeAt(tipRef.current, tipAt.current)
+    setAvatarTip(true)
+  }
 
   const press = useRef<{ id: number; x: number; lastX: number; dragging: boolean } | null>(null)
   // a press that turned the avatar ends in no click
@@ -441,14 +479,17 @@ export function LobbyHome({
     const p = press.current
     const at = toCanvas(e.clientX, e.clientY)
     if (p == null || p.id !== e.pointerId) {
-      setAvatarTip({ x: at.x + AVATAR_TOOLTIP_OFFSET, y: at.y })
+      showAvatarTip(at)
       return
     }
+    const scale = canvasScale()
     if (!p.dragging && Math.abs(e.clientX - p.x) / scale < DRAG_THRESHOLD) return
     p.dragging = true
     dragged.current = true
-    setAvatarTip(null)
-    setRotating(at)
+    setAvatarTip(false)
+    rotateAt.current = at
+    placeAt(rotateRef.current, at)
+    setRotating(true)
     session.backpack.rotate(((e.clientX - p.lastX) / scale) * DEGREES_PER_PX)
     p.lastX = e.clientX
   }
@@ -456,11 +497,8 @@ export function LobbyHome({
     const p = press.current
     if (p == null || p.id !== e.pointerId) return
     press.current = null
-    setRotating(null)
-    if (p.dragging) {
-      const at = toCanvas(e.clientX, e.clientY)
-      setAvatarTip({ x: at.x + AVATAR_TOOLTIP_OFFSET, y: at.y })
-    }
+    setRotating(false)
+    if (p.dragging) showAvatarTip(toCanvas(e.clientX, e.clientY))
   }
   const onAvatarClick = (): void => {
     if (dragged.current) {
@@ -468,7 +506,7 @@ export function LobbyHome({
       return
     }
     clickButton('CUSTOMIZE', 'LOBBY')
-    setAvatarTip(null)
+    setAvatarTip(false)
     session.backpack.toggle()
   }
 
@@ -496,9 +534,9 @@ export function LobbyHome({
           onPointerUp={onAvatarUp}
           onPointerCancel={() => {
             press.current = null
-            setRotating(null)
+            setRotating(false)
           }}
-          onPointerLeave={() => press.current == null && setAvatarTip(null)}
+          onPointerLeave={() => press.current == null && setAvatarTip(false)}
           onClick={onAvatarClick}
         />
       )}
@@ -593,7 +631,11 @@ export function LobbyHome({
           nameColor={nameColor}
           withClose={onClose != null}
           onClose={() => setMenuOpen(false)}
-          onProfile={() => profile && openPassport(profile.address)}
+          onProfile={() => {
+            if (profile == null) return
+            moveOn()
+            openPassport(profile.address)
+          }}
           onSettings={() => openSection('settings')}
           onReportBug={() => window.open(bugReportUrl(), '_blank', 'noopener')}
           onSignOut={session.logout}
@@ -653,7 +695,7 @@ export function LobbyHome({
       )}
 
       {avatarTip && !editing && (
-        <div className={styles.avatarTooltip} style={{ left: avatarTip.x, top: avatarTip.y }}>
+        <div ref={tipRef} className={styles.avatarTooltip} style={{ left: tipAt.current.x, top: tipAt.current.y }}>
           <img src={mouseLeft} alt="" width={22} height={22} />
           CUSTOMIZE
         </div>
@@ -663,7 +705,7 @@ export function LobbyHome({
           {friendTip.name}
         </div>
       )}
-      {rotating && <img className={styles.rotateCursor} src={cursorRotate} alt="" style={{ left: rotating.x, top: rotating.y }} />}
+      {rotating && <img ref={rotateRef} className={styles.rotateCursor} src={cursorRotate} alt="" style={{ left: rotateAt.current.x, top: rotateAt.current.y }} />}
     </div>
   )
 }

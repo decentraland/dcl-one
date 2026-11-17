@@ -2,6 +2,7 @@
 // through the session and the bridge messages it sends.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import type { EventData, GetEventsRequest } from '@explorer-core/engine/protocol'
@@ -31,15 +32,20 @@ interface Hud {
   open: () => void
 }
 
-function renderHud(): Hud {
+function renderHud(options: { compact?: { onTravel: () => void }; refused?: boolean } = {}): Hud {
   const driver = new FakeDriver()
   let current!: EngineSession
+  let showModal: () => void = () => undefined
   function Tree(): React.JSX.Element {
-    const session = useEngineSession(() => driver)
+    const engine = useEngineSession(() => driver)
+    // mounted after the session is up: the modal reads on mount
+    const [inModal, setInModal] = useState(false)
+    showModal = () => setInModal(true)
+    const session = options.refused ? { ...engine, map: { ...engine.map, changeRealm: () => false, teleportToPlace: () => false } } : engine
     current = session
     return (
       <SessionProvider value={session}>
-        <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={vi.fn()} />
+        {(options.compact == null || inModal) && <EventsPage events={session.events} profile={session.profile} friends={session.friends} compact={options.compact} onNavigate={vi.fn()} />}
         <PopupHost />
         <ToastHost />
       </SessionProvider>
@@ -57,12 +63,12 @@ function renderHud(): Hud {
       answered.add(request.request)
       driver.emit(events === 'failed' ? { kind: 'events', request: request.request, events: [], failed: true } : { kind: 'events', request: request.request, events })
     },
-    open: () => act(() => current.events.toggle('sidebar'))
+    open: () => act(() => (options.compact == null ? current.events.toggle('sidebar') : showModal()))
   }
 }
 
-function openWith(range: EventData[], extra: { live?: EventData[]; highlighted?: EventData[] } = {}): Hud {
-  const hud = renderHud()
+function openWith(range: EventData[], extra: { live?: EventData[]; highlighted?: EventData[] } = {}, options: Parameters<typeof renderHud>[0] = {}): Hud {
+  const hud = renderHud(options)
   hud.open()
   hud.answer('highlight', extra.highlighted ?? [])
   hud.answer('live', extra.live ?? [])
@@ -403,6 +409,26 @@ describe('events: the detail', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(hud.session().events.open).toBe(false)
     expect(sentEvents(['event_card_clicked', 'event_jumped_in'])).toEqual(['event_card_clicked', 'event_jumped_in'])
+  })
+
+  it('stays open in the lobby\'s modal, with the detail, when the startup lobby refuses the jump', async () => {
+    const onTravel = vi.fn()
+    const hud = openWith([{ ...weekly, world: true, server: 'casino.dcl.eth' }], {}, { compact: { onTravel }, refused: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Event: Weekly poker' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Jump in to/ }))
+    expect(screen.getByRole('dialog', { name: 'Weekly poker' })).toBeInTheDocument()
+    expect(onTravel).not.toHaveBeenCalled()
+    expect(hud.session().events.open).toBe(false)
+    expect(sentEvents(['event_jumped_in'])).toHaveLength(0)
+  })
+
+  it('leaves the full page open when the startup lobby refuses a card\'s jump', async () => {
+    const hud = openWith([], {}, { refused: true })
+    await userEvent.click(screen.getByRole('button', { name: 'Today' }))
+    hud.driver.emit({ kind: 'events', request: hud.driver.last('getEvents')!.request, events: [eventAt('live', at(0, 11), { name: 'Live set', live: true, x: 5, y: 7 })] })
+    await userEvent.click(within(card('Live set')).getByRole('button', { name: /jump in/i }))
+    expect(hud.session().events.open).toBe(true)
+    expect(sentEvents(['event_jumped_in'])).toHaveLength(0)
   })
 
   it('does not travel when the event\'s server is not a world name', async () => {

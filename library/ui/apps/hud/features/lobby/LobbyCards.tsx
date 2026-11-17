@@ -297,6 +297,7 @@ export function FriendCard({
   presence,
   location,
   joinable,
+  disabled = false,
   onOpen,
   onJoin
 }: {
@@ -308,6 +309,7 @@ export function FriendCard({
   presence: FriendPresence
   location: string
   joinable: boolean
+  disabled?: boolean
   onOpen: () => void
   onJoin: () => void
 }): React.JSX.Element {
@@ -327,7 +329,7 @@ export function FriendCard({
         <span className={styles.friendLocationText}>{location}</span>
       </span>
       {joinable && (
-        <button type="button" className={styles.join} aria-label={`Join ${name}`} onClick={onJoin}>
+        <button type="button" className={styles.join} aria-label={`Join ${name}`} disabled={disabled} onClick={onJoin}>
           <span className={styles.joinText}>JOIN</span>
           <MaskIcon src={jumpIn} size={16} />
         </button>

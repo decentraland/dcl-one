@@ -81,11 +81,11 @@ function serve(services: Services = {}): MapRequest[] {
   return seen
 }
 
-function renderMap(over: Partial<MapState> = {}, genesis = true): MapState {
+function renderMap(over: Partial<MapState> = {}, genesis = true, compact?: { onTravel: () => void }): MapState {
   const session = fakeSession()
   const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn(), setHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
-  render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+  render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} compact={compact} onNavigate={vi.fn()} />)
   return map
 }
 
@@ -565,6 +565,27 @@ describe('map navigation', () => {
     await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
     await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
     expect(navigation.getSnapshot()).toBeNull()
+  })
+
+  it("keeps the search and the route in the lobby's modal when the startup lobby refuses the jump", async () => {
+    serve({ search: [CLUB] })
+    const onTravel = vi.fn()
+    const teleportToPlace = vi.fn(() => false)
+    const map = renderMap({ teleportToPlace }, true, { onTravel })
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(teleportToPlace).toHaveBeenCalledWith(-20, 60)
+    expect(onTravel).not.toHaveBeenCalled()
+    expect(vi.mocked(map.toggle)).not.toHaveBeenCalled()
+    expect(navigation.getSnapshot()).not.toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('Sugar Club')
+    teleportToPlace.mockReturnValue(true)
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(onTravel).toHaveBeenCalledOnce()
+    expect(navigation.getSnapshot()).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('')
   })
 
   it('offers to start or exit the route by whether one leads to the place', async () => {

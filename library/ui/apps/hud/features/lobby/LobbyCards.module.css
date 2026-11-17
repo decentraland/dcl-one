@@ -698,6 +698,10 @@
 .join:active {
   background: var(--lobby-accent-pressed);
 }
+.join:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .joinText {
   font-size: var(--type-10);
   font-weight: var(--fw-semibold);

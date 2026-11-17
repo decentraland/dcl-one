@@ -8806,7 +8806,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventActions.ts",
-      "sha256": "b9956c6a35bf835cbf9578b5dd089160826eb0e560751ee7bc5c737a721fd875"
+      "sha256": "ec714155df4f42c4ce72d80cf04a8d32dcc575a5c3fe04a798e692cd5fe97217"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventsData.ts",
@@ -8946,11 +8946,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
-      "sha256": "2e220dbd38cc5dceb8f64ac0412606e0a6e5cb50915c4e7cb8fad63ccfed996a"
+      "sha256": "38fdb350f133a4d8d5a987c657839229e7877af98f9601bf8de406eb765b9bf1"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "sha256": "b2f09f466df3d60d0fed46338ae8c8b6a1b71dfc1c1a3d4fa04896dc9b431429"
+      "sha256": "db65c863aaabff93bb2181411721bde87511f5e6e5e800c0097a15461615cef6"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.module.css",
@@ -8966,7 +8966,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "f96a26902a55e3ee5c40fd61304b593f6cba4e01fa4e9435e0a93d2857e1b82e"
+      "sha256": "c9c64dd8b5efbe1e756410ae2d21629947b068f6645ab06c4b1b6e47a14eec76"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -8990,7 +8990,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "sha256": "659da02e2684e5fe9faa17d966647146139e6ed70d8341f5b9b84b7d28e229fa"
+      "sha256": "3fd3aeb314e9757743c0f3379ccb7e1c787a8dfff206f0d73e5ebbff97e5000c"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/grid.ts",
@@ -9006,7 +9006,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
-      "sha256": "a7c04ce2c953e303533e9a037bd97516b637060f2d6707c23db12465e73bdf30"
+      "sha256": "4ed10e7e144255e5ea94d236056cd9824c9773df690c8e67db1989cc354e2781"
     },
     {
       "path": "library/ui/apps/hud/features/login/useStoredProfile.ts",
@@ -9046,7 +9046,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "e3bfb7e9f5e5ce5d788a1bf17f54b9570704c1913a730a0415a504685e52133b"
+      "sha256": "38ddc31dc5128f2a5abdb3e73ad651c44fa930b72f7e48c7e5903257cd0f5760"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9790,7 +9790,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
-      "sha256": "598538712720ba52f120935ce27ecc7ff23b8c5f1b9480dced4d2a1e7316a05f"
+      "sha256": "fdd99796983c95136789cddd68d865ed423e7e1237cf6459e098b75dbf2508e3"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
@@ -9834,7 +9834,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "d7ba08f937f4d7bb9ddd7266d3247453d6a2aeaccc8dfcddcfc925f5d8c2eef7"
+      "sha256": "92feece6338f2ae7d81d3185aaeacf244b35dfc0d1c009e53149ae310036b481"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
@@ -9850,7 +9850,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "83857b82bcb0fc53c060021128a09f90cff30053a8883dcfaa933f487f0cee21"
+      "sha256": "798dc54109c4d4761918844d53255c434c98852aae72133a1436f83ce3d5df4a"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",

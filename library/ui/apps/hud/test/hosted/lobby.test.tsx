@@ -112,6 +112,20 @@ describe('lobby controls', () => {
     expect(session.pickDestination).toHaveBeenCalledWith(null)
   })
 
+  it("drops the old home's card when the home changes, even when the new one cannot be read", async () => {
+    const session = fakeSession()
+    session.homeScene = () => ({ realm: null, parcel: '1,1' })
+    const old: LobbyPlace = { id: 'old', title: 'Old Home', description: '', image: '', positions: ['1,1'], owner: '', world: false }
+    vi.mocked(fetchLandingPlace).mockResolvedValueOnce(old).mockRejectedValueOnce(new Error('down'))
+    const { rerender } = render(lobby(session))
+    expect(await screen.findByText('Old Home')).toBeInTheDocument()
+    session.homeScene = () => ({ realm: 'new-home.dcl.eth', parcel: '0,0' })
+    rerender(lobby(session))
+    expect(screen.queryByText('Old Home')).toBeNull()
+    expect(await screen.findByText('new-home.dcl.eth')).toBeInTheDocument()
+    expect(screen.queryByText('Old Home')).toBeNull()
+  })
+
   it("names a recent place's creator from the owner's profile when the place carries no name", async () => {
     resetProfileStore()
     const owner = '0xb8c4df381c6c305758f806c3aa71f37aabbcbd92'
@@ -227,6 +241,53 @@ describe('lobby widgets', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
     expect(await screen.findByText('Your friend’s location could not be found. Please try again.')).toBeInTheDocument()
     expect(session.pickDestination).not.toHaveBeenCalled()
+  })
+
+  it("shows a friend's location from a read slower than the 15 s re-check, and starts no second read", async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const session = fakeSession()
+      session.friends.loading = false
+      session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+      let answer: (found: Map<string, { kind: 'genesis'; parcel: { x: number; y: number } }>) => void = () => undefined
+      vi.mocked(fetchWhereabouts).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+      render(lobby(session))
+      expect(fetchWhereabouts).toHaveBeenCalledOnce()
+      act(() => vi.advanceTimersByTime(31_000))
+      expect(fetchWhereabouts).toHaveBeenCalledOnce()
+      await act(async () => answer(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]])))
+      expect(await screen.findByRole('button', { name: 'Join Mojito' })).toBeInTheDocument()
+      expect(screen.queryByText('Locating…')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("disables a friend's JOIN while sign-in finishes", async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    session.login = { ...session.login, busy: true }
+    vi.mocked(fetchWhereabouts).mockResolvedValue(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+    render(lobby(session))
+    expect(await screen.findByRole('button', { name: 'Join Mojito' })).toBeDisabled()
+  })
+
+  it("does not travel when a friend's location answers after a section opened over the lobby", async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    let answer: (found: Map<string, { kind: 'genesis'; parcel: { x: number; y: number } }>) => void = () => undefined
+    vi.mocked(fetchWhereabouts)
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    render(lobbyWithPopups(session))
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    await waitFor(() => expect(fetchWhereabouts).toHaveBeenCalledTimes(2))
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Lobby' })).getByRole('button', { name: 'Map' }))
+    await act(async () => answer(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]])))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Map' })).toBeInTheDocument()
   })
 
   it('lists live and upcoming events and marks one interested', async () => {
@@ -490,6 +551,24 @@ describe('lobby go to', () => {
     await waitFor(() => expect(session.pickDestination).toHaveBeenCalledOnce())
     expect(screen.getByRole('textbox', { name: 'Go to a coordinate or a World' })).toHaveValue('3,-5')
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('says nothing of a crowd lookup that fails after a section opened over the lobby', async () => {
+    const session = withGoTo()
+    let fail: (e: Error) => void = () => undefined
+    vi.mocked(fetchCrowd).mockReturnValueOnce(new Promise((_, reject) => (fail = reject)))
+    render(
+      <>
+        {lobbyWithPopups(session)}
+        <ToastHost />
+      </>
+    )
+    goTo('crowd')
+    await waitFor(() => expect(fetchCrowd).toHaveBeenCalledOnce())
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Lobby' })).getByRole('button', { name: 'Map' }))
+    await act(async () => fail(new Error('down')))
+    expect(screen.queryByText('The most crowded place could not be found. Please try again.')).toBeNull()
+    expect(session.pickDestination).not.toHaveBeenCalled()
   })
 
   it('does not travel when the crowd answers after another pick', async () => {

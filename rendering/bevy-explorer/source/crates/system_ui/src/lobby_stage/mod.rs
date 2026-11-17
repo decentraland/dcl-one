@@ -18,7 +18,7 @@ use bevy::{
     pbr::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::{
-        camera::Exposure,
+        camera::{CameraUpdateSystem, Exposure},
         view::{ColorGrading, NoFrustumCulling, RenderLayers},
     },
     scene::SceneInstanceReady,
@@ -97,7 +97,10 @@ impl Plugin for LobbyStagePlugin {
             )
             .add_systems(
                 PostUpdate,
-                fit_stage.after(TransformSystem::TransformPropagate),
+                // a resize resets the projection's aspect ratio until the camera update
+                fit_stage
+                    .after(TransformSystem::TransformPropagate)
+                    .after(CameraUpdateSystem),
             )
             .add_observer(moss_rocks)
             .add_observer(layer_scene);

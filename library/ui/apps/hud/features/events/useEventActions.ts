@@ -14,7 +14,7 @@ export interface EventActions {
   reminding: (event: EventData) => boolean
   addToCalendar: (event: EventData, start?: Date) => void
   /** Travel to the event and close the Events page. False when the event names no world to
-   *  travel to, and nothing happened. */
+   *  travel to or the startup lobby refused the pick, and nothing happened. */
   jumpIn: (event: EventData) => boolean
   shareOnX: (event: EventData) => void
   copyLink: (event: EventData) => void
@@ -47,8 +47,8 @@ export function useEventActions(): EventActions {
           showToast('This event’s world cannot be reached.', { tone: 'error' })
           return false
         }
-        if (dest.kind === 'world') changeRealm(dest.realm)
-        else teleportToPlace(dest.x, dest.y)
+        const travelling = dest.kind === 'world' ? changeRealm(dest.realm) : teleportToPlace(dest.x, dest.y)
+        if (!travelling) return false
         track('event_jumped_in', eventAnalytics(event))
         if (open) toggle()
         return true

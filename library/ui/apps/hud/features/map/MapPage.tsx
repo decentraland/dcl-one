@@ -104,12 +104,17 @@ export function MapPage({
   }, [destination, pose])
 
   // The full map closes before a jump starts: a jump from the startup lobby closes every page
-  // itself, and a toggle after it would reopen the map. The lobby's modal stays open on a refused pick.
-  const go = (travel: () => boolean): void => {
+  // itself, and a toggle after it would reopen the map. On a refused pick the lobby's modal and
+  // what `travelled` clears stay.
+  const go = (travel: () => boolean, travelled: () => void): void => {
     if (compact == null) {
+      travelled()
       map.toggle()
       travel()
-    } else if (travel()) compact.onTravel()
+    } else if (travel()) {
+      travelled()
+      compact.onTravel()
+    }
   }
 
   const onParcel = useCallback(
@@ -155,20 +160,23 @@ export function MapPage({
     if (isWorldPlace(place)) {
       if (place.world_name == null) return
       const realm = place.world_name
-      nav.clearInput()
-      go(() => map.changeRealm(realm))
+      go(() => map.changeRealm(realm), () => nav.clearInput())
     } else {
       if (target == null) return
-      if (destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y) navigation.stop()
-      nav.clearInput()
-      go(() => map.teleportToPlace(target.x, target.y))
+      const routeEnds = destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y
+      go(
+        () => map.teleportToPlace(target.x, target.y),
+        () => {
+          if (routeEnds) navigation.stop()
+          nav.clearInput()
+        }
+      )
     }
   }
   const jumpInEvent = (): void => {
     const view = snap.event
     if (view == null) return
-    nav.clearInput()
-    go(() => map.teleportToPlace(view.event.x, view.event.y))
+    go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
   // Home can be set, not cleared: the engine keeps one home, the default until one is set.
   const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
@@ -296,11 +304,15 @@ export function MapPage({
           onIndex={(index) => setPhoto({ photos: photo.photos, index })}
           onLoadMeta={gallery.loadPhoto}
           onClose={() => setPhoto(null)}
-          onTeleport={(x, y) => {
-            setPhoto(null)
-            nav.clearInput()
-            go(() => map.teleportToPlace(x, y))
-          }}
+          onTeleport={(x, y) =>
+            go(
+              () => map.teleportToPlace(x, y),
+              () => {
+                setPhoto(null)
+                nav.clearInput()
+              }
+            )
+          }
         />
       )}
     </>

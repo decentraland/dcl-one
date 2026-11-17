@@ -10,7 +10,8 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::structs::{
-    AppConfig, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics, TimeOfDay,
+    AppConfig, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics, StageLight,
+    TimeOfDay,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
@@ -380,7 +381,7 @@ fn sun_shadows(
     config: Res<AppConfig>,
     bias: Res<ShadowBiasOverride>,
     map: Res<DirectionalLightShadowMap>,
-    sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+    sun: Query<(&DirectionalLight, &CascadeShadowConfig), Without<StageLight>>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
         let preset = SUN_SHADOW_BIAS;

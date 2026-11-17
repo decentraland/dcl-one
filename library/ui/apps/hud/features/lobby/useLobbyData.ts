@@ -29,21 +29,22 @@ export function offlineTitle(dest: LandingDestination): string {
   return dest.parcel.x === 0 && dest.parcel.y === 0 ? 'Genesis Plaza' : `${dest.parcel.x},${dest.parcel.y}`
 }
 
-/** A read that keeps its last good value through failures; `loaded` once any read has finished. */
-function useKept<T>(load: (() => Promise<T>) | null, deps: unknown[]): { value: T | null; loaded: boolean } {
-  const [state, setState] = useState<{ value: T | null; loaded: boolean }>({ value: null, loaded: false })
+/** A read that keeps its last good value through failures; `loaded` once a read has finished.
+ *  Another key starts empty, so a value never shows under a key it was not read for. */
+function useKept<T>(load: (() => Promise<T>) | null, key: string | null): { value: T | null; loaded: boolean } {
+  const [state, setState] = useState<{ key: string | null; value: T | null; loaded: boolean }>({ key, value: null, loaded: false })
   useEffect(() => {
     if (load == null) return
     let live = true
     load()
-      .then((value) => live && setState({ value, loaded: true }))
-      .catch(() => live && setState((s) => ({ ...s, loaded: true })))
+      .then((value) => live && setState({ key, value, loaded: true }))
+      .catch(() => live && setState((s) => (s.key === key ? { ...s, loaded: true } : { key, value: null, loaded: true })))
     return () => {
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
-  return state
+  }, [key])
+  return state.key === key ? state : { value: null, loaded: false }
 }
 
 export interface LandingState {
@@ -59,9 +60,9 @@ export interface LandingState {
 export function useLanding(home: { realm: string | null; parcel: string } | null): LandingState {
   const dest = landingDestination(home)
   const key = dest == null ? null : `${dest.world ?? ''}|${dest.parcel.x},${dest.parcel.y}`
-  const place = useKept(() => (dest == null ? Promise.resolve(null) : fetchLandingPlace(dest)), [key])
+  const place = useKept(() => (dest == null ? Promise.resolve(null) : fetchLandingPlace(dest)), key)
   const placeId = place.value?.id ?? null
-  const live = useKept(placeId == null ? null : () => fetchConnected(placeId), [placeId])
+  const live = useKept(placeId == null ? null : () => fetchConnected(placeId), placeId)
   const connected = live.value?.connected_addresses ?? []
   return {
     dest,
@@ -74,8 +75,8 @@ export function useLanding(home: { realm: string | null; parcel: string } | null
 }
 
 export function usePlaces(): { recent: LobbyPlace[] | null; recommended: LobbyPlace[] | null } {
-  const recent = useKept(fetchRecents, [])
-  const recommended = useKept(fetchHighlighted, [])
+  const recent = useKept(fetchRecents, '')
+  const recommended = useKept(fetchHighlighted, '')
   return { recent: recent.value, recommended: recommended.value }
 }
 
@@ -99,25 +100,38 @@ export function useFriendLocations(online: Friend[]): Map<string, FriendLocation
   }, [])
   const known = useRef(locations)
   known.current = locations
-  // set when an answer is applied: a dropped answer marks nothing fresh
+  // set when an answer is applied: a failed read marks nothing fresh
   const readAt = useRef(new Map<string, number>())
+  // one read at a time, never dropped by a tick: a read slower than the tick still lands
+  const reading = useRef(false)
+  const mounted = useRef(true)
+  const currentKey = useRef(key)
+  currentKey.current = key
   useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (reading.current) return
     const now = Date.now()
     const missing = ids.filter((id) => !known.current.has(id) || now - (readAt.current.get(id) ?? 0) > LOCATION_TTL_MS)
     if (missing.length === 0) return
-    let live = true
+    reading.current = true
     fetchWhereabouts(missing)
       .then(async (found) => {
         const titled = await Promise.all([...found].map(async ([id, where]) => [id, { where, title: await whereTitle(where) }] as const))
-        if (!live) return
+        if (!mounted.current) return
         const at = Date.now()
         for (const [id] of titled) readAt.current.set(id, at)
         setLocations((prev) => new Map([...prev, ...titled]))
       })
       .catch(() => undefined)
-    return () => {
-      live = false
-    }
+      .finally(() => {
+        reading.current = false
+        if (mounted.current && currentKey.current !== key) setTick((t) => t + 1)
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, tick])
   return locations

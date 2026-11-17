@@ -189,6 +189,7 @@ function FriendsOnline({ ctx }: { ctx: LobbyWidgetContext }): React.JSX.Element 
                 presence={f.status === 'away' ? 'away' : f.status === 'online' ? 'online' : 'offline'}
                 location={location?.title ?? 'Locating…'}
                 joinable={joinable}
+                disabled={ctx.busy}
                 onOpen={() => ctx.openFriend(f)}
                 onJoin={() => ctx.joinFriend(f)}
               />
