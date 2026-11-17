@@ -1,8 +1,8 @@
 /* Top-right, clear of the minimap (top-left) and the centred status toasts (design/Toast). */
 .host {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: calc(16px * var(--ui-scale));
+  right: calc(16px * var(--ui-scale));
   z-index: var(--z-toast);
   transform: scale(var(--ui-scale, 1));
   transform-origin: top right;

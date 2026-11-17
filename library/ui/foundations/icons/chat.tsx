@@ -14,14 +14,14 @@ export const ChatEmojisOff = ({ size, ...props }: IconProps) => {
       {...props}
     >
       <g clipPath={`url(#${svgId}-a)`}>
-        <circle cx="12" cy="12" r="10.957" stroke="#fcfcfc" strokeWidth="2.087" />
-        <path stroke="#fcfcfc" strokeLinecap="round" strokeWidth="1.043" d="M7 14c.8 1.76 2.737 3 5 3s4.2-1.24 5-3" />
-        <circle cx="8.5" cy="9.848" r="1.5" fill="#fcfcfc" />
-        <circle cx="15.5" cy="9.848" r="1.5" fill="#fcfcfc" />
+        <circle cx="12" cy="12" r="10.957" stroke="currentColor" strokeWidth="2.087" />
+        <path stroke="currentColor" strokeLinecap="round" strokeWidth="1.043" d="M7 14c.8 1.76 2.737 3 5 3s4.2-1.24 5-3" />
+        <circle cx="8.5" cy="9.848" r="1.5" fill="currentColor" />
+        <circle cx="15.5" cy="9.848" r="1.5" fill="currentColor" />
       </g>
       <defs>
         <clipPath id={`${svgId}-a`}>
-          <path fill="#fff" d="M0 0h24v24H0z" />
+          <path fill="currentColor" d="M0 0h24v24H0z" />
         </clipPath>
       </defs>
     </svg>
@@ -40,11 +40,11 @@ export const ChatEmojisOn = ({ size, ...props }: IconProps) => {
       {...props}
     >
       <g clipPath={`url(#${svgId}-a)`}>
-        <path fill="#fcfcfc" d="M12 0c6.627 0 12 5.373 12 12s-5.373 12-12 12S0 18.627 0 12 5.373 0 12 0m0 2.087c-5.475 0-9.913 4.438-9.913 9.913S6.525 21.913 12 21.913s9.913-4.438 9.913-9.913S17.475 2.087 12 2.087m3.652 14.087a3.652 3.652 0 0 1-7.304 0v-1.566H6.26a.521.521 0 0 1 0-1.043h11.478a.522.522 0 0 1 0 1.043h-2.087zM8.501 8.348a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m6.999 0a1.5 1.5 0 1 1-.001 3 1.5 1.5 0 0 1 .001-3" />
+        <path fill="currentColor" d="M12 0c6.627 0 12 5.373 12 12s-5.373 12-12 12S0 18.627 0 12 5.373 0 12 0m0 2.087c-5.475 0-9.913 4.438-9.913 9.913S6.525 21.913 12 21.913s9.913-4.438 9.913-9.913S17.475 2.087 12 2.087m3.652 14.087a3.652 3.652 0 0 1-7.304 0v-1.566H6.26a.521.521 0 0 1 0-1.043h11.478a.522.522 0 0 1 0 1.043h-2.087zM8.501 8.348a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3m6.999 0a1.5 1.5 0 1 1-.001 3 1.5 1.5 0 0 1 .001-3" />
       </g>
       <defs>
         <clipPath id={`${svgId}-a`}>
-          <path fill="#fff" d="M0 0h24v24H0z" />
+          <path fill="currentColor" d="M0 0h24v24H0z" />
         </clipPath>
       </defs>
     </svg>

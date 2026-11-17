@@ -17,6 +17,7 @@ import { storedLoginType, type LoginType } from '@explorer-core/features/session
 import type { InteractableArea } from '../../lib/hudInset'
 import type { FatalError } from '@explorer-core/features/error/fatalError'
 import { createLoadingProgress } from '@explorer-core/features/session/loadingProgress'
+import { MOCK_HOLD_LOADING_PROGRESS, mockHold } from '@explorer-core/engine/mockBridge'
 import { useConnectivity } from './useConnectivity'
 import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
@@ -126,6 +127,10 @@ import type {
 type EngineFocusWindow = Window & { __engineTextFocus?: boolean }
 
 // Unity's wording (CommunityCardController *_ERROR_MESSAGE); the raw HTTP error only goes to the log.
+// The screen the mock holds (`?mock=1&mockhold=…`): a property of the entry link, read once as the
+// module loads, not on every render.
+const MOCK_HOLD = mockHold()
+
 const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   join: 'There was an error joining the community. Please try again.',
   requestToJoin: 'There was an error requesting to join community. Please try again.',
@@ -430,19 +435,25 @@ export interface CommunitiesState {
   likePost: (id: string, postId: string, like: boolean) => void
 }
 
+/** What a travel asked from a menu page came to. `sent`: an ordinary travel, and the page that asked
+ *  closes itself. `lobby`: the startup lobby's pick, which already closed every page. `refused`: the
+ *  lobby is not taking picks yet (sign-in still running); nothing happened, the page stays, and a
+ *  toast says why. */
+export type TravelOutcome = 'sent' | 'lobby' | 'refused'
+
 export interface MapState {
   /** Local player's current parcel. */
   x: number
   y: number
   open: boolean
   toggle: () => void
-  teleport: (x: number, y: number) => void
+  teleport: (x: number, y: number) => TravelOutcome
   /** Teleport to a Genesis City place: from outside Genesis the parcel carries the Genesis realm,
    *  so the engine changes realm first. In Genesis already it is a plain teleport — a realm-carrying
    *  teleport is a full realm reconnect, like changeRealm, even to the realm the player is in. */
-  teleportToPlace: (x: number, y: number) => void
+  teleportToPlace: (x: number, y: number) => TravelOutcome
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
-  changeRealm: (realm: string) => void
+  changeRealm: (realm: string) => TravelOutcome
   /** The home the engine holds: its realm (null for the default one) and parcel; null until it answers. */
   home: { realm: string | null; parcel: string } | null
   /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
@@ -477,6 +488,9 @@ export interface MinimapState {
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
+  /** The realm the player is in, as the place's link names it: a World's name, `DEFAULT_REALM` in Genesis City;
+   *  null in a preview or a local realm. Unlike `donatePlace`, a parcel with no scene has one. */
+  linkRealm: string | null
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
@@ -936,6 +950,10 @@ export interface LoginFlow {
   status: LoginStatus
   /** Root wallet address of the stored SSO identity (shown on the "welcome back" screen). */
   account: string | null
+  /** The kind of the sign-in that landed, for the player to end with Sign Out: null before one,
+   *  after a sign-out, for a sign-in the scene owns, and for one the boot made (?guest=1, an
+   *  unattended run), which a reload would only make again. */
+  signedInAs: LoginType | null
   busy: boolean
   error: string | null
   /** Engine has booted and can accept the login command. The engine-driven CTAs (Jump in / Explore)
@@ -953,6 +971,8 @@ export interface LoginFlow {
   startWithAccount: (method?: LoginMethod) => void
   /** Native fresh sign-in in flight (the browser is open): the methods screen waits with Cancel. */
   authPending: boolean
+  /** The mock holds the returning-account screen (`mockhold=returning`): no splash, no entering on its own. */
+  held?: boolean
   /** That sign-in's code, once the engine has it: the browser shows the same one, so the player can
    *  tell the request they approve there is this one. */
   authCode: string | null
@@ -1039,6 +1059,8 @@ export interface EngineSession {
   /** The engine has drawn the sign-in stage (a new account's avatar on the sign-in background), so the
    *  page's own background can fade out. */
   signinStageReady: boolean
+  /** Turn the lobby stage's avatar by `degrees` about its vertical axis (a drag over it). */
+  turnLobbyAvatar: (degrees: number) => void
   /** The lobby reopened in-world from the menu. */
   lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
@@ -1160,6 +1182,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // then (it loads alongside the status), null is a scene-owned login the page never ran.
   const pendingLoginType = useRef<LoginType | 'stored' | null>(null)
   const lastLoginType = useRef<LoginType | null>(null)
+  const [signedInAs, setSignedInAs] = useState<LoginType | null>(null)
   // the terms accepted on this install, as the welcome flow reported it (the engine knows otherwise)
   const termsOk = useRef(false)
   // The Google Ads conversion, once per page load (shell/googleTag.ts dedupes per tab session).
@@ -1537,6 +1560,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [sceneTitle, setSceneTitle] = useState('')
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  const [linkRealm, setLinkRealm] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
@@ -2385,7 +2409,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
           // An existing account has no terms step: it accepted them where it was made, so they are
           // answered for it here; only a new account is asked.
-          const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null || !msg.newProfile ? {} : null)
+          const chosen: { name?: string } | null =
+            MOCK_HOLD === 'welcome' ? null : (guestPick.current ?? (hudLoginPending.current != null || !msg.newProfile ? {} : null))
           guestPick.current = null
           if (chosen == null || (!msg.terms && !msg.newProfile)) setWelcomePending(false)
           // native, which launches itself, holds a link's world for the terms (src/lib.rs)
@@ -2442,6 +2467,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           {
+            const here = donatePlaceOf(msg)
+            setLinkRealm(here == null ? null : 'world' in here ? here.world : DEFAULT_REALM)
             // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
             // every parcel), so the host is asked once per scene; a parcel with no scene names none.
             const sceneKey = donateSceneKey(msg)
@@ -2917,6 +2944,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const deleteHistory = useCallback((address: string) => {
     const key = channelKey(address)
+    // Nearby is the HUD's own log: nothing is stored for it, so the clear is local
+    if (key === 'Nearby') {
+      setMessages([])
+      setNearbyUnread(0)
+      return
+    }
     driverRef.current?.send({ kind: 'dmDelete', address: key })
     setDmLines((prev) => ({ ...prev, [key]: [] }))
     // a read queued before the delete would answer with the old rows: this one answers after it
@@ -3348,6 +3381,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         if (type != null) {
           lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
+          if (boot.current.autoLogin == null) setSignedInAs(lastLoginType.current)
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
         welcomeLink.current = urlDestination.current
@@ -3736,6 +3770,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const rotatePreview = useCallback((degrees: number) => {
     driverRef.current?.send({ kind: 'previewRotate', degrees })
   }, [])
+  const turnLobbyAvatar = useCallback((degrees: number) => {
+    driverRef.current?.send({ kind: 'previewRotate', degrees, stage: 'lobby' })
+  }, [])
   const zoomPreview = useCallback((zoom: number, anchor: number) => {
     driverRef.current?.send({ kind: 'previewZoom', zoom, anchor })
   }, [])
@@ -4032,7 +4069,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
-    driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
+    driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
       setStored(null)
@@ -4041,6 +4078,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
     pendingLoginType.current = null
     lastLoginType.current = null
+    setSignedInAs(null)
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(false)
@@ -4186,6 +4224,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ran = true
         // signed out before the deferred run: the sign-in never runs
         if (signOuts.current !== signOut) return setBusy(false)
+        // a mock capture's hold: the sign-in stays ahead, its wait on screen
+        if (MOCK_HOLD === 'verifying') return
         if (driver.launch != null && !launchedRef.current) {
           const home = driver.homeScene?.()
           if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {
@@ -4345,10 +4385,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const autoEntered = useRef(false)
   useEffect(() => {
     if (status !== 'reuse-login-or-new' || submitted || !engineReady || autoEntered.current) return
+    if (MOCK_HOLD === 'returning') return
     if (accountChecking) return
     autoEntered.current = true
     enterStored()
   }, [status, submitted, engineReady, enterStored, accountChecking])
+
+  // Set once the web sign-in navigates away. The page comes back from the browser's back/forward
+  // cache as it was left (Back from the auth site), so showing it again clears the flag.
+  const leavingForAuth = useRef(false)
+  useEffect(() => {
+    const shown = (): void => {
+      leavingForAuth.current = false
+    }
+    window.addEventListener('pageshow', shown)
+    return () => window.removeEventListener('pageshow', shown)
+  }, [])
 
   // Fresh sign-in (or signing in with a different account). Web: bounce to the same-domain
   // auth site, which writes the identity back to this origin's localStorage and redirects
@@ -4359,11 +4411,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // approval means the engine is already logged in, so the destination pick has no deferred
   // login left to run.
   const startWithAccount = useCallback((method?: LoginMethod) => {
-    if (busy) return
+    if (busy || leavingForAuth.current) return
     clickButton('SIGN_IN', 'ACCOUNT_HOME')
     guestPick.current = null
     const driver = driverRef.current
     if (driver?.loginNew == null) {
+      // the navigation is under way: a second click or another choice must not start a second one
+      leavingForAuth.current = true
       screenViewed('AUTH_BROWSER_OPEN', { method: method ?? 'sso' })
       redirectToAuth(undefined, method)
       return
@@ -4482,7 +4536,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadingTracker = useRef(createLoadingProgress())
   if (!loaderActive) loadingTracker.current.reset()
   const loadingProgress = loaderActive
-    ? loadingTracker.current.next({ scene: sceneLoading, playerReady, revealing, travelling: travellingTo != null })
+    ? MOCK_HOLD === 'loading'
+      ? MOCK_HOLD_LOADING_PROGRESS
+      : loadingTracker.current.next({ scene: sceneLoading, playerReady, revealing, travelling: travellingTo != null })
     : 100
 
   const phase: SessionPhase = !submitted
@@ -4537,6 +4593,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if (fatalError.source === 'launch') restoreHudSignIn()
     settleHudLogin(new Error(fatalError.message))
   }, [fatalError, settleHudLogin, restoreHudSignIn])
+
+  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session: the
+  // start screen has none to lose.
+  const sessionLive = phase !== 'login'
+  useEffect(() => {
+    if (inShell) postToShell({ type: 'bevy-shell:session', live: sessionLive })
+  }, [sessionLive])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).
@@ -4795,10 +4858,32 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
-  const mapSlice = useMemo(
-    () => ({ x: mapParcel.x, y: mapParcel.y, open: mapOpen, toggle: toggleMap, teleport, changeRealm, teleportToPlace, home, setHome: setHomeScene }),
-    [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, home, setHomeScene]
-  )
+  // Travel asked from a menu page over the startup lobby is the lobby's pick: it releases the held
+  // world and leaves the lobby, and closes the page here, once, so it is not there on arrival (the
+  // page must not toggle itself after: that would open it again). A pick the lobby refuses leaves
+  // the page as it is and says why.
+  const mapSlice = useMemo(() => {
+    const pick = (dest: Destination): TravelOutcome | null => {
+      if (!lobbyRef.current) return null
+      if (!pickDestination(dest)) {
+        showToast('Still signing in. Try again in a moment.')
+        return 'refused'
+      }
+      closeAllPanels()
+      return 'lobby'
+    }
+    return {
+      x: mapParcel.x,
+      y: mapParcel.y,
+      open: mapOpen,
+      toggle: toggleMap,
+      teleport: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleport(x, y), 'sent'),
+      changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
+      teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
+      home,
+      setHome: setHomeScene
+    }
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, home, setHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,
@@ -4806,9 +4891,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       sceneTitle,
       restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
+      linkRealm,
       setConfig: setMinimapConfig
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, setMinimapConfig]
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig]
   )
 
   return {
@@ -4816,6 +4902,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     playerReady,
     lobbyStageReady,
     signinStageReady,
+    turnLobbyAvatar,
     lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
     homeScene,
     avatarPreviewRect,
@@ -4983,6 +5070,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     login: {
       status,
       account,
+      signedInAs,
       busy,
       error,
       engineReady,
@@ -4991,6 +5079,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       loadStep,
       startWithAccount,
       authPending: auth != null,
+      held: MOCK_HOLD === 'returning',
       authCode: auth?.code ?? null,
       cancelLogin,
       cancelSignIn: () => cancelSignIn(),

@@ -2,7 +2,7 @@ import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
 import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType } from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
-import { isPlainLinkClick } from '../../link.helpers'
+import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
 
 type PanelTabsBarProps = {
   label: string
@@ -122,19 +122,10 @@ function NavigationTabsBar({
   actions
 }: TabsBarNavigationProps) {
   if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
-  const ids = new Set<string>()
-  for (const item of items) {
-    if (typeof item.id !== 'string' || !item.id.trim() || ids.has(item.id))
-      throw new Error('TabsBar item IDs must be unique non-empty strings')
-    if (
-      typeof item.label !== 'string' ||
-      !item.label.trim() ||
-      typeof item.href !== 'string' ||
-      !item.href.trim()
-    )
-      throw new Error('TabsBar routes require a non-empty label and href')
-    ids.add(item.id)
-  }
+  assertNavigationEntries(items, (href) => typeof href === 'string' && !!href.trim(), {
+    id: 'TabsBar item IDs must be unique non-empty strings',
+    entry: 'TabsBar routes require a non-empty label and href'
+  })
   const listRef = useRef<HTMLUListElement>(null)
   const routeLayout = JSON.stringify(
     items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile])

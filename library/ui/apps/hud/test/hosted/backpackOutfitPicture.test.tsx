@@ -15,7 +15,7 @@ describe('saved outfit pictures', () => {
     const outfits = [{ slot: 0, outfit, thumbnail: PICTURE }, { slot: 1, outfit }]
     render(<BackpackPage backpack={{ ...s.backpack, open: true, outfits }} emotes={s.emotes} profile={fakeProfileState()} onNavigate={vi.fn()} setEngineViewport={vi.fn()} />)
     await userEvent.click(screen.getByRole('tab', { name: /saved outfits/i }))
-    expect(screen.getByRole('button', { name: 'Outfit 1' }).querySelector('img')).toHaveAttribute('src', PICTURE)
-    expect(screen.getByRole('button', { name: 'Outfit 2' }).querySelector('img')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Outfit 1' }).parentElement!.querySelector('img')).toHaveAttribute('src', PICTURE)
+    expect(screen.getByRole('button', { name: 'Outfit 2' }).parentElement!.querySelector('img')).toBeNull()
   })
 })
