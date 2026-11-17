@@ -76,7 +76,7 @@ Status values:
 | RPC relay upstreams `rpc` (`RPC_UPSTREAM_{MAINNET,ETHEREUM,SEPOLIA,POLYGON,MATIC,AMOY}`); the OpenSea resolver's RPC legs reuse them. Status: mirror | `src/ops/rpc/routes.rs`, `explore/src/opensea.rs` | `@decentraland/apis` | No target yet |
 | Shop checkout RPC `rpc` (`/polygon`, `/mainnet`, `/amoy`, `/sepolia`). `DEFAULT_RPC`, overridden by `window.__SHOP_CHAIN__.rpc` or `VITE_SHOP_RPC_*`; no deployment sets either. The market reader uses `rpc/amoy` only on Amoy. Status: production (browser) | `apps/ui3/src/shop/checkout/chain/config.ts`, `chain/rpc.ts`, `checkout/lib/authorizations.ts`; `apps/ui3/src/shop/market/lib/rpc.ts` | `@decentraland/web-applications` | Reads go through the node's relay (`${catalystBase()}/rpc/<network>`, as `apps/ui3/src/shop/land/evm.ts` already does), served by `services/catalyst/src/ops/rpc/` |
 | Feature flags `feature-flags` (`/dapps.json`, Referer `FEATURE_FLAGS_ORIGIN`). Sites: `FEATURE_FLAGS_URL`, default `https://feature-flags.decentraland.org`. Shop browser fallback: `FLAGS_SERVICE`. Catalyst: `FF_URL`, `SHOP_FEATURE_FLAGS_URL` (mirror). Status: production | `apps/sites/src/data/lib/feature-flags.server.ts`, `auth/sign-in-flags.server.ts`; `library/shop/discovery/lib/rolloutFlags.ts`; `services/catalyst/social/src/communities/features.rs`, `shop/src/market/features.rs` | `@decentraland/web-applications`, `@decentraland/apis` | Sites and Shop read the node's `GET /feature-flags/<app>.json` (`services/catalyst/explore/src/api/feature_flags.rs`), which mirrors the document and applies local overrides |
-| Explorer download counts `cdn-data` (`/public/current/explorer-alpha-downloads.json`). Hardcoded `COUNTS_URL`. Falls back to "+400K". Status: production | `apps/sites/src/data/lib/catalyst/landings/download-counts.server.ts` | `@decentraland/web-applications` | No target yet |
+| Explorer download counts (the `explorer-alpha-downloads.json` shape). Read only when the deployment sets `DOWNLOAD_COUNTS_URL`; a 2 s deadline, then the last total; with no total the home page shows "+400K". Status: production | `apps/sites/src/data/lib/download/counts.server.ts` | `@decentraland/web-applications` | No target yet |
 | Editor-scene realm `peer` (`/content`, `/lambdas`, `/bff`). The static realm JSON advertises them as `publicUrl`. Status: production (`/editor-scene/about`) | `apps/ui3/src/editor/editor-scene-realm.json`, `apps/sites/src/routes/routes/editor-scene.EditorScene.about.ts` | `@decentraland/web-applications` | No target yet. The node serves `/content` and `/lambdas` itself |
 | Places `places` (`/api/places`, `/api/worlds`). `PLACES_UPSTREAM_URL`, `WORLDS_UPSTREAM_URL`. Status: mirror | `services/catalyst/explore/src/places/mirror.rs` | `@decentraland/apis` | No target yet |
 | Events `events` (`/api/events`, `/api/events/{id}`). `EVENTS_UPSTREAM_URL`. Status: mirror | `explore/src/events/mirror.rs` | `@decentraland/apis` | `EVENTS_MIRROR_ADOPT` adopts the mirrored rows as local once the old service stops ([explore API parity ADR](adr/2026-11-05-explore-api-parity-contract.md)) |
@@ -170,11 +170,12 @@ the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
 time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
 the other shards check that the tests are present. A run that sets neither
-variable runs them. When the dependency cache is restored from its exact key,
-the jobs compile through a compiler cache (`sccache` on the GitHub cache) that
-holds what that entry does not: the results of the workspace crates and of the
-separate `rusty_enet` workspace. Without that hit, without the tool, or when its
-server does not start, they compile as before. A PR that changes a build or dev-stack input gets a
+variable runs them. When the dependency cache restores anything, from its exact
+key or a partial match, the jobs compile through a compiler cache (`sccache` on
+the GitHub cache) that holds what that entry does not: the results of the
+workspace crates, of dependencies the entry lacks and of the separate
+`rusty_enet` workspace. Without a restore, without the tool, or when its server
+does not start, they compile as before. A PR that changes a build or dev-stack input gets a
 notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and

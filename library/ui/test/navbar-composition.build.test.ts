@@ -838,15 +838,19 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
             ).toEqual({ count: 2, lower: true })
           }
           const measure = await evaluate(
-            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
+            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,filter:getComputedStyle(d).backdropFilter,shadow:getComputedStyle(d).boxShadow,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
           expect(measure).toMatchObject({
             dialog: { x: 0, y: 64, width, height: 780 },
             layer: { x: 0, y: 64, width, height: 780 },
+            background: await resolveWash('--dcl-bg-surface-overlay'),
+            filter: 'blur(12.5px)',
             bottomInside: true,
             bottomBackdrop: false
           })
-          expect((measure as { background: string }).background).toMatch(/^rgb\(/)
+          expect((measure as { shadow: string }).shadow).toMatch(
+            /^(rgba\(0, 0, 0, 0\.5\)|color\(srgb 0 0 0 \/ 0\.5\)) 0px 4px 16px 0px$/
+          )
           await evaluate(`document.querySelector('a[aria-label="Decentraland home"]').focus()`)
           await key('Tab', true)
           expect(await evaluate('document.activeElement.id')).toBe('account-control')

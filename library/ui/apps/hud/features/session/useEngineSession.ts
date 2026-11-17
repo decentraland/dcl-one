@@ -31,6 +31,7 @@ import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { portableKey, toastPortableChanges } from '../portables/portableToasts'
+import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -1737,6 +1738,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'sceneLoading':
           setSceneLoading(msg.state)
+          break
+        case 'textureOptimization':
+          // a scene preview's texture import; Reload drops the scene as a preview file save does
+          showTextureOptimization(msg, (scene) => driver.send({ kind: 'reloadScene', scene }))
           break
         case 'hover': {
           const next = msg.actions

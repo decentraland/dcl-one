@@ -28,6 +28,10 @@
 .error {
   border: 1px solid var(--brand);
 }
+/* a toast with an action or a Dismiss button takes the pointer; the host never does */
+.interactive {
+  pointer-events: auto;
+}
 .text b {
   font-weight: var(--fw-semibold);
 }

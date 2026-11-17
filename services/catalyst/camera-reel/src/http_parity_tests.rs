@@ -22,6 +22,7 @@ async fn app_with_token(token: Option<&str>) -> (Router, std::path::PathBuf) {
 async fn app_at_mount(token: Option<&str>, prefix: &str) -> (Router, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("camera-http-{}", uuid::Uuid::new_v4()));
     let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
         .connect_lazy("postgres://localhost/camera_http_unused")
         .unwrap();
     let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());

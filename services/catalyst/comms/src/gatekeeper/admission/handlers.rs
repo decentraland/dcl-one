@@ -206,6 +206,14 @@ pub async fn get_scene_adapter(
     let token = token
         .to_jwt()
         .map_err(|e| ApiError::internal(format!("livekit token: {e}")))?;
+    // A scene admin joining a room that is casting becomes a presenter; off
+    // the response, bounded, and never a reason to refuse the join (upstream
+    // logs it).
+    crate::gatekeeper::streaming::cast::spawn_admin_presenter_on_join(
+        state.clone(),
+        resolved.room.clone(),
+        identity.clone(),
+    );
     Ok(Json(SceneAdapterResponse {
         adapter: build_adapter_url(&state.livekit.client_url, &token),
     }))
