@@ -28,6 +28,25 @@ struct Snapshot {
 
 static SNAPSHOT: Mutex<Option<Snapshot>> = Mutex::new(None);
 
+/// The page's `Feature Flags Resolved` event: the session's rollout flags, which a crash report
+/// carries so the session can be run again with them.
+pub const FEATURE_FLAGS_EVENT: &str = "Feature Flags Resolved";
+const FEATURE_FLAGS_FIELDS: [&str; 2] = ["feature_flags", "feature_flags_override"];
+
+/// The session's flags as the page last reported them, `(field, value)`.
+static FEATURE_FLAGS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
+
+/// Keep the flags of a `Feature Flags Resolved` event for the crash report.
+pub fn note_feature_flags(properties: &serde_json::Map<String, serde_json::Value>) {
+    let flags = FEATURE_FLAGS_FIELDS
+        .into_iter()
+        .filter_map(|field| Some((field, properties.get(field)?.as_str()?.to_owned())))
+        .collect();
+    if let Ok(mut kept) = FEATURE_FLAGS.lock() {
+        *kept = flags;
+    }
+}
+
 pub fn refresh_crash_snapshot(config: Res<SegmentConfig>, app_config: Res<AppConfig>) {
     if !config.is_changed() && !app_config.is_changed() {
         return;
@@ -58,7 +77,14 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
         Utc::now(),
         uuid::Uuid::new_v4().to_string(),
     );
-    let item = serde_json::to_string(&item).ok()?;
+    let mut item = serde_json::to_value(&item).ok()?;
+    // Left out rather than waited for: the trapped engine may hold this lock too.
+    if let Ok(flags) = FEATURE_FLAGS.try_lock() {
+        for (field, value) in flags.iter() {
+            item["properties"][*field] = value.clone().into();
+        }
+    }
+    let item = item.to_string();
     Some((
         SEGMENT_BATCH_URL.to_owned(),
         batch_body(&snapshot.write_key, &[item]),
@@ -96,5 +122,20 @@ mod tests {
         assert_eq!(item["properties"]["error_type"], "Crash");
         assert_eq!(item["properties"]["error_message"], "[panic] panicked at x");
         assert!(item["timestamp"].is_string());
+        assert!(item["properties"].get("feature_flags").is_none());
+
+        let flags = serde_json::json!({
+            "feature_flags": "-*,test",
+            "feature_flags_override": "",
+            "feature_flags_source": "service",
+        });
+        note_feature_flags(flags.as_object().unwrap());
+        let (_, body) = crash_batch("panicked at x", "panic").unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let properties = &body["batch"][0]["properties"];
+        assert_eq!(properties["feature_flags"], "-*,test");
+        assert_eq!(properties["feature_flags_override"], "");
+        assert!(properties.get("feature_flags_source").is_none());
+        assert_eq!(properties["session_id"], "s");
     }
 }

@@ -59,6 +59,12 @@ and boot.js's crash watchdog calls `engine_crash_event` on the page thread, whic
 wasm memory, to build the request and post it with `keepalive`. Nothing before the terms are
 accepted. Natively the next run reports the previous one's log (`crash_report.rs`).
 
+The web crash report carries the session's rollout flags: the page reports them as `Feature Flags
+Resolved` (`feature_flags`, the flags that are on as a `?ff=` value; `feature_flags_override`, the
+entry url's own), and `/track` keeps that event's two fields for `crash_batch` as well as queueing
+it. Opening the page with `?ff=<feature_flags>` runs a session with the same flags
+(`library/explorer-core/lib/featureFlags.ts`). Other events join to the flags on `session_id`.
+
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it
 shows, LOADING_END {position, status} when it hides (Failed, with `error`, when the player was let

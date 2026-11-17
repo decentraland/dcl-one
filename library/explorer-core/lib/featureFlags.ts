@@ -3,53 +3,87 @@
 // the same file; the service has no application of this client's own, so its flags are told apart
 // by name.
 //
-// - This client's flags are named `explorer-bevy-<flag>` in Unleash. Only those are kept, the prefix
-//   dropped, so code names a flag as `<flag>`; every other key in the file is the Unity Explorer's
-//   and is ignored.
+// - This client's flags are named `explorer-bevy-<flag>` in Unleash and read as `<flag>`. A flag
+//   both clients share keeps the Unity Explorer's name, `explorer-<flag>`, and is read only when
+//   FLAG lists it with `shared()`. Every other key in the file is ignored.
 // - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: the
 //   landing page's campaign id when the entry url has one, else one minted here and kept in prefs.
 //   The sign-in address is never sent.
 // - Read once per session, after the prefs load (lib/prefs) and without holding up the HUD. A flag
 //   is off until the answer says `true`, and stays off if the file can't be read.
-// - The entry url's `?ff=` overrides the answer, for testing: a comma list of flag names, each
-//   `name` (forced on) or `-name` (forced off); `-*` ignores the service entirely (nothing is
-//   fetched, every flag not forced on is off). `?ff=-*,photo-mode` runs with only that flag on.
-//   A link can set it: a flag hides or shows a feature, it is never a permission.
+// - The entry url's `?ff=` overrides the answer, for testing and for running a reported session
+//   again: a comma list of `name` (forced on), `name:variant` (forced on with that variant) or
+//   `-name` (forced off); `-*` ignores the service entirely (nothing is fetched, every flag not
+//   forced on is off). `?ff=-*,photo-mode` runs with only that flag on. A link can set it: a flag
+//   hides or shows a feature, it is never a permission.
+// - Once the read settles the session's flags go to analytics as `Feature Flags Resolved`
+//   (`feature_flags`: the flags that are on, as a `?ff=` value that reproduces them;
+//   `feature_flags_override`: the entry url's own overrides). The engine keeps the pair for its
+//   crash report (crates/analytics/src/crash.rs).
 //
 // Name a flag in FLAG before reading it, so its uses can be found from one place. React reads them
 // through the HUD's useFeatureFlag (library/ui/apps/hud/lib/useFeatureFlag.ts).
 
 import { BASE_DOMAIN } from '@hud-host'
-import { launchAnalytics } from './analytics'
+import { launchAnalytics, track } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
+const APP_PREFIX = 'explorer-'
 const FLAG_PREFIX = 'explorer-bevy-'
+
+/** The Unity Explorer's flags this client reads too, by their name without `explorer-`. */
+const SHARED = new Set<string>()
+
+/** Marks a FLAG entry as a flag shared with the Unity Explorer: `shared('x')` reads `explorer-x`. */
+export function shared<const T extends string>(name: T): T {
+  SHARED.add(name)
+  return name
+}
+
+/** Every flag the HUD reads: a plain name is this client's own (`explorer-bevy-<name>`), a
+ *  `shared()` one is the Unity Explorer's (`explorer-<name>`). */
+export const FLAG = {
+  /** A flag with no feature behind it, for checking the read end to end. */
+  test: 'test'
+} as const satisfies Record<string, string>
+
+export type Flag = (typeof FLAG)[keyof typeof FLAG]
 
 /** The entry url param that overrides the service's answer. */
 export const FLAG_OVERRIDE_PARAM = 'ff'
 
+/** The analytics event carrying the session's flags; the engine reads it too (page_events.rs). */
+export const FLAGS_RESOLVED_EVENT = 'Feature Flags Resolved'
+
 export interface FlagOverrides {
-  on: ReadonlySet<string>
+  /** Flags forced on, each with the variant it is forced to or null. */
+  on: ReadonlyMap<string, string | null>
   off: ReadonlySet<string>
   /** `-*`: the service is not asked, and every flag not forced on is off. */
   ignoreAll: boolean
 }
 
-/** The `?ff=` overrides in a query string; repeated params add up. */
+/** The `?ff=` overrides in a query string; repeated params add up, a name's last mention wins. */
 export function parseFlagOverrides(search: string): FlagOverrides {
-  const on = new Set<string>()
+  const on = new Map<string, string | null>()
   const off = new Set<string>()
   let ignoreAll = false
   for (const value of new URLSearchParams(search).getAll(FLAG_OVERRIDE_PARAM)) {
     for (const raw of value.split(',')) {
-      const item = raw.trim().toLowerCase()
+      const item = raw.trim()
       if (item === '-*') ignoreAll = true
-      else if (item.startsWith('-') && item.length > 1) {
-        off.add(item.slice(1))
-        on.delete(item.slice(1))
-      } else if (item !== '' && item !== '-') {
-        on.add(item)
-        off.delete(item)
+      else if (item.startsWith('-')) {
+        const name = item.slice(1).toLowerCase()
+        if (name === '') continue
+        off.add(name)
+        on.delete(name)
+      } else {
+        const colon = item.indexOf(':')
+        const name = (colon < 0 ? item : item.slice(0, colon)).toLowerCase()
+        if (name === '') continue
+        const variant = colon < 0 ? '' : item.slice(colon + 1)
+        on.set(name, variant === '' ? null : variant)
+        off.delete(name)
       }
     }
   }
@@ -71,11 +105,6 @@ export function featureFlagOverride(flag: Flag): boolean | undefined {
   if (overrides.off.has(flag) || overrides.ignoreAll) return false
   return undefined
 }
-
-/** Every flag the HUD reads, by its name without the `explorer-bevy-` prefix. */
-export const FLAG = {} as const satisfies Record<string, string>
-
-export type Flag = (typeof FLAG)[keyof typeof FLAG]
 
 export interface FlagPayload {
   /** Unleash's payload type: `string`, `json`, `csv` or `number`. */
@@ -120,11 +149,14 @@ export function featureFlagsUserId(): string {
   return minted
 }
 
-/** A key's flag name without the prefix, or null for a key that is not this client's. */
+/** A key's flag name: this client's own without its prefix, a shared one without the application's,
+ *  or null for a key this client does not read. */
 function ownFlag(key: string): string | null {
-  if (!key.toLowerCase().startsWith(FLAG_PREFIX)) return null
-  const name = key.slice(FLAG_PREFIX.length)
-  return name === '' ? null : name
+  const lower = key.toLowerCase()
+  if (lower.startsWith(FLAG_PREFIX)) return lower.slice(FLAG_PREFIX.length) || null
+  if (!lower.startsWith(APP_PREFIX)) return null
+  const name = lower.slice(APP_PREFIX.length)
+  return SHARED.has(name) ? name : null
 }
 
 /** This client's part of the service's file: each flag on only where it says `true`, each variant by its name. */
@@ -167,23 +199,58 @@ export async function fetchFeatureFlags(signal?: AbortSignal, url: string = feat
   return parseFeatureFlags(await res.json())
 }
 
+/** The flags that are on, as a `?ff=` value that reproduces them whatever the service answers
+ *  later: `-*`, then each flag on, with its variant when one is enabled. */
+export function featureFlagsString(): string {
+  const on = new Map<string, string | null>()
+  if (!overrides.ignoreAll) {
+    for (const [name, enabled] of Object.entries(answer?.flags ?? {})) {
+      if (!enabled || overrides.off.has(name)) continue
+      const variant = answer?.variants[name]
+      on.set(name, variant?.enabled === true ? variant.name : null)
+    }
+  }
+  for (const [name, variant] of overrides.on) on.set(name, variant ?? on.get(name) ?? null)
+  return ['-*', ...[...on].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(flagItem)].join(',')
+}
+
+/** The entry url's overrides as a `?ff=` value, empty without any. */
+export function featureFlagOverridesString(): string {
+  return [...(overrides.ignoreAll ? ['-*'] : []), ...[...overrides.on].map(flagItem), ...[...overrides.off].map((name) => `-${name}`)].join(',')
+}
+
+// A variant whose name would not survive the list's own separators is left out.
+function flagItem([name, variant]: [string, string | null]): string {
+  return variant == null || /[,:\s]/.test(variant) ? name : `${name}:${variant}`
+}
+
+/** Where the session's flags came from. */
+type FlagsSource = 'service' | 'unavailable' | 'ignored'
+
+function settle(source: FlagsSource): void {
+  settled = true
+  notify()
+  track(FLAGS_RESOLVED_EVENT, {
+    feature_flags: featureFlagsString(),
+    feature_flags_override: featureFlagOverridesString(),
+    feature_flags_source: source
+  })
+}
+
 /** Starts the session's one read (after loadPrefs); later calls share it. Never rejects. */
 export function loadFeatureFlags(): Promise<void> {
   if (overrides.ignoreAll && reading == null) {
-    settled = true
-    notify()
+    settle('ignored')
     reading = Promise.resolve()
   }
   reading ??= fetchFeatureFlags(AbortSignal.timeout(READ_TIMEOUT_MS)).then(
     (flags) => {
       answer = flags
-      settled = true
-      notify()
+      settle('service')
     },
     (e: unknown) => {
       console.warn('[featureFlags] read failed; every flag is off this session', e)
-      settled = true
-      notify()
+      settle('unavailable')
     }
   )
   return reading
@@ -212,10 +279,15 @@ export function featureFlag(flag: Flag): boolean {
   return featureFlagOverride(flag) ?? answer?.flags[flag] === true
 }
 
-/** A flag's variant as answered, or null without one or when `?ff=` forces the flag off. Unleash
- *  names a disabled variant `disabled`. */
+/** A flag's variant: the one `?ff=name:variant` forces, else as answered; null without one or
+ *  when `?ff=` forces the flag off. A forced variant has the answer's payload only when the answer
+ *  is that same variant. Unleash names a disabled variant `disabled`. */
 export function featureFlagVariant(flag: Flag): FlagVariant | null {
-  return featureFlagOverride(flag) === false ? null : (answer?.variants[flag] ?? null)
+  if (featureFlagOverride(flag) === false) return null
+  const answered = answer?.variants[flag] ?? null
+  const forced = overrides.on.get(flag)
+  if (forced == null) return answered
+  return { name: forced, enabled: true, payload: answered?.name === forced ? answered.payload : null }
 }
 
 /** A variant's payload, only when the variant is the named one and enabled. */

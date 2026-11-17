@@ -325,6 +325,13 @@ back as `analyticsSession`). Expectations:
   load that created it: the queue outlives a load that bounces before the engine is up, and the
   engine keeps the page's value over its own, and drops an event held over 36 h by its own time
   (`crates/analytics/README.md`).
+- **Rollout flags** (`loadFeatureFlags`, `main.tsx`): `Feature Flags Resolved` once the session's
+  read of the feature-flags service settles (`library/explorer-core/lib/featureFlags.ts`):
+  `feature_flags`, the flags that are on with their variants, as a `?ff=` value that runs a session
+  with exactly those; `feature_flags_override`, the entry url's own `?ff=` (empty without one);
+  `feature_flags_source`, `service`, `unavailable` (the read failed) or `ignored` (`?ff=-*`). Other
+  events join to it on `session_id`; the engine's crash report carries the first two itself
+  (`crates/analytics/README.md`).
 - **Sign-in link** (`authLoginUrl`): the entry's `utm_*` params ride along, so the auth site's
   own Segment calls carry the campaign and tie it to the address it signs in. Once read, the
   shell and the app take the attribution params (`utm_*`, `gad_*`, ad click ids such as `gclid`,
@@ -370,7 +377,7 @@ back as `analyticsSession`). Expectations:
 - Tests: `library/explorer-core/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
   `library/explorer-core/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
   `library/ui/apps/hud/test/hosted/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
-  id at launch), `entryParams.test.ts` (campaign params).
+  id at launch), `entryParams.test.ts` (campaign params), `library/explorer-core/lib/featureFlags.test.ts` (`Feature Flags Resolved`).
 
 ## Photo mode
 
