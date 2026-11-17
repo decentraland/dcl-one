@@ -1474,8 +1474,14 @@ Invariants: once a checkout is frozen, no line of it gains a recorded buy. The
 freeze is a row update of the checkout, which conflicts with the claim's
 `FOR SHARE` read: a claim that commits first is fenced, one that waits reads
 the frozen status and is refused, and the claimant's record (fenced on
-`pending` and its claim time) matches no fenced row. A transaction that locks
-both takes the checkout row before the claim row, so the edges add no lock
+`pending` and its claim time) matches no fenced row. The fence covers only
+claims with no transaction recorded: a buy already recorded (`sent`, `bought`,
+`forwarding`) still settles and may deliver. Compensation holds such a line
+out of its refund; the manual refund pays the amount the operator gives. The
+manual refund locks the wallet, then the checkout (`FOR UPDATE`, refusing
+unless it is still `fulfilling` or `fulfilled`, so it never refunds a checkout
+compensation is reversing), then the claims; a transaction that locks a
+checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
