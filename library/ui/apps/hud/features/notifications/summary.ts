@@ -5,7 +5,7 @@ import { openCommunityModal } from '../communities/CommunityModal'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { ChatState, FriendsState, VoiceChatSession } from '../session/useEngineSession'
-import { nativeProfileImage } from '@hud-host'
+import { nativeProfileImage, siteUrl } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openPassport } from '../profile/Passport'
@@ -140,6 +140,23 @@ export function tipTarget(n: AppNotification): (() => void) | undefined {
   if (n.type !== 'tip_received') return undefined
   const address = str(n.metadata, 'senderAddress')
   return address == null ? undefined : () => openPassport(address)
+}
+
+/** A referral notification: a player who accepted the invite opens that player's passport, and a new
+ *  reward tier opens the referrer's Referral Rewards page on the site. */
+export function referralTarget(n: AppNotification): (() => void) | undefined {
+  if (n.type === 'referral_invited_users_accepted') {
+    const invited = str(n.metadata, 'invitedUserAddress')
+    return invited == null ? undefined : () => openPassport(invited)
+  }
+  if (n.type === 'referral_new_tier_reached') {
+    const referrer = str(n.metadata, 'address')
+    if (referrer == null) return undefined
+    return () => {
+      window.open(siteUrl(`/profile/${encodeURIComponent(referrer.toLowerCase())}/referral-rewards`), '_blank', 'noopener')
+    }
+  }
+  return undefined
 }
 
 /** A gift's notification opens the gift-received popup. */

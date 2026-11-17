@@ -45,7 +45,7 @@
     "directory": "apps/creator-hub/packages/asset-packs"
   },
   "scripts": {
-    "build": "npm run build:lib && npm run build:js && npm run build:catalog",
+    "build": "pnpm run build:lib && pnpm run build:js && pnpm run build:catalog",
     "build:catalog": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/catalog.ts",
     "build:js": "sdk-commands build --skip-install",
     "build:lib": "tsc --project tsconfig.lib.json",
@@ -56,7 +56,7 @@
     "start:dev": "pnpm run \"/^start:(js:data-layer|lib|catalog)$/\"",
     "start:js": "sdk-commands start --skip-install --no-browser --port 8001",
     "start:js:data-layer": "pnpm run start:js --data-layer",
-    "start:lib": "npm run build:lib -- --watch",
+    "start:lib": "pnpm run build:lib -- --watch",
     "test": "node ../../scripts/rolldown.js vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.lib.json",
     "upload": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/upload.ts",

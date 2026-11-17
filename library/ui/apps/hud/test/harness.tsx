@@ -36,6 +36,9 @@ export class FakeDriver implements LoginDriver {
   welcome: { terms: boolean; newProfile: boolean } | null = { terms: false, newProfile: false }
   /** What the autopilot reported when its sign-in failed. */
   readonly autopilotFailures: string[] = []
+  /** Whether the bridge scene has answered the page (`LoginDriver.bridgeReady`); unset, a driver
+   *  with no bridge to wait for. */
+  bridgeReady?: () => boolean
 
   private readonly listeners = new Set<(msg: SceneToPage) => void>()
 

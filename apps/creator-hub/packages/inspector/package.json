@@ -89,7 +89,7 @@
     "copy-bevy-engine": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/copy-bevy-engine.ts",
     "copy-bin": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/copy-bin.ts",
     "start": "pnpm run \"/^copy-/\" && node ./build.js --watch",
-    "test": "npm run test:unit",
+    "test": "pnpm run test:unit",
     "test:e2e": "playwright test",
     "test:unit": "node ../../scripts/rolldown.js vitest run",
     "typecheck": "tsc -p tsconfig.ui3.json && tsc -p tsconfig.check.json && tsc --noEmit -p test/tsconfig.json"

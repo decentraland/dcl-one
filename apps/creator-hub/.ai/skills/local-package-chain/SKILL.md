@@ -44,7 +44,7 @@ To propose a `TOOLCHAIN`, look for an existing checkout. A plain sibling clone s
 
 If there's no checkout, ask before you clone one, then install it once with `git clone https://github.com/decentraland/js-sdk-toolchain <path> && make -C <path> install build`.
 
-Every tarball gets a timestamp in its file name. npm records a local tarball's integrity in the lockfile, so rebuilding under the same file name fails with `EINTEGRITY` or serves the old build.
+Every tarball gets a timestamp in its file name. A lockfile records a local tarball's integrity, so rebuilding under the same file name fails the integrity check or serves the old build.
 
 The monorepo packages keep version `0.1.0` in `package.json`, which npm never publishes (published versions are `7.x` for the inspector and `2.x` for asset-packs). So any `0.1.0` you see downstream is a local build.
 
@@ -69,9 +69,9 @@ The inspector's `package.json` declares `@dcl/asset-packs` as `file:../asset-pac
 AP=$(ls -t "$PKGS"/dcl-asset-packs-*.tgz 2>/dev/null | head -1)
 test -n "$AP" || echo "No asset-packs tarball in $PKGS: run step 1 first."
 test -n "$AP" && make -C "$REPO" build-inspector && T=$(mktemp -d) \
-  && (cd "$REPO/packages/inspector" && pnpm pkg set "dependencies['@dcl/asset-packs']=file:$AP" && pnpm pack --pack-destination "$T")
+  && (cd "$REPO/packages/inspector" && pnpm pkg set "dependencies[\"@dcl/asset-packs\"]=file:$AP" && pnpm pack --pack-destination "$T")
 PACKED=$?
-(cd "$REPO/packages/inspector" && pnpm pkg set "dependencies['@dcl/asset-packs']=file:../asset-packs")
+(cd "$REPO/packages/inspector" && pnpm pkg set "dependencies[\"@dcl/asset-packs\"]=file:../asset-packs")
 git -C "$REPO" diff --exit-code -- packages/inspector/package.json \
   && test "$PACKED" -eq 0 \
   && mv "$T"/*.tgz "$PKGS/dcl-inspector-$(date +%Y%m%d%H%M%S).tgz" \
