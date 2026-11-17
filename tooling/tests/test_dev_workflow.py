@@ -74,6 +74,18 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         self.assertEqual(log.read_text(), 'rm -rf /usr/local/lib/android /usr/share/dotnet '
                                          '/usr/share/swift /opt/ghc /usr/local/.ghcup\n')
 
+    def test_every_workflow_deletes_the_sdk_folders_only_below_a_free_space_limit(self):
+        delete = 'sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup'
+        seen = 0
+        for path in sorted(WORKFLOW.parent.glob('*.y*ml')):
+            lines = [line.strip() for line in path.read_text().splitlines()]
+            for number, line in enumerate(lines):
+                if line == delete:
+                    seen += 1
+                    with self.subTest(workflow=path.name, line=number + 1):
+                        self.assertRegex(lines[number - 1], r'^if \[ "\$(\{avail:-0\}|available)" -l[te] \S.* \]; then$')
+        self.assertGreaterEqual(seen, 12)
+
     def test_rust_caches_dependencies_only_and_smoke_keeps_a_snapshot_on_both_platforms(self):
         rust, smoke = jobs()['rust'], jobs()['smoke']
         for job in (rust, smoke):
@@ -125,6 +137,36 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('steps.rust-cache.outputs.cache-primary-key', saves[0])
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
+
+    def test_header_geometry_control_requires_the_original_missing_port_evidence(self):
+        web = jobs()['web']
+        original = re.search(r'(?ms)^      - name: Run Sites unit tests\n(.*?)(?=^      - |\Z)', web).group(1)
+        self.assertIn('id: sites-tests', original)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test\n', original)
+        self.assertNotIn('continue-on-error', original)
+        control = re.findall(r'(?ms)^      - name: Diagnose isolated header geometry startup\n(.*?)(?=^      - |\Z)', web)
+        self.assertEqual(len(control), 1)
+        control = control[0]
+        self.assertIn('timeout-minutes: 4', control)
+        self.assertNotIn('continue-on-error', control)
+        self.assertNotIn('|', control)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts\n', control)
+        self.assertLess(web.index('name: Run Sites unit tests'), web.index('name: Diagnose isolated header geometry startup'))
+        expression = re.search(r'^        if: \$\{\{ (.*?) \}\}$', control, re.M).group(1)
+        expression = expression.replace('&&', 'and')
+        expression = expression.replace('steps.sites-tests.outcome', 'outcome')
+        expression = expression.replace('steps.sites-tests.outputs.capture-missing-port', 'evidence')
+        for failed, outcome, evidence, expected in (
+            (True, 'failure', 'true', True),
+            (True, 'failure', '', False),
+            (True, 'success', 'true', False),
+            (False, 'cancelled', 'true', False),
+            (False, 'success', '', False),
+        ):
+            with self.subTest(failed=failed, outcome=outcome, evidence=evidence):
+                self.assertEqual(bool(eval(expression, {'__builtins__': {}}, {
+                    'failure': lambda: failed, 'outcome': outcome, 'evidence': evidence,
+                })), expected)
 
     def test_no_privileged_job_takes_its_runner_from_a_variable(self):
         # The RUNNER_* variables can name a fork's own runners. A job with a write permission, an

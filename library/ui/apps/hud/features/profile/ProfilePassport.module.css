@@ -101,6 +101,14 @@
 .headBtn:hover {
   background: var(--brand, #ff2d55);
 }
+/* Jump to Location: the icon alone, as unity-explorer's passport shows it */
+.headIconBtn {
+  padding: 0.45rem;
+}
+/* the icon is a brand-red tile: the brand hover would hide it */
+.headIconBtn:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
 /* FRIEND reads as a state until hovered, when it offers REMOVE FRIEND. */
 .headBtnSwap .hover,
 .headBtnSwap:hover .idle {

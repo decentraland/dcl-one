@@ -29,7 +29,7 @@ class NativeCacheTest(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.key_file = Path(folder.name) / 'cache-key/.cargo/config.toml'
-        for name, value in (('KEY_FILE', self.key_file), ('vendored_trees', lambda: ['a' * 40, 'b' * 40, 'd' * 40])):
+        for name, value in (('KEY_FILE', self.key_file), ('vendored_trees', lambda: ['a' * 40, 'b' * 40])):
             patcher = patch.object(cache, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -110,13 +110,12 @@ class NativeCacheKeyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             key_file = Path(folder) / 'cache-key/.cargo/config.toml'
             texts = []
-            for trees in (['a' * 40, 'b' * 40, 'd' * 40], ['a' * 40, 'b' * 40, 'd' * 40], ['c' * 40, 'b' * 40, 'd' * 40],
-                          ['a' * 40, 'c' * 40, 'd' * 40], ['a' * 40, 'b' * 40, 'c' * 40]):
+            for trees in (['a' * 40, 'b' * 40], ['a' * 40, 'b' * 40], ['c' * 40, 'b' * 40], ['a' * 40, 'c' * 40]):
                 with patch.object(cache, 'KEY_FILE', key_file), patch.object(cache, 'vendored_trees', lambda: trees):
                     cache.write_cache_key()
                 texts.append(key_file.read_bytes())
         self.assertEqual(texts[0], texts[1])
-        self.assertEqual(len(set(texts)), 4)
+        self.assertEqual(len(set(texts)), 3)
         # A comment only: Cargo would get no setting from it.
         self.assertTrue(all(line.startswith(b'# ') for line in texts[0].splitlines()))
 
@@ -131,23 +130,19 @@ class NativeCacheKeyTest(unittest.TestCase):
                 if source.resolve() not in target.parents:
                     outside.add(target.relative_to(ROOT.resolve()).as_posix())
         self.assertTrue(outside)
-        # tooling/patched-sources.py rebuilds one tree for each patch series; the series is its tracked source.
-        explorer = 'rendering/bevy-explorer/'
-        rebuilt = {explorer + ('bevy' if series.name == 'bevy' else 'forks/' + series.name): explorer + 'patches'
-                   for series in (ROOT / explorer / 'patches').iterdir()}
-        self.assertIn(explorer + 'bevy', rebuilt)
+        # Bevy and the forked crates are git dependencies: Cargo.lock names their revisions and the
+        # cache action hashes it.
         for path in outside:
-            tracked = next((series for tree, series in rebuilt.items() if path == tree or path.startswith(tree + '/')), path)
-            self.assertTrue(any(tracked == tree or tracked.startswith(tree + '/') for tree in cache.VENDORED), path)
+            self.assertTrue(any(path == tree or path.startswith(tree + '/') for tree in cache.VENDORED), path)
         for tree in cache.VENDORED:
             self.assertTrue((ROOT / tree).is_dir(), tree)
 
     def test_identity_comes_from_the_commit_and_rejects_anything_else(self):
-        with patch.object(cache, 'output', side_effect=['a' * 40, 'b' * 40, 'c' * 40]) as output:
-            self.assertEqual(cache.vendored_trees(), ['a' * 40, 'b' * 40, 'c' * 40])
+        with patch.object(cache, 'output', side_effect=['a' * 40, 'b' * 40]) as output:
+            self.assertEqual(cache.vendored_trees(), ['a' * 40, 'b' * 40])
         self.assertEqual([call.args[-1] for call in output.call_args_list],
                          [f'HEAD:{path}' for path in cache.VENDORED])
-        with patch.object(cache, 'output', side_effect=['a' * 40, 'b' * 40, 'HEAD:missing']):
+        with patch.object(cache, 'output', side_effect=['a' * 40, 'HEAD:missing']):
             with self.assertRaisesRegex(RuntimeError, 'no Git identity'):
                 cache.vendored_trees()
 

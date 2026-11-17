@@ -76,7 +76,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
   downloads of a scene that has left.
@@ -146,7 +147,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unaffected.
   - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
     hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
-  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
+  - A scene room that refuses the player as banned (a platform, world or scene ban, as
+    `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
+    every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
+    realm or wallet, lifts it without reopening the mic. unity-explorer suppresses on any 401 or
+    403 from the scene room and lifts it on the room's next connect or disconnect.
+- **Blocked and scene-banned players are not heard nearby.** A player blocked in either
+  direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
+  voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
+  source. Calls and community streams still carry them. Scene bans apply without the
+  `alfa-banned-users-from-scene` flag unity-explorer reads, as in Nearby chat.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -508,6 +518,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m), read at startup and held to 500 to 7000 m.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 
 ## Deliberate choices that look like mistakes
 

@@ -325,11 +325,8 @@ struct LastTransmission {
 /// on the next scene, realm or wallet, or the room admits the player. Calls are unaffected.
 fn suppress_nearby_voice_on_refusal(
     admission: Res<crate::SceneAdmission>,
-    mic_state: Option<ResMut<MicState>>,
+    mut mic_state: ResMut<MicState>,
 ) {
-    let Some(mut mic_state) = mic_state else {
-        return;
-    };
     let banned = matches!(admission.view(), crate::AdmissionView::Refused { .. });
     if mic_state.scene_banned != banned {
         mic_state.set_scene_banned(banned);

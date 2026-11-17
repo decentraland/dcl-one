@@ -34,7 +34,10 @@ function parseAttributes(node: SvgNode): [string, string][] {
   return [...node.attrs.matchAll(ATTRIBUTE)].map((match) => [match[1]!, decodeEntities(match[2]!)])
 }
 
+// A clip path uses only the geometry of its children and a mask only their luminance: neither paint is an
+// icon color, so neither decides whether the icon is monochrome.
 function collectPaints(node: SvgNode, colors: Set<string>, state: { dynamic: boolean }) {
+  if (node.tag === 'clipPath' || node.tag === 'mask') return
   for (const [name, value] of parseAttributes(node)) {
     if (PAINT_ATTRIBUTES.has(name)) {
       if (value.startsWith('url(')) state.dynamic = true

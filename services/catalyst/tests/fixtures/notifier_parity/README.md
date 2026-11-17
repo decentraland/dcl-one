@@ -18,7 +18,7 @@ notifier masks them); nothing comes from a capture.
 ```sh
 cd services/catalyst
 CATALYST_TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/postgres \
-  cargo test -p catalyst --test notifier_parity -- --nocapture
+  cargo test -p catalyst --test node_1 -- notifier_parity:: --nocapture
 ```
 
 Without `CATALYST_TEST_DATABASE_URL` the test skips. Every entry runs with the
