@@ -109,6 +109,11 @@ impl SceneAdmission {
         }
     }
 
+    /// The gatekeeper refused the player as banned.
+    pub fn is_refused(&self) -> bool {
+        matches!(self.0, Admission::Refused { .. })
+    }
+
     pub fn scene_id(&self) -> Option<&str> {
         match &self.0 {
             Admission::Unknown => None,

@@ -309,7 +309,7 @@ fn add_ping_systems(world: &mut World) {
         schedules.add_systems(
             OnEnter(MicrophoneTransmissionState::Disabled),
             ping_disabled.run_if(|mic_state: Res<MicState>, last: Res<LastTransmission>| {
-                mic_off_pings(mic_state.scene_blocked, last.call)
+                mic_off_pings(mic_state.scene_blocked(), last.call)
             }),
         );
     });
@@ -327,8 +327,8 @@ fn suppress_nearby_voice_on_refusal(
     admission: Res<crate::SceneAdmission>,
     mut mic_state: ResMut<MicState>,
 ) {
-    let banned = matches!(admission.view(), crate::AdmissionView::Refused { .. });
-    if mic_state.scene_banned != banned {
+    let banned = admission.is_refused();
+    if mic_state.scene_banned() != banned {
         mic_state.set_scene_banned(banned);
     }
 }
@@ -479,7 +479,7 @@ fn tear_down_microphone(mut commands: Commands) {
 
 /// A call holds the nearby mic off without changing the user's setting.
 fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
-    mic_state.enabled && !mic_state.scene_blocked && !call_mic.suppress_nearby
+    mic_state.enabled && !mic_state.scene_blocked() && !call_mic.suppress_nearby
 }
 
 fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
@@ -831,7 +831,7 @@ fn locate_foreign_streams(
 
             let (volume, panning) =
                 pan.volume_and_panning(emitter_transform.translation(), render_layers);
-            let volume = if mic_state.scene_blocked || mutes.is_muted(player.address) {
+            let volume = if mic_state.scene_blocked() || mutes.is_muted(player.address) {
                 0.0
             } else {
                 volume * settings.voice()
@@ -936,6 +936,13 @@ mod routing_tests {
 
     use super::*;
 
+    fn mic_state(available: bool, enabled: bool) -> MicState {
+        let mut mic = MicState::default();
+        mic.available = available;
+        mic.enabled = enabled;
+        mic
+    }
+
     fn pending(
         runtime: &tokio::runtime::Runtime,
         drain: &MicrophoneDrain,
@@ -956,13 +963,7 @@ mod routing_tests {
             .build()
             .unwrap();
         let drain = MicrophoneDrain::default();
-        let mic = MicState {
-            available: true,
-            enabled: true,
-            scene_blocked: false,
-            refusals: 0,
-            ..Default::default()
-        };
+        let mic = mic_state(true, true);
         let mut call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
         let voice_room = (false, false, true, true);
@@ -995,13 +996,7 @@ mod routing_tests {
 
     #[test]
     fn call_mute_and_reconnect_never_restore_nearby_publication() {
-        let mic = MicState {
-            available: true,
-            enabled: true,
-            scene_blocked: false,
-            refusals: 0,
-            ..Default::default()
-        };
+        let mic = mic_state(true, true);
         let mut call_mic = CallMic {
             enabled: false,
             in_call: true,
@@ -1026,13 +1021,7 @@ mod routing_tests {
 
     #[test]
     fn call_publication_uses_its_own_mute_and_never_enables_private_chat() {
-        let mic = MicState {
-            available: true,
-            enabled: false,
-            scene_blocked: false,
-            refusals: 0,
-            ..Default::default()
-        };
+        let mic = mic_state(true, false);
         let call_mic = CallMic {
             enabled: true,
             in_call: true,
@@ -1247,18 +1236,15 @@ mod routing_tests {
 
     #[test]
     fn a_scene_that_disables_nearby_voice_holds_the_nearby_mic_off() {
-        let mut mic = MicState {
-            available: true,
-            enabled: true,
-            scene_blocked: true,
-            refusals: 0,
-            ..Default::default()
-        };
+        let mut mic = mic_state(true, false);
+        mic.set_scene_disabled(true);
+        // The route reads the block itself, not only the closed mic.
+        mic.enabled = true;
         let call_mic = CallMic::default();
         let nearby_room = (true, false, false, true);
         assert!(!microphone_route_enabled(nearby_room, &mic, &call_mic));
 
-        mic.scene_blocked = false;
+        mic.set_scene_disabled(false);
         assert!(microphone_route_enabled(nearby_room, &mic, &call_mic));
     }
 
@@ -1266,18 +1252,14 @@ mod routing_tests {
     fn a_scene_room_ban_turns_nearby_voice_off_until_the_admission_resets() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = World::new();
-        world.insert_resource(MicState {
-            available: true,
-            enabled: true,
-            ..Default::default()
-        });
+        world.insert_resource(mic_state(true, true));
         let mut admit = |admission: crate::SceneAdmission| {
             world.insert_resource(admission);
             world
                 .run_system_once(suppress_nearby_voice_on_refusal)
                 .unwrap();
             let mic = world.resource::<MicState>();
-            (mic.scene_blocked, mic.enabled)
+            (mic.scene_blocked(), mic.enabled)
         };
         assert_eq!(admit(crate::SceneAdmission::allowed("s")), (false, true));
         assert_eq!(
@@ -1309,13 +1291,8 @@ mod routing_tests {
 
     #[test]
     fn a_scene_that_disables_nearby_voice_leaves_the_call_mic_alone() {
-        let mic = MicState {
-            available: true,
-            enabled: false,
-            scene_blocked: true,
-            refusals: 0,
-            ..Default::default()
-        };
+        let mut mic = mic_state(true, false);
+        mic.set_scene_disabled(true);
         let call_mic = CallMic {
             enabled: true,
             in_call: true,

@@ -1775,7 +1775,7 @@ fn update_scene_voice_block(
         .ok()
         .and_then(|player| containing_scene.get_parcel(player))
         .is_some_and(|scene| disabling_scenes.contains(scene));
-    if mic_state.scene_disabled != disabled {
+    if mic_state.scene_disabled() != disabled {
         mic_state.set_scene_disabled(disabled);
     }
 }

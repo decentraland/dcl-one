@@ -93,7 +93,8 @@ impl RoomRecovery {
 }
 
 /// A scene room refused for a ban. The room stays denied, but asks for admission again every
-/// [`BAN_RECHECK_SECS`]: an unban reaches only the players inside the room.
+/// [`BAN_RECHECK_SECS`]: an unban reaches only the players inside the room, and the platform
+/// ban poll never admits the room again.
 #[derive(Component)]
 pub struct BanRecheck;
 
@@ -461,12 +462,15 @@ pub(crate) fn finish_credentials(
         Option<&crate::SceneRoomTarget>,
         Has<RealmAdapter>,
         Has<RoomSuspended>,
+        Has<BanRecheck>,
     )>,
     time: Res<Time>,
     wallet: Res<Wallet>,
     mut admission: ResMut<crate::SceneAdmission>,
 ) {
-    for (entity, mut task, mut recovery, context, scene, realm, suspended) in &mut requests {
+    for (entity, mut task, mut recovery, context, scene, realm, suspended, rechecking) in
+        &mut requests
+    {
         if suspended || wallet.address() != Some(task.identity) {
             commands.entity(entity).try_remove::<CredentialTask>();
             continue;
@@ -493,6 +497,13 @@ pub(crate) fn finish_credentials(
                 commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
             }
+            Err(error) if rechecking && error.kind != FailureKind::Denied => {
+                // Only a refusal says anything about the ban.
+                warn!(?entity, kind = ?error.kind, "ban recheck got no answer");
+                recovery
+                    .retry
+                    .failed(time.elapsed_secs_f64(), Some(BAN_RECHECK_SECS));
+            }
             Err(mut error) => {
                 let mut banned = false;
                 if let Some(scene) = scene {
@@ -507,7 +518,7 @@ pub(crate) fn finish_credentials(
                                     &scene.scene.scene_id,
                                 )
                             });
-                    banned = matches!(refusal.view(), crate::AdmissionView::Refused { .. });
+                    banned = refusal.is_refused();
                     admission.set_if_neq(refusal);
                 }
                 warn!(?entity, kind = ?error.kind, "room admission failed");
@@ -817,6 +828,30 @@ mod tests {
                 app.world().get::<BanRecheck>(entity).is_some(),
                 scope.is_some()
             );
+
+            if scope.is_some() {
+                for error in [
+                    AdmissionError::status(503, None),
+                    AdmissionError::new(FailureKind::Transient),
+                    AdmissionError::new(FailureKind::Invalid),
+                ] {
+                    let before = app.world().resource::<crate::SceneAdmission>().clone();
+                    let task = completed(&app, Err(error));
+                    app.world_mut().entity_mut(entity).insert(task);
+                    app.update();
+                    assert_eq!(*app.world().resource::<crate::SceneAdmission>(), before);
+                    assert!(app.world().get::<BanRecheck>(entity).is_some());
+                    let recovery = app.world().get::<RoomRecovery>(entity).unwrap();
+                    assert_eq!(recovery.failure, Some(FailureKind::Denied));
+                    let now = app.world().resource::<Time>().elapsed_secs_f64();
+                    assert!(!recovery.retry.ready(now + BAN_RECHECK_SECS - 0.1));
+                    assert!(recovery.retry.ready(now + BAN_RECHECK_SECS));
+                    assert!(app
+                        .world()
+                        .resource::<AccessStatus>()
+                        .is_denied(&AccessScope::Scene("scene".into())));
+                }
+            }
 
             let task = completed(
                 &app,

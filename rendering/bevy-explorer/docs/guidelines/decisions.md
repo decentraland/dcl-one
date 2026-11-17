@@ -150,8 +150,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - A scene room that refuses the player as banned (a platform, world or scene ban, as
     `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
     every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
-    realm or wallet, lifts it without reopening the mic. unity-explorer suppresses on any 401 or
-    403 from the scene room and lifts it on the room's next connect or disconnect.
+    realm or wallet, lifts it without reopening the mic. A recheck with no answer (a network
+    error, a 503) keeps the refusal. The interval bounds both the gatekeeper requests from a
+    player who stays banned and the wait before an unban is noticed. Platform bans recheck here
+    too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
+    again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
+    room's next connect or disconnect; its scene room asks again every 5 s while refused.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
