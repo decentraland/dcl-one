@@ -141,7 +141,9 @@ impl State {
     }
 }
 pub fn standalone(state: State) -> Router {
-    Router::new().fallback(dispatch).with_state(state)
+    Router::new()
+        .fallback(crate::shared::routing::erase(dispatch))
+        .with_state(state)
 }
 /// Ordinary requests to the socket alias retain the standalone host's fallback.
 pub fn socket_alias(router: Router, state: State) -> Router {
