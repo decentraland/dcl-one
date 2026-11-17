@@ -1,15 +1,15 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import type * as WorldsModule from '/@/lib/worlds';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { CollaboratorsTab } from '.';
 
@@ -140,9 +140,9 @@ async function renderTab({
   const store = createTestStore();
   render(
     <Provider store={store as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <CollaboratorsTab worldName={WORLD} />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   await screen.findByRole('textbox', { name: 'Wallet address or NAME' });
@@ -158,7 +158,7 @@ const notices = (store: ReturnType<typeof createTestStore>) =>
     );
 const deploy = (name: string) => screen.getByRole('combobox', { name: `Parcels for ${name}` });
 const pick = (name: string, option: string) => {
-  fireEvent.mouseDown(deploy(name));
+  fireEvent.click(deploy(name));
   fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: option }));
 };
 const stream = (name: string) =>

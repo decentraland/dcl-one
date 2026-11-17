@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { Box, FormControlLabel, Switch, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { RENDERER } from '/shared/types/settings';
 import { t } from '/@/modules/store/translation/utils';
 import { IS_NON_PRODUCTION_BUILD } from '/@/modules/buildMode';
+import { ToggleRow } from '../../ToggleRow';
 import type { BaseTabProps } from '../../types';
 
 import './styles.css';
@@ -24,41 +25,33 @@ const ExperimentalTab = ({ settings, updateSettings }: BaseTabProps) => {
   );
 
   return (
-    <Box className="FormContainer ExperimentalTab">
-      <Box className="ExperimentalField">
-        <FormControlLabel
-          control={
-            <Switch
-              checked={settings.renderer === RENDERER.BEVY}
-              onChange={(_event, checked) => handleRendererChange(checked)}
-            />
-          }
+    <div className="FormContainer ExperimentalTab">
+      <div className="ExperimentalField">
+        <ToggleRow
+          checked={settings.renderer === RENDERER.BEVY}
           label={t('modal.app_settings.fields.renderer.toggle')}
+          onChange={handleRendererChange}
         />
-      </Box>
+      </div>
       {/* Dev/QA only: shown solely in non-production builds so unreleased smart items can be tested
           from the dev CDN. A production release never renders this. */}
       {IS_NON_PRODUCTION_BUILD && (
-        <Box className="ExperimentalField">
-          <FormControlLabel
-            control={
-              <Switch
-                checked={!!settings.useDevAssetCatalog}
-                onChange={(_event, checked) => handleDevAssetCatalogChange(checked)}
-              />
-            }
+        <div className="ExperimentalField">
+          <ToggleRow
+            checked={!!settings.useDevAssetCatalog}
             label={t('modal.app_settings.fields.dev_asset_catalog.toggle')}
+            onChange={handleDevAssetCatalogChange}
           />
-          <Typography
+          <Text
             variant="body2"
-            color="text.secondary"
+            tone="secondary"
             className="ExperimentalHint"
           >
             {t('modal.app_settings.fields.dev_asset_catalog.help')}
-          </Typography>
-        </Box>
+          </Text>
+        </div>
       )}
-    </Box>
+    </div>
   );
 };
 

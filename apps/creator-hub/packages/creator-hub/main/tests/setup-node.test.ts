@@ -8,7 +8,7 @@ vi.mock('os', async importOriginal => ({
   platform: () => 'linux',
 }));
 vi.mock('electron', () => ({ app: { getAppPath: () => '/opt/hub/resources/app.asar' } }));
-vi.mock('cmd-shim', () => ({ default: vi.fn() }));
+vi.mock('../src/modules/cmd-shim', () => ({ writeCmdShim: vi.fn(() => Promise.resolve()) }));
 vi.mock('electron-log/main', () => ({
   default: { info: vi.fn(), warn: mocks.warn, error: vi.fn() },
 }));

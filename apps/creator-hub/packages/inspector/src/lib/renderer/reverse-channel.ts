@@ -1,4 +1,4 @@
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../utils/emitter';
 import type { IEngine, TransformType } from '@dcl/ecs';
 import { Quaternion, Vector3 } from '@dcl/ecs-math';
 

@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { useDrop } from 'react-dnd';
 import { useStore } from 'react-redux';
 import { IoAddOutline, IoCopyOutline, IoTrashOutline } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import type { Entity, PBUiTransform } from '@dcl/ecs';
 
 import { useAssetUrl } from '../../../hooks/useAssetUrl';
