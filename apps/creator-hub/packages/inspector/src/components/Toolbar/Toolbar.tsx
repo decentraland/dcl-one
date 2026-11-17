@@ -13,7 +13,6 @@ import {
   BiVolumeFull,
   BiVolumeMute,
 } from 'react-icons/bi';
-import { RiListSettingsLine } from 'react-icons/ri';
 import { FaPencilAlt } from 'react-icons/fa';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { IoCheckmark as CheckIcon } from 'react-icons/io5';
@@ -64,11 +63,6 @@ const Toolbar = withSdk(({ sdk }) => {
 
   const showSceneInfoButton = !!sceneInfoContent;
   const isSceneInfoPanelOpen = !!uiState?.sceneInfoPanelVisible;
-
-  // TODO: Remove withSdk
-  const handleInspector = useCallback(() => {
-    sdk.renderer.debug?.toggle();
-  }, [sdk]);
 
   // Editor camera toggle — only for renderers whose native camera isn't already a
   // free editor camera (Bevy exposes `editorCamera`; Babylon omits it). Tracks the
@@ -272,13 +266,6 @@ const Toolbar = withSdk(({ sdk }) => {
         </ToolbarButton>
       )}
       <Preferences />
-      <ToolbarButton
-        className="babylonjs-inspector"
-        onClick={handleInspector}
-        title="Inspector"
-      >
-        <RiListSettingsLine />
-      </ToolbarButton>
       <div className="RightContent">
         <ToolbarButton
           className="edit-scene"
