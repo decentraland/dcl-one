@@ -27,7 +27,6 @@ import type {
   HoverEvent,
   HomeScene,
   OutfitsData,
-  OutfitThumbnailData,
   LiveSceneInfo,
   PermanentPermissionItem,
   PermissionRequestEvent,
@@ -233,11 +232,6 @@ export type BevyApiInterface = {
   /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
    *  is not the signed-in account, or when the catalyst refuses it. */
   deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>
-  /** The player's saved outfit pictures, kept by the engine on this device (none for a guest or
-   *  another account). */
-  getOutfitThumbnails: (address: string) => Promise<OutfitThumbnailData[]>
-  /** Keeps (a PNG data URL of at most 1 MiB) or drops (null) one slot's picture. */
-  setOutfitThumbnail: (address: string, slot: number, thumbnail: string | null) => void
   /** Any user's full deployed profile as the engine holds it (own, nearby and remote players,
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */

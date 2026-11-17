@@ -951,11 +951,3 @@ pub struct OutfitsData {
     pub outfits: Vec<OutfitSlotData>,
     pub names_for_extra_slots: Vec<String>,
 }
-
-/// A saved outfit's picture (PNG data URL), kept by the engine on this device.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
-#[ts(export)]
-pub struct OutfitThumbnailData {
-    pub slot: u32,
-    pub thumbnail: String,
-}

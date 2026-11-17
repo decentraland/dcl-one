@@ -871,24 +871,6 @@ pub async fn op_deploy_outfits(
 }
 
 #[wasm_bindgen]
-pub async fn op_get_outfit_thumbnails(
-    state: &WorkerContext,
-    address: String,
-) -> Result<JsValue, WasmError> {
-    serde_result!(dcl_js::system_api::op_get_outfit_thumbnails(state.rc(), address).await)
-}
-
-#[wasm_bindgen]
-pub fn op_set_outfit_thumbnail(
-    state: &WorkerContext,
-    address: String,
-    slot: u32,
-    thumbnail: Option<String>,
-) {
-    dcl_js::system_api::op_set_outfit_thumbnail(state.rc(), address, slot, thumbnail)
-}
-
-#[wasm_bindgen]
 pub async fn op_get_portables_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state.rc()).await
 }

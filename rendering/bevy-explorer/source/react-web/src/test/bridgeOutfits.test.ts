@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { OutfitsData, OutfitThumbnailData } from '@explorer-core/engine/generated'
+import type { OutfitsData } from '@explorer-core/engine/generated'
 import type { OutfitsMetadata, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 const FEMALE = 'urn:decentraland:off-chain:base-avatars:BaseFemale'
@@ -11,16 +11,26 @@ let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 
 const deployOutfits = vi.fn<(address: string, outfits: OutfitsData) => Promise<void>>()
-const getOutfitThumbnails = vi.fn<(address: string) => Promise<OutfitThumbnailData[]>>()
-const setOutfitThumbnail = vi.fn<(address: string, slot: number, thumbnail: string | null) => void>()
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
-    deployOutfits: (address: string, outfits: OutfitsData) => deployOutfits(address, outfits),
-    getOutfitThumbnails: (address: string) => getOutfitThumbnails(address),
-    setOutfitThumbnail: (address: string, slot: number, thumbnail: string | null) =>
-      setOutfitThumbnail(address, slot, thumbnail)
+    deployOutfits: (address: string, outfits: OutfitsData) => deployOutfits(address, outfits)
   }
 }))
+
+// The scene's localStorage: what it holds, and each picture write in order.
+const storage = new Map<string, string>()
+const pictureWrites: Array<[string, string | null]> = []
+const localStorage = {
+  getItem: vi.fn((key: string) => storage.get(key) ?? null),
+  setItem: vi.fn((key: string, value: string) => {
+    storage.set(key, value)
+    if (key.startsWith('outfit-thumb:')) pictureWrites.push([key, value])
+  }),
+  removeItem: vi.fn((key: string) => {
+    storage.delete(key)
+    if (key.startsWith('outfit-thumb:')) pictureWrites.push([key, null])
+  })
+}
 
 const getJson = vi.fn<(url: string) => Promise<unknown>>()
 vi.mock('../../bridge-scene/src/http', async (importOriginal) => ({
@@ -93,7 +103,7 @@ describe('the bridge outfits domain', () => {
     look = { bodyShape: FEMALE, wearables: ['urn:a'], forceRender: [] } as unknown as AvatarLook
     stored = { outfits: [{ slot: 0, outfit: outfit(['urn:old']) }], namesForExtraSlots: [] }
     getJson.mockResolvedValue({ metadata: stored })
-    getOutfitThumbnails.mockResolvedValue([])
+    vi.stubGlobal('localStorage', localStorage)
     deployOutfits.mockResolvedValue(undefined)
     readOwnedNames.mockResolvedValue([])
     captureAvatarThumbnail.mockResolvedValue(PICTURE)
@@ -102,6 +112,9 @@ describe('the bridge outfits domain', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
+    storage.clear()
+    pictureWrites.length = 0
     player = null
   })
 
@@ -120,7 +133,7 @@ describe('the bridge outfits domain', () => {
         ],
         namesForExtraSlots: []
       })
-      expect(setOutfitThumbnail).toHaveBeenCalledWith('0xA', 1, PICTURE)
+      expect(storage.get('outfit-thumb:0xa:1')).toBe(PICTURE)
       expect(lastOutfits()?.outfits.find((o) => o.slot === 1)?.thumbnail).toBe(PICTURE)
     })
 
@@ -145,7 +158,7 @@ describe('the bridge outfits domain', () => {
         const { request, lastOutfits } = await bridge()
         await request({ kind: 'saveOutfit', slot: 1 })
         expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
-        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+        expect(pictureWrites).toEqual([])
       })
 
       it('should tell the page the save failed after showing the outfits as they were', async () => {
@@ -163,7 +176,7 @@ describe('the bridge outfits domain', () => {
         const { request, lastOutfits, failures } = await bridge()
         await request({ kind: 'deleteOutfit', slot: 0 })
         expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
-        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+        expect(pictureWrites).toEqual([])
         expect(failures()).toEqual([
           { kind: 'outfitSaveFailed', slot: 0, action: 'delete', message: 'Error: failed to deploy' }
         ])
@@ -183,7 +196,7 @@ describe('the bridge outfits domain', () => {
         const { request, failures } = await bridge()
         await request({ kind: 'saveOutfit', slot: 4 })
         expect(deployOutfits).not.toHaveBeenCalled()
-        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+        expect(pictureWrites).toEqual([])
         expect(failures()).toEqual([
           { kind: 'outfitSaveFailed', slot: 4, action: 'save', message: 'Error: HTTP 503: unavailable' }
         ])
@@ -224,6 +237,68 @@ describe('the bridge outfits domain', () => {
       await request({ kind: 'saveOutfit', slot: 2 })
       expect(deployOutfits).toHaveBeenCalledWith('0xA', { outfits: [{ slot: 2, outfit: deployed(['urn:a']) }], namesForExtraSlots: [] })
       expect(failures()).toEqual([])
+    })
+  })
+
+  describe('when the catalyst has no outfits but this device saved some before', () => {
+    beforeEach(async () => {
+      player = { userId: '0xA', isGuest: false }
+      const { HttpError } = await import('../../bridge-scene/src/http')
+      getJson.mockRejectedValue(new HttpError(404, '{"error":"Not Found","message":"Outfits not found"}'))
+      storage.set('outfits:0xa', JSON.stringify({ outfits: [{ slot: 0, outfit: outfit(['urn:saved']) }], namesForExtraSlots: [] }))
+    })
+
+    it('should show the outfits saved on this device', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'getOutfits' })
+      expect(lastOutfits()?.outfits).toEqual([{ slot: 0, outfit: deployed(['urn:saved']) }])
+    })
+
+    it('should deploy them with the first change and forget the device copy', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits).toHaveBeenCalledWith('0xA', {
+        outfits: [
+          { slot: 0, outfit: deployed(['urn:saved']) },
+          { slot: 1, outfit: deployed(['urn:a']) }
+        ],
+        namesForExtraSlots: []
+      })
+      expect(storage.has('outfits:0xa')).toBe(false)
+    })
+
+    describe('and the catalyst refuses the deploy', () => {
+      beforeEach(() => {
+        deployOutfits.mockRejectedValue(new Error('failed to deploy'))
+      })
+
+      it('should keep the device copy for the next change', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'saveOutfit', slot: 1 })
+        expect(storage.has('outfits:0xa')).toBe(true)
+      })
+    })
+  })
+
+  describe('when the catalyst has no outfits and the device copy is unreadable', () => {
+    let error: ReturnType<typeof vi.spyOn>
+
+    beforeEach(async () => {
+      player = { userId: '0xA', isGuest: false }
+      const { HttpError } = await import('../../bridge-scene/src/http')
+      getJson.mockRejectedValue(new HttpError(404, '{"error":"Not Found","message":"Outfits not found"}'))
+      storage.set('outfits:0xa', '{not json')
+      error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      error.mockRestore()
+    })
+
+    it('should show no outfits', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'getOutfits' })
+      expect(lastOutfits()?.outfits).toEqual([])
     })
   })
 
@@ -415,39 +490,22 @@ describe('the bridge outfits domain', () => {
     })
   })
 
-  describe('when the engine pictures read fails once', () => {
-    let error: ReturnType<typeof vi.spyOn>
-
+  describe('when the device storage cannot be read', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }
-      getOutfitThumbnails.mockRejectedValueOnce(new Error('boom')).mockResolvedValue([{ slot: 0, thumbnail: PICTURE }])
-      error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      localStorage.getItem.mockImplementation(() => {
+        throw new Error('storage unavailable')
+      })
     })
 
     afterEach(() => {
-      error.mockRestore()
+      localStorage.getItem.mockImplementation((key: string) => storage.get(key) ?? null)
     })
 
-    it('should read them again on the next request', async () => {
+    it('should show the catalyst outfits without pictures', async () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'getOutfits' })
-      await request({ kind: 'getOutfits' })
-      expect(lastOutfits()?.outfits[0]?.thumbnail).toBe(PICTURE)
-      expect(error.mock.calls).toEqual([['[outfits] thumbnails read failed', new Error('boom')]])
-    })
-  })
-
-  describe('when the capture is larger than the engine keeps', () => {
-    beforeEach(() => {
-      player = { userId: '0xA', isGuest: false }
-      captureAvatarThumbnail.mockResolvedValue(`data:image/png;base64,${'A'.repeat(1024 * 1024)}`)
-    })
-
-    it('should neither show nor store a picture for the slot', async () => {
-      const { request, lastOutfits } = await bridge()
-      await request({ kind: 'saveOutfit', slot: 1 })
-      expect(setOutfitThumbnail).toHaveBeenCalledWith('0xA', 1, null)
-      expect(lastOutfits()?.outfits.find((o) => o.slot === 1)?.thumbnail).toBeUndefined()
+      expect(lastOutfits()).toEqual(shown(stored))
     })
   })
 
@@ -460,7 +518,7 @@ describe('the bridge outfits domain', () => {
     it('should picture it once its wearables loaded', async () => {
       const { request } = await bridge()
       await request({ kind: 'equipOutfit', slot: 0 })
-      expect(setOutfitThumbnail).toHaveBeenCalledWith('0xA', 0, PICTURE)
+      expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', PICTURE]])
     })
 
     describe('and the slot is deleted while the wearables load', () => {
@@ -470,7 +528,7 @@ describe('the bridge outfits domain', () => {
           await request({ kind: 'deleteOutfit', slot: 0 })
         })
         await request({ kind: 'equipOutfit', slot: 0 })
-        expect(setOutfitThumbnail.mock.calls).toEqual([['0xA', 0, null]])
+        expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', null]])
       })
     })
 
@@ -483,7 +541,7 @@ describe('the bridge outfits domain', () => {
       it('should equip nothing without failing', async () => {
         const { request } = await bridge()
         await expect(request({ kind: 'equipOutfit', slot: 0 })).resolves.toBeUndefined()
-        expect(setOutfitThumbnail).not.toHaveBeenCalled()
+        expect(pictureWrites).toEqual([])
       })
     })
   })
@@ -512,15 +570,15 @@ describe('the bridge outfits domain', () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'deleteOutfit', slot: 0 })
       expect(deployOutfits).toHaveBeenCalledWith('0xA', { outfits: [], namesForExtraSlots: [] })
-      expect(setOutfitThumbnail).toHaveBeenCalledWith('0xA', 0, null)
+      expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', null]])
       expect(lastOutfits()?.outfits).toEqual([])
     })
   })
 
-  describe('when the engine holds pictures from an earlier session', () => {
+  describe('when this device holds pictures from an earlier session', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }
-      getOutfitThumbnails.mockResolvedValue([{ slot: 0, thumbnail: PICTURE }])
+      storage.set('outfit-thumb:0xa:0', PICTURE)
     })
 
     it('should show them on the catalyst outfits', async () => {

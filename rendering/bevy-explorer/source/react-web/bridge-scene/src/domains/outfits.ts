@@ -1,12 +1,13 @@
 // Outfits: the player's saved avatar looks (backpack Outfits tab).
 //   load  ← what this session last saved or read, else catalyst GET /lambdas/outfits/:address
-//           (404 → none saved yet; any other failure refuses the save or delete; never for a guest)
+//           (404 → the outfits this device saved before they were deployed, else none; any other
+//           failure refuses the save or delete; never for a guest)
 //   save/delete → BevyApi.deployOutfits: the engine signs and deploys the `outfits` entity
 //                 (slots past FREE_SLOTS carry names the player owns now)
 //                 (a guest's saves last until the scene restarts)
 //                 a save only fills an empty slot
 //                 a refused one → outfitSaveFailed to the page
-//   thumbnails → BevyApi.get/setOutfitThumbnail(s): kept by the engine on this device
+//   pictures → localStorage, per account and slot: never deployed
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
@@ -20,61 +21,74 @@ import type { OutfitColor, OutfitData, OutfitsData } from '@explorer-core/engine
 import type { Ctx } from '../bridge'
 import type { Outfit, OutfitsMetadata, RGBColor } from '@explorer-core/engine/protocol'
 
+// The engine gives system scenes a persistent localStorage.
+declare const localStorage: {
+  getItem: (key: string) => string | null
+  setItem: (key: string, value: string) => void
+  removeItem: (key: string) => void
+}
+
 const EMPTY: OutfitsMetadata = { outfits: [], namesForExtraSlots: [] }
 const GREY: OutfitColor = { r: 0.5, g: 0.5, b: 0.5, a: 1 }
 // The catalyst takes slots 5 to 9 only with a name the deployer owns.
 const FREE_SLOTS = 5
 // Each listed name is an ownership check at the catalyst.
 const MAX_NAMES = 5
-// What the engine keeps: a PNG data URL of at most 1 MiB.
-const THUMBNAIL_PREFIX = 'data:image/png;base64,'
-const MAX_THUMBNAIL_LENGTH = 1024 * 1024
 // Wait for an equipped outfit's wearables to load before picturing it.
 const EQUIP_THUMBNAIL_DELAY_FRAMES = 180
 
 // The catalyst's lambdas lag a deploy, so this session's last known outfits win over a fresh read.
 const known = new Map<string, OutfitsMetadata>()
-// Each account's slot pictures, read from the engine once per session.
-const thumbnails = new Map<string, Promise<Map<number, string>>>()
 
-function thumbnailsOf(address: string): Promise<Map<number, string>> {
-  const key = address.toLowerCase()
-  let found = thumbnails.get(key)
-  if (found == null) {
-    found = BevyApi.getOutfitThumbnails(address)
-      .then((stored) => new Map(stored.map((t) => [t.slot, t.thumbnail])))
-      .catch((e) => {
-        console.error('[outfits] thumbnails read failed', e)
-        // Read again next time.
-        thumbnails.delete(key)
-        return new Map<number, string>()
-      })
-    thumbnails.set(key, found)
+// Outfits saved on this device before they were deployed; read once, when the catalyst has none.
+const savedKey = (address: string): string => `outfits:${address.toLowerCase()}`
+// One picture per slot, so a save rewrites one image.
+const thumbKey = (address: string, slot: number): string => `outfit-thumb:${address.toLowerCase()}:${slot}`
+
+function thumbnailOf(address: string, slot: number): string | null {
+  try {
+    return localStorage.getItem(thumbKey(address, slot))
+  } catch {
+    return null
   }
-  return found
 }
 
-async function withThumbnails(address: string, metadata: OutfitsMetadata): Promise<OutfitsMetadata> {
-  const pictures = await thumbnailsOf(address)
+function withThumbnails(address: string, metadata: OutfitsMetadata): OutfitsMetadata {
   return {
     ...metadata,
     outfits: metadata.outfits.map((o) => {
-      const thumbnail = pictures.get(o.slot)
+      const thumbnail = thumbnailOf(address, o.slot)
       return thumbnail != null ? { ...o, thumbnail } : o
     })
   }
 }
 
-// A picture the engine would not keep is not shown either.
-async function writeThumbnail(address: string, slot: number, thumbnail: string | null): Promise<void> {
-  const kept =
-    thumbnail != null && thumbnail.startsWith(THUMBNAIL_PREFIX) && thumbnail.length <= MAX_THUMBNAIL_LENGTH
-      ? thumbnail
-      : null
-  const pictures = await thumbnailsOf(address)
-  if (kept != null) pictures.set(slot, kept)
-  else pictures.delete(slot)
-  BevyApi.setOutfitThumbnail(address, slot, kept)
+function writeThumbnail(address: string, slot: number, thumbnail: string | null): void {
+  try {
+    if (thumbnail != null) localStorage.setItem(thumbKey(address, slot), thumbnail)
+    else localStorage.removeItem(thumbKey(address, slot))
+  } catch (e) {
+    console.error('[outfits] thumbnail write failed', e)
+  }
+}
+
+function readSaved(address: string): OutfitsMetadata | null {
+  try {
+    const raw = localStorage.getItem(savedKey(address))
+    if (raw == null) return null
+    const saved = JSON.parse(raw) as Partial<OutfitsData> | null
+    if (!Array.isArray(saved?.outfits) || saved.outfits.length === 0) return null
+    return { outfits: saved.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) })), namesForExtraSlots: [] }
+  } catch (e) {
+    console.error('[outfits] saved outfits unreadable', e)
+    return null
+  }
+}
+
+function forgetSaved(address: string): void {
+  try {
+    localStorage.removeItem(savedKey(address))
+  } catch {}
 }
 
 // Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
@@ -116,6 +130,7 @@ async function store(address: string, isGuest: boolean, next: OutfitsMetadata): 
   if (!isGuest) {
     kept = { ...next, namesForExtraSlots: await namesFor(address, next) }
     await BevyApi.deployOutfits(address, toDeploy(kept))
+    forgetSaved(address)
   }
   known.set(address.toLowerCase(), kept)
   return kept
@@ -130,7 +145,8 @@ function serially<T>(change: () => Promise<T>): Promise<T> {
 }
 
 // This session's outfits, else the catalyst lambdas endpoint, which returns
-// { metadata: OutfitsMetadata }, or 404 for an address that never saved one. A guest never deploys.
+// { metadata: OutfitsMetadata }, or 404 for an address that never deployed one: then the outfits this
+// device saved before, deployed with the first change. A guest never deploys.
 async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsMetadata> {
   const key = address.toLowerCase()
   const local = known.get(key)
@@ -144,7 +160,7 @@ async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsM
   // A change stored while this read was in flight is newer; a stored entry is never dropped.
   const stored = known.get(key)
   if (stored != null) return stored
-  if (res?.metadata == null) return EMPTY
+  if (res?.metadata == null) return readSaved(address) ?? EMPTY
   const metadata = {
     ...res.metadata,
     outfits: res.metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) }))
@@ -185,7 +201,7 @@ function currentOutfit(look: AvatarLook): Outfit {
 export function registerOutfits(ctx: Ctx): void {
   // Pictures of the account the outfits belong to, even if the player changed meanwhile.
   const emit = async (address: string | null, metadata: OutfitsMetadata): Promise<void> => {
-    ctx.send({ kind: 'outfits', metadata: address != null ? await withThumbnails(address, metadata) : metadata })
+    ctx.send({ kind: 'outfits', metadata: address != null ? withThumbnails(address, metadata) : metadata })
   }
 
   // Applies a change to the stored outfits. A failed read refuses it; a change the edit or the
@@ -246,7 +262,7 @@ export function registerOutfits(ctx: Ctx): void {
         return { ...metadata, outfits }
       })
       if (next == null) return
-      await writeThumbnail(me.userId, msg.slot, thumbnail)
+      writeThumbnail(me.userId, msg.slot, thumbnail)
       await emit(me.userId, next)
     })
   })
@@ -260,7 +276,7 @@ export function registerOutfits(ctx: Ctx): void {
         outfits: metadata.outfits.filter((o) => o.slot !== msg.slot)
       }))
       if (next == null) return
-      await writeThumbnail(me.userId, msg.slot, null)
+      writeThumbnail(me.userId, msg.slot, null)
       await emit(me.userId, next)
     })
   })
@@ -288,7 +304,7 @@ export function registerOutfits(ctx: Ctx): void {
     // loaded catalog page). Otherwise off-page outfit items never reach the HUD's category slots
     // and the next single-item equip drops them.
     await sendEquipped(ctx)
-    if (!(await thumbnailsOf(me.userId)).has(msg.slot)) {
+    if (thumbnailOf(me.userId, msg.slot) == null) {
       await waitFrames(EQUIP_THUMBNAIL_DELAY_FRAMES)
       // Changed since: the preview no longer shows this outfit.
       if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(outfit.wearables)) return
@@ -299,8 +315,8 @@ export function registerOutfits(ctx: Ctx): void {
         const now = await loadMetadata(me.userId, me.isGuest).catch(() => null)
         const held = now?.outfits.find((o) => o.slot === msg.slot)
         if (now == null || held == null || JSON.stringify(held.outfit) !== JSON.stringify(outfit)) return
-        if ((await thumbnailsOf(me.userId)).has(msg.slot)) return
-        await writeThumbnail(me.userId, msg.slot, thumbnail)
+        if (thumbnailOf(me.userId, msg.slot) != null) return
+        writeThumbnail(me.userId, msg.slot, thumbnail)
         await emit(me.userId, now)
       })
     }
