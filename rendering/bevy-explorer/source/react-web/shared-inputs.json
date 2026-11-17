@@ -8507,7 +8507,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "631a3fb799e50e8a2eb89bd325764de93bbe3d436621576ced619588aaef92a0"
+      "sha256": "c7b4d3040609c20a8eaa01d7249d8a095f985233b70732adbee183afdd56f5c7"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -9287,7 +9287,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "9bc429f1df7b8530bd4155c24648dccc0c8233937661dfef8d8cd0009d13083a"
+      "sha256": "b9d648a5dea85963cc4d1f6c44a9c8de082253ff74b189566c427c8baaa3365c"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
@@ -10087,7 +10087,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passport.test.tsx",
-      "sha256": "3fe228a2cc336ac976bf8549869410534917dcbb6c0b2d3ba55e329378352352"
+      "sha256": "748d05030106c3b03219966e0718a817622b8d2a143e0923a31778ab1b4c87be"
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
@@ -10095,7 +10095,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profileCard.test.tsx",
-      "sha256": "064dbddf1a95f7443c5d9cf71e4aa3a910fdaebdcc7e39b0a5984de9f8e74a7c"
+      "sha256": "516443497824b81d18c953f5b8d2254e8b8a8d4f66ff05d6fe91ba6b50fbb624"
     },
     {
       "path": "library/ui/apps/hud/test/profileStore.test.ts",
