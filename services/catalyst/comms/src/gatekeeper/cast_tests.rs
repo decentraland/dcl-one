@@ -26,6 +26,8 @@ struct LiveKitFixture {
     /// CreateIngress and CreateRoom answer 500 while set.
     fail_ingress: std::sync::atomic::AtomicBool,
     fail_rooms: std::sync::atomic::AtomicBool,
+    /// ListParticipants answers 500 while set.
+    fail_participants: std::sync::atomic::AtomicBool,
     ingresses: AtomicUsize,
     deleted_ingresses: AtomicUsize,
 }
@@ -150,6 +152,7 @@ impl LiveKitFixture {
                 "/twirp/livekit.RoomService/ListParticipants",
                 axum::routing::post(move |Json(body): Json<Value>| {
                     let room = body["room"].as_str().unwrap().to_owned();
+                    let failing = f.fail_participants.load(Ordering::SeqCst);
                     let listed: Vec<Value> = f
                         .participants
                         .lock()
@@ -161,7 +164,12 @@ impl LiveKitFixture {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    async move { Json(json!({ "participants": listed })) }
+                    async move {
+                        if failing {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        }
+                        Ok(Json(json!({ "participants": listed })))
+                    }
                 }),
             )
             .route(
@@ -1556,26 +1564,57 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
         .await;
     assert_eq!(status, StatusCode::OK, "{streamer}");
     let streamer_id = streamer["identity"].as_str().unwrap().to_owned();
-    let stale = format!("stream:{}:{}", scene.place_id, Uuid::new_v4());
-    let bot = format!("presentation-bot:{}:{}", scene.room, Uuid::new_v4());
+    // The identity names the credential that minted it.
+    let current: Uuid = sqlx::query_scalar(
+        "SELECT id FROM social.scene_stream_access WHERE streaming_key = $1 AND active",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        streamer_id.starts_with(&format!("stream:{}:{current}:", scene.place_id)),
+        "{streamer_id}"
+    );
+    let (status, bot_body) = h
+        .post("/cast/presentation-bot-token", json!({"streamingKey": key}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{bot_body}");
+    // The bot identity is not returned; mint one as the route does.
+    let bot = format!(
+        "presentation-bot:{}:{current}:{}",
+        scene.room,
+        Uuid::new_v4()
+    );
+    // Minted before identities carried the credential.
+    let untagged = format!("stream:{}:{}", scene.place_id, Uuid::new_v4());
     let visitor = address_of(OUTSIDER_KEY);
+    // A replacement credential: its publishers stay, whenever they joined,
+    // and a token of the old key that connects late still goes.
+    let replacement = Uuid::new_v4();
+    let fresh = format!("stream:{}:{replacement}:{}", scene.place_id, Uuid::new_v4());
+    let pending = format!("stream:{}:{replacement}:{}", scene.place_id, Uuid::new_v4());
     let early = chrono::Utc::now().timestamp() - 3600;
-    for id in [streamer_id.as_str(), bot.as_str(), visitor.as_str()] {
-        h.livekit.join(&scene.room, id, early);
+    let late = chrono::Utc::now().timestamp() + 3600;
+    for (id, at) in [
+        (fresh.as_str(), early),
+        (streamer_id.as_str(), late),
+        (bot.as_str(), late),
+        (untagged.as_str(), early),
+        (visitor.as_str(), early),
+    ] {
+        h.livekit.join(&scene.room, id, at);
     }
     let mut meta = h.livekit.metadata(&scene.room);
-    meta["presenters"] = json!([streamer_id, stale, visitor]);
+    // `pending` holds a token of the replacement and has not connected yet.
+    meta["presenters"] = json!([streamer_id, untagged, visitor, pending]);
     h.livekit.set_metadata(&scene.room, meta);
 
-    // A replacement credential created now: its publishers join after it.
-    let now = chrono::Utc::now().timestamp();
-    let fresh = format!("stream:{}:{}", scene.place_id, Uuid::new_v4());
-    h.livekit.join(&scene.room, &fresh, now + 60);
     crate::gatekeeper::streaming::cast::evict_revoked_publishers(
         &h.state,
         &scene.place_id,
         &scene.room,
-        Some(now),
+        Some(replacement),
     )
     .await
     .unwrap();
@@ -1586,7 +1625,27 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
     assert_eq!(connected, expected);
     assert_eq!(
         h.livekit.metadata(&scene.room)["presenters"],
-        json!([visitor])
+        json!([visitor, pending])
+    );
+
+    // While the key is active, its publisher joins; once revoked, a late
+    // join with its still-valid token is removed by the join guard.
+    h.livekit.join(&scene.room, &streamer_id, late);
+    assert!(
+        !crate::gatekeeper::streaming::cast::refuse_revoked_publisher(
+            &h.state,
+            &scene.room,
+            &streamer_id
+        )
+        .await
+        .unwrap()
+    );
+    assert!(h.livekit.connected(&scene.room).contains(&streamer_id));
+    assert!(
+        crate::gatekeeper::streaming::cast::refuse_revoked_publisher(&h.state, &scene.room, &fresh)
+            .await
+            .unwrap(),
+        "a publisher of a credential that is not the room's active one"
     );
 
     // Revoked through the route, with no successor: the durable cleanup
@@ -1604,6 +1663,98 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// A room-service failure while evicting the WebRTC publishers never holds
+/// back the RTMP revocation: the ingress is deleted first, the route answers
+/// once the revocation is stored, and the eviction is retried on its own.
+#[tokio::test]
+async fn an_eviction_failure_still_revokes_the_ingress() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, link) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{link}");
+    let key = link["streamingKey"].as_str().unwrap().to_owned();
+    let (status, streamer) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{streamer}");
+    let streamer_id = streamer["identity"].as_str().unwrap().to_owned();
+    h.livekit
+        .join(&scene.room, &streamer_id, chrono::Utc::now().timestamp());
+
+    h.livekit.fail_participants.store(true, Ordering::SeqCst);
+    let (status, body) = h
+        .signed(KEY, "DELETE", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    let ingress_deleted: bool = sqlx::query_scalar(
+        "SELECT ingress_deleted FROM social.scene_stream_cleanup WHERE place_id = $1",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        ingress_deleted,
+        "the eviction is retried apart from the ingress"
+    );
+    assert_eq!(h.livekit.connected(&scene.room), vec![streamer_id.clone()]);
+
+    // The room service back: the retry evicts and skips the deleted ingress.
+    h.livekit.fail_participants.store(false, Ordering::SeqCst);
+    sqlx::query("UPDATE social.scene_stream_cleanup SET due_at = timezone('UTC', now()) WHERE place_id = $1")
+        .bind(&scene.place_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state)
+        .await
+        .unwrap();
+    assert!(h.livekit.connected(&scene.room).is_empty());
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+}
+
+/// An expired credential the expiry job has not deactivated yet does not
+/// make a room count as casting.
+#[tokio::test]
+async fn an_expired_credential_does_not_promote_admins_on_join() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = timezone('UTC', now()) - interval '1 minute' WHERE place_id = $1 AND active")
+        .bind(&scene.place_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let admin = Address::parse(&address_of(KEY)).unwrap();
+    let promoted = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join(
+        &h.state,
+        &scene.room,
+        &admin,
+    )
+    .await
+    .unwrap();
+    assert!(!promoted);
 }
 
 /// Upstream mints the replacement's ingress before revoking the old one: a

@@ -225,6 +225,21 @@ async fn enqueue_prepared(
     Ok(changed.is_some())
 }
 
+/// A Reset intent whose replacement credential was never stored delivers as
+/// a revocation: the old key is gone and nothing replaced it. The prepared
+/// recipient and metadata were for the reset, so they are resolved again.
+pub(super) async fn downgrade_reset_to_revoke(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE social.scene_stream_cleanup SET notification_kind = 'streaming_key_revoke', \
+         recipient = NULL, metadata = NULL \
+         WHERE access_id = $1 AND notification_kind = 'streaming_key_reset'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn expire_streams(state: &CommsState) -> Result<(), ApiError> {
     expire(state, Expiry::Duration).await
 }
@@ -327,7 +342,7 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
 
 /// The Cast publishers the cleaned-up credential admitted leave its room
 /// (`cast::evict_revoked_publishers`); a credential that replaced it in the
-/// same place keeps the publishers that joined after it was created.
+/// same place and room keeps its own publishers.
 async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
     let room: Option<String> =
         sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
@@ -338,8 +353,8 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     let Some(room) = room.filter(|r| !r.is_empty()) else {
         return Ok(());
     };
-    let successor: Option<NaiveDateTime> = sqlx::query_scalar(
-        "SELECT created_at FROM social.scene_stream_access \
+    let successor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM social.scene_stream_access \
          WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(&row.place_id)
@@ -347,12 +362,15 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     .bind(&room)
     .fetch_optional(&state.pool)
     .await?;
-    let cutoff = successor.map(|t| t.and_utc().timestamp());
-    super::cast::evict_revoked_publishers(state, &row.place_id, &room, cutoff).await
+    super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
 }
 
+/// Revokes first: the RTMP ingress is deleted (and `ingress_deleted`
+/// recorded) before anything else, so a room-service failure while evicting
+/// the WebRTC publishers never leaves the revoked key accepting RTMP. Eviction
+/// and the notification follow; either failing retries the row, which skips
+/// the ingress already deleted.
 async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
-    evict_publishers(state, row).await?;
     if !row.ingress_deleted {
         if let Some(id) = row.ingress_id.as_deref().filter(|id| !id.is_empty()) {
             tokio::time::timeout(Duration::from_secs(5), state.ingress().delete_ingress(id))
@@ -366,6 +384,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Err(ApiError::internal("stream cleanup lease lost"));
         }
     }
+    evict_publishers(state, row).await?;
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
     };

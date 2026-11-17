@@ -18,7 +18,15 @@
 //!   a subscribe-only token.
 //! - `GET /presenters`, `PUT|DELETE /presenters/{identity}` (signed as
 //!   scene): owner or admin of the place the room's stream credential is
-//!   stored for.
+//!   stored for. As upstream, a demotion does not stick for a scene admin:
+//!   the next join of that admin adds them back.
+//!
+//! Publisher identities name the credential that minted them
+//! (`stream:<place>:<access id>:<uuid>`, `presentation-bot:<room>:<access
+//! id>:<uuid>`; upstream has `stream:<place>:<uuid>`). Revoking or replacing a
+//! credential removes its publishers and their presenter entries, and the
+//! `participant_joined` webhook removes one that connects later with a token
+//! still inside its five-minute lifetime.
 //!
 //! Errors answer upstream's `{"error": msg}` with its statuses; a signature
 //! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
@@ -98,6 +106,7 @@ fn require_livekit(state: &CommsState) -> Result<(), ApiError> {
 /// A stream credential as the cast routes read it.
 #[derive(sqlx::FromRow)]
 struct KeyedAccess {
+    id: Uuid,
     place_id: String,
     room_id: Option<String>,
     created_at: NaiveDateTime,
@@ -119,7 +128,7 @@ fn now_ms() -> i64 {
 /// The active credential holding `key` (`scene_stream_access_active_key_idx`).
 async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+        "SELECT id, place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
          WHERE streaming_key = $1 AND active ORDER BY created_at DESC LIMIT 1",
     )
     .bind(key)
@@ -127,11 +136,15 @@ async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, 
     .await
 }
 
-/// The active credential streaming into `room` (`scene_stream_access_active_room_idx`).
+/// The active, unexpired credential streaming into `room`
+/// (`scene_stream_access_active_room_idx`). An expired row the expiry job has
+/// not deactivated yet counts as none.
 async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
-         WHERE room_id = $1 AND active ORDER BY created_at DESC LIMIT 1",
+        "SELECT id, place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+         WHERE room_id = $1 AND active \
+         AND COALESCE(expiration_time, created_at + interval '4 days') > timezone('UTC', now()) \
+         ORDER BY created_at DESC LIMIT 1",
     )
     .bind(room)
     .fetch_optional(pool)
@@ -140,8 +153,9 @@ async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>
 
 /// A key's credential for the publishing tokens: unknown 401, expired 401,
 /// without a room 401 (upstream's `validateStreamerToken` and
-/// `generatePresentationBotToken`). Returns the place and the room.
-async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String), ApiError> {
+/// `generatePresentationBotToken`). Returns the place, the room and the
+/// credential's id, which the publisher identities carry.
+async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String, Uuid), ApiError> {
     let access = access_by_key(pool, key)
         .await?
         .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
@@ -151,7 +165,64 @@ async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String),
     let room = access
         .room_id
         .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
-    Ok((access.place_id, room))
+    Ok((access.place_id, room, access.id))
+}
+
+/// A publisher identity minted for credential `access_id`:
+/// `stream:<place>:<access id>:<uuid>`, `presentation-bot:<room>:<access id>:<uuid>`.
+/// The credential id is what lets a revocation tell a revoked key's
+/// publishers from the replacement's, whenever they connect.
+fn publisher_identity(kind: &str, scope: &str, access_id: Uuid) -> String {
+    format!("{kind}:{scope}:{access_id}:{}", Uuid::new_v4())
+}
+
+/// What a participant identity says about the credential that admitted it.
+#[derive(Debug, PartialEq, Eq)]
+enum Publisher {
+    /// Not a Cast publisher of this place and room.
+    Other,
+    /// A publisher minted before identities carried the credential id.
+    Untagged,
+    /// A publisher minted for this credential.
+    Tagged(Uuid),
+}
+
+/// Classifies `identity` against the streamer prefix of `place_id` and the
+/// bot prefix of `room`.
+fn classify_publisher(identity: &str, place_id: &str, room: &str) -> Publisher {
+    let rest = identity
+        .strip_prefix("stream:")
+        .and_then(|r| r.strip_prefix(place_id))
+        .or_else(|| {
+            identity
+                .strip_prefix("presentation-bot:")
+                .and_then(|r| r.strip_prefix(room))
+        })
+        .and_then(|r| r.strip_prefix(':'));
+    let Some(rest) = rest else {
+        return Publisher::Other;
+    };
+    match rest.split_once(':') {
+        Some((access, tail)) => match (Uuid::parse_str(access), Uuid::parse_str(tail)) {
+            (Ok(access), Ok(_)) => Publisher::Tagged(access),
+            _ => Publisher::Other,
+        },
+        None if Uuid::parse_str(rest).is_ok() => Publisher::Untagged,
+        None => Publisher::Other,
+    }
+}
+
+/// The credential a publisher identity names, wherever it joins:
+/// `stream:<place>:<access>:<uuid>` or `presentation-bot:<room>:<access>:<uuid>`.
+/// `None` for any other identity, untagged ones included.
+fn tagged_access(identity: &str) -> Option<Uuid> {
+    if !(identity.starts_with("stream:") || identity.starts_with("presentation-bot:")) {
+        return None;
+    }
+    let (head, uuid) = identity.rsplit_once(':')?;
+    let (_, access) = head.rsplit_once(':')?;
+    Uuid::parse_str(uuid).ok()?;
+    Uuid::parse_str(access).ok()
 }
 
 // ── places ──
@@ -668,11 +739,12 @@ pub async fn streamer_token(
     };
     let key = text(&body, "token").unwrap_or_default();
     let display_name = text(&body, "identity").unwrap_or_default();
-    let (place_id, room) = publishing_access(&state.pool, key).await?;
+    let (place_id, room, access_id) = publishing_access(&state.pool, key).await?;
     // The streamer is registered as a presenter in the room's metadata.
     require_livekit(&state)?;
-    // A unique LiveKit identity; the display name rides in the metadata.
-    let identity = format!("stream:{place_id}:{}", Uuid::new_v4());
+    // A unique LiveKit identity naming the credential; the display name rides
+    // in the metadata.
+    let identity = publisher_identity("stream", &place_id, access_id);
     let token = mint(
         &state,
         Grant {
@@ -837,8 +909,8 @@ pub async fn presentation_bot_token(
         Err(refusal) => return Ok(refusal),
     };
     let key = text(&body, "streamingKey").unwrap_or_default();
-    let (_place_id, room) = publishing_access(&state.pool, key).await?;
-    let identity = format!("presentation-bot:{room}:{}", Uuid::new_v4());
+    let (_place_id, room, access_id) = publishing_access(&state.pool, key).await?;
+    let identity = publisher_identity("presentation-bot", &room, access_id);
     let token = mint(
         &state,
         Grant {
@@ -867,49 +939,41 @@ pub async fn presentation_bot_token(
 
 /// The Cast publishers a revoked or replaced credential admitted, removed
 /// from the room and from its `presenters`. The streaming key mints WebRTC
-/// publishers (`stream:<place>:<uuid>`, `presentation-bot:<room>:<uuid>`),
-/// which deleting the RTMP ingress does not stop. A replacement keeps the
-/// publishers that joined after the new credential was created (`cutoff`,
-/// unix seconds): those hold the new key. `presenters` also drops this
-/// place's streamer ids that are no longer connected, so reconnects do not
-/// grow it without bound. Idempotent; the durable cleanup retries it.
+/// publishers, which deleting the RTMP ingress does not stop. Each publisher
+/// identity names the credential that minted it (`publisher_identity`), so
+/// only `keep`'s publishers stay (the credential that replaced the revoked
+/// one in this room, if any), however late they connect. Untagged
+/// publishers, minted before identities carried the credential, always go.
+/// Idempotent; the durable cleanup retries it, and `refuse_revoked_publisher`
+/// removes a revoked publisher that connects later.
 pub(crate) async fn evict_revoked_publishers(
     state: &CommsState,
     place_id: &str,
     room: &str,
-    cutoff: Option<i64>,
+    keep: Option<Uuid>,
 ) -> Result<(), ApiError> {
     if !state.livekit.configured {
         return Ok(());
     }
     let rooms = state.room_service();
-    let streamer = format!("stream:{place_id}:");
-    let bot = format!("presentation-bot:{room}:");
+    let revoked = |identity: &str| match classify_publisher(identity, place_id, room) {
+        Publisher::Other => false,
+        Publisher::Untagged => true,
+        Publisher::Tagged(access) => Some(access) != keep,
+    };
     let participants = match rooms.list_participants(room).await {
         Ok(participants) => participants,
         Err(crate::shared::livekit::RoomServiceError::NotFound) => Vec::new(),
         Err(e) => return Err(ApiError::internal(format!("cast eviction: {e}"))),
     };
-    let mut connected = std::collections::BTreeSet::new();
-    for p in participants {
-        if !(p.identity.starts_with(&streamer) || p.identity.starts_with(&bot)) {
-            continue;
-        }
-        let revoked = match (cutoff, p.joined_at) {
-            (Some(cutoff), Some(joined)) => joined < cutoff,
-            _ => true,
-        };
-        if revoked {
-            rooms
-                .remove_participant(room, &p.identity)
-                .await
-                .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
-            tracing::info!(room, identity = %p.identity, "cast publisher of a revoked credential removed");
-        } else {
-            connected.insert(p.identity);
-        }
+    for p in participants.iter().filter(|p| revoked(&p.identity)) {
+        rooms
+            .remove_participant(room, &p.identity)
+            .await
+            .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
+        tracing::info!(room, identity = %p.identity, "cast publisher of a revoked credential removed");
     }
-    let presenters = match rooms.get_room_info(room).await {
+    let presenters: Vec<String> = match rooms.get_room_info(room).await {
         Ok(Some(info)) => {
             let metadata = crate::shared::livekit::parse_room_metadata(
                 info.get("metadata").and_then(|m| m.as_str()),
@@ -927,15 +991,53 @@ pub(crate) async fn evict_revoked_publishers(
         Ok(None) | Err(crate::shared::livekit::RoomServiceError::NotFound) => Vec::new(),
         Err(e) => return Err(ApiError::internal(format!("cast eviction: {e}"))),
     };
-    for id in presenters {
-        if (id.starts_with(&streamer) || id.starts_with(&bot)) && !connected.contains(&id) {
-            rooms
-                .remove_from_room_metadata_array(room, PRESENTERS_FIELD, &id)
-                .await
-                .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
-        }
+    for id in presenters.iter().filter(|id| revoked(id)) {
+        rooms
+            .remove_from_room_metadata_array(room, PRESENTERS_FIELD, id)
+            .await
+            .map_err(|e| ApiError::internal(format!("cast eviction: {e}")))?;
     }
     Ok(())
+}
+
+/// The `participant_joined` guard: a Cast publisher whose credential is no
+/// longer the active one for `room` is removed as it connects. A publisher
+/// token lives five minutes and LiveKit honours it until then, so a revoked
+/// key's holder could otherwise join after the revocation's eviction pass.
+/// Untagged publishers (minted before identities carried the credential) are
+/// removed when the room has no active credential. Returns whether it removed
+/// the participant.
+pub async fn refuse_revoked_publisher(
+    state: &CommsState,
+    room: &str,
+    identity: &str,
+) -> Result<bool, ApiError> {
+    if !state.livekit.configured
+        || !(identity.starts_with("stream:") || identity.starts_with("presentation-bot:"))
+    {
+        return Ok(false);
+    }
+    let active = access_by_room(&state.pool, room).await?;
+    let allowed = match (tagged_access(identity), &active) {
+        (Some(access), Some(active)) => access == active.id,
+        (Some(_), None) => false,
+        // Untagged: kept while the room still streams, as before tagging.
+        (None, active) => active.is_some(),
+    };
+    if allowed {
+        return Ok(false);
+    }
+    state
+        .room_service()
+        .remove_participant(room, identity)
+        .await
+        .map_err(|e| ApiError::internal(format!("cast join guard: {e}")))?;
+    tracing::info!(
+        room,
+        identity,
+        "cast publisher of a revoked credential refused on join"
+    );
+    Ok(true)
 }
 
 // ── scene admins on join ──
@@ -965,6 +1067,84 @@ pub async fn add_admin_presenter_on_join(
         }
         PermissionDecision::Refused(_) => Ok(false),
     }
+}
+
+/// At most this many admin lookups run at once; a join past it skips the
+/// lookup (a missed promotion, never a refused join).
+const ADMIN_LOOKUP_PERMITS: usize = 8;
+/// One admin lookup's bound: the DB reads plus the LAND or world owner lookup.
+const ADMIN_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A (room, wallet) looked at recently is not looked at again for this long.
+const ADMIN_LOOKUP_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+/// The recent-lookup memory is cleared past this many entries.
+const ADMIN_LOOKUP_MEMORY: usize = 4096;
+
+fn admin_lookup_permits() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
+    static PERMITS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    PERMITS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(ADMIN_LOOKUP_PERMITS)))
+}
+
+/// Whether (room, wallet) was looked at within `ADMIN_LOOKUP_TTL`; records it
+/// when not.
+fn admin_lookup_recent(room: &str, identity: &Address) -> bool {
+    static RECENT: std::sync::OnceLock<
+        parking_lot::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
+    > = std::sync::OnceLock::new();
+    let mut recent = RECENT.get_or_init(Default::default).lock();
+    let now = std::time::Instant::now();
+    let key = (room.to_owned(), identity.as_str().to_owned());
+    if recent
+        .get(&key)
+        .is_some_and(|at| now.duration_since(*at) < ADMIN_LOOKUP_TTL)
+    {
+        return true;
+    }
+    if recent.len() >= ADMIN_LOOKUP_MEMORY {
+        recent.retain(|_, at| now.duration_since(*at) < ADMIN_LOOKUP_TTL);
+        if recent.len() >= ADMIN_LOOKUP_MEMORY {
+            recent.clear();
+        }
+    }
+    recent.insert(key, now);
+    false
+}
+
+/// Runs `add_admin_presenter_on_join` off the join's response, bounded: a
+/// (room, wallet) seen in the last minute is skipped, at most
+/// `ADMIN_LOOKUP_PERMITS` run at once (a join past them skips the lookup)
+/// and each is cut at `ADMIN_LOOKUP_TIMEOUT`. Throwaway wallets joining a
+/// live cast cannot pile up lookups this way.
+pub fn spawn_admin_presenter_on_join(state: SharedState, room: String, identity: Address) {
+    if !state.livekit.configured || admin_lookup_recent(&room, &identity) {
+        return;
+    }
+    let Ok(permit) = admin_lookup_permits().clone().try_acquire_owned() else {
+        tracing::debug!(
+            room,
+            "cast: admin presenter lookup skipped, all permits in use"
+        );
+        return;
+    };
+    tokio::spawn(async move {
+        let _permit = permit;
+        match tokio::time::timeout(
+            ADMIN_LOOKUP_TIMEOUT,
+            add_admin_presenter_on_join(&state, &room, &identity),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    room,
+                    ?error,
+                    "cast: adding a scene admin as presenter failed"
+                )
+            }
+            Err(_) => tracing::warn!(room, "cast: admin presenter lookup timed out"),
+        }
+    });
 }
 
 // ── /cast/presenters ──

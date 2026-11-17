@@ -45,6 +45,12 @@ mod jobs;
 pub(super) mod cast;
 pub(super) use jobs::spawn_jobs;
 
+/// The durable cleanup's drain, for tests that retry it after a failure.
+#[cfg(test)]
+pub(crate) async fn drain_cleanup_for_test(state: &CommsState) -> Result<(), ApiError> {
+    jobs::drain_cleanup(state).await
+}
+
 pub const PATH: &str = "/scene-stream-access";
 pub const FOUR_DAYS_MS: i64 = 4 * 24 * 60 * 60 * 1000;
 pub const STREAM_ACCESS_NOT_FOUND_MSG: &str = "No active streaming access found for place";
@@ -222,8 +228,9 @@ async fn issue_access(
                     return Err(concurrent_change());
                 }
                 let response =
-                    store_access(&state.pool, ingress, place_id, room, signer, info).await?;
-                jobs::cleanup_access(state, existing.id).await?;
+                    store_replacement(state, ingress, place_id, room, signer, info, existing.id)
+                        .await?;
+                settle_cleanup(state, existing.id, place_id).await;
                 return Ok(response);
             }
         }
@@ -329,6 +336,41 @@ async fn mint_ingress(
         ));
     }
     Ok(info)
+}
+
+/// Stores the credential that replaces `replaced`, whose cleanup intent is
+/// already committed (`jobs::enqueue` deactivated it). When the store fails,
+/// the new ingress is deleted, and a pending Reset intent becomes a Revoke:
+/// no replacement will exist, so the reset's "awaiting replacement" retry
+/// would otherwise never end.
+async fn store_replacement(
+    state: &CommsState,
+    ingress: &IngressClient<'_>,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+    info: crate::shared::livekit::IngressInfo,
+    replaced: Uuid,
+) -> Result<SceneStreamAccessResponse, ApiError> {
+    let minted = info.clone();
+    match store_access(&state.pool, ingress, place_id, room, signer, info).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            discard_ingress(ingress, &minted, place_id).await;
+            if let Err(e) = jobs::downgrade_reset_to_revoke(&state.pool, replaced).await {
+                tracing::warn!(place_id, access_id = %replaced, error = %e, "reset intent left awaiting a replacement");
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Runs the committed cleanup now. Its failure is logged, not answered: the
+/// swap or revocation is already stored, and the durable job retries it.
+async fn settle_cleanup(state: &CommsState, id: Uuid, place_id: &str) {
+    if let Err(error) = jobs::cleanup_access(state, id).await {
+        tracing::warn!(place_id, access_id = %id, error = %error, "stream cleanup deferred to the job");
+    }
 }
 
 /// Deletes an ingress minted for a credential that was not stored.
@@ -449,8 +491,9 @@ async fn reset_access(
         }
         // The durable intent owns the old ingress's deletion and the reset notification,
         // delivered only once the replacement credential exists; it also covers a crash here.
-        let response = store_access(&state.pool, ingress, place_id, room, signer, info).await?;
-        jobs::cleanup_access(state, row.id).await?;
+        let response =
+            store_replacement(state, ingress, place_id, room, signer, info, row.id).await?;
+        settle_cleanup(state, row.id, place_id).await;
         Ok(response)
     }
     .await;
@@ -471,7 +514,7 @@ async fn remove_access(
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
         return Err(concurrent_change());
     }
-    jobs::cleanup_access(state, row.id).await?;
+    settle_cleanup(state, row.id, place_id).await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
