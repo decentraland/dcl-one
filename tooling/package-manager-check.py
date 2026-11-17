@@ -26,11 +26,11 @@ PNPM_SHA512 = ('66fd8278ee28935ce951792d34367ff3af5c432a2756445823029533835b8da5
 PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
 # Copies of projects the service test installs with the pnpm its machine carries.
 UNPINNED = ('infra/dev/service-test/fixture/',)
-# A job may fetch a newer npm to publish; that npm is checked like any other.
-NPX_NPM = re.compile(r'\bnpx\s+--yes\s+npm@\S+')
-# npm commands that install or run a project, after any global flags; publishing and registry queries stay on npm.
+# npm commands after any global flags, npx and yarn; installs, runs, packs, publishes and registry queries all use pnpm.
 NPM_USE = re.compile(r'\bnpm(?:\s+-{1,2}[\w-]+(?:[= ][^\s-]\S*)?)*\s+(?:ci|install|i|add|uninstall|remove|update|up|dedupe'
-                     r'|prune|run|run-script|test|t|start|stop|restart|exec|x|rebuild|link|init|create)(?![\w-])'
+                     r'|prune|run|run-script|test|t|start|stop|restart|exec|x|rebuild|link|init|create'
+                     r'|pack|publish|unpublish|deprecate|version|view|info|show|v|dist-tag|dist-tags|whoami|access|owner'
+                     r'|login|adduser|logout|token|config|set|get|pkg|search|ls|list|outdated|audit|cache|ping|query)(?![\w-])'
                      r'|\bnpx\b|(?:^|[\s;&|(])(?:yarn|yarnpkg)(?=\s|$)')
 
 
@@ -73,8 +73,8 @@ def offenders(root):
             for number, line in enumerate((root / rel).read_text(encoding='utf-8', errors='replace').splitlines(), 1):
                 if line.lstrip().startswith('#'):
                     continue
-                if NPM_USE.search(NPX_NPM.sub('npm', line)):
-                    found.append(f'{rel}:{number}: installs or runs with npm or yarn; use pnpm')
+                if NPM_USE.search(line):
+                    found.append(f'{rel}:{number}: runs npm or yarn; use pnpm')
                 for version in PNPM_NAMED.findall(line):
                     if version != PNPM_VERSION:
                         found.append(f'{rel}:{number}: fetches pnpm {version}; the projects pin {PNPM_VERSION}')

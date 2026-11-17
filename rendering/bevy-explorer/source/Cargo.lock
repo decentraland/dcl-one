@@ -7339,6 +7339,7 @@ dependencies = [
  "reqwest",
  "ruzstd 0.9.1",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "tokio",
  "url",

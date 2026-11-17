@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::*;
 use crate::access::Ban;
 use crate::gatekeeper::moderation::test_support::StubBanStatus;
-use crate::gatekeeper::streaming::cast::{build_stream_links, is_valid_presenter_identity};
+use crate::gatekeeper::streaming::cast::{
+    build_stream_links, is_valid_presenter_identity, watcher_wallet,
+};
 use crate::rooms::{ActiveDeployment, ResolvedRoom};
 use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 
@@ -362,6 +364,16 @@ async fn seed_genesis_place(pool: &PgPool, scene: &Scene, title: Option<&str>) {
         .unwrap();
 }
 
+/// A world the worlds store knows, as one a Cast runs in is: its access
+/// edits stamp the authorization proofs world tokens carry.
+async fn seed_world(pool: &PgPool, world: &WorldName) {
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(world.key())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// A stream credential row as a stream link stores it.
 async fn seed_access(
     pool: &PgPool,
@@ -424,6 +436,22 @@ fn stream_links_name_the_cast_app_with_upstreams_default() {
             "https://cast.example/w/foo.dcl.eth".to_owned()
         )
     );
+}
+
+#[test]
+fn a_watchers_wallet_comes_from_its_signed_attribute() {
+    let wallet = address_of(KEY);
+    let attributes: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), wallet.clone())].into();
+    assert_eq!(
+        watcher_wallet("watch:scene:main:x:1", &attributes).map(|a| a.as_str().to_owned()),
+        Some(wallet)
+    );
+    // Only for a watcher's identity, and only a wallet.
+    assert_eq!(watcher_wallet("stream:p:1", &attributes), None);
+    let junk: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), "Moderator".to_owned())].into();
+    assert_eq!(watcher_wallet("watch:scene:main:x:1", &junk), None);
 }
 
 #[test]
@@ -826,6 +854,7 @@ async fn a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires() {
 async fn a_world_scene_admin_gets_a_link_watchers_open_by_world_name() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castworld{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let scene_id = format!("bafkreiworld{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
     let place_id = format!("cast-world-{}", tag());
@@ -878,6 +907,25 @@ async fn a_world_scene_admin_gets_a_link_watchers_open_by_world_name() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["roomId"], room.room);
+    // The world authorization proof a scene join carries, for this watcher and
+    // room: the world access sweep keeps it past any earlier access edit.
+    let claims = claims(&body["token"]);
+    let proof = claims["attributes"]["dcl.worldAuthorization"]
+        .as_str()
+        .expect("a world watcher's token carries the authorization proof");
+    let authorized_after = |cutoff: chrono::NaiveDateTime| {
+        crate::gatekeeper::admission::world_mint::authorized_after(
+            &h.state.livekit.api_secret,
+            &world,
+            body["identity"].as_str().unwrap(),
+            &room.room,
+            Some(proof),
+            cutoff,
+        )
+    };
+    let now = chrono::Utc::now().naive_utc();
+    assert!(authorized_after(now - chrono::Duration::hours(1)));
+    assert!(!authorized_after(now + chrono::Duration::hours(1)));
 }
 
 #[tokio::test]
@@ -1059,6 +1107,7 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, Some("Cast Plaza")).await;
     let world = WorldName::parse(&format!("cast{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let world_scene = format!("bafkreiworld{}", tag());
     let world_room = resolved_room(RealmId::World(world.clone()), &world_scene, "0,0");
     let world_place = format!("cast-world-{}", tag());
@@ -1120,6 +1169,8 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     let claims = claims(&body["token"]);
     assert_eq!(claims["sub"], identity);
     assert_eq!(claims["name"], "Viewer #1");
+    // The viewer's wallet rides in a signed attribute, for the ban sweeps.
+    assert_eq!(claims["attributes"]["dcl.castWatcher"], address_of(&key));
     assert_eq!(
         claims["metadata"],
         // JSON.stringify's insertion order.
@@ -1463,6 +1514,7 @@ async fn scene_admins_list_promote_and_demote_presenters() {
 async fn a_private_worlds_cast_refuses_watchers_the_world_does_not_admit() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castprivate{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let scene_id = format!("bafkreiprivate{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "1,1");
     let place_id = format!("cast-private-{}", tag());

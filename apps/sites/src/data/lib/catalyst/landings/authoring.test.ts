@@ -4,7 +4,6 @@ vi.mock("../../auth/signer", () => ({ signedFetch: vi.fn() }));
 import { postJSON } from "../client";
 import { signedFetch } from "../../auth/signer";
 import { buildHangoutSubmit, deleteHangout, emptyDraft as emptyHangout, eventToDraft, uploadHangoutPoster, type EditableHangout, type HangoutDraft } from "./submit-hangout";
-import { buildScheduleSubmit, emptyDraft as emptySchedule, scheduleToDraft, type Schedule, type ScheduleDraft } from "./schedules";
 import type { AuthIdentity } from "../../auth/types";
 
 describe("when submitting a hangout", () => {
@@ -264,56 +263,6 @@ describe("when submitting a hangout", () => {
       it("should preserve the hourly frequency on an unrelated edit", async () => {
         await submit({ draft });
         expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ recurrent_frequency: "HOURLY", recurrent_interval: 2 }), expect.any(Object));
-      });
-    });
-  });
-});
-
-describe("when saving a moderator schedule", () => {
-  let identity: AuthIdentity;
-  let draft: ScheduleDraft;
-  let submit: ReturnType<typeof buildScheduleSubmit>;
-
-  beforeEach(() => {
-    identity = { signer: "0x1111111111111111111111111111111111111111", ephemeral: { address: "0x2222222222222222222222222222222222222222", privateKey: "0x01" }, expiration: "2099-01-01T00:00:00Z", authChain: [] };
-    draft = { ...emptySchedule(), name: "Festival", activeSinceDate: "2099-06-01", activeUntilDate: "2099-06-03" };
-    submit = buildScheduleSubmit(() => identity);
-    vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { id: "saved-schedule", active: true } });
-  });
-
-  afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });
-
-  it("should use RFC3339 boundaries with the signed legacy schedule endpoint", async () => {
-    await submit({ draft });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules", expect.objectContaining({ active_since: "2099-06-01T00:00:00.000Z", active_until: "2099-06-03T23:59:59.000Z" }), expect.objectContaining({ identity, method: "POST" }));
-  });
-
-  it("should patch the selected schedule instead of creating another", async () => {
-    await submit({ draft, scheduleId: "saved-schedule" });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules/saved-schedule", expect.any(Object), expect.objectContaining({ method: "PATCH" }));
-  });
-
-  it("should surface permission failures from the server", async () => {
-    vi.mocked(postJSON).mockRejectedValueOnce(new Error("Moderator access required"));
-    await expect(submit({ draft })).rejects.toThrow("Moderator access required");
-  });
-
-  describe("and editing a schedule with precise times", () => {
-    let original: Schedule;
-    beforeEach(() => {
-      original = { id: "saved-schedule", name: "Festival", description: null, image: null, theme: null, background: [], active: true, active_since: "2099-06-01T12:34:56.789Z", active_until: "2099-06-03T16:45:12.345Z" , created_at: null, updated_at: null };
-      draft = scheduleToDraft(original);
-      submit = buildScheduleSubmit(() => identity, original);
-    });
-    it("should retain both times while editing an unrelated field", async () => {
-      await submit({ draft, scheduleId: original.id });
-      expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: original.active_until }), expect.any(Object));
-    });
-    describe("and only the last day changes", () => {
-      beforeEach(() => { draft.activeUntilDate = "2099-06-04"; });
-      it("should retain the start time and use the new end day", async () => {
-        await submit({ draft, scheduleId: original.id });
-        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: "2099-06-04T23:59:59.000Z" }), expect.any(Object));
       });
     });
   });

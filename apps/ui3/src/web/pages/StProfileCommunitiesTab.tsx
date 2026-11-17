@@ -85,7 +85,7 @@ function CommunityCard({ community, isOwnProfile, onOpen }: CommunityCardProps) 
   return (
     <a
       className="spc__card"
-      href={`/landings/community-detail?id=${community.id}`}
+      href={`/communities/${encodeURIComponent(community.id)}`}
       onClick={(e) => {
         e.preventDefault();
         onOpen(community.id);

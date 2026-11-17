@@ -201,6 +201,7 @@ export function fakeSession(): EngineSession {
     turnLobbyAvatar: vi.fn(),
     lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn(() => true) },
     lobbyData: { warm: vi.fn(), communitiesLoaded: true, covered: false },
+    queryGifting: vi.fn(async (q) => ({ kind: 'giftingPage' as const, catalog: q.catalog, items: [], total: 0, equipped: [], failed: false, requestId: 0 })),
     homeScene: () => null,
     avatarPreviewRect: null,
     pickDestination: vi.fn(() => true),

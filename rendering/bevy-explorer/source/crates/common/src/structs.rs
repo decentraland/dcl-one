@@ -66,6 +66,27 @@ impl Default for PrimaryUser {
     }
 }
 
+/// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
+/// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
+/// express the player's speed as a gait.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct LocomotionSpeeds {
+    pub walk: f32,
+    pub jog: f32,
+    pub run: f32,
+}
+
+impl Default for LocomotionSpeeds {
+    fn default() -> Self {
+        let user = PrimaryUser::default();
+        Self {
+            walk: user.walk_speed,
+            jog: user.jog_speed,
+            run: user.run_speed,
+        }
+    }
+}
+
 #[derive(Component, Default, Debug)]
 pub struct PlayerModifiers {
     pub hide: bool,

@@ -1,5 +1,3 @@
-import { fetchEvents, type Event } from "../places/events";
-import { fetchMostActivePlaces } from "../places/index";
 import type { GetOptions } from "../client";
 import {
   joinLiveNow,
@@ -15,24 +13,8 @@ import {
 import { ttlMemo } from "../../ttl-memo";
 import { withDeadline } from "../../request-deadline";
 import { VIBE_CREATORS } from "./vibe-creators";
-import {
-  eventToRitualItem,
-  eventWeekday,
-  parseHomeContent,
-  placeToHotspotItem,
-  withHotspots,
-  withLiveEvents,
-  withRituals,
-  type HomeContent,
-  type HotspotRailItem,
-  type RitualRailItem,
-} from "./home";
+import { parseHomeContent, type HomeContent } from "./home";
 
-const LIVE_RAIL_LIMIT = 3;
-const HOTSPOT_RAIL_LIMIT = 4;
-const RITUAL_RAIL_LIMIT = 5;
-const RITUAL_FETCH_LIMIT = 100;
-const EVENT_LISTS = ["highlight", "trending", "active"] as const;
 
 const HOME_CONTENT: HomeContent = {
   hero: {
@@ -94,18 +76,6 @@ const HOME_TTL_MS = 60_000;
 const HOME_EVENTS_FAILURE_TTL_MS = 5_000;
 
 type HomeData = { content: HomeContent; live: boolean; unreadable: string[] };
-
-const homeMemo = ttlMemo({
-  ttlMs: HOME_TTL_MS,
-  keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
-  keep: (d: HomeData) => d.unreadable.length === 0,
-  load: (opts) => loadHomeRails(opts.fetchImpl || opts.base ? opts : {}),
-});
-
-// The rails are visitor-independent; a fully readable result serves a minute of requests.
-export function loadHome(opts: GetOptions = {}): Promise<HomeData> {
-  return homeMemo(opts);
-}
 
 // The reference home page's "Jump Into What's Happening": the live
 // events, the realm's hot scenes, their places and the creators' profiles, read as /whats-on's Live
@@ -217,91 +187,4 @@ const homeLiveMemo = ttlMemo({
 /** Visitor-independent: one read serves a minute of requests, five seconds after an unreadable one. */
 export function loadHomeLive(opts: GetOptions = {}): Promise<HomeLiveData> {
   return homeLiveMemo(opts);
-}
-
-async function loadHomeRails(opts: GetOptions): Promise<HomeData> {
-  let content = loadHomeContent();
-
-  const [events, hotspots, rituals] = await Promise.all([
-    loadRailEvents(opts),
-    loadHotspots(opts),
-    loadRituals(opts),
-  ]);
-
-  const unreadable: string[] = [];
-  const live = (events?.length ?? 0) > 0;
-  if (events === null) unreadable.push("events");
-  else if (live) content = withLiveEvents(content, events);
-
-  if (hotspots === null) unreadable.push("hotspots");
-  else content = withHotspots(content, hotspots);
-
-  if (rituals === null) unreadable.push("rituals");
-  else content = withRituals(content, rituals);
-
-  if (unreadable.length > 0) {
-    content = {
-      ...content,
-      rails: content.rails.filter((rail) => !unreadable.includes(rail.kind)),
-    };
-  }
-
-  return { content, live, unreadable };
-}
-
-async function loadRailEvents(opts: GetOptions): Promise<Event[] | null> {
-  const results = await Promise.all(
-    EVENT_LISTS.map((list) =>
-      fetchEvents({ list, limit: LIVE_RAIL_LIMIT }, opts)
-        .then((r) => r.data)
-        .catch(() => null),
-    ),
-  );
-  if (results.every((events) => events === null)) return null;
-  return results.find((events) => events !== null && events.length > 0) ?? [];
-}
-
-async function loadHotspots(
-  opts: GetOptions,
-): Promise<HotspotRailItem[] | null> {
-  const places = await fetchMostActivePlaces(
-    { limit: HOTSPOT_RAIL_LIMIT },
-    opts,
-  ).catch(() => null);
-  return places === null ? null : places.map(placeToHotspotItem);
-}
-
-async function loadRituals(opts: GetOptions): Promise<RitualRailItem[] | null> {
-  const events = await fetchEvents({ limit: RITUAL_FETCH_LIMIT }, opts)
-    .then((r) => r.data)
-    .catch(() => null);
-  if (events === null) return null;
-  if (!events.length) return [];
-
-  const picked = events.filter((e) => e.recurrent_frequency === "WEEKLY");
-  if (picked.length < 2) {
-    for (const e of events) {
-      if (picked.length >= RITUAL_RAIL_LIMIT) break;
-      if (e.recurrent && !picked.some((p) => p.id === e.id)) picked.push(e);
-    }
-  }
-  if (picked.length < 2) {
-    for (const e of events) {
-      if (picked.length >= RITUAL_RAIL_LIMIT) break;
-      if (!picked.some((p) => p.id === e.id)) picked.push(e);
-    }
-  }
-
-  return sortByWeekday(picked)
-    .slice(0, RITUAL_RAIL_LIMIT)
-    .map(eventToRitualItem);
-}
-
-function weekdayKey(e: Event): number {
-  const day = eventWeekday(e);
-  return day == null ? 7 : (day + 6) % 7;
-}
-
-function sortByWeekday(events: Event[]): Event[] {
-  return [...events].sort((a, b) => weekdayKey(a) - weekdayKey(b));
 }
