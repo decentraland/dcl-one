@@ -763,6 +763,15 @@ pub struct ChangeRealmEvent {
     pub report: bool,
 }
 
+/// The ids [`change_realm`] issues, and whether a platform ban was known on its last run.
+#[derive(Default)]
+pub struct RealmChangeIds {
+    issued: u64,
+    /// The latest request's id; a stand-down issues an id of its own.
+    latest_request: u64,
+    was_banned: bool,
+}
+
 /// A realm change being attempted, see [`change_realm`].
 pub struct InFlightRealmChange {
     id: u64,
@@ -781,10 +790,7 @@ pub fn change_realm(
     preview_mode: Res<PreviewMode>,
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
-    mut issued: Local<u64>,
-    // the latest request's id; a stand-down issues an id of its own
-    mut latest_request: Local<u64>,
-    mut was_banned: Local<bool>,
+    mut ids: Local<RealmChangeIds>,
     // the latest issued id, watched by the issued changes so the earlier ones stand down
     mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
@@ -797,7 +803,7 @@ pub fn change_realm(
     // Polled before the realm watch: a change's result is sent after its realm config, so a
     // success seen here is applied below in this same run.
     let mut released = false;
-    let latest = *latest_request;
+    let latest = ids.latest_request;
     in_flight.retain_mut(|change| {
         let result = match change.result.poll_once() {
             Ok(None) => return true,
@@ -869,14 +875,14 @@ pub fn change_realm(
     }
 
     let platform_ban = platform_ban.filter(|status| status.ban().is_some());
-    let newly_banned = platform_ban.is_some() && !*was_banned;
-    *was_banned = platform_ban.is_some();
+    let newly_banned = platform_ban.is_some() && !ids.was_banned;
+    ids.was_banned = platform_ban.is_some();
     // a platform ban learnt while changes are in flight stops those still waiting on world access
     if newly_banned && !in_flight.is_empty() {
-        *issued += 1;
+        ids.issued += 1;
         if let Some(latest_issued) = latest_issued.as_ref() {
             latest_issued.send_replace(world_access::Issued {
-                id: *issued,
+                id: ids.issued,
                 refusal: REALM_CHANGE_BANNED,
             });
         }
@@ -905,8 +911,8 @@ pub fn change_realm(
             let content_server_override = request.content_server_override.to_owned();
             let response = request.response.clone();
             let (sx, rx) = RpcResultSender::channel();
-            *issued += 1;
-            *latest_request = *issued;
+            ids.issued += 1;
+            ids.latest_request = ids.issued;
             let latest_issued = latest_issued.get_or_insert_with(|| {
                 tokio::sync::watch::channel(world_access::Issued {
                     id: 0,
@@ -916,7 +922,7 @@ pub fn change_realm(
             });
             // while banned, an earlier change this one supersedes still answers the ban
             latest_issued.send_replace(world_access::Issued {
-                id: *issued,
+                id: ids.issued,
                 refusal: if platform_ban.is_some() {
                     REALM_CHANGE_BANNED
                 } else {
@@ -925,10 +931,10 @@ pub fn change_realm(
             });
             let superseded = world_access::Superseded {
                 latest: latest_issued.subscribe(),
-                id: *issued,
+                id: ids.issued,
             };
             in_flight.push(InFlightRealmChange {
-                id: *issued,
+                id: ids.issued,
                 realm: request.new_realm.clone(),
                 report: request.report,
                 result: rx,
