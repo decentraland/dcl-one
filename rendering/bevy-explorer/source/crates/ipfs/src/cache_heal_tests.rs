@@ -2,11 +2,11 @@ use super::*;
 use crate::{
     content_hash::raw_cid,
     ipfs_path::{IpfsPath, IpfsType},
-    ContentMap, EndpointConfig, IpfsEntity, RealmConfig, ServerAbout,
+    ContentMap, EndpointConfig, IpfsEntity, PassThroughReader, RealmConfig, ServerAbout,
 };
 use bevy::asset::{
-    io::{AssetReaderError, Reader},
-    AssetLoader, LoadContext,
+    io::{AssetReaderError, AssetSource, AssetSourceId, Reader},
+    AssetLoader, LoadContext, UnapprovedPathMode,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -428,6 +428,98 @@ fn a_failed_load_drops_a_bad_url_entry_and_a_reader_error_does_not() {
         .resource::<PendingCacheHeals>()
         .checks
         .is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[derive(Asset, TypePath)]
+struct SettingsTest;
+
+/// Loader settings with a non-default value to look for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Level(u32);
+
+/// Records the bytes and settings of every load; bytes other than `good` fail.
+struct RecordingLoader(Arc<std::sync::Mutex<Vec<(Vec<u8>, Level)>>>);
+
+impl AssetLoader for RecordingLoader {
+    type Asset = SettingsTest;
+    type Settings = Level;
+    type Error = std::io::Error;
+
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        settings: &Self::Settings,
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        self.0.lock().unwrap().push((bytes.clone(), *settings));
+        if bytes == b"good" {
+            Ok(SettingsTest)
+        } else {
+            Err(std::io::Error::other("bad bytes"))
+        }
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["settingstest"]
+    }
+}
+
+#[tokio::test]
+async fn a_healed_asset_loads_again_with_the_settings_it_was_first_loaded_with() {
+    let (io, dir) = io_with_cache("settings");
+    let (base, log) = serve(vec![("/model.settingstest".to_owned(), b"good".to_vec())]).await;
+    scene_with(&io, &base, "unused.png", "bafkreiunused").await;
+    let (path, name) = url_asset(&io, &format!("{base}/model.settingstest"), "settingstest").await;
+    std::fs::write(dir.join(&name), b"bad").unwrap();
+
+    let loads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reader = PassThroughReader { inner: io.clone() };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSource::build().with_reader(move || Box::new(reader.clone())),
+    )
+    .add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            unapproved_path_mode: UnapprovedPathMode::Allow,
+            ..default()
+        },
+    ))
+    .init_asset::<SettingsTest>()
+    .register_asset_loader(RecordingLoader(loads.clone()))
+    .insert_resource(IpfsResource { inner: io.clone() });
+    super::CacheHealPlugin.finish(&mut app);
+
+    // the requester holds its handle, as a scene's glTF container or material does
+    let handle = app
+        .world()
+        .resource::<AssetServer>()
+        .load_with_settings::<SettingsTest, Level>(AssetPath::from(path), |level| {
+            *level = Level(7)
+        });
+    let start = std::time::Instant::now();
+    while app
+        .world()
+        .resource::<Assets<SettingsTest>>()
+        .get(&handle)
+        .is_none()
+        && start.elapsed().as_secs() < 10
+    {
+        app.update();
+        // lets the test server answer
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(
+        *loads.lock().unwrap(),
+        vec![(b"bad".to_vec(), Level(7)), (b"good".to_vec(), Level(7))]
+    );
+    assert_eq!(io.cache_heals.counts(), (1, 1));
+    assert_eq!(*log.lock().unwrap(), vec!["/model.settingstest".to_owned()]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
