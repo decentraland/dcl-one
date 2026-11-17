@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { isDestination, isGenesisParcel, parseGotoTarget, randomParcel, worldName } from '../features/lobby/goto'
 
 describe('lobby go to', () => {
-  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth', 'name.eth', 'mana.dcl.eth/140,0', 'mana.dcl.eth/-150,150'])('accepts %s', (text) => {
+  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth', 'name.eth', 'my-world.eth', 'a-b-c.eth', 'mana.dcl.eth/140,0', 'mana.dcl.eth/-150,150'])('accepts %s', (text) => {
     expect(isDestination(text)).toBe(true)
   })
 
-  it.each(['1000,-500', '3,-5,7', 'your.world.eth', 'my-world.dcl.eth', 'foo bar', 'mana.dcl.eth/', '3,-5/door', 'eax/spawn', 'mana.dcl.eth/3,-5/spawn', 'mana.dcl.eth/200,0', 'mana.dcl.eth/0,-151', '-151,0'])('rejects %s', (text) => {
+  it.each(['1000,-500', '3,-5,7', 'your.world.eth', 'my-world.dcl.eth', '-world.eth', 'world-.eth', 'my-world', 'foo bar', 'mana.dcl.eth/', '3,-5/door', 'eax/spawn', 'mana.dcl.eth/3,-5/spawn', 'mana.dcl.eth/200,0', 'mana.dcl.eth/0,-151', '-151,0'])('rejects %s', (text) => {
     expect(isDestination(text)).toBe(false)
   })
 

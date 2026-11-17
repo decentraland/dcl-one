@@ -1050,6 +1050,11 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
 
+/// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
+/// shadows on or off.
+#[derive(Component)]
+pub struct StageLight;
+
 /// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {

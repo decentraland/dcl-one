@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { getHudScale, installHudScale, subscribeHudScale } from '../lib/hudScale'
 
 const cssScale = (): string => document.documentElement.style.getPropertyValue('--ui-scale')
+const lobbyScale = (): string => document.documentElement.style.getPropertyValue('--lobby-scale')
 
 function resizeTo(height: number, width = height * 3): void {
   Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
@@ -35,6 +36,26 @@ describe('hud scale', () => {
     expect(cssScale()).toBe('1.000')
     resizeTo(1080, 1280) // narrow window
     expect(cssScale()).toBe('0.667')
+  })
+
+  it("gives the lobby the same scale without the floor, so its canvas never drops under 1920x1080", () => {
+    resizeTo(810)
+    expect(lobbyScale()).toBe('0.750')
+    resizeTo(600, 960)
+    expect(cssScale()).toBe('0.600')
+    expect(lobbyScale()).toBe('0.500')
+    resizeTo(2160)
+    expect(lobbyScale()).toBe('1.300')
+  })
+
+  it('wakes subscribers when only the lobby scale changes', () => {
+    resizeTo(500)
+    let woken = 0
+    const off = subscribeHudScale(() => woken++)
+    resizeTo(400) // the HUD stays at its floor; the lobby shrinks
+    off()
+    expect(cssScale()).toBe('0.600')
+    expect(woken).toBe(1)
   })
 
   it('writes --ui-scale before waking subscribers, in the same task', () => {

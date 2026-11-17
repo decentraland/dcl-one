@@ -42,6 +42,7 @@ export type EventsAction =
   | { type: 'attendingDone'; eventId: string; attending: boolean; failed: boolean }
   | { type: 'places'; places: EventPlace[] }
   | { type: 'reset' }
+  | { type: 'resetAll' }
 
 export function eventsReducer(store: EventsStore, action: EventsAction): EventsStore {
   switch (action.type) {
@@ -75,6 +76,8 @@ export function eventsReducer(store: EventsStore, action: EventsAction): EventsS
     }
     case 'reset':
       return keepLobby(store)
+    case 'resetAll':
+      return emptyEventsStore()
   }
 }
 

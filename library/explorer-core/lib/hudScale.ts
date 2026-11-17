@@ -1,4 +1,4 @@
-// The HUD's `--ui-scale`, and a signal for when it changes.
+// The HUD's `--ui-scale` (and the lobby's `--lobby-scale`), and a signal for when either changes.
 //
 // Scales with a 1920x1080 reference canvas by the smaller of the width and height ratios, so the canvas
 // expands along the longer axis. Viewport sizes are logical px, so
@@ -23,14 +23,20 @@ const MIN = 0.6
 const MAX = 1.3
 
 let scale = 0
+let lobbyScale = 0
 const listeners = new Set<() => void>()
 
 function apply(): void {
   const expand = Math.min(window.innerWidth / REFERENCE_WIDTH, window.innerHeight / REFERENCE_HEIGHT)
   const next = Math.min(MAX, Math.max(MIN, expand))
-  if (next === scale) return
+  // The lobby's `--lobby-scale` has no floor: its widget grids are laid out on a canvas of at least
+  // 1920x1080, and a smaller one would overlap them.
+  const nextLobby = Math.min(MAX, expand)
+  if (next === scale && nextLobby === lobbyScale) return
   scale = next
+  lobbyScale = nextLobby
   document.documentElement.style.setProperty('--ui-scale', next.toFixed(3))
+  document.documentElement.style.setProperty('--lobby-scale', nextLobby.toFixed(3))
   listeners.forEach((l) => l())
 }
 

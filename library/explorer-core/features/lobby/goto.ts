@@ -46,8 +46,8 @@ export function parseGotoTarget(text: string): GotoTarget {
 }
 
 export const WORLD_SUFFIX = '.dcl.eth'
-// name.dcl.eth or name.eth, the names worldName keeps
-const WORLD = /^[A-Za-z0-9]+(\.dcl)?\.eth$/
+// name.dcl.eth (a NAME: letters and digits) or an ENS name.eth, the names worldName keeps
+const WORLD = /^(?:[A-Za-z0-9]+\.dcl|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\.eth$/
 const WORLD_SHORT_NAME = /^[A-Za-z0-9]+$/
 
 /** Genesis City's parcels: the square city and its two extensions, as `[minX, minY, maxX, maxY)`. */

@@ -85,32 +85,41 @@ export interface FriendLocation {
 }
 
 const LOCATION_TTL_MS = 60_000
+const LOCATION_CHECK_MS = 15_000
 
-/** Read once per set of online friends; a location over a minute old is read again. */
+/** Read when a friend comes online, and again once a location is over a minute old. */
 export function useFriendLocations(online: Friend[]): Map<string, FriendLocation> {
   const ids = useMemo(() => online.map((f) => f.address.toLowerCase()).sort(), [online])
   const key = ids.join(',')
   const [locations, setLocations] = useState<Map<string, FriendLocation>>(new Map())
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), LOCATION_CHECK_MS)
+    return () => clearInterval(timer)
+  }, [])
   const known = useRef(locations)
   known.current = locations
+  // set when an answer is applied: a dropped answer marks nothing fresh
   const readAt = useRef(new Map<string, number>())
   useEffect(() => {
     const now = Date.now()
     const missing = ids.filter((id) => !known.current.has(id) || now - (readAt.current.get(id) ?? 0) > LOCATION_TTL_MS)
     if (missing.length === 0) return
-    for (const id of missing) readAt.current.set(id, now)
     let live = true
     fetchWhereabouts(missing)
       .then(async (found) => {
         const titled = await Promise.all([...found].map(async ([id, where]) => [id, { where, title: await whereTitle(where) }] as const))
-        if (live) setLocations((prev) => new Map([...prev, ...titled]))
+        if (!live) return
+        const at = Date.now()
+        for (const [id] of titled) readAt.current.set(id, at)
+        setLocations((prev) => new Map([...prev, ...titled]))
       })
       .catch(() => undefined)
     return () => {
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+  }, [key, tick])
   return locations
 }
 

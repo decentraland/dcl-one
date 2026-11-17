@@ -58,6 +58,13 @@ describe('events store', () => {
     expect(store.queries.range.status).toBe('idle')
   })
 
+  it("drops the lobby's list and its reminders on a sign-out", () => {
+    let store = loaded(emptyEventsStore(), 'lobby', [eventAt('lobby', at(0, 18), { place_id: 'p1', attending: true })])
+    store = eventsReducer(store, { type: 'attendingSent', eventId: 'lobby' })
+    store = eventsReducer(store, { type: 'resetAll' })
+    expect(store).toEqual(emptyEventsStore())
+  })
+
   it('keeps showing the lobby list while it reads again and after the read fails', () => {
     let store = loaded(emptyEventsStore(), 'lobby', [eventAt('a', at(0, 18))])
     store = eventsReducer(store, { type: 'loading', query: 'lobby' })

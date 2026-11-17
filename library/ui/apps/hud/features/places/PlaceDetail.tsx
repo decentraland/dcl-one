@@ -146,7 +146,8 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   const confirmed = useRef(votes)
   // The signed read can predate a vote or favourite. Per field: before a write it sets the field;
   // while one is in flight it only sets what a refusal goes back to; after one answered it is stale.
-  const writes = useRef<Record<Field, 'none' | 'sent' | 'answered'>>({ vote: 'none', favorite: 'none' })
+  const writes = useRef<Record<Field, 'none' | 'sent'>>({ vote: 'none', favorite: 'none' })
+  const answered = useRef<Record<Field, boolean>>({ vote: false, favorite: false })
   const [counts, setCounts] = useState<{ likeRate?: number | null; favorites?: number }>({})
   const [busy, setBusy] = useState<{ vote: boolean; favorite: boolean }>({ vote: false, favorite: false })
   const [access, setAccess] = useState<WorldAccess | 'checking'>(world ? 'checking' : 'allowed')
@@ -159,8 +160,8 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
       setSigned(read)
       const fresh = votesOf(read)
       const take = (field: Field, keys: (keyof Votes)[]): void => {
+        if (answered.current[field]) return
         const state = writes.current[field]
-        if (state === 'answered') return
         for (const key of keys) confirmed.current = { ...confirmed.current, [key]: fresh[key] }
         if (state === 'none') setVotes((v) => ({ ...v, ...Object.fromEntries(keys.map((k) => [k, fresh[k]])) }))
       }
@@ -189,7 +190,8 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     setBusy((b) => ({ ...b, vote: true }))
     setPlaceLike(place.id, next).then(
       (result) => {
-        writes.current.vote = 'answered'
+        writes.current.vote = 'none'
+        answered.current.vote = true
         confirmed.current = { ...confirmed.current, like: result.user_like, dislike: result.user_dislike }
         setCounts((c) => ({ ...c, likeRate: likeRateOf(result.likes, result.dislikes) }))
         setVotes((v) => ({ ...v, like: result.user_like, dislike: result.user_dislike }))
@@ -210,7 +212,8 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     setBusy((b) => ({ ...b, favorite: true }))
     setPlaceFavorite(place.id, next).then(
       (result) => {
-        writes.current.favorite = 'answered'
+        writes.current.favorite = 'none'
+        answered.current.favorite = true
         confirmed.current = { ...confirmed.current, favorite: result.user_favorite }
         setCounts((c) => ({ ...c, favorites: result.favorites }))
         setVotes((v) => ({ ...v, favorite: result.user_favorite }))

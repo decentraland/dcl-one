@@ -15,6 +15,7 @@ import jumpBackIcon from '../../assets/lobby/jump-back-icon.png'
 import liveIcon from '../../assets/lobby/live-icon.png'
 import recommendedIcon from '../../assets/lobby/recommended-icon.png'
 import { MaskIcon } from '../../design'
+import { moveFocus } from '../../lib/arrowKeys'
 import {
   LOBBY_CORNERS,
   LOBBY_FAMILIES,
@@ -121,10 +122,11 @@ export function useLayoutEditor(saved: LobbyLayout, canvas: Canvas, toCanvas: (c
       dragRef.current = first
       setDrag(first)
       listeners.current?.()
-      const overTheModal = (ev: PointerEvent): boolean => {
+      const onTheModal = (ev: PointerEvent): boolean => {
         const m = modal.current?.getBoundingClientRect()
-        return from === 'grid' && m != null && ev.clientX >= m.left && ev.clientX <= m.right && ev.clientY >= m.top && ev.clientY <= m.bottom
+        return m != null && ev.clientX >= m.left && ev.clientX <= m.right && ev.clientY >= m.top && ev.clientY <= m.bottom
       }
+      const overTheModal = (ev: PointerEvent): boolean => from === 'grid' && onTheModal(ev)
       const move = (ev: PointerEvent): void => {
         const d = dragRef.current
         if (d == null || ev.pointerId !== d.pointer) return
@@ -148,11 +150,13 @@ export function useLayoutEditor(saved: LobbyLayout, canvas: Canvas, toCanvas: (c
         if (d == null || ev.pointerId !== d.pointer) return
         const at = toCanvas(ev.clientX, ev.clientY)
         const last = { ...d, at: { x: at.x - d.grab.x, y: at.y - d.grab.y } }
-        const onModal = overTheModal(ev)
+        // never a grid drop, even where the modal covers a grid: a row's press and release is its Add click
+        const onModal = onTheModal(ev)
         setDraft((current) => {
           const next = current.clone()
-          if (onModal) next.remove(last.widget)
-          else {
+          if (onModal) {
+            if (from === 'grid') next.remove(last.widget)
+          } else {
             const t = dropTarget(current, last, canvasRef.current)
             if (t?.valid) next.tryPlacePushing(last.widget, t.corner, t.cell)
           }
@@ -349,13 +353,22 @@ export function CustomizeModal({
               <img className={styles.familyIcon} src={FAMILY_ICONS[family]} alt="" width={24} height={24} />
               <span className={styles.rowTitle}>{familyTitle(family)}</span>
               {options.length > 1 && (
-                <span className={styles.sizes} role="radiogroup" aria-label={`${familyTitle(family)} size`}>
+                <span
+                  className={styles.sizes}
+                  role="radiogroup"
+                  aria-label={`${familyTitle(family)} size`}
+                  onKeyDown={(e) => {
+                    const next = moveFocus(e, 'radio')
+                    if (next != null) setSizes((s) => ({ ...s, [family]: options[next] }))
+                  }}
+                >
                   {options.map((w) => (
                     <button
                       key={w}
                       type="button"
                       role="radio"
                       aria-checked={w === chosen}
+                      tabIndex={w === chosen ? 0 : -1}
                       className={`${styles.size} ${w === chosen ? styles.sizeSelected : ''}`.trim()}
                       // a size toggle takes the pointer for itself: it picks the size, the row drags
                       onPointerDown={(e) => e.stopPropagation()}

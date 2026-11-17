@@ -2,6 +2,7 @@ import { useState } from 'react'
 import checkmark from '../../assets/lobby/checkmark-green.png'
 import { LOBBY_STAGE_PRESETS, lobbyStagePreset } from '@explorer-core/engine/lobbyStage'
 import { STAGE_BACKDROPS } from '../lobby/stageBackdrops'
+import { moveFocus } from '../../lib/arrowKeys'
 import styles from './LobbyStageTab.module.css'
 
 export function LobbyStageTab({ preset, onPick }: { preset: string; onPick: (id: string) => void }): React.JSX.Element {
@@ -12,13 +13,22 @@ export function LobbyStageTab({ preset, onPick }: { preset: string; onPick: (id:
     <div className={styles.tab}>
       <h2 className={styles.title}>Background</h2>
       <img className={styles.preview} src={STAGE_BACKDROPS[shown]} alt={lobbyStagePreset(shown).name} />
-      <div className={styles.options} role="radiogroup" aria-label="Lobby background">
+      <div
+        className={styles.options}
+        role="radiogroup"
+        aria-label="Lobby background"
+        onKeyDown={(e) => {
+          const next = moveFocus(e, 'radio')
+          if (next != null) onPick(LOBBY_STAGE_PRESETS[next].id)
+        }}
+      >
         {LOBBY_STAGE_PRESETS.map((p) => (
           <button
             key={p.id}
             type="button"
             role="radio"
             aria-checked={p.id === chosen}
+            tabIndex={p.id === chosen ? 0 : -1}
             title={p.name}
             className={`${styles.option} ${p.id === chosen ? styles.selected : ''}`.trim()}
             onClick={() => onPick(p.id)}

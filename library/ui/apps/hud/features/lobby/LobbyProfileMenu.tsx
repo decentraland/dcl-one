@@ -11,6 +11,7 @@ import { MaskIcon } from '../../design'
 import { siteUrl } from '@hud-host'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { profilePictureStyle } from './LobbyCards'
+import { moveFocus } from '../../lib/arrowKeys'
 import styles from './LobbyProfileMenu.module.css'
 
 const COPIED_MS = 1000
@@ -76,7 +77,7 @@ export function LobbyProfileMenu({
   return (
     <div className={styles.menu}>
       <div className={styles.backdrop} onClick={onClose} />
-      <div className={`${styles.panel} ${withClose ? styles.withClose : ''}`.trim()} role="menu" aria-label="Profile menu">
+      <div className={`${styles.panel} ${withClose ? styles.withClose : ''}`.trim()} role="menu" aria-label="Profile menu" onKeyDown={(e) => moveFocus(e, 'menuitem')}>
         <div className={styles.identity}>
           <span className={styles.picture} style={profilePictureStyle(nameColor, picture)} />
           <div className={styles.texts}>

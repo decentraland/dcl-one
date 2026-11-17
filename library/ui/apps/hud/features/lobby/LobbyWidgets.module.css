@@ -381,7 +381,7 @@
   color: var(--lobby-white-70);
 }
 .gotoInput::selection {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--lobby-white-25);
 }
 .gotoGo {
   flex: none;

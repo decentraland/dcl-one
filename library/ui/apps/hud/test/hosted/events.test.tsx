@@ -344,6 +344,27 @@ describe('events: the reminder', () => {
   })
 })
 
+describe('events: sign-out', () => {
+  it("drops the lobby's events, and a read or reminder answered after it changes nothing", () => {
+    const hud = renderHud()
+    act(() => hud.session().events.data.loadLobby())
+    const lobbyRead = hud.driver.last('getEvents')!.request
+    hud.driver.emit({ kind: 'events', request: lobbyRead, events: [eventAt('a', at(1, 18), { attending: true })] })
+    expect(hud.session().events.data.store.queries.lobby.ids).toEqual(['a'])
+    act(() => hud.session().events.data.setAttending(hud.session().events.data.store.byId.a, false))
+    act(() => hud.session().events.data.loadLobby())
+    const second = hud.driver.last('getEvents')!.request
+    act(() => hud.session().logout())
+    const store = hud.session().events.data.store
+    expect(store.queries.lobby).toEqual({ status: 'idle', ids: [] })
+    expect(store.byId).toEqual({})
+    expect(store.pending).toEqual([])
+    hud.driver.emit({ kind: 'events', request: second, events: [eventAt('a', at(1, 18), { attending: true })] })
+    hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: false })
+    expect(hud.session().events.data.store.byId).toEqual({})
+  })
+})
+
 describe('events: the detail', () => {
   const weekly = eventAt('w', at(1, 18), {
     name: 'Weekly poker',

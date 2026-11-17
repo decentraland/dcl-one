@@ -28,6 +28,8 @@ export interface EventsData {
   setAttending: (event: EventData, attending: boolean) => void
   /** Drops what the Events page read; the lobby's list stays. */
   clear: () => void
+  /** Drops everything, the lobby's list and requests in flight included. */
+  resetAll: () => void
 }
 
 type Pending = { request: number; timer: ReturnType<typeof setTimeout> | null }
@@ -135,6 +137,10 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
     reminderTimers.current.clear()
     reminderLate.current.clear()
   }, [stop])
+  const resetAll = useCallback((): void => {
+    dispose()
+    dispatch({ type: 'resetAll' })
+  }, [dispose])
 
   const onMessage = useCallback(
     (msg: SceneToPage): void => {
@@ -166,7 +172,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   useEffect(() => dispose, [dispose])
 
   return useMemo(
-    () => ({ store, loadCalendar, loadDay, loadLobby, setAttending, clear, onMessage }),
-    [store, loadCalendar, loadDay, loadLobby, setAttending, clear, onMessage]
+    () => ({ store, loadCalendar, loadDay, loadLobby, setAttending, clear, resetAll, onMessage }),
+    [store, loadCalendar, loadDay, loadLobby, setAttending, clear, resetAll, onMessage]
   )
 }

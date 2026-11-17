@@ -224,7 +224,7 @@
   filter: none;
 }
 .static .landingBody {
-  background: rgba(16, 16, 20, 0.45);
+  background: var(--lobby-landing-static);
 }
 .static:hover .outline {
   opacity: 0;

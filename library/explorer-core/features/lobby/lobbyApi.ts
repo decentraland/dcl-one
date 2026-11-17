@@ -8,7 +8,7 @@ const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
 const CACHE_TTL = 60_000
 const WHERE_LOOKUPS = 4
-const WHERE_TIMEOUT_MS = 5_000
+const TIMEOUT_MS = 5_000
 
 export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -26,7 +26,7 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
 }
 
 async function placesData(url: string, init?: RequestInit): Promise<LobbyPlace[]> {
-  const res = await fetch(url, init)
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined)
     throw new Error(`places API failed: ${res.status}`)
@@ -107,7 +107,7 @@ type Peer = { id?: string; address?: string; parcel?: [number, number] }
 /** None when comms cannot answer, so the worlds are still asked. */
 async function fetchPeers(wallets: string[]): Promise<Peer[]> {
   const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`, { signal: AbortSignal.timeout(WHERE_TIMEOUT_MS) }).catch(() => null)
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
   if (res == null) return []
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined)
@@ -118,7 +118,7 @@ async function fetchPeers(wallets: string[]): Promise<Peer[]> {
 }
 
 async function fetchConnectedWorld(wallet: string): Promise<string | null> {
-  const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(wallet)}/connected-world`, { signal: AbortSignal.timeout(WHERE_TIMEOUT_MS) }).catch(() => null)
+  const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(wallet)}/connected-world`, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
   if (r == null) return null
   if (!r.ok) {
     await r.body?.cancel().catch(() => undefined)
@@ -155,7 +155,7 @@ export async function whereTitle(where: FriendWhere): Promise<string> {
 }
 
 export async function fetchCrowd(): Promise<{ x: number; y: number }> {
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/hot-scenes`)
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/hot-scenes`, { signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined)
     throw new Error(`hot-scenes: ${res.status}`)
@@ -168,6 +168,6 @@ export async function fetchCrowd(): Promise<{ x: number; y: number }> {
 
 /** Probes the realm as a realm change does before going. */
 export async function worldReachable(world: string): Promise<boolean> {
-  const r = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/about`, { method: 'HEAD' }).catch(() => null)
+  const r = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/about`, { method: 'HEAD', signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
   return r != null && r.ok
 }

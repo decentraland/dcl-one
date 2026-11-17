@@ -490,6 +490,7 @@ export interface MinimapState {
 export interface PlacesState {
   open: boolean
   toggle: () => void
+  close: () => void
   /** One place read signed, with the player's own votes; null when the read failed. */
   readSigned: (id: string) => Promise<SignedPlace | null>
 }
@@ -3064,6 +3065,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
+  const closePlaces = useCallback(() => setPlacesOpen(false), [])
   const toggleEvents = useCallback(
     (source?: EventsOpenSource) => {
       // a click handler may pass its event here
@@ -3073,6 +3075,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [exclusive]
   )
   const clearEvents = eventsData.clear
+  const resetEvents = eventsData.resetAll
   useEffect(() => {
     if (!eventsOpen) {
       // nothing is kept between visits: the page reads again each time it opens
@@ -4162,6 +4165,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setActiveVoiceChatsLoaded(false)
     setCommunities([])
     setCommunitiesLoaded(false)
+    resetEvents()
     setCommunityCards({})
     setCommunityInvites(null)
     setPendingCount(null)
@@ -4189,7 +4193,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setPortables([])
     portableStates.current = null
     portableToasts.current = false
-  }, [closeAllPanels])
+  }, [closeAllPanels, resetEvents])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
   // sign-in kept, and the error shown there.
@@ -5022,7 +5026,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
     map: mapSlice,
     minimap: minimapSlice,
-    places: { open: placesOpen, toggle: togglePlaces, readSigned: readSignedPlace },
+    places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace },
     events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },

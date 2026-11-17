@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { serviceUrl } from '@hud-host'
-import { fetchCrowd, fetchWhereabouts } from '../features/lobby/lobbyApi'
+import { fetchCrowd, fetchDestinationsById, fetchWhereabouts, worldReachable } from '../features/lobby/lobbyApi'
 import { fetchWorldAccess } from '../features/places/worldAccess'
 
 // A refused read releases its body: an unread stream holds the connection until it is collected.
@@ -81,11 +81,24 @@ describe('refused server reads', () => {
     const read = vi.fn(async () => ok([{ baseCoords: [12, -3] }]))
     vi.stubGlobal('fetch', read)
     await expect(fetchCrowd()).resolves.toEqual({ x: 12, y: -3 })
-    expect(read).toHaveBeenCalledWith(`${serviceUrl('archipelagoStats')}/hot-scenes`)
+    expect(read).toHaveBeenCalledWith(`${serviceUrl('archipelagoStats')}/hot-scenes`, { signal: expect.any(AbortSignal) })
 
     const hot = refused(502)
     vi.stubGlobal('fetch', vi.fn(async () => hot.response))
     await expect(fetchCrowd()).rejects.toThrow('hot-scenes: 502')
     expect(hot.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('gives up on a stalled places, hot-scenes or world read', async () => {
+    const timeout = new AbortController()
+    const asked = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const stalled = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError')))))
+    vi.stubGlobal('fetch', stalled)
+    const reads = [fetchDestinationsById(['p']).catch(() => 'failed'), fetchCrowd().catch(() => 'failed'), worldReachable('party.dcl.eth')]
+    expect(stalled).toHaveBeenCalledTimes(3)
+    expect(asked).toHaveBeenCalledTimes(3)
+    timeout.abort()
+    await expect(Promise.all(reads)).resolves.toEqual(['failed', 'failed', false])
+    asked.mockRestore()
   })
 })

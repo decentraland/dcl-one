@@ -20,8 +20,8 @@ export function serializeLayout(layout: LobbyLayout): string {
 }
 
 /** Unknown, out-of-grid or overlapping entries, and a second widget of one family, are skipped; a
- *  missing, malformed or other-version value
- *  gives the default layout. */
+ *  missing, malformed or other-version value, or one none of whose entries can be placed any more,
+ *  gives the default layout. A layout saved empty stays empty. */
 export function deserializeLayout(layout: LobbyLayout, stored: string | null): void {
   layout.clear()
   if (stored == null) return layout.resetToDefault()
@@ -44,6 +44,7 @@ export function deserializeLayout(layout: LobbyLayout, stored: string | null): v
     if (layout.all.some((p) => widgetFamily(p.widget) === widgetFamily(widget as LobbyWidgetId))) continue
     layout.tryPlace(widget as LobbyWidgetId, corner as LobbyCorner, { x, y })
   }
+  if (dto.Entries.length > 0 && layout.all.length === 0) layout.resetToDefault()
 }
 
 export function loadLayout(layout: LobbyLayout): void {

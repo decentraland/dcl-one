@@ -64,6 +64,7 @@ const AVATAR_TOOLTIP_OFFSET = 100
 const FRIEND_TOOLTIP_OFFSET = 16
 const STALE = Symbol('stale')
 const CROWD_ERROR = 'The most crowded place could not be found. Please try again.'
+const FRIEND_UNKNOWN = 'Your friend’s location could not be found. Please try again.'
 
 // The Backpack's preview runs past its modal's edge; only the part inside the modal is a hole.
 function clipToModal(rect: Rect | null): { x: number; y: number; width: number; height: number } | null {
@@ -365,9 +366,9 @@ export function LobbyHome({
           } else if (where.kind === 'world') {
             lobbyAnalytics.friendJoined(f.address, where.parcel ?? { x: 0, y: 0 })
             pick({ kind: 'world', realm: where.world })
-          }
+          } else showToast(FRIEND_UNKNOWN)
         })
-        .catch(() => undefined)
+        .catch(() => showToast(FRIEND_UNKNOWN))
     },
     viewCommunity: (c: Community) => {
       openCommunityModal(c.id, () => undefined)

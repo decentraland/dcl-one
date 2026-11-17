@@ -309,6 +309,11 @@ describe('lobby layout storage', () => {
     expect(layout.all).toHaveLength(0)
   })
 
+  it('uses the default layout when none of the stored widgets can be placed any more', () => {
+    deserializeLayout(layout, '{"Version":1,"Entries":[{"Corner":"TopLeft","Widget":"Landing9By9","X":0,"Y":0}]}')
+    expect(layout.equals(defaults())).toBe(true)
+  })
+
   it('skips unknown widgets and corners', () => {
     deserializeLayout(
       layout,

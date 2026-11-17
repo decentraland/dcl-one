@@ -15,7 +15,7 @@ use bevy::{
     core_pipeline::{bloom::Bloom, tonemapping::Tonemapping},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
     math::Affine2,
-    pbr::{NotShadowCaster, NotShadowReceiver},
+    pbr::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::{
         camera::Exposure,
@@ -23,7 +23,10 @@ use bevy::{
     },
     scene::SceneInstanceReady,
 };
-use common::sets::SceneSets;
+use common::{
+    sets::SceneSets,
+    structs::{sun_cascades, AppConfig, StageLight, MIN_CASCADE},
+};
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
 use system_bridge::{LobbyStage, SystemApi};
 use texture_camera::TextureLayersCache;
@@ -45,8 +48,10 @@ const BLOB_Y: f32 = -0.995;
 const BLOB_SIZE: f32 = 1.4;
 const FLOOR_SIZE: f32 = 60.0;
 const FLOOR_TILING: f32 = 12.0;
-const FLOOR_SPOT_RADIUS: f32 = -0.67;
+const FLOOR_SPOT_RADIUS: f32 = 0.67;
 const FLOOR_SPOT_SOFTNESS: f32 = 0.26;
+/// How far from the camera the key light casts shadows, in metres.
+const STAGE_SHADOW_DISTANCE: f32 = 20.0;
 /// Its size and height are refitted to the camera every frame.
 const BACKDROP_POSITION: Vec3 = Vec3::new(0.0, 1.0, -15.0);
 const MIST_POSITION: Vec3 = Vec3::new(0.0, -1.87, -6.0);
@@ -193,6 +198,7 @@ fn sync_stage(
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut builder: StageAssets,
+    config: Res<AppConfig>,
 ) {
     let wanted = request.0.as_ref().and_then(|stage| {
         let render_layer = render_layer(&cache, &roots, stage.layer)?;
@@ -288,12 +294,19 @@ fn sync_stage(
             ChildOf(scene_root),
         ))
         .id();
+    // a change of the setting while the stage is up reaches its light through `apply_shadows`
+    let shadows = sun_cascades(
+        config.graphics.shadow_settings,
+        config.graphics.shadow_distance,
+    )
+    .is_some();
     builder.build(
         &mut commands,
         root,
         &layers,
         preset,
         exposure,
+        shadows,
         &asset_server,
         &mut meshes,
     );
@@ -335,6 +348,7 @@ impl StageAssets<'_> {
         layers: &RenderLayers,
         preset: &'static StagePreset,
         exposure: f32,
+        shadows: bool,
         asset_server: &AssetServer,
         meshes: &mut Assets<Mesh>,
     ) {
@@ -492,9 +506,17 @@ impl StageAssets<'_> {
             DirectionalLight {
                 color: preset.light_color,
                 illuminance: key_light_illuminance(preset.light_intensity, exposure),
-                shadows_enabled: true,
+                shadows_enabled: shadows,
                 ..Default::default()
             },
+            CascadeShadowConfigBuilder {
+                num_cascades: 1,
+                minimum_distance: MIN_CASCADE,
+                maximum_distance: STAGE_SHADOW_DISTANCE,
+                ..Default::default()
+            }
+            .build(),
+            StageLight,
             Transform::from_rotation(
                 mirrored_rotation(preset.light_rotation) * Quat::from_rotation_y(PI),
             ),

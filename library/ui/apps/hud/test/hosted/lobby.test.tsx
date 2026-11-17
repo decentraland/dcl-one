@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PopupHost, resetPopups } from '../../design'
+import { PopupHost, ToastHost, resetPopups } from '../../design'
 import { BackpackModal } from '../../features/backpack/BackpackModal'
 import modalStyles from '../../features/backpack/BackpackModal.module.css'
 import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
 import { eventAt } from './eventFixtures'
-import { fetchCrowd, fetchLandingPlace, fetchRecents, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, fetchLandingPlace, fetchRecents, fetchWhereabouts, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import * as analytics from '@explorer-core/lib/analytics'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
@@ -209,6 +209,24 @@ describe('lobby widgets', () => {
     rerender(lobby(session))
     expect(await screen.findByText('1 Online')).toBeInTheDocument()
     expect(screen.getByText('Locating…')).toBeInTheDocument()
+  })
+
+  it("says so when JOIN finds the friend's location gone", async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    vi.mocked(fetchWhereabouts)
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'unknown' }]]))
+    render(
+      <>
+        {lobby(session)}
+        <ToastHost />
+      </>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    expect(await screen.findByText('Your friend’s location could not be found. Please try again.')).toBeInTheDocument()
+    expect(session.pickDestination).not.toHaveBeenCalled()
   })
 
   it('lists live and upcoming events and marks one interested', async () => {

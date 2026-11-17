@@ -12,6 +12,7 @@ import type { ProfileState } from '../session/useEngineSession'
 export interface PlacesState {
   open: boolean
   toggle: () => void
+  close: () => void
 }
 
 export const COMPACT_PLACES_COLUMNS = 4
@@ -56,8 +57,9 @@ export function PlacesPage({
     return <PlacesBrowser account={account} columns={COMPACT_PLACES_COLUMNS} onPick={open} />
   }
 
+  // a jump from the startup lobby has closed every page already: a toggle would reopen this one
   const visit = (place: DiscoverPlace): void => {
-    if (travel(place)) places.toggle()
+    if (travel(place)) places.close()
   }
 
   const p = profile.data

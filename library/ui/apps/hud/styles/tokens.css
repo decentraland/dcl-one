@@ -304,6 +304,7 @@
   --lobby-gutter: 2px;
   --lobby-card-fill: rgba(20, 20, 26, 0.9);
   --lobby-card-bone: rgb(20, 20, 26);
+  --lobby-landing-static: rgba(16, 16, 20, 0.45);
   --lobby-white-1: rgba(255, 255, 255, 0.01);
   --lobby-white-2: rgba(255, 255, 255, 0.02);
   --lobby-white-5: rgba(255, 255, 255, 0.05);

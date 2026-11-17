@@ -160,6 +160,24 @@ describe('place detail', () => {
     expect(screen.getByRole('button', { name: 'Dislike' })).toHaveAttribute('aria-pressed', 'false')
   })
 
+  it('ignores the signed read once a write answered, even while a later write is out or after it is refused', async () => {
+    const session = fakeSession()
+    let read: (place: { id: string; user_like: boolean; user_dislike: boolean; user_favorite: boolean }) => void = () => undefined
+    vi.mocked(session.places.readSigned).mockReturnValue(new Promise((resolve) => (read = resolve)))
+    let refuse: (e: Error) => void = () => undefined
+    vi.mocked(setPlaceLike)
+      .mockResolvedValueOnce({ likes: 1, dislikes: 0, user_like: true, user_dislike: false })
+      .mockReturnValueOnce(new Promise((_, reject) => (refuse = reject)))
+    show(session, PLAZA)
+    const like = screen.getByRole('button', { name: 'Like' })
+    fireEvent.click(like)
+    await waitFor(() => expect(like).toBeEnabled())
+    fireEvent.click(like)
+    await act(async () => read({ id: 'plaza', user_like: false, user_dislike: false, user_favorite: false }))
+    await act(async () => refuse(new Error('refused')))
+    expect(like).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('shows the like rate and favourites the write returns', async () => {
     vi.mocked(setPlaceLike).mockResolvedValue({ likes: 1, dislikes: 3, user_like: true, user_dislike: false })
     vi.mocked(setPlaceFavorite).mockResolvedValue({ favorites: 7, user_favorite: true })
