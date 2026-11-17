@@ -2,14 +2,16 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
-use common::structs::{AppConfig, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
-use comms::profile::{ProfileManager, UserProfile};
+use common::structs::{
+    AppConfig, AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser,
+};
+use comms::profile::{name_color::name_color, ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use rand::{seq::IteratorRandom, Rng};
 use serde_json::json;
 
-use crate::{AvatarProcessed, AvatarSelection, AvatarShape};
+use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
 
 /// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
 const MAX_DEMOS: usize = 1024;
@@ -212,8 +214,7 @@ fn demo_command(
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
     mut config: ResMut<AppConfig>,
-    children: Query<&Children>,
-    processed: Query<(), With<AvatarProcessed>>,
+    (children, processed): (Query<&Children>, Query<(), With<AvatarProcessed>>),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     let mut count = demos.iter().len();
@@ -319,6 +320,23 @@ fn demo_command(
                     wearables,
                     ..default()
                 });
+                // a demo avatar stands in for a player: it carries a nametag too, every other
+                // one with a claimed name
+                let attach_points = AttachPoints::new(&mut commands);
+                let claimed = index & 1 == 0;
+                let name = format!("Demo{index}");
+                let address = format!("{index:040x}");
+                let nametag = NametagContent {
+                    suffix: if claimed {
+                        String::new()
+                    } else {
+                        format!("#{index:04x}")
+                    },
+                    color: name_color(&name, &address, claimed),
+                    verified: claimed,
+                    official: false,
+                    name,
+                };
                 let mut entity = commands.spawn((
                     DemoAvatar,
                     Transform::from_translation(player.translation() + offset),
@@ -330,7 +348,11 @@ fn demo_command(
                         automatic_delete: false,
                         disable_dither: false,
                     },
+                    nametag,
                 ));
+                entity
+                    .add_children(&attach_points.entities())
+                    .insert(attach_points);
                 if let Some(name) = &creator.emote {
                     entity.insert(EmoteCommand {
                         urn: format!("urn:decentraland:off-chain:base-emotes:{name}"),

@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
-import { homeOf, isHomePlace } from '@explorer-core/features/map/home'
+import { homeOf, isPlacePanelHome } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
@@ -17,7 +17,7 @@ import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import type { GalleryState, MapState, MinimapState, ProfileState } from '../session/useEngineSession'
+import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import { CategoryStrip } from './CategoryStrip'
 import { DestinationBanner } from './DestinationBanner'
 import { LayersPanel } from './LayersPanel'
@@ -101,6 +101,10 @@ export function MapPage({
   }, [destination, pose])
 
   const close = map.toggle
+  // Over the startup lobby the lobby takes the pick and closes the page itself; a refused pick keeps it open.
+  const closeAfter = (outcome: TravelOutcome): void => {
+    if (outcome === 'sent') close()
+  }
 
   const onParcel = useCallback(
     (parcel: Vec2): void => {
@@ -142,24 +146,24 @@ export function MapPage({
     const { place, origin, landOnOrigin } = view
     const base = parseParcel(place.base_position)
     const target = (landOnOrigin || isRoad(place.title)) && origin != null ? origin : base
+    let outcome: TravelOutcome
     if (isWorldPlace(place)) {
       if (place.world_name == null) return
       nav.clearInput()
-      map.changeRealm(place.world_name)
+      outcome = map.changeRealm(place.world_name)
     } else {
       if (target == null) return
       if (destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y) navigation.stop()
       nav.clearInput()
-      map.teleportToPlace(target.x, target.y)
+      outcome = map.teleportToPlace(target.x, target.y)
     }
-    close()
+    closeAfter(outcome)
   }
   const jumpInEvent = (): void => {
     const view = snap.event
     if (view == null) return
     nav.clearInput()
-    map.teleportToPlace(view.event.x, view.event.y)
-    close()
+    closeAfter(map.teleportToPlace(view.event.x, view.event.y))
   }
   // Home can be set, not cleared: the engine keeps one home, the default until one is set.
   const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
@@ -171,8 +175,7 @@ export function MapPage({
     if (parcel != null) map.setHome(DEFAULT_REALM, parcel)
   }
 
-  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean =>
-    isHomePlace(home, place) || (isRoad(place.title) && origin != null && home.world == null && home.parcel?.x === origin.x && home.parcel.y === origin.y)
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
 
   const navigatingTo = (place: DiscoverPlace): boolean => {
     if (destination == null || isWorldPlace(place)) return false
@@ -289,8 +292,7 @@ export function MapPage({
           onTeleport={(x, y) => {
             setPhoto(null)
             nav.clearInput()
-            map.teleportToPlace(x, y)
-            close()
+            closeAfter(map.teleportToPlace(x, y))
           }}
         />
       )}

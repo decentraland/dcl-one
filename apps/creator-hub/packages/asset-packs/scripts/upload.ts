@@ -1,14 +1,15 @@
 import { resolve } from 'path';
-import { createReadStream, readFileSync } from 'fs';
-import dotenv from 'dotenv';
-import mimeTypes from 'mime-types';
+import { createReadStream, existsSync, readFileSync } from 'fs';
 import type { S3ClientConfigType } from '@aws-sdk/client-s3';
 import { HeadObjectCommand, S3 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { version } from '../package.json';
-import { LocalFileSystem } from './utils/local';
+import packageJson from '../package.json' with { type: 'json' };
+import { contentType } from './utils/content-type.ts';
+import { LocalFileSystem } from './utils/local.ts';
+import { Queue } from './utils/queue.ts';
 
-dotenv.config();
+if (existsSync('.env')) process.loadEnvFile();
+const { version } = packageJson;
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 // Set with the role credentials CI assumes through GitHub OIDC; long-lived keys have none.
@@ -64,12 +65,7 @@ async function main() {
   const client = new S3(config);
 
   // upload queue
-  const { default: Queue } = await import('p-queue');
-  const queue = new Queue({ concurrency: Math.max(concurrency, 1) });
-  queue.on('error', error => {
-    queue.pause();
-    throw error;
-  });
+  const queue = new Queue(Math.max(concurrency, 1));
 
   const local = new LocalFileSystem('./packs');
 
@@ -83,7 +79,7 @@ async function main() {
       await client.send(head);
     } catch (error) {
       // if head object does not exist, this file needs to be uploaded
-      const mimeType = mimeTypes.lookup(pathToFile) || 'application/octet-stream';
+      const mimeType = contentType(pathToFile);
       const uploadKey = local.isAdminToolkitAsset(pathToFile)
         ? pathToFile.replace(/^.*\/admin_toolkit\/assets\//, 'admin_toolkit/assets/')
         : key;

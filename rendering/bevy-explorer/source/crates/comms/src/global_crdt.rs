@@ -401,6 +401,25 @@ impl CrdtContexts {
             .copied()
             .or_else(|| (!common::structs::multi_tenant()).then(|| self.shared()))
     }
+
+    /// Removes the contexts `keep` rejects and returns their entities. Marks the resource changed
+    /// only when something was removed: change-detecting readers (the listener AoI rebuild) must
+    /// not run on every frame of a per-frame sweep.
+    pub fn reap(contexts: &mut ResMut<Self>, mut keep: impl FnMut(&str) -> bool) -> Vec<Entity> {
+        let doomed: Vec<String> = contexts
+            .0
+            .iter()
+            .filter(|(hash, _)| !keep(hash))
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if doomed.is_empty() {
+            return Vec::new();
+        }
+        doomed
+            .iter()
+            .filter_map(|hash| contexts.0.remove(hash))
+            .collect()
+    }
 }
 
 impl GlobalCrdtState {
@@ -627,6 +646,7 @@ pub struct PlayerPositionEvent {
     pub grounded: Option<bool>,
     /// MoveKind inferred from the packet:
     ///   - `jump_count >= 2` → `DoubleJump`
+    ///   - `jump_count == 1` → `Jump`
     ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
     ///   - `is_jumping` or `is_long_jump` → `Jump`
     ///
@@ -734,6 +754,25 @@ fn prune_player_map<V>(
     }
 }
 
+/// The movement state a movement packet announces, `None` when it announces none.
+fn remote_move_kind(
+    glide_state: rfc4::movement::GlideState,
+    jump_count: i32,
+    jumping: bool,
+) -> Option<MoveKind> {
+    // Glide is checked before DoubleJump because Unity keeps `jump_count`
+    // at its last value (usually 2) through the whole glide — so the
+    // DoubleJump-first ordering would mask an active glide.
+    match (glide_state, jump_count, jumping) {
+        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
+            Some(MoveKind::Glide)
+        }
+        (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
+        (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
+        _ => None,
+    }
+}
+
 /// Apply a foreign player's [`rfc4::Movement`], whether it arrived over Pulse (as
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
@@ -782,21 +821,11 @@ fn apply_foreign_movement(
         scene_id,
         &dcl_transform,
     );
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
-    let remote_move_kind = match (
+    let remote_move_kind = remote_move_kind(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
-    ) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
-        (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
-        (_, _, true) => Some(MoveKind::Jump),
-        _ => None,
-    };
+    );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
     let precision = m
@@ -939,6 +968,7 @@ pub fn process_transport_updates(
                                         profile_version: 0,
                                         audio_sender: audio_sender.clone(),
                                     },
+                                    common::structs::ForeignAvatar,
                                     ForeignAudioSource {
                                         audio_available_receiver: audio_receiver,
                                         audio_receiver: None,
@@ -1498,7 +1528,11 @@ fn remove_transport_from_foreign_audio_source(
 
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
-    mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    mut q: Query<(
+        &mut ForeignAudioSource,
+        &ForeignPlayer,
+        Has<crate::BlockedOrBanned>,
+    )>,
     #[cfg(feature = "livekit")] call_rooms: Query<
         &crate::livekit::participant::ParticipantIndex,
         With<crate::voice_chat::VoiceRoom>,
@@ -1509,26 +1543,7 @@ fn handle_foreign_audio(
         .filter_map(|(e, transport)| transport.control.as_ref().map(|t| (e, t)))
         .collect::<HashMap<_, _>>();
 
-    for (mut source, player) in q.iter_mut() {
-        // a call's peers are heard flat through the call, not spatially as well
-        #[cfg(feature = "livekit")]
-        let in_call_with = call_rooms.iter().any(|index| {
-            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
-                &format!("{:#x}", player.address),
-            ))
-        });
-        #[cfg(not(feature = "livekit"))]
-        let in_call_with = false;
-        if in_call_with {
-            if let Some(current) = source.current_transport.take() {
-                if let Some(control) = transports.get(&current) {
-                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
-                }
-                source.audio_receiver = None;
-            }
-            continue;
-        }
-
+    for (mut source, player, blocked_or_banned) in q.iter_mut() {
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1558,8 +1573,25 @@ fn handle_foreign_audio(
             source.audio_receiver = None;
         }
 
-        // request a new source
-        if source.current_transport.is_none() {
+        // A call's peers are heard flat through the call, not spatially as well. Skipping after
+        // the availability events are read keeps a long skip from filling their channel.
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with || blocked_or_banned {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+        } else if source.current_transport.is_none() {
+            // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
@@ -1616,6 +1648,80 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[derive(Resource, Default)]
+    struct Doomed(Option<String>);
+
+    #[derive(Resource, Default)]
+    struct Observed {
+        changed: bool,
+    }
+
+    fn reap_doomed(mut contexts: ResMut<CrdtContexts>, doomed: Res<Doomed>) {
+        CrdtContexts::reap(&mut contexts, |hash| Some(hash) != doomed.0.as_deref());
+    }
+
+    fn observe(contexts: Res<CrdtContexts>, mut observed: ResMut<Observed>) {
+        observed.changed = contexts.is_changed();
+    }
+
+    #[test]
+    fn reaping_marks_contexts_changed_only_when_something_is_removed() {
+        let mut app = App::new();
+        let shared = app.world_mut().spawn_empty().id();
+        let room = app.world_mut().spawn_empty().id();
+        app.insert_resource(CrdtContexts(HashMap::from_iter([
+            (String::new(), shared),
+            ("room".to_owned(), room),
+        ])))
+        .init_resource::<Doomed>()
+        .init_resource::<Observed>()
+        .add_systems(Update, (reap_doomed, observe).chain());
+
+        // the first frame sees the resource as added
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+        assert_eq!(app.world().resource::<CrdtContexts>().0.len(), 2);
+
+        app.world_mut().resource_mut::<Doomed>().0 = Some("room".to_owned());
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+        assert_eq!(
+            app.world()
+                .resource::<CrdtContexts>()
+                .0
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![""]
+        );
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+    }
+
+    #[test]
+    fn a_packet_names_the_movement_state_it_announces() {
+        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+
+        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
+        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(
+            remote_move_kind(PropClosed, 2, false),
+            Some(MoveKind::DoubleJump)
+        );
+        // the jump count stays at 2 through a glide, which wins
+        assert_eq!(
+            remote_move_kind(OpeningProp, 2, false),
+            Some(MoveKind::Glide)
+        );
+        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+    }
+
     #[test]
     fn peer_emote_urns_are_bounded() {
         assert!(acceptable_emote_urn(
@@ -1664,6 +1770,60 @@ mod tests {
         assert_eq!(reused.index(), gone.index());
         assert!(!state.cache.contains_key(&reused));
         assert!(!state.last_sequence.contains_key(&reused));
+    }
+
+    fn anim_packet(
+        sender: Address,
+        hashes: Option<(&str, &str)>,
+        clear: bool,
+    ) -> rfc4::SceneDrivenAnimation {
+        rfc4::SceneDrivenAnimation {
+            scene_hash: clear
+                .then(String::new)
+                .or_else(|| hashes.map(|(s, _)| s.to_owned())),
+            content_hash: hashes.map(|(_, c)| c.to_owned()),
+            speed: Some(1.0),
+            origin_address: Some(format!("{sender:#x}")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_repeated_clip_announcement_resolves_to_the_clip_already_playing() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let sender = Address::repeat_byte(0x11);
+        let mut cache = HashMap::default();
+        let mut resolve = |packet| resolve_remote_anim(entity, sender, &mut cache, Some(packet));
+
+        let announced = resolve(anim_packet(sender, Some(("scene", "clip")), false));
+        let repeated = resolve(anim_packet(sender, Some(("scene", "clip")), false));
+        let ride_along = resolve(anim_packet(sender, None, false));
+
+        let announced = announced.expect("the announcement resolves");
+        // Checks that a repeated announcement resolves to a request equal to the first, with no
+        // seek or sounds. That the avatar then keeps the clip running rests on the animation
+        // system restarting a clip only when its URN differs; this test does not cover that.
+        assert_eq!(repeated.as_ref(), Some(&announced));
+        assert_eq!(ride_along.as_ref(), Some(&announced));
+        assert_eq!(announced.seek, None);
+        assert!(announced.sounds.is_empty());
+    }
+
+    #[test]
+    fn a_repeated_clear_leaves_the_avatar_without_a_clip() {
+        let mut world = World::new();
+        let entity = world.spawn_empty().id();
+        let sender = Address::repeat_byte(0x11);
+        let mut cache = HashMap::default();
+        let mut resolve = |packet| resolve_remote_anim(entity, sender, &mut cache, Some(packet));
+
+        assert!(resolve(anim_packet(sender, Some(("scene", "clip")), false)).is_some());
+        assert!(resolve(anim_packet(sender, None, true)).is_none());
+        assert!(resolve(anim_packet(sender, None, true)).is_none());
+        // a ride-along that outlives the clear has no cached clip to revive
+        assert!(resolve(anim_packet(sender, None, false)).is_none());
+        assert!(cache.is_empty());
     }
 
     /// The presence pipeline as the plugin wires it, on a bare world: one shared context, the
@@ -1946,5 +2106,90 @@ mod tests {
             foreign_players(&mut app),
             vec![HashSet::from_iter([other, socket])]
         );
+    }
+
+    fn voice_app() -> (App, Entity, Entity, mpsc::Receiver<ChannelControl>) {
+        let mut app = App::new();
+        app.add_systems(Update, handle_foreign_audio);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _) = mpsc::channel(1);
+        let (control, control_rx) = mpsc::channel(8);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::Livekit,
+                sender,
+                control: Some(control),
+                context,
+            })
+            .id();
+        let peer = Address::repeat_byte(0xab);
+        let (audio_sender, audio_receiver) = mpsc::channel(10);
+        audio_sender
+            .try_send(ForeignAudioData::TransportAvailable(transport))
+            .unwrap();
+        let player = app
+            .world_mut()
+            .spawn((
+                ForeignPlayer {
+                    address: peer,
+                    context,
+                    transports: HashSet::from_iter([transport]),
+                    scene_id: SceneEntityId::new(*SceneEntityId::FOREIGN_PLAYER_RANGE.start(), 0),
+                    profile_version: 0,
+                    audio_sender,
+                },
+                ForeignAudioSource {
+                    audio_available_receiver: audio_receiver,
+                    audio_receiver: None,
+                    available_transports: Default::default(),
+                    current_transport: None,
+                },
+            ))
+            .id();
+        (app, player, transport, control_rx)
+    }
+
+    fn voice_controls(rx: &mut mpsc::Receiver<ChannelControl>) -> Vec<&'static str> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|control| match control {
+                ChannelControl::VoiceSubscribe(..) => "subscribe",
+                ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_unsubscribed_and_heard_again_once_cleared() {
+        let (mut app, player, _, mut controls) = voice_app();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["unsubscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::BlockedOrBanned>();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_never_subscribed_and_keeps_its_streams_known() {
+        let (mut app, player, transport, mut controls) = voice_app();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        assert!(voice_controls(&mut controls).is_empty());
+        let mut sources = app.world_mut().query::<&ForeignAudioSource>();
+        let source = sources.single(app.world()).unwrap();
+        assert!(source.available_transports.contains(&transport));
+        assert!(source.current_transport.is_none());
     }
 }

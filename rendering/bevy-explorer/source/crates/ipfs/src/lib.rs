@@ -1,5 +1,6 @@
 mod batch_sizes;
 pub mod bevy_variants;
+pub mod cache_heal;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -11,6 +12,7 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+pub mod partition;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
@@ -671,6 +673,7 @@ impl Plugin for IpfsIoPlugin {
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
         app.add_plugins(bevy_variants::BevyVariantsPlugin);
+        app.add_plugins(cache_heal::CacheHealPlugin);
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(web_cache_plugin::WebCachePlugin {
             preview: self.preview,
@@ -1077,6 +1080,8 @@ pub struct IpfsIo {
     // urls that failed, answered from memory on a repeat request (`failed_remotes`)
     failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    // cached entries checked after a failed load (`cache_heal`)
+    pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1121,6 +1126,7 @@ impl IpfsIo {
             in_flight: Default::default(),
             failed_remotes: Default::default(),
             bevy_variants: Default::default(),
+            cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1500,19 +1506,20 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
-    /// cache entry goes through `web_cache`).
+    /// Drops the cached bytes under `key`, if there are any, and says whether there were (native
+    /// only: on web the worker's cache entry goes through `web_cache`).
     #[cfg(not(target_arch = "wasm32"))]
-    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
             .cache_path()
             .and_then(|root| root.join_relative(key.name()))
         else {
-            return Ok(());
+            return Ok(false);
         };
         match async_fs::remove_file(&cached).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
@@ -2130,6 +2137,22 @@ impl IpfsIo {
                     ipfs_io_read_state.send_cached(cached.len());
                     return Ok(Box::new(VecReader::new(cached)));
                 }
+            }
+
+            // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
+            // item a page supplies) are the page's own: the http client refuses their schemes, the
+            // browser serves them without a request slot
+            #[cfg(target_arch = "wasm32")]
+            if remote.starts_with("data:") || remote.starts_with("blob:") {
+                return match web_cache::fetch_local(&remote).await {
+                    Ok(bytes) => {
+                        ipfs_io_read_state.send_cached(bytes.len());
+                        Ok(Box::new(VecReader::new(bytes)))
+                    }
+                    Err(e) => ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(format!("failed to read `{remote}`: {e}")),
+                    )))),
+                };
             }
 
             // a failure is answered from memory for the retry window, or for the session when the

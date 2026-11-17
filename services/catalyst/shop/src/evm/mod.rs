@@ -65,9 +65,9 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{get, post};
 use alloy_primitives::{Address, U256};
 use axum::Router;
-use axum::routing::{get, post};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 
@@ -516,9 +516,7 @@ impl State {
 /// its own capped signer ([`Settings::refuse_an_open_trial_relay`],
 /// `TransactionComponent::check_data`): it is how those buyers spend their
 /// credits, so it opens with the credits switch, `OPS_WRITES_ENABLED`, and
-/// answers the credits 503. That plane stores no blobs, so restore stamps
-/// that leave them out release it. The relayer controls stay open on both
-/// gates.
+/// answers the credits 503. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
     let (trial, data_writes, ops_writes) = (
@@ -555,8 +553,7 @@ pub fn router(state: SharedState) -> Router {
             crate::shared::writes::Gate {
                 enabled: ops_writes,
                 open_while_disabled: RELAYER_CONTROLS,
-                refuse: crate::credits::writes::refused_response,
-                blobs: false,
+                refuse: crate::credits::writes::disabled_response,
             },
         )
     } else {

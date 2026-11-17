@@ -1,2 +1,2 @@
 export { EmptyState } from './EmptyState';
-export { InlineLink } from './EmptyState.styled';
+export { InlineLink } from './InlineLink';

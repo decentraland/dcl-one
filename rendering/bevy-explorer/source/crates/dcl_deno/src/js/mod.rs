@@ -616,26 +616,6 @@ fn op_require(
         "~system/CommsApi" => {
             Ok(include_str!("../../../dcl_js/src/modules/CommsApi.js").to_owned())
         }
-        "~system/DevTools" => Ok(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/DevTools.js"
-        ))
-        .to_owned()),
-        "~system/ParcelIdentity" => Ok(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/ParcelIdentity.js"
-        ))
-        .to_owned()),
-        "~system/Permissions" => Ok(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/Permissions.js"
-        ))
-        .to_owned()),
-        "~system/SocialController" => Ok(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/rendering/bevy-explorer/source/crates/dcl_js/src/modules/SocialController.js"
-        ))
-        .to_owned()),
         "~system/EngineApi" => {
             Ok(include_str!("../../../dcl_js/src/modules/EngineApi.js").to_owned())
         }
@@ -685,12 +665,6 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 
 #[cfg(test)]
 mod tests {
-    mod legacy_kernel {
-        include!("legacy_kernel_tests.rs");
-    }
-    mod ethereum_controller {
-        include!("ethereum_controller_tests.rs");
-    }
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
     }
@@ -867,6 +841,24 @@ mod tests {
             r#"if (typeof Deno === "undefined") { throw new Error("client behaviour changed"); }"#,
         )
         .unwrap();
+    }
+
+    /// A scene server has no player to partition `localStorage` by, and no business writing to
+    /// its host's disk: every storage op must raise there.
+    #[test]
+    fn local_storage_raises_on_a_scene_server() {
+        for call in [
+            "localStorage.length",
+            "localStorage.key(0)",
+            "localStorage.getItem('k')",
+            "localStorage.setItem('k', 'v')",
+            "localStorage.removeItem('k')",
+            "localStorage.clear()",
+            "Object.keys(localStorage)",
+        ] {
+            let err = run_scene(true, call).expect_err(call);
+            assert!(err.contains("scene server"), "{call}: {err}");
+        }
     }
 
     /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at

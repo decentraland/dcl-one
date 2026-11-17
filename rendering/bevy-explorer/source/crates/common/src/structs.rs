@@ -66,6 +66,27 @@ impl Default for PrimaryUser {
     }
 }
 
+/// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
+/// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
+/// express the player's speed as a gait.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct LocomotionSpeeds {
+    pub walk: f32,
+    pub jog: f32,
+    pub run: f32,
+}
+
+impl Default for LocomotionSpeeds {
+    fn default() -> Self {
+        let user = PrimaryUser::default();
+        Self {
+            walk: user.walk_speed,
+            jog: user.jog_speed,
+            run: user.run_speed,
+        }
+    }
+}
+
 #[derive(Component, Default, Debug)]
 pub struct PlayerModifiers {
     pub hide: bool,
@@ -433,6 +454,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -597,6 +645,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -665,6 +714,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1300,36 +1350,9 @@ pub struct SceneMeta {
     /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
-    /// `requiredPermissions`, kept as raw json so a value of another shape never fails the
-    /// scene.json. Only the legacy permission query reads it ([`Self::legacy_declared_permissions`]).
-    pub required_permissions: Option<serde_json::Value>,
 }
 
-/// scene.json `requiredPermissions` names, indexed by their legacy `PermissionItem` value.
-pub const LEGACY_PERMISSION_NAMES: [&str; 7] = [
-    "ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE",
-    "ALLOW_TO_TRIGGER_AVATAR_EMOTE",
-    "USE_WEB3_API",
-    "USE_WEBSOCKET",
-    "USE_FETCH",
-    "ALLOW_MEDIA_HOSTNAMES",
-    "OPEN_EXTERNAL_LINK",
-];
-
 impl SceneMeta {
-    /// The legacy `PermissionItem` values this scene.json declares, as a bit set (bit `n` is
-    /// item `n`). Unknown names and non-string entries are ignored.
-    pub fn legacy_declared_permissions(&self) -> u8 {
-        self.required_permissions
-            .as_ref()
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(serde_json::Value::as_str)
-            .filter_map(|name| LEGACY_PERMISSION_NAMES.iter().position(|n| *n == name))
-            .fold(0, |bits, item| bits | 1 << item)
-    }
-
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -1622,7 +1645,7 @@ pub struct EngineMovementControl {
     pub penetration_bounds: (DVec3, DVec3),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
     #[default]
     Idle,
@@ -1755,6 +1778,8 @@ pub struct SceneGlobalLight {
     /// setting unless a scene overrides it, as a tint and a multiplier
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 
@@ -1863,19 +1888,50 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// Nearby voice is off where the player stands: the scene turns it off, or the scene room
+    /// refused the player as banned. Nobody nearby is heard and the mic stays closed. Written
+    /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
-    pub scene_blocked: bool,
+    scene_blocked: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(skip)]
+    scene_disabled: bool,
+    /// The current scene's room refused the player as banned.
+    #[serde(skip)]
+    scene_banned: bool,
     /// Counts the mic opens the scene refused.
     #[serde(default)]
     pub refusals: u32,
 }
 
 impl MicState {
+    pub fn scene_blocked(&self) -> bool {
+        self.scene_blocked
+    }
+
+    pub fn scene_disabled(&self) -> bool {
+        self.scene_disabled
+    }
+
+    pub fn scene_banned(&self) -> bool {
+        self.scene_banned
+    }
+
     /// Leaving the scene does not reopen the mic.
-    pub fn set_scene_blocked(&mut self, blocked: bool) {
-        self.scene_blocked = blocked;
-        if blocked {
+    pub fn set_scene_disabled(&mut self, disabled: bool) {
+        self.scene_disabled = disabled;
+        self.update_scene_blocked();
+    }
+
+    /// Being admitted again does not reopen the mic.
+    pub fn set_scene_banned(&mut self, banned: bool) {
+        self.scene_banned = banned;
+        self.update_scene_blocked();
+    }
+
+    fn update_scene_blocked(&mut self) {
+        self.scene_blocked = self.scene_disabled || self.scene_banned;
+        if self.scene_blocked {
             self.enabled = false;
         }
     }
@@ -1928,6 +1984,20 @@ pub enum GlobalCrdtStateUpdate {
     /// changes (camera zoom etc.).
     CameraFov(f32),
 }
+
+/// The animation graph nodes an avatar or a glTF container exposes: the default clip, and the
+/// named clips with the time each was last played. Scenes drive them through their animator,
+/// avatars through emote playback.
+#[derive(Component, Default)]
+pub struct Clips {
+    pub default: Option<AnimationNodeIndex>,
+    pub named: HashMap<String, (AnimationNodeIndex, f32)>,
+}
+
+/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// treat remote and local emotes differently read this instead of the comms type.
+#[derive(Component, Default, Debug, Clone, Copy)]
+pub struct ForeignAvatar;
 
 // used for responses to scenes which require strict monotonic timestamps
 // by convention we use T = the protobuf struct containing the timestamp (e.g. PbPointerEventsResult, PbTriggerAreaResult)
@@ -2095,6 +2165,15 @@ pub enum PointAtMarkerVisibility {
     None,
 }
 
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
+    None,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraSmoothing {
     Raw,
@@ -2184,13 +2263,32 @@ mod tests {
         let mut mic = MicState {
             available: true,
             enabled: true,
-            scene_blocked: false,
-            refusals: 0,
+            ..Default::default()
         };
-        mic.set_scene_blocked(true);
+        mic.set_scene_disabled(true);
         assert!(mic.scene_blocked && !mic.enabled);
-        mic.set_scene_blocked(false);
+        mic.set_scene_disabled(false);
         assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_ban_and_a_scene_turning_voice_off_block_nearby_voice_until_both_clear() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            ..Default::default()
+        };
+        mic.set_scene_banned(true);
+        assert!(mic.scene_blocked && !mic.enabled, "a ban closes the mic");
+        mic.set_scene_disabled(true);
+        mic.set_scene_banned(false);
+        assert!(mic.scene_blocked, "the scene still turns voice off");
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        mic.set_scene_disabled(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+        mic.request_enabled(true);
+        assert!(mic.enabled);
     }
 
     #[test]
@@ -2198,9 +2296,9 @@ mod tests {
         let mut mic = MicState {
             available: true,
             enabled: false,
-            scene_blocked: true,
-            refusals: 0,
+            ..Default::default()
         };
+        mic.set_scene_disabled(true);
         mic.request_enabled(true);
         assert!(!mic.enabled);
         assert_eq!(mic.refusals, 1);
@@ -2212,7 +2310,7 @@ mod tests {
         assert_eq!(mic.refusals, 1, "no mic to refuse");
 
         mic.available = true;
-        mic.scene_blocked = false;
+        mic.set_scene_disabled(false);
         mic.request_enabled(true);
         assert!(mic.enabled);
         assert_eq!(mic.refusals, 1);
@@ -2429,37 +2527,6 @@ mod tests {
                 PortableExperiencesToggle::Enabled,
                 "{toggles}"
             );
-        }
-    }
-
-    #[test]
-    fn required_permissions_map_to_legacy_items_leniently() {
-        let declared = |extra: &str| -> u8 {
-            serde_json::from_str::<SceneMeta>(&format!(
-                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{extra}}}"#
-            ))
-            .unwrap()
-            .legacy_declared_permissions()
-        };
-        assert_eq!(declared(""), 0);
-        assert_eq!(
-            declared(r#","requiredPermissions":["USE_FETCH","ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE"]"#),
-            0b1_0001
-        );
-        assert_eq!(
-            declared(&format!(
-                r#","requiredPermissions":{}"#,
-                serde_json::to_string(&LEGACY_PERMISSION_NAMES).unwrap()
-            )),
-            0b111_1111
-        );
-        // values of another shape are ignored rather than failing the scene.json
-        for extra in [
-            r#","requiredPermissions":"USE_FETCH""#,
-            r#","requiredPermissions":[1,null,"use_fetch","UNKNOWN"]"#,
-            r#","requiredPermissions":{"USE_FETCH":true}"#,
-        ] {
-            assert_eq!(declared(extra), 0, "{extra}");
         }
     }
 }

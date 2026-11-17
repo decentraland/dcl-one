@@ -101,6 +101,16 @@ export function siteUrl(path: string): string {
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
+// Pulse is UDP, which an HTTP front cannot carry: behind the gateway the deployment names its host.
+const PULSE_SERVER = BASE_DOMAIN === ONE_GATEWAY_HOST ? configuredPulseServer() : null
+
+function configuredPulseServer(): string | null {
+  const raw = window.__DCL_PUBLIC__?.pulseServer || null
+  const host = normaliseServiceUrl(service('pulseServer'), raw)
+  if (raw != null && host == null) console.warn('[play] PUBLIC_PULSE_SERVER is not host[:port], ignored:', raw)
+  return host
+}
+
 declare global {
   interface Window {
     __defaultBaseDomain?: () => string
@@ -145,14 +155,17 @@ export function normaliseServiceUrl(s: ServiceDef, raw: string | null): string |
   }
 }
 
+/** The entry url's override; a `pulseServer` equal to this page's host is a stale engine write-back once Pulse is named. */
+export function entryServiceUrl(s: ServiceDef): string | null {
+  const url = normaliseServiceUrl(s, new URLSearchParams(window.location.search).get(s.name))
+  return s.name === 'pulseServer' && PULSE_SERVER != null && url === ONE_GATEWAY_HOST ? null : url
+}
+
 /** The explicit overrides in the ENTRY url, by service name — also the engine's, via the boot config. */
 export const SERVICE_OVERRIDES: Readonly<Record<string, string>> = {}
-{
-  const q = new URLSearchParams(window.location.search)
-  for (const s of SERVICES) {
-    const url = normaliseServiceUrl(s, q.get(s.name))
-    if (url != null) (SERVICE_OVERRIDES as Record<string, string>)[s.name] = url
-  }
+for (const s of SERVICES) {
+  const url = entryServiceUrl(s)
+  if (url != null) (SERVICE_OVERRIDES as Record<string, string>)[s.name] = url
 }
 
 /**
@@ -175,6 +188,7 @@ export function derivedServiceUrl(name: string): string {
   if (BASE_DOMAIN === ONE_GATEWAY_HOST && !NOT_THROUGH_GATEWAY.has(s.sub)) {
     const prefix = GATEWAY_PREFIXES[s.sub]
     if (prefix == null) throw new Error(`serviceUrl: '${name}' (${s.sub}) has no gateway prefix`)
+    if (s.name === 'pulseServer' && PULSE_SERVER != null) return PULSE_SERVER
     if (s.value === 'authority') return ONE_GATEWAY_HOST
     const secure = window.location.protocol === 'https:'
     const scheme = s.value === 'websocket' ? (secure ? 'wss' : 'ws') : secure ? 'https' : 'http'

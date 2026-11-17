@@ -1,6 +1,6 @@
 # ADR: The Explorer's Bevy and forked crates are an upstream commit plus patches
 
-- Status: Accepted
+- Status: Accepted; superseded in part by [2026-11-15](2026-11-15-explorer-patched-sources-as-git-commits.md)
 - Date: 2026-11-14
 - Supersedes: [The Explorer's Bevy is vendored in this repository](2026-11-05-explorer-vendored-bevy.md)
 

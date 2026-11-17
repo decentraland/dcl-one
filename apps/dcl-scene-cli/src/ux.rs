@@ -632,6 +632,8 @@ impl Steps {
 pub struct Slow {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    /// Drawn after the label, e.g. `12/40`; [`Slow::set_detail`].
+    detail: std::sync::Arc<Mutex<String>>,
 }
 
 const SLOW_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
@@ -640,10 +642,16 @@ impl Slow {
     pub fn start(label: impl Into<String>) -> Self {
         let label = label.into();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let detail = std::sync::Arc::new(Mutex::new(String::new()));
         if quiet() || events() || !stdout_color() {
-            return Slow { stop, handle: None };
+            return Slow {
+                stop,
+                handle: None,
+                detail,
+            };
         }
         let s = stop.clone();
+        let d = detail.clone();
         let handle = std::thread::spawn(move || {
             use std::io::Write;
             let began = std::time::Instant::now();
@@ -654,7 +662,11 @@ impl Slow {
                 if waited < SLOW_AFTER {
                     continue;
                 }
-                print!("\r\x1b[2K  {label} {}s", waited.as_secs());
+                let detail = d.lock().unwrap_or_else(PoisonError::into_inner).clone();
+                match detail.is_empty() {
+                    true => print!("\r\x1b[2K  {label} {}s", waited.as_secs()),
+                    false => print!("\r\x1b[2K  {label} {detail} {}s", waited.as_secs()),
+                }
                 let _ = std::io::stdout().flush();
                 drawn = true;
             }
@@ -666,7 +678,13 @@ impl Slow {
         Slow {
             stop,
             handle: Some(handle),
+            detail,
         }
+    }
+
+    /// Progress drawn after the label from the next redraw on.
+    pub fn set_detail(&self, detail: impl Into<String>) {
+        *self.detail.lock().unwrap_or_else(PoisonError::into_inner) = detail.into();
     }
 
     /// Stops the redraw and clears the line (via Drop).

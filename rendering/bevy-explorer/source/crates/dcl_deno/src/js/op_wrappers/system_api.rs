@@ -12,10 +12,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 
 // list of op declarations
@@ -53,6 +54,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_chat_stream(),
             op_read_chat_stream(),
             op_send_chat(),
+            op_set_chat_bubble_text(),
             op_get_chat_reaction_stream(),
             op_read_chat_reaction_stream(),
             op_send_chat_reaction(),
@@ -99,6 +101,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_scene_loading_ui_stream(),
             op_get_analytics_event_stream(),
             op_read_analytics_event_stream(),
+            op_get_texture_optimization_stream(),
+            op_read_texture_optimization_stream(),
             op_get_avatar_modifiers(),
             // Social / Friends
             op_get_friendship_event_stream(),
@@ -366,6 +370,15 @@ pub fn op_send_chat(
     #[string] channel: String,
 ) {
     dcl_js::system_api::op_send_chat(state, message, channel)
+}
+
+#[op2(fast)]
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<OpState>>,
+    #[string] message_id: String,
+    #[string] message: String,
+) {
+    dcl_js::system_api::op_set_chat_bubble_text(state, message_id, message)
 }
 
 #[op2(async)]
@@ -684,6 +697,20 @@ pub async fn op_read_analytics_event_stream(
 }
 
 #[op2(async)]
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_texture_optimization_stream(state, rid).await
+}
+
+#[op2(async)]
 #[serde]
 pub async fn op_get_avatar_modifiers(
     state: Rc<RefCell<OpState>>,
@@ -941,8 +968,11 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[op2]
-pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state, ids)
+pub fn op_set_community_channels(
+    state: Rc<RefCell<OpState>>,
+    #[serde] communities: Vec<ListenedCommunity>,
+) {
+    dcl_js::system_api::op_set_community_channels(state, communities)
 }
 
 #[op2(async)]

@@ -18,10 +18,10 @@
 //! denylist is checked through the shared DENY_LIST_URL reader, alongside
 //! the operator's block list, platform and scene bans.
 
+use crate::shared::routing::post;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, Uri, header::CONTENT_LENGTH};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use axum::{Json, Router};
 use chrono::NaiveDateTime;
 use serde::Serialize;
@@ -798,32 +798,96 @@ mod throttle_tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
+        // Resolve the installed function names outside the stamp's own bound.
+        crate::gatekeeper::admission::functions::installed(&pool)
+            .await
+            .unwrap();
+        let label = format!("stamp-{}", uuid::Uuid::new_v4());
+        let stamp_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                pool.connect_options()
+                    .as_ref()
+                    .clone()
+                    .application_name(&label),
+            )
+            .await
+            .unwrap();
+        sqlx::query("SELECT 1").execute(&stamp_pool).await.unwrap();
         let world = WorldName::parse(&format!("stamp-{}.dcl.eth", uuid::Uuid::new_v4())).unwrap();
         sqlx::query("INSERT INTO worlds.worlds(name) VALUES($1)")
             .bind(world.key())
             .execute(&pool)
             .await
             .unwrap();
-        let mut edit = pool.begin().await.unwrap();
-        sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
-            .bind(world.key())
-            .fetch_one(&mut *edit)
+        // The stamp's lock wait gives up after its function-local lock timeout
+        // (55P03), which refuses the mint. A host stall longer than that
+        // between the observed wait and the edit's commit is therefore a
+        // refused stamp, never an early one: only that refusal reruns the
+        // scenario, and every accepted stamp must follow the edit.
+        let mut refusals = Vec::new();
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let mut edit = pool.begin().await.unwrap();
+            sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
+                .bind(world.key())
+                .fetch_one(&mut *edit)
+                .await
+                .unwrap();
+            let (stamp_pool, stamped) = (stamp_pool.clone(), world.clone());
+            let stamp =
+                tokio::spawn(async move { authorization_started(&stamp_pool, &stamped).await });
+            // A time inside the edit at which the stamp is observed blocked on
+            // the edit's row lock. The bound only ends a hang.
+            let cutoff = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    let waiting: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity \
+                         WHERE application_name=$1 AND wait_event_type='Lock')",
+                    )
+                    .bind(&label)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                    if waiting {
+                        let now: NaiveDateTime =
+                            sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+                                .fetch_one(&mut *edit)
+                                .await
+                                .unwrap();
+                        return Some(now);
+                    }
+                    if stamp.is_finished() {
+                        return None;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                }
+            })
             .await
-            .unwrap();
-        let cutoff: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
-            .fetch_one(&mut *edit)
-            .await
-            .unwrap();
-        let (cloned_pool, cloned_world) = (pool.clone(), world.clone());
-        let stamp =
-            tokio::spawn(async move { authorization_started(&cloned_pool, &cloned_world).await });
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        assert!(
-            !stamp.is_finished(),
-            "stamp must wait for the accepted edit"
+            .expect("the stamp reaches the edit's row lock");
+            edit.commit().await.unwrap();
+            match stamp.await.unwrap() {
+                Ok(stamped) => {
+                    let cutoff = cutoff.expect("stamp must wait for the accepted edit");
+                    assert!(stamped >= cutoff, "{stamped} precedes the edit at {cutoff}");
+                    return;
+                }
+                Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => {
+                    let elapsed = started.elapsed();
+                    eprintln!(
+                        "stamp gave up at its lock timeout after {elapsed:?}; rerunning the edit"
+                    );
+                    refusals.push((elapsed, error.to_string()));
+                }
+                Err(error) => panic!("stamp failed: {error}"),
+            }
+        }
+        let elapsed: Vec<_> = refusals.iter().map(|(elapsed, _)| *elapsed).collect();
+        let last = refusals.last().map_or("", |(_, error)| error.as_str());
+        panic!(
+            "every stamp gave up at its lock timeout ({} attempts, elapsed {elapsed:?}); last: {last}",
+            refusals.len()
         );
-        edit.commit().await.unwrap();
-        assert!(stamp.await.unwrap().unwrap() >= cutoff);
     }
 
     /// Concurrent attempts each reserve atomically: only `max` get past the throttle.

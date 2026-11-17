@@ -25,6 +25,9 @@ pub use super::assignments::{CurrentAssignment, CurrentAssignments};
 const NO_PEER_CAP: u32 = 0;
 
 pub trait ClusterFeedPublisher: Send + Sync {
+    fn shutdown(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
     fn current_assignments(&self) -> Option<std::sync::Arc<CurrentAssignments>> {
         None
     }

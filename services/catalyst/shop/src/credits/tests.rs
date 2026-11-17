@@ -174,6 +174,8 @@ pub(crate) struct MockBroker {
     pub claims: Option<(PgPool, &'static str)>,
     pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
     pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
+    /// What [`Broker::released_buy_mined`] answers.
+    pub released_mined: Arc<parking_lot::Mutex<Result<bool, String>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -186,6 +188,7 @@ impl MockBroker {
             claims: None,
             resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
             resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
+            released_mined: Arc::new(parking_lot::Mutex::new(Ok(false))),
             verifications: HashMap::new(),
         }
     }
@@ -228,6 +231,13 @@ impl Broker for MockBroker {
             .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
     }
 
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        self.released_mined
+            .lock()
+            .clone()
+            .map_err(ApiError::BadGateway)
+    }
+
     async fn reclaim(
         &self,
         _collection: &str,
@@ -259,14 +269,14 @@ impl Broker for MockBroker {
 }
 
 /// Records a broker buy claimed under `key` in `status`, as the broker's
-/// claim and broadcast leave it.
+/// claim and broadcast leave it (`write_ahead`, as every claim it makes is).
 async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
     sqlx::query(
         "INSERT INTO shop.broker_purchases \
          (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
-          price_wei, chain_id, mode, status) \
+          price_wei, chain_id, mode, status, write_ahead) \
          VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
-                 'primary', $4) \
+                 'primary', $4, true) \
          ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
          DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
     )
@@ -564,12 +574,11 @@ async fn ledger(pool: &PgPool, addr: &str, kind: &str) -> Vec<(String, String)> 
 }
 
 /// The settlement pass writes money (it retires stale pack orders and sends
-/// revocations): held by the restore stamps it writes nothing, and resumes
-/// once they vouch for the node.
+/// revocations): with the switch off it writes nothing, and resumes once
+/// the switch is on.
 #[tokio::test]
-async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
+async fn the_settlement_pass_skips_while_the_switch_is_off() {
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("settle_hold").await else {
         return;
     };
@@ -591,23 +600,15 @@ async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
         .unwrap()
     };
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
-    let held = StampLab::new();
-    let ran = scoped(
-        held.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    let gate = PassGate::new("credits-settlement");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, false, None)
+        .await
+        .unwrap();
     assert!(!ran);
-    assert_eq!(status().await, "pending", "held: nothing retired");
-    let fresh = StampLab::fresh();
-    let ran = scoped(
-        fresh.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    assert_eq!(status().await, "pending", "off: nothing retired");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, true, None)
+        .await
+        .unwrap();
     assert!(ran);
     assert_eq!(status().await, "abandoned");
     own.drop().await;
@@ -6234,6 +6235,7 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     seed_wallet(&pool, &addr, "0", "10").await;
     let broker = MockBroker::configured();
     let resumes = broker.resumes.clone();
+    let released_mined = broker.released_mined.clone();
     *broker.resume_answer.lock() = Err(BrokerError::Retryable(
         "broker status 504: broker buy tx not yet mined".into(),
     ));
@@ -6309,6 +6311,81 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     assert_eq!(checkout_status(&pool, checkout).await, "reversed");
     assert_eq!(available(&pool, &addr).await, "7");
     assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
+
+    // A claim that failed under a binary sending before it recorded may have
+    // broadcast: it is held out of the refund, not refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    let legacy_key = format!("checkout:{checkout}:{line}");
+    claim_broker_buy(&pool, &legacy_key, "error", None).await;
+    sqlx::query("UPDATE shop.broker_purchases SET write_ahead = false WHERE idempotency_key = $1")
+        .bind(&legacy_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "the legacy claim is held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the legacy claim").await;
+
+    // A claim that released a buy as dead is refunded only once a later look
+    // finds none of its released buys mined; a failed look waits.
+    let released_line = |checkout: i64| {
+        let pool = pool.clone();
+        async move {
+            let line = outbox_lines(&pool, checkout).await[0].0;
+            let key = format!("checkout:{checkout}:{line}");
+            claim_broker_buy(&pool, &key, "error", None).await;
+            sqlx::query(
+                "UPDATE shop.broker_purchases SET tx_hash = NULL, \
+                 released_tx_hashes = ARRAY['0xdead'] WHERE idempotency_key = $1",
+            )
+            .bind(&key)
+            .execute(&pool)
+            .await
+            .unwrap();
+            line
+        }
+    };
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Err("rpc down".into());
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "a failed look waits"
+    );
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Ok(false);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "no released buy mined: refunded"
+    );
+
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    *released_mined.lock() = Ok(true);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "1",
+        "a released buy mined: held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the mined released buy").await;
 
     cleanup(&pool, &addr).await;
 }
@@ -6959,14 +7036,10 @@ async fn packs_are_served_from_a_memo_until_an_admin_write() {
         .unwrap();
 }
 
-/// `GET /captcha` writes a challenge: off or held it answers the credits
-/// 503 and writes nothing.
+/// `GET /captcha` writes a challenge: off it answers the credits 503 and
+/// writes nothing.
 #[tokio::test]
-async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
+async fn captcha_generate_waits_for_the_credits_switch() {
     let Some(db) = OwnDatabase::create("captcha_write_guards").await else {
         return;
     };
@@ -7005,17 +7078,8 @@ async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["message"], crate::shared::writes::WRITES_DISABLED_MESSAGE);
-    let on = app(test_state(pool.clone(), StateCfg::default()));
-    let lab = StampLab::fresh();
-    lab.advance(30 * HOUR);
-    let (status, body) = scoped(lab.stamps.clone(), get(on.clone())).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    let v: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        v["message"],
-        "operator-plane writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-    );
     assert_eq!(challenges().await, 0);
+    let on = app(test_state(pool.clone(), StateCfg::default()));
     let (status, _) = get(on).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(challenges().await, 1);
@@ -9099,14 +9163,13 @@ async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() 
 }
 
 /// The daily report only reads: a settlement pass that fails still runs it,
-/// and one the restore stamps hold skips it, as it skips every write.
+/// and one with the switch off skips it, as it skips every write.
 #[tokio::test]
-async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_switch() {
     use super::settlement::{
         REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
     };
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("stale_report_pass").await else {
         return;
     };
@@ -9120,22 +9183,18 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .await
     .unwrap();
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let gate = PassGate::new("credits-settlement");
     let every = REPORT_STALE_PROCESSING_EVERY;
 
-    // Held by the restore stamps: no pass, and no report yet.
-    let held = StampLab::new();
+    // The switch off: no pass, and no report yet.
     let report = StaleProcessingReport::default();
-    let ran = scoped(
-        held.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await
-    .unwrap();
+    let ran = settlement_job_pass(&credits, None, &gate, false, None, &report)
+        .await
+        .unwrap();
     assert!(!ran);
     assert!(
         report.run(&credits, every).await.is_some(),
-        "the held pass reported"
+        "the skipped pass did not report"
     );
 
     // A pass whose sweep fails has still reported.
@@ -9146,13 +9205,8 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .execute(&own.pool)
     .await
     .unwrap();
-    let fresh = StampLab::fresh();
     let report = StaleProcessingReport::default();
-    let failed = scoped(
-        fresh.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await;
+    let failed = settlement_job_pass(&credits, None, &gate, true, None, &report).await;
     assert!(failed.is_err(), "{failed:?}");
     assert_eq!(
         report.run(&credits, every).await,

@@ -25,9 +25,9 @@ paths      = [
     "livekit-token",
     "webrtc-sys",
 ]
-exclude    = ["livekit-protocol/protocol"]
-base_tree  = "0860dacf759306008cc04a5611265517f09598f4"
-tree       = "bd0d8df20d6b8229786725c6cc4a07b74d7f88a6"
+base_tree  = "e07982aad9eebd1d8a25c4765328ca91224f753f"
+tree       = "9dcbf842a6780d184f66b2cf5d5d0203db6aa0f9"
+rev        = "b2f8bc84000333ea843578959c9d11caccaa9474"
 nix_hash   = "sha256-6GqUYgbYZTZjeYcO/w8EV+jCLt5YsubCI4G7ha7NX2Q="
 
 [[submodule]]

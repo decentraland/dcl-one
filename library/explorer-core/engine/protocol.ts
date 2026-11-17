@@ -15,6 +15,7 @@ import type {
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
+  TextureOptimizationStatus,
   VoiceChatAction,
   VoiceChatState,
   WelcomeState,
@@ -66,7 +67,7 @@ export type RpcMethod =
   | 'logout'
   | 'guestLogin'
   | 'guestSign'
-  | 'guestDiscard'
+  | 'guestSession'
   | 'emailStart'
   | 'emailComplete'
 
@@ -98,8 +99,8 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
-/** Redraw a Nearby chat bubble with other words (its translation), if that message is still the
- *  sender's bubble; its timer starts again. */
+/** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
+ *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
   kind: 'chatBubbleText'
   sender: string
@@ -107,9 +108,12 @@ export interface ChatBubbleTextRequest {
   message: string
 }
 
-/** Reload the current scene(s) — the `/reload` chat command (scene calls SystemApi.reload). */
+/** Reload a scene: the one under the player (the `/reload` chat command), or `scene`, a live scene's
+ *  hash such as a preview's scene id (the texture optimization toast's Reload). The scene runs the
+ *  engine's `reload <hash>`, which drops the live scene as a preview file save does. */
 export interface ReloadSceneRequest {
   kind: 'reloadScene'
+  scene?: string
 }
 
 /** Run an engine console command (chat `/commands` → `help`, or any passed-through `/command`);
@@ -203,6 +207,7 @@ export type PageToScene =
   | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
+  | GiftingQueryRequest
   | EquipRequest
   | CommitAvatarRequest
   | RevertAvatarRequest
@@ -325,6 +330,13 @@ export type SceneLoadingState = SceneLoadingUi
 export interface SceneLoadingMessage {
   kind: 'sceneLoading'
   state: SceneLoadingState
+}
+
+/** The preview server's background texture import status for a scene (preview mode only), as the
+ *  engine got it from the preview socket. `replay` marks the server's last status, replayed as the
+ *  socket (re)connected (library/ui/apps/hud/features/preview/textureOptimizationToast.ts). */
+export interface TextureOptimizationMessage extends TextureOptimizationStatus {
+  kind: 'textureOptimization'
 }
 
 /** Mirrors SystemApi ChatMessageDefinition (sender_address → sender). */
@@ -1991,6 +2003,51 @@ export interface CatalogPageMessage {
   requestId: number
 }
 
+/** One owned token of a giftable item: its full urn (item urn + token id), its id, and when it last changed hands. */
+export interface GiftableToken {
+  urn: string
+  tokenId: string
+  /** Seconds since the epoch, as the owned catalog reports it; 0 when unknown. */
+  transferredAt: number
+}
+
+/** An owned on-chain wearable or emote the gift picker lists. */
+export interface GiftableItem {
+  /** The item urn (no token id). */
+  urn: string
+  name: string
+  rarity: string
+  category: string
+  thumbnail?: string
+  /** How many copies the player owns. */
+  amount: number
+  tokens: GiftableToken[]
+}
+
+/** A page of the player's owned on-chain wearables or emotes for the gift picker: newest first, filtered by name
+ *  on the server. */
+export interface GiftingQueryRequest {
+  kind: 'giftingQuery'
+  catalog: CatalogKind
+  /** 0-based page index. */
+  page: number
+  pageSize: number
+  search?: string
+  /** Echoed in the answer; the picker drops older ones. */
+  requestId: number
+}
+
+/** The answer to a GiftingQueryRequest. `equipped` lists the token urns the player's look wears. */
+export interface GiftingPageMessage {
+  kind: 'giftingPage'
+  catalog: CatalogKind
+  items: GiftableItem[]
+  total: number
+  equipped: string[]
+  failed: boolean
+  requestId: number
+}
+
 /** Equip a new full wearable set on the Backpack's look (page → scene); deployed on commitAvatar. */
 export interface EquipRequest {
   kind: 'equip'
@@ -2042,6 +2099,8 @@ export interface PreviewEmoteRequest {
 export interface PreviewRotateRequest {
   kind: 'previewRotate'
   degrees: number
+  /** The stage whose avatar turns: the lobby's when named, else the preview's (the Backpack's, the Shop's). */
+  stage?: 'lobby'
 }
 
 /** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
@@ -2351,6 +2410,7 @@ export type SceneToPage =
   | AnalyticsEventMessage
   | LoginCodeMessage
   | SceneLoadingMessage
+  | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
   | ConsoleReplyMessage
@@ -2379,6 +2439,7 @@ export type SceneToPage =
   | MicMessage
   | WearablesMessage
   | CatalogPageMessage
+  | GiftingPageMessage
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage

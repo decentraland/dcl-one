@@ -1,7 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./download_success";
 import { loader as aliasLoader } from "./download_.success";
-import { loader as legacyLoader } from "./landings.download_.success";
 function read(search = "", cookie = "") {
   return loader({
     request: new Request(`https://site.test/download_success${search}`, {
@@ -9,7 +8,33 @@ function read(search = "", cookie = "") {
     }),
   } as never);
 }
+const INSTALLERS = "https://installers.example.test";
+beforeEach(() => vi.stubEnv("EXPLORER_INSTALLERS_URL", INSTALLERS));
+afterEach(() => vi.unstubAllEnvs());
 describe("Download success loader", () => {
+  describe("when the deployment configures an installer host", () => {
+    it.each([
+      ["?os=windows&arch=amd64", "/launcher-rust/Decentraland_installer.exe"],
+      ["?os=Windows&arch=arm64", "/launcher-rust/Decentraland_installer.exe"],
+      ["?os=macOS&arch=arm64", "/launcher-rust/Decentraland_installer.dmg"],
+      ["?os=macos&arch=amd64", "/launcher/dcl/Decentraland%20Outdated-mac-x64.dmg"],
+    ])("should start the installer of %s from that host", (search, path) => {
+      expect(read(search).url).toBe(`${INSTALLERS}${path}`);
+    });
+  });
+  describe("when the deployment configures no installer host", () => {
+    beforeEach(() => vi.stubEnv("EXPLORER_INSTALLERS_URL", ""));
+    it("should answer 404, with no download from another host", () => {
+      let thrown: unknown;
+      try {
+        read("?os=windows&arch=amd64");
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Response);
+      expect((thrown as Response).status).toBe(404);
+    });
+  });
   describe("when locale and platform vary", () => {
     it("should isolate the locale of each request", () => {
       expect(read("?lang=es").locale).toBe("es");
@@ -27,10 +52,10 @@ describe("Download success loader", () => {
     });
   });
   describe("when visiting an older URL", () => {
-    it.each([aliasLoader, legacyLoader])(
+    it(
       "should retain platform parameters in the canonical redirect",
-      (fn) => {
-        const response = fn({
+      () => {
+        const response = aliasLoader({
           request: new Request(
             "https://site.test/download/success?os=windows&arch=amd64",
           ),

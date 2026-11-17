@@ -25,6 +25,15 @@ describe('nearby voice', () => {
     expect(vi.mocked(s.settings.load)).toHaveBeenCalled()
   })
 
+  it('a press on the popover keeps it open, a press outside closes it', async () => {
+    renderSidebar()
+    await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
+    fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Nearby voice' }))
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: 'Nearby voice' })).toBeNull()
+  })
+
   it('Speak opens the mic, and the hint follows it', async () => {
     const s = renderSidebar()
     await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))

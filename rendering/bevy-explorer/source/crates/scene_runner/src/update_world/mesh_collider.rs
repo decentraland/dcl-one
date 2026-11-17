@@ -135,8 +135,8 @@ impl From<PbMeshCollider> for MeshCollider<CtCollider> {
 }
 
 pub fn add_collider_systems<T: ColliderType>(app: &mut App) {
-    // Collider components are created in RunLoop (by scene messages) and PostLoop
-    // (by glTF processing). PostUpdate propagates their global transforms before
+    // Collider components are created in RunLoop (by scene messages) and in the SpawnScene
+    // schedule (by glTF processing). PostUpdate propagates their global transforms before
     // the next Init registers and positions them for Input raycasts and triggers.
     app.add_systems(Update, update_colliders::<T>.in_set(SceneSets::Init));
 

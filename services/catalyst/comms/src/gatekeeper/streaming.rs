@@ -11,8 +11,8 @@
 //! `*-scene-stream-access-handler.ts`). One active row per place in
 //! `social.scene_stream_access`; the ingress itself is LiveKit's (twirp
 //! `livekit.Ingress`), and the LiveKit webhook keeps the active row's
-//! `streaming` flag. `/cast/*` (Cast 2.0) was a 501 stub in the old service
-//! and answers the same here.
+//! `streaming` flag. The Cast 2.0 routes (`/cast/*`, [`cast`]) mint and read
+//! the same rows.
 
 use crate::shared::now_utc;
 use axum::Json;
@@ -40,15 +40,22 @@ pub(super) mod notifications;
 
 #[path = "streaming_jobs.rs"]
 mod jobs;
+
+#[path = "streaming_cast.rs"]
+pub(super) mod cast;
 pub(super) use jobs::spawn_jobs;
+
+/// The durable cleanup's drain, for tests that retry it after a failure.
+#[cfg(test)]
+pub(crate) async fn drain_cleanup_for_test(state: &CommsState) -> Result<(), ApiError> {
+    jobs::drain_cleanup(state).await
+}
 
 pub const PATH: &str = "/scene-stream-access";
 pub const FOUR_DAYS_MS: i64 = 4 * 24 * 60 * 60 * 1000;
 pub const STREAM_ACCESS_NOT_FOUND_MSG: &str = "No active streaming access found for place";
 pub const STREAM_RESET_FAILED_MSG: &str = "Failed to reset scene stream access";
 pub const NOT_AUTHORIZED_TO_STREAM_MSG: &str = "you are not authorized to stream to this scene";
-pub const CAST_NOT_PORTED_MSG: &str = "Cast 2.0 WebRTC presenter surface (stream links, streamer/watcher/bot tokens, presenter \
-     promote/demote) is not served; RTMP scene-stream ingress is served by /scene-stream-access";
 
 /// The wire body (upstream's `SceneStreamAccessResponse`), times in ms.
 #[derive(Serialize, PartialEq, Eq)]
@@ -100,10 +107,6 @@ impl AccessRow {
 
 const ACCESS_COLUMNS: &str =
     "id, room_id, streaming, streaming_url, streaming_key, ingress_id, created_at, expiration_time";
-
-pub async fn cast_any() -> ApiError {
-    ApiError::http(501, CAST_NOT_PORTED_MSG)
-}
 
 pub async fn scene_stream_access(
     State(state): State<SharedState>,
@@ -190,36 +193,48 @@ pub async fn scene_stream_access(
             }
             None => Err(ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG)),
         },
-        Method::POST => {
-            if let Some(existing) = active_access(&state.pool, &place_id).await? {
-                match renewal(&existing, &room, now_utc()) {
-                    Renewal::Reuse => return Ok(Json(existing.response()).into_response()),
-                    Renewal::Conflict => return Err(renewal_conflict()),
-                    Renewal::Replace => {
-                        if !jobs::enqueue(
-                            &state,
-                            existing.id,
-                            jobs::CleanupCommand::IdleReplacement,
-                        )
-                        .await?
-                        {
-                            return Err(renewal_conflict());
-                        }
-                        jobs::cleanup_access(&state, existing.id).await?;
-                    }
-                }
-            }
-            Ok(
-                Json(create_access(&state.pool, &ingress, &place_id, &room, &sf.signer).await?)
-                    .into_response(),
-            )
-        }
+        Method::POST => issue_access(&state, &ingress, &place_id, &room, &sf.signer)
+            .await
+            .map(|resp| Json(resp).into_response()),
         Method::PUT => reset_access(&state, &ingress, &place_id, &room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
         Method::DELETE => remove_access(&state, &ingress, &place_id).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
+}
+
+/// The place's active credential when it is still valid for `room`, else a
+/// new one: an idle credential for another room or past its expiry is
+/// replaced (its ingress cleanup is a durable intent), a streaming one is a
+/// 409. `POST /scene-stream-access` and `/cast/generate-stream-link` share it.
+async fn issue_access(
+    state: &CommsState,
+    ingress: &IngressClient<'_>,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+) -> Result<SceneStreamAccessResponse, ApiError> {
+    if let Some(existing) = active_access(&state.pool, place_id).await? {
+        match renewal(&existing, room, now_utc()) {
+            Renewal::Reuse => return Ok(existing.response()),
+            Renewal::Conflict => return Err(renewal_conflict()),
+            Renewal::Replace => {
+                // The replacement's ingress first: a LiveKit failure keeps the old credential.
+                let info = mint_ingress(ingress, room).await?;
+                return replace_access(
+                    state,
+                    ingress,
+                    existing.id,
+                    jobs::CleanupCommand::IdleReplacement,
+                    (place_id, room, signer),
+                    info,
+                )
+                .await;
+            }
+        }
+    }
+    create_access(&state.pool, ingress, place_id, room, signer).await
 }
 
 async fn refuse_if_platform_banned(
@@ -299,18 +314,110 @@ async fn create_access(
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
+    let info = mint_ingress(ingress, room).await?;
+    store_access(pool, ingress, place_id, room, signer, info).await
+}
+
+/// The new credential's RTMP ingress. Minted before an old credential is
+/// revoked (as upstream does), so a LiveKit failure leaves the old one in place.
+async fn mint_ingress(
+    ingress: &IngressClient<'_>,
+    room: &str,
+) -> Result<crate::shared::livekit::IngressInfo, ApiError> {
     let participant_identity = format!("{}-streamer", Uuid::new_v4());
     let info = ingress
         .create_ingress(room, &participant_identity)
         .await
         .map_err(|e| ApiError::internal(format!("livekit ingress create: {e}")))?;
+    if info.url.is_none() || info.stream_key.is_none() {
+        return Err(ApiError::internal(
+            "livekit ingress response missing url or stream key",
+        ));
+    }
+    Ok(info)
+}
+
+/// Replaces credential `old` with one for the freshly minted `info`: the old
+/// row's deactivation, its cleanup intent and the new row are one
+/// transaction, so any failure (a concurrent change included) leaves the old
+/// credential in force and deletes the new ingress. For a reset that trades
+/// security for availability: a reset that answers 500 or 409 leaves the key
+/// it meant to replace working, and the admin retries it (or revokes).
+async fn replace_access(
+    state: &CommsState,
+    ingress: &IngressClient<'_>,
+    old: Uuid,
+    command: jobs::CleanupCommand,
+    (place_id, room, signer): (&str, &str, &Address),
+    info: crate::shared::livekit::IngressInfo,
+) -> Result<SceneStreamAccessResponse, ApiError> {
+    let stored = async {
+        let Some(prepared) = jobs::prepare(state, old, command).await? else {
+            return Ok(None);
+        };
+        let mut tx = state.pool.begin().await?;
+        if !prepared.record(&mut *tx).await? {
+            return Ok(None);
+        }
+        let Some(row) = insert_access(&mut *tx, place_id, room, signer, &info).await? else {
+            return Ok(None);
+        };
+        tx.commit().await?;
+        Ok::<_, ApiError>(Some(row))
+    }
+    .await;
+    match stored {
+        Ok(Some(row)) => {
+            settle_cleanup(state, old, place_id).await;
+            Ok(row.response())
+        }
+        Ok(None) => {
+            discard_ingress(ingress, &info, place_id).await;
+            Err(concurrent_change())
+        }
+        Err(error) => {
+            discard_ingress(ingress, &info, place_id).await;
+            Err(error)
+        }
+    }
+}
+
+/// Runs the committed cleanup now. Its failure is logged, not answered: the
+/// swap or revocation is already stored, and the durable job retries it.
+async fn settle_cleanup(state: &CommsState, id: Uuid, place_id: &str) {
+    if let Err(error) = jobs::cleanup_access(state, id).await {
+        tracing::warn!(place_id, access_id = %id, error = %error, "stream cleanup deferred to the job");
+    }
+}
+
+/// Deletes an ingress minted for a credential that was not stored.
+async fn discard_ingress(
+    ingress: &IngressClient<'_>,
+    info: &crate::shared::livekit::IngressInfo,
+    place_id: &str,
+) {
+    if !info.ingress_id.is_empty()
+        && let Err(e) = ingress.delete_ingress(&info.ingress_id).await
+    {
+        tracing::warn!(error = %e, place_id, "failed to delete an unused ingress");
+    }
+}
+
+/// Inserts the place's active credential for `info`'s ingress; `None` when
+/// the place already has one.
+async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+    info: &crate::shared::livekit::IngressInfo,
+) -> Result<Option<AccessRow>, ApiError> {
     let (Some(url), Some(stream_key)) = (info.url.as_deref(), info.stream_key.as_deref()) else {
         return Err(ApiError::internal(
             "livekit ingress response missing url or stream key",
         ));
     };
-    let now = now_utc();
-    let inserted: Option<AccessRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO social.scene_stream_access \
              (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $7 + make_interval(secs => $8::double precision / 1000), true) \
@@ -323,10 +430,21 @@ async fn create_access(
     .bind(&info.ingress_id)
     .bind(room)
     .bind(signer)
-    .bind(now)
+    .bind(now_utc())
     .bind(FOUR_DAYS_MS)
-    .fetch_optional(pool)
-    .await?;
+    .fetch_optional(executor)
+    .await?)
+}
+
+async fn store_access(
+    pool: &PgPool,
+    ingress: &IngressClient<'_>,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+    info: crate::shared::livekit::IngressInfo,
+) -> Result<SceneStreamAccessResponse, ApiError> {
+    let inserted = insert_access(pool, place_id, room, signer, &info).await?;
     if let Some(row) = inserted {
         return Ok(row.response());
     }
@@ -366,8 +484,20 @@ fn renewal(row: &AccessRow, room: &str, now: NaiveDateTime) -> Renewal {
     }
 }
 
+/// Upstream's `StreamRenewalConflictError`.
+pub const RENEWAL_CONFLICT_MSG: &str = "A broadcast is still live. Stop it before renewing, or explicitly reset the stream key to interrupt it.";
+
 fn renewal_conflict() -> ApiError {
-    ApiError::http(409, "Cannot renew streaming access while streaming")
+    ApiError::http(409, RENEWAL_CONFLICT_MSG)
+}
+
+/// The credential was replaced, revoked or touched by a webhook while this
+/// request worked on it: nothing need be streaming, and a retry decides anew.
+pub const CONCURRENT_CHANGE_MSG: &str =
+    "The stream access changed while this request was handling it. Please try again.";
+
+fn concurrent_change() -> ApiError {
+    ApiError::http(409, CONCURRENT_CHANGE_MSG)
 }
 
 async fn reset_access(
@@ -381,14 +511,19 @@ async fn reset_access(
         let row = active_access(&state.pool, place_id)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
-        if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Reset).await? {
-            return Err(renewal_conflict());
-        }
+        // The replacement's ingress first: a LiveKit failure keeps the old credential.
         // The durable intent owns the old ingress's deletion and the reset notification,
-        // delivered only once the replacement credential exists; it also covers a crash here.
-        let response = create_access(&state.pool, ingress, place_id, room, signer).await?;
-        jobs::cleanup_access(state, row.id).await?;
-        Ok(response)
+        // delivered only once the replacement credential exists; it also covers a crash.
+        let info = mint_ingress(ingress, room).await?;
+        replace_access(
+            state,
+            ingress,
+            row.id,
+            jobs::CleanupCommand::Reset,
+            (place_id, room, signer),
+            info,
+        )
+        .await
     }
     .await;
     result.map_err(|error: ApiError| {
@@ -406,9 +541,9 @@ async fn remove_access(
         .await?
         .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
-        return Err(renewal_conflict());
+        return Err(concurrent_change());
     }
-    jobs::cleanup_access(state, row.id).await?;
+    settle_cleanup(state, row.id, place_id).await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -504,7 +639,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cast_answers_the_old_501_and_an_unconfigured_livekit_503() {
+    async fn cast_refuses_an_unsigned_caller_and_an_unconfigured_livekit_answers_503() {
         let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         let unconfigured = Settings {
             livekit: super::super::LiveKit {
@@ -533,7 +668,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+        // The signature gate answers before the LiveKit configuration is consulted.
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let resp = app
             .oneshot(Request::get(PATH).body(Body::empty()).unwrap())
             .await

@@ -299,7 +299,7 @@ function createJsContext(wasmApi, context) {
 
 const defer = Promise.resolve().then.bind(Promise.resolve());
 
-function runWithScopeSync(code) {
+async function runWithScope(code) {
   const module = { exports: {} };
 
   const func = new Function(
@@ -309,37 +309,27 @@ function runWithScopeSync(code) {
     `${jsPreamble}\n\n;(function (globalThis, module, exports) {\n${code}\n}).call(globalThis, globalThis, module, exports);`
   );
 
-  func.call(jsProxy, jsProxy, module, module.exports);
+  await defer(() => func.call(jsProxy, jsProxy, module, module.exports));
   return module.exports;
-}
-
-async function runWithScope(code) {
-  return await defer(() => runWithScopeSync(code));
 }
 
 // prefetch all the requireable scripts before we replace the fetch function
 var allowedModules = undefined;
-// SocialController registers a lifetime stream: execute it at first require, not prefetch.
-const deferredModules = Object.create(null);
 
 async function preloadModules(context, fetch_fn) {
   const modules = [
     "~system/BevyExplorerApi",
     "~system/CommunicationsController",
     "~system/CommsApi",
-    "~system/DevTools",
     "~system/EngineApi",
     "~system/EnvironmentApi",
     "~system/EthereumController",
-    "~system/ParcelIdentity",
-    "~system/Permissions",
     "~system/Players",
     "~system/PortableExperiences",
     "~system/RestrictedActions",
     "~system/Runtime",
     "~system/Scene",
     "~system/SignedFetch",
-    "~system/SocialController",
     "~system/Testing",
     "~system/UserActionModule",
     "~system/UserIdentity",
@@ -349,10 +339,6 @@ async function preloadModules(context, fetch_fn) {
   const promises = modules.map(async (key) => {
     try {
       const code = fetch_fn(context, key);
-      if (key === "~system/SocialController") {
-        deferredModules[key] = code;
-        return undefined;
-      }
       const result = await runWithScope(code);
       return [key, result];
     } catch (e) {
@@ -364,10 +350,6 @@ async function preloadModules(context, fetch_fn) {
 }
 
 function require(moduleName) {
-  if (Object.prototype.hasOwnProperty.call(deferredModules, moduleName)) {
-    allowedModules[moduleName] = runWithScopeSync(deferredModules[moduleName]);
-    delete deferredModules[moduleName];
-  }
   let code = allowedModules[moduleName];
   if (!code) {
     throw "can't find module `" + moduleName + "`";
@@ -525,16 +507,12 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   enter(() => relay.__wbindgen_start());
   postToEngine({ type: "INIT_COMPLETE" });
 
-  // B failed under a relay call: let A deliver its terminal error before teardown.
-  let failureReported = false;
+  // B failed under a relay call: end the scene
   const checkFailure = () => {
     if (failure === undefined) return false;
-    if (!failureReported) {
-      failureReported = true;
-      relayLog.error(`[Relay] scene ${sceneId}: scene runtime failed; ending the scene`, failure);
-      enter(() => relay.relay_fail());
-    }
-    return enter(() => relay.relay_killed());
+    relayLog.error(`[Relay] scene ${sceneId}: scene runtime failed; ending the scene`, failure);
+    enter(() => relay.relay_fail());
+    return true;
   };
   const logStats = () => {
     const stat = (i) => relay.relay_stat(i);
@@ -791,11 +769,11 @@ function createWebStorageProxy(ops) {
         }
 
         // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
+        return ops.op_webstorage_get(String(prop));
       },
 
       set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
+        ops.op_webstorage_set(String(prop), String(value));
         return true;
       },
 

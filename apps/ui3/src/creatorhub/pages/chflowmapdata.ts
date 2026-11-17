@@ -30,14 +30,14 @@ export const SECTIONS: FlowSection[] = [
     tracks: [
       {
         chain: "home",
-        items: [route("/create", { sub: "HOME" })],
+        items: [route("/create/home", { sub: "HOME" })],
         branches: [
           {
             chain: "home",
             chips: true,
             note: "the rail \u{2014} Land \u{2192} /shop and Names \u{2192} /marketplace/names stay in-product; Curate appears only for committee wallets",
             items: [
-              node("chip", "Home", { href: "/create" }),
+              node("chip", "Home", { href: "/create/home" }),
               node("chip", "Scenes", { href: "/create/scenes" }),
               node("chip", "Templates", { href: "/create/templates" }),
               node("chip", "Collections", { href: "/create/wearables" }),
@@ -584,7 +584,7 @@ export const SECTIONS: FlowSection[] = [
       {
         chain: "download",
         items: [
-          route("/landings/creator-hub-download", { sub: "desktop app landing" }),
+          route("/download/creator-hub", { sub: "desktop app landing" }),
           click("Download"),
           outcome("installer", { sub: "per-OS build" }),
         ],
@@ -679,7 +679,7 @@ machine states; \`/paths\` are routes. Regenerated against the live route tree.
 \u{251C}\u{2500}\u{2500} /create/learn \u{2500}\u{2500} Videos\u{2197} \u{B7} Creator Docs\u{2197} \u{B7} Studios\u{2197} \u{B7} Creator Hub flow map
 \u{2502}    (\u{25B6} /create/map \u{2014} this document)
 \u{251C}\u{2500}\u{2500} /create/settings \u{2500}\u{2500} preferences \u{2500}[Close]\u{25B6} back (history \u{B7} /create)
-\u{251C}\u{2500}\u{2500} /landings/creator-hub-download \u{2500}\u{2500} [Download]\u{25B6} per-OS installer
+\u{251C}\u{2500}\u{2500} /download/creator-hub \u{2500}\u{2500} [Download]\u{25B6} per-OS installer
 \u{251C}\u{2500}\u{2500} delete-project: CONFIRM \u{2500}[Delete]\u{23F3} signed tombstone \u{25B6} done (?local=deleted|kept)
 \u{2514}\u{2500}\u{2500} /create/map \u{2014} this map \u{B7} sibling: /explorer-map (the Explorer client)
 \`\`\`

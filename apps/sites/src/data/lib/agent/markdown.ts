@@ -52,11 +52,12 @@ function heading(level: number, text: string): string {
   return `${prefix}${clean(text)}`;
 }
 
-function bulletList(items: string[]): string {
+function bulletList(items: string[], ordered = false): string {
+  // An ordered item keeps its position as its number, so the numbers match the rendered list.
   return items
-    .map((i) => clean(i))
-    .filter((i) => i.length > 0)
-    .map((i) => `- ${i}`)
+    .map((i, n) => [clean(i), ordered ? `${n + 1}.` : "-"] as const)
+    .filter(([i]) => i.length > 0)
+    .map(([i, marker]) => `${marker} ${i}`)
     .join("\n");
 }
 
@@ -225,8 +226,8 @@ function legalBlockToMarkdown(block: AgentLegalBlock): string {
   const type = block.type;
   if (type === "h3") return heading(3, reactNodeToMarkdown(block.content ?? block.heading));
   if (type === "h4") return heading(4, reactNodeToMarkdown(block.content ?? block.heading));
-  if (type === "ul") {
-    return bulletList((block.items ?? []).map(reactNodeToMarkdown));
+  if (type === "ul" || type === "ol") {
+    return bulletList((block.items ?? []).map(reactNodeToMarkdown), type === "ol");
   }
   const text = clean(reactNodeToMarkdown(block.content ?? block.heading ?? ""));
   return text;
@@ -323,8 +324,6 @@ type AgentWhatsOnData = {
   tab?: "my";
   live?: Event[];
   upcoming?: Event[];
-  filter?: string;
-  search?: string;
 };
 
 function eventLine(e: Event): string {
@@ -336,7 +335,7 @@ function eventLine(e: Event): string {
     (e.total_attendees ?? 0) > 0 ? `${e.total_attendees} attending` : null,
   ]);
   const title = clean(e.name || "Untitled event");
-  return `- [${title}](/whats-on/${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
+  return `- [${title}](/events?id=${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
@@ -344,20 +343,15 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
     return joinBlocks([
       heading(1, "My Hangouts"),
       "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
-      "[Open My Hangouts](/whats-on?tab=my)",
-      "[Browse public hangouts](/whats-on)",
+      "[Open My Hangouts](/events?tab=my)",
+      "[Browse public hangouts](/events)",
     ]);
   }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
-  const note = inlineParts([
-    data.filter ? `filter: ${data.filter}` : null,
-    data.search ? `search: "${data.search}"` : null,
-  ]);
-
   const blocks: string[] = [
     heading(1, "What's On in Decentraland"),
-    `${live.length} live now, ${upcoming.length} upcoming.${note ? ` (${note})` : ""}`,
+    `${live.length} live now, ${upcoming.length} upcoming.`,
   ];
   if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
   if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));

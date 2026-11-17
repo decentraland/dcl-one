@@ -40,5 +40,7 @@ export function createStream(
 
   void ctx.engine.update(1);
 
-  return queue;
+  // AsyncQueue predates `Symbol.asyncDispose`, which the `AsyncGenerator` type now requires.
+  // The RPC server only iterates the stream and never calls it.
+  return queue as unknown as AsyncGenerator<{ data: Uint8Array }>;
 }

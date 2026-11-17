@@ -1,4 +1,4 @@
-import { isMissingScriptFile, resolveScriptFile } from './script-files';
+import { isMissingSceneFile, isMissingScriptFile, resolveScriptFile } from './script-files';
 
 describe('script-files', () => {
   const scriptPath = 'assets/chest/Chest.ts';
@@ -68,6 +68,22 @@ describe('script-files', () => {
           false,
         );
       });
+    });
+  });
+
+  describe('when checking a file param, stored from the scene root', () => {
+    const files = new Set(['assets/scene/images/sky.png']);
+
+    it('should find a file the script folder does not hold, ignoring letter case', () => {
+      expect(isMissingSceneFile('assets/scene/Images/sky.png', files)).toBe(false);
+    });
+
+    it('should report a file that is not in the scene', () => {
+      expect(isMissingSceneFile('assets/scene/Images/night.png', files)).toBe(true);
+    });
+
+    it('should not report an empty value', () => {
+      expect(isMissingSceneFile('', files)).toBe(false);
     });
   });
 });

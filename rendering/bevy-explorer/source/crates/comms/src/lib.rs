@@ -1,11 +1,13 @@
 pub mod access_status;
 pub mod adapter;
+mod anim_announce;
 pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
 pub mod chat_reaction;
 pub mod community_chat;
 pub mod connectivity;
+mod gait;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
@@ -16,13 +18,13 @@ pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
 pub mod profile;
-pub mod public_voice;
 pub mod pulse;
 pub mod recovery;
 pub mod room_connection;
 pub mod scene_rooms;
 pub mod scene_topics;
 pub mod signed_login;
+pub mod speaking;
 #[cfg(test)]
 mod test;
 mod traffic;
@@ -50,7 +52,9 @@ use prost::Message as _;
 use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
-pub use moderation::{AdmissionView, BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
+pub use moderation::{
+    AdmissionView, BanScope, BlockedOrBanned, MetadataError, SceneAdmission, SceneRoomModeration,
+};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -118,6 +122,7 @@ impl Plugin for CommsPlugin {
             automation::CommsAutomationPlugin,
             nearby_mutes::NearbyMutesPlugin,
             scene_topics::SceneTopicsPlugin,
+            speaking::SpeakingPlugin,
         ));
 
         #[cfg(feature = "livekit")]

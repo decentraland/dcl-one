@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
@@ -31,10 +32,34 @@ describe('serveWebApp', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test('the browser origin uses the development host accepted by service CORS policies', async () => {
-    assert.equal(new URL(server.url).hostname, 'localhost')
-    assert.equal(new URL(server.url).port, String(server.port))
+  test('the app is served at localhost, the host the services admit to a signed read', async () => {
+    assert.equal(server.url, `http://localhost:${server.port}/`)
     assert.equal((await fetch(server.url)).status, 200)
+  })
+
+  test('both loopback addresses localhost resolves to answer, so no other process takes one', async () => {
+    assert.equal((await fetch(`http://127.0.0.1:${server.port}/`)).status, 200)
+    const v6 = await fetch(`http://[::1]:${server.port}/`).catch(() => null)
+    // a host with no IPv6 loopback has nothing at [::1] for the browser to reach
+    if (v6) assert.equal(v6.status, 200)
+  })
+
+  test('a fixed port another process holds on [::1] fails, naming it', async (t) => {
+    const other = createServer((_, response) => response.end('someone else'))
+    const listening = await new Promise<boolean>((resolve) => {
+      other.once('error', () => resolve(false))
+      other.listen(0, '::1', () => resolve(true))
+    })
+    if (!listening) {
+      t.skip('no IPv6 loopback on this host')
+      return
+    }
+    try {
+      const port = (other.address() as { port: number }).port
+      await assert.rejects(serveWebApp(dir, port), new RegExp(`port ${port} is taken on \\[::1\\]`))
+    } finally {
+      await new Promise<void>((done) => other.close(() => done()))
+    }
   })
 
   test('the common headers are on every response', async () => {

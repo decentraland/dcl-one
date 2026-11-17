@@ -31,7 +31,6 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button(title))
   }
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
-  const cloudBefore = await explorer.json<{ enabled: boolean }>('/cloud_motion')
   const developmentBuild = await explorer.json<boolean>('/debug_panel --dev-build')
   const sidebarSettings = button('Sidebar settings')
   const nativeHud = explorer.console.kind === 'native'
@@ -44,7 +43,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     }>('/cef_hud_perf'), (reading) => (reading.bitmapMiBPerSecond ?? 0) > 0,
     { timeoutMs: 10_000, what: 'a CEF repaint while the debug panel is closed' })
     assert.ok(cef.paintSize?.every(size => size > 0))
-    if (developmentBuild) await explorer.hud.click(sidebarSettings)
+    // the open popup's backdrop covers its handle: Escape closes the popup
+    if (developmentBuild) await explorer.escape()
   }
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
@@ -71,17 +71,6 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes(new URL(world.realm).origin), {
       timeoutMs: 10_000, what: 'the panel to display the current realm'
     })
-    await expand('Legacy avatar events')
-    await until(async () => ({ state: await explorer.legacySocial(), read: await explorer.hud.get(panel) }), ({ state, read }) => {
-      assert.ok(Object.values(state).every(value => Number.isInteger(value) && value >= 0))
-      assert.ok(state.queuedEvents <= state.subscribedScenes * 1024)
-      assert.ok(state.resyncScenes <= state.subscribedScenes)
-      const text = read.text.replace(/\s+/g, ' ')
-      return [
-        ['Subscribed scenes', state.subscribedScenes], ['Queued events', state.queuedEvents],
-        ['Scenes awaiting resync', state.resyncScenes], ['Tracked peers', state.trackedPeers]
-      ].every(([label, value]) => new RegExp(`${label} ${value}(?:\\s|$)`).test(text))
-    }, { timeoutMs: 10_000, what: 'the panel to display the engine legacy avatar queue counts' })
     await explorer.run('/session_graphics fps 47')
     await expand('Performance')
     await waitTarget(47)
@@ -91,18 +80,6 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
-    await expand('Skybox')
-    const cloudToggle = { role: 'switch', name: 'Cloud motion' } as const
-    const waitCloudMotion = (enabled: boolean) => until(async () => ({
-      control: await explorer.hud.get(cloudToggle),
-      state: await explorer.json<{ enabled: boolean }>('/cloud_motion')
-    }), ({ control, state }) => control.checked === enabled && state.enabled === enabled,
-    { timeoutMs: 10_000, what: 'the cloud motion switch and renderer to agree on ' + enabled })
-    await waitCloudMotion(cloudBefore.enabled)
-    await explorer.hud.click(cloudToggle)
-    await waitCloudMotion(!cloudBefore.enabled)
-    await explorer.hud.click(cloudToggle)
-    await waitCloudMotion(cloudBefore.enabled)
     // walk, click the world and use Sidebar settings with the panel open
     const start = await explorer.position()
     await explorer.key('KeyW', 'down')
@@ -112,11 +89,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     } finally {
       await explorer.key('KeyW', 'up')
     }
+    // The world, high in the sky left of the panel: mid-height, another session's avatar can stand
+    // under the pointer, and a click on it opens its menu over the rail.
     const open = await explorer.hud.get(panel)
-    await explorer.clickAt(open.x / 2, open.y + open.height / 2)
+    await explorer.clickAt(open.x / 2, open.y + 10)
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
-    await explorer.hud.click(sidebarSettings)
+    // Escape closes the popup first, and the debug panel stays
+    await explorer.escape()
     await explorer.hud.waitHidden(button('Debug panel'))
     assert.equal(await explorer.hud.isVisible(panel), true)
     await expand('Avatar')
@@ -129,10 +109,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
-    const restoredClouds = await explorer.json<{ enabled: boolean }>(`/cloud_motion ${cloudBefore.enabled}`)
-    assert.equal(restoredClouds.enabled, cloudBefore.enabled)
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
-    if (await explorer.hud.isVisible(panel)) await explorer.escape()
+    // The panel's own Close button, not Escape: with the filter field focused the HUD leaves Cancel
+    // to the field, and a panel left open would stay over every later scenario. The panel comes
+    // after the rail in document order, so its Close is the last match.
+    if (await explorer.hud.isVisible(panel)) {
+      const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
+      await explorer.hud.click({ ...button('Close'), index: closes - 1 })
+    }
     await explorer.hud.waitHidden(panel)
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)

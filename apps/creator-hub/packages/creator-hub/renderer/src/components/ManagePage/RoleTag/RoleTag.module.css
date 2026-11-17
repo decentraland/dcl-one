@@ -1,0 +1,19 @@
+.tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background-color: rgba(26, 117, 210, 0.2);
+  color: var(--palette-info-light);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tag[data-variant="tenant"] {
+  background-color: rgba(254, 156, 42, 0.2);
+  color: #ffb95b;
+}
