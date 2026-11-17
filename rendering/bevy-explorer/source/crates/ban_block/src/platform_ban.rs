@@ -275,10 +275,6 @@ fn check_platform_ban(
         return;
     };
     let refresh_requested = refresh.read().count() > 0;
-    let passed_expiry = status
-        .ban()
-        .and_then(|ban| ban.expires_at.clone())
-        .filter(|_| ban_expired(&status, web_time::SystemTime::now()));
     let triggered =
         refresh_requested || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
@@ -314,6 +310,11 @@ fn check_platform_ban(
         }
     }
 
+    // read after the answer above: a lifted ban has no expiry to check
+    let passed_expiry = status
+        .ban()
+        .and_then(|ban| ban.expires_at.clone())
+        .filter(|_| ban_expired(&status, web_time::SystemTime::now()));
     if !schedule.starts(now, triggered, passed_expiry.as_deref()) {
         return;
     }

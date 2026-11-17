@@ -59,6 +59,18 @@ describe('platform ban domain', () => {
     expect(h.session().platformBan.travelRefused).toBe(false)
   })
 
+  it('a ban refusal that answers after sign-out is dropped', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().map.changeRealm('other.dcl.eth'))
+    const go = h.driver.last('changeRealm')!
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    h.driver.emit({ kind: 'travelResult', travelId: go.travelId!, realm: go.realm, ok: false, message: PLATFORM_BANNED_REFUSAL })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(h.session().platformBan.travelRefused).toBe(false)
+  })
+
   it('an in-world travel refused for the ban is not a travel error', async () => {
     const h = renderSession()
     await enterAsGuest(h)
@@ -172,16 +184,16 @@ describe('the ban notices', () => {
 
   it('Contact Support on the native HUD asks the engine to open the help page', async () => {
     isNative = true
+    const open = vi.spyOn(window, 'open')
     try {
-      const open = vi.spyOn(window, 'open')
       const h = mount({ phase: 'world', notice: BAN, travelRefused: true })
       await waitFor(() => expect(dialog()).not.toBeNull())
       await userEvent.click(screen.getByRole('button', { name: 'Contact Support' }))
       expect(h.openExternalUrl).toHaveBeenCalledOnce()
       expect(h.openExternalUrl.mock.calls[0][0]).toMatch(/\/help\/$/)
       expect(open).not.toHaveBeenCalled()
-      open.mockRestore()
     } finally {
+      open.mockRestore()
       isNative = false
     }
   })
