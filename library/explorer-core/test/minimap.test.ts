@@ -18,7 +18,8 @@ import {
   saveZoom
 } from '../features/minimap/minimapPrefs'
 import { placesNear, type MinimapPlace } from '../features/minimap/minimapPlaces'
-import { isStandingInHome, minimapHomeTarget } from '../features/minimap/minimapHome'
+import { minimapHomeTarget } from '../features/minimap/minimapHome'
+import { isPlacePanelHome, isStandingInHome } from '../features/map/home'
 import { jumpInLink } from '../features/map/shareLinks'
 import { DEFAULT_REALM } from '@hud-host'
 
@@ -214,14 +215,25 @@ describe('minimap Set as Home', () => {
   })
 
   it('counts any parcel of the home place as home', () => {
-    expect(isStandingInHome({ parcel: { x: 10, y: 20 }, world: null }, DEFAULT_REALM, { x: 11, y: 20 }, plaza)).toBe(true)
+    expect(isStandingInHome({ parcel: { x: 10, y: 20 }, world: null }, null, { x: 11, y: 20 }, plaza)).toBe(true)
   })
 
   it('on a road or with no place, counts only the home parcel itself', () => {
     const home = { parcel: { x: 10, y: 20 }, world: null }
-    expect(isStandingInHome(home, DEFAULT_REALM, { x: 11, y: 20 }, road)).toBe(false)
-    expect(isStandingInHome(home, DEFAULT_REALM, { x: 10, y: 20 }, road)).toBe(true)
-    expect(isStandingInHome(home, DEFAULT_REALM, { x: 10, y: 20 }, null)).toBe(true)
+    expect(isStandingInHome(home, null, { x: 11, y: 20 }, road)).toBe(false)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, road)).toBe(true)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, null)).toBe(true)
+  })
+
+  it("differs from the place panel's rule on roads and on World names, on purpose", () => {
+    const home = { parcel: { x: 11, y: 20 }, world: null }
+    // the panel counts a road home when any of its parcels is; the minimap only at the home parcel
+    expect(isPlacePanelHome(home, road, { x: 10, y: 20 })).toBe(true)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, road)).toBe(false)
+    const world = { parcel: null, world: 'Boedo.dcl.eth' }
+    const boedo = { id: 'w', title: 'Boedo', world_name: 'boedo.dcl.eth', positions: [], base_position: '0,0' } as unknown as DiscoverPlace
+    expect(isPlacePanelHome(world, boedo, null)).toBe(false)
+    expect(isStandingInHome(world, 'boedo.dcl.eth', { x: 0, y: 0 }, null)).toBe(true)
   })
 
   it('in a World, compares its name without case', () => {

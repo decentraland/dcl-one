@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, screen } from '@testing-library/react'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { DEFAULT_REALM } from '@hud-host'
@@ -26,6 +26,13 @@ async function renderMinimap(sceneTitle: string, restrictions: string[] = []): P
 beforeEach(() => {
   localStorage.clear()
   placeAt.place = null
+})
+// jsdom has no clipboard: a test defines one, and it goes with the test
+function stubClipboard(writeText: (text: string) => Promise<void>): void {
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+}
+afterEach(() => {
+  Reflect.deleteProperty(navigator, 'clipboard')
 })
 
 describe('minimap header', () => {
@@ -130,7 +137,7 @@ describe('minimap menu', () => {
 
   it("copies a Genesis City parcel's link with the player's address", async () => {
     const writeText = vi.fn(async () => {})
-    Object.assign(navigator, { clipboard: { writeText } })
+    stubClipboard(writeText)
     await openMenu(DEFAULT_REALM, { at: { x: 3, y: 4 }, referrer: '0xabc' })
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Link' }))
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/jump\/\?position=3,4&referrer=0xabc$/))
@@ -138,7 +145,7 @@ describe('minimap menu', () => {
 
   it("copies a World's link with its parcel and the player's address", async () => {
     const writeText = vi.fn(async () => {})
-    Object.assign(navigator, { clipboard: { writeText } })
+    stubClipboard(writeText)
     await openMenu('boedo.dcl.eth', { at: { x: 3, y: 4 }, referrer: '0xabc' })
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Link' }))
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/jump\/\?realm=boedo\.dcl\.eth&position=3,4&referrer=0xabc$/))
@@ -164,6 +171,15 @@ describe('minimap home pin', () => {
     session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
     const { container } = await renderSettled(<Minimap minimap={session.minimap} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     expect(container.querySelector('[data-marker="home"]')).not.toBeNull()
+  })
+
+  it('draws none in a World, for a Genesis City home', async () => {
+    const session = fakeSession()
+    session.map = { ...session.map, home: { realm: null, parcel: '1,2' } }
+    const { container } = await renderSettled(
+      <Minimap minimap={{ ...session.minimap, satelliteView: null, linkRealm: 'boedo.dcl.eth' }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />
+    )
+    expect(container.querySelector('[data-marker="home"]')).toBeNull()
   })
 
   it('draws none for a World home', async () => {

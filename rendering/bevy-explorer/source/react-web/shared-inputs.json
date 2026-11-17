@@ -6281,7 +6281,7 @@
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
-      "sha256": "be7a34786b38b7109954595f63e271753473708a9ac58a42e8bb7c7c9df9e946"
+      "sha256": "d670b1117e1bf56139c854bb00509f403a91c22661be783ba714667a57a50932"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
@@ -6325,7 +6325,7 @@
     },
     {
       "path": "library/explorer-core/features/minimap/minimapHome.ts",
-      "sha256": "3eb5fcb840dec97344a7aa2f0538b1d0a693bb2a4cee56cd243f795009dad501"
+      "sha256": "bcc0dff9298b1740491c7d08d2aeba5cece9c399307cb438a8e4e4fb71620936"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapPlaces.ts",
@@ -6605,7 +6605,7 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "2340568156a47cadc3afc889c7c62e6c55da74a6b9271698495c4d8a8022a1fc"
+      "sha256": "1e9081938c5c50cba3729628917d76082ba4a7e4451498a69cd3fc56b73cf74d"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -9065,7 +9065,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "777d12fd358246095e8be957ea08090b0df748c7f605a3cfee02c219c8a3b03f"
+      "sha256": "20ad674a9e274eb36e90cd189cd9902621a019a246b813042ab0ff15223ec3ab"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9157,7 +9157,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "1283fc99ba0df763fd3b8e686d86e75a71a42433676c633a440d66a969a02136"
+      "sha256": "2b673de7abc5b1663d75ca80c23219ce429a943b9f365120f23f48f1ceb1dfe8"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -9933,7 +9933,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "5cea4d9f3fa1b5bfeba71b253e4ae4d9540d717c5356dda6226a28b734ade2af"
+      "sha256": "fa81c7d1b5668e086f5d441a84107c7c8d145a82120fe48c9740dd06efc13066"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -9981,7 +9981,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "313a1f180189b7055a305509f7232431afb06d54eada148926c2c58f9af625d9"
+      "sha256": "03c157c1028c234d9e9a6b6ba807627f6d071cae38e2d8cbb415357e9d0d20b8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",
@@ -11281,36 +11281,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/features/minimap/minimapHome.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "native:runtime"
@@ -12343,6 +12313,21 @@
     {
       "from": "library/explorer-core/test/minimap.test.ts",
       "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
       "kind": "test:runtime"
     },
     {

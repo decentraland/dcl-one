@@ -21,10 +21,10 @@ import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { MARKER_ART, pinForCategories } from '../map/mapArt'
-import { homeOf } from '@explorer-core/features/map/home'
+import { homeOf, isStandingInHome } from '@explorer-core/features/map/home'
 import { fetchPlaceAt } from '@explorer-core/features/map/mapApi'
 import { jumpInLink } from '@explorer-core/features/map/shareLinks'
-import { isStandingInHome, minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
+import { minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
 import { loadMinimapPlaces, placesNear, type MinimapPlace } from '@explorer-core/features/minimap/minimapPlaces'
@@ -296,7 +296,7 @@ export const Minimap = memo(function Minimap({
     }
   }, [settingsOpen, linkRealm, parcelKey, map.x, map.y])
   const homeHere =
-    linkRealm != null && isStandingInHome(home, linkRealm, { x: map.x, y: map.y }, placeHere?.at === parcelKey ? placeHere.place : null)
+    linkRealm != null && isStandingInHome(home, inWorld ? linkRealm : null, { x: map.x, y: map.y }, placeHere?.at === parcelKey ? placeHere.place : null)
   const setHomeHere = useCallback(() => {
     if (linkRealm == null) return
     const target = minimapHomeTarget(linkRealm, { x: map.x, y: map.y })
@@ -390,14 +390,8 @@ export const Minimap = memo(function Minimap({
               <div className={styles.layer}>
                 {tiles}
                 {nearby.map((p) => {
-                  // Anchor at the centre of the place's parcel, not its corner.
-                  const at = atlasPx(
-                    p.x * PARCEL_METERS + PARCEL_METERS / 2,
-                    p.y * PARCEL_METERS + PARCEL_METERS / 2,
-                    BASE_PX_PER_PARCEL
-                  )
                   return (
-                    <span key={p.id} className={styles.poi} style={{ left: at.x, top: at.y }}>
+                    <span key={p.id} className={styles.poi} style={atlasPxAt(p)}>
                       <img className={styles.poiPin} src={pinForCategories(p.categories)} alt="" draggable={false} />
                       {/* Only points of interest are named — labelling every category turns the
                           map into a wall of text, which is why the SDK7 HUD did the same. */}
