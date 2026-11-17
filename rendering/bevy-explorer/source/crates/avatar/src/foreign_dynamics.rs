@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use common::{
+    sets::SceneSets,
     structs::{
         avatar_tilt_quat, AvatarDynamicState, MoveKind, SceneDrivenAnim,
         SceneDrivenAnimationRequest,
@@ -57,6 +58,7 @@ impl Plugin for PlayerMovementPlugin {
                     ("Target yaw (degrees)", "yaw"),
                     ("Packet velocity (X / Y / Z)", "velocity"),
                     ("Movement kind", "movement"),
+                    ("Jump take-off in flight", "jump"),
                 ],
                 actions: &[("Inspect first remote player", "/movement_profile")],
                 inputs: &[DebugInput {
@@ -73,7 +75,10 @@ impl Plugin for PlayerMovementPlugin {
                 update_foreign_scene_anim,
                 update_foreign_user_actual_position,
             )
-                .chain(),
+                .chain()
+                // the jump take-off clip restarts on the frame `jump_time` is set, so the
+                // animation must see that frame
+                .before(SceneSets::PostLoop),
         );
     }
 }
@@ -137,6 +142,7 @@ fn foreign_movement(
         report["name"] = json!(profile.map(|p| p.content.name.as_str()));
         report["version"] = json!(player.profile_version);
         report["position"] = json!(pose.map(|t| t.translation.to_array()));
+        report["jump"] = json!(dynamics.map(|d| d.jump_time > 0.0));
         report["movement"] = json!(dynamics.map(|d| match d.move_kind {
             MoveKind::Idle => "idle",
             MoveKind::Walk => "walk",
@@ -154,6 +160,7 @@ fn foreign_movement(
             "name": "Waiting for the player profile",
             "position": "The player has no rendered transform",
             "movement": "The player has no animation state",
+            "jump": "The player has no animation state",
         });
         if let Some(target) = target {
             report["teleport"] = json!(target.teleport);
@@ -364,6 +371,42 @@ fn update_foreign_scene_anim(
     }
 }
 
+/// Apply the remote-derived move kind to a foreign avatar's dynamic state. This runs every frame
+/// on the last packet's target, so it must be idempotent.
+///
+/// `jump_time` marks the take-off of the jump in flight (`<= 0.0` for none): set once on the
+/// rising edge of a Jump and kept while the avatar stays airborne, so the animation starts the
+/// take-off clip once and the falling loop follows. A grounded packet that does not announce a
+/// jump ends the flight and clears it. DoubleJump / Glide select the matching emote; a Jump, or
+/// no state, clears a previously-applied DoubleJump / Glide so the picker reclaims.
+fn apply_remote_move_kind(
+    dynamic_state: &mut AvatarDynamicState,
+    kind: Option<MoveKind>,
+    grounded: Option<bool>,
+    now: f64,
+) {
+    match kind {
+        Some(MoveKind::Jump) => {
+            if dynamic_state.jump_time <= 0.0 {
+                dynamic_state.jump_time = now;
+            }
+        }
+        Some(k) => dynamic_state.move_kind = k,
+        None => {}
+    }
+    if matches!(kind, None | Some(MoveKind::Jump))
+        && matches!(
+            dynamic_state.move_kind,
+            MoveKind::DoubleJump | MoveKind::Glide
+        )
+    {
+        dynamic_state.move_kind = MoveKind::Idle;
+    }
+    if kind != Some(MoveKind::Jump) && grounded == Some(true) {
+        dynamic_state.jump_time = -1.0;
+    }
+}
+
 fn update_foreign_user_actual_position(
     mut commands: Commands,
     mut avatars: Query<(
@@ -458,29 +501,15 @@ fn update_foreign_user_actual_position(
             actual.rotation = actual.rotation.lerp(target_rotation, turn_fraction);
         }
 
-        // Apply the remote-derived move_kind. Jump drives jump_time (the velocity picker
-        // reads it to size the jump clip); DoubleJump / Glide select the matching emote.
-        // None clears a previously-applied DoubleJump / Glide so the picker reclaims.
-        match target.remote_move_kind {
-            Some(MoveKind::Jump) => {
-                if dynamic_state.jump_time == -1.0 {
-                    dynamic_state.jump_time = time.elapsed_secs_f64();
-                }
-            }
-            Some(k) => dynamic_state.move_kind = k,
-            None => {
-                if matches!(
-                    dynamic_state.move_kind,
-                    MoveKind::DoubleJump | MoveKind::Glide
-                ) {
-                    dynamic_state.move_kind = MoveKind::Idle;
-                }
-            }
-        }
+        apply_remote_move_kind(
+            &mut dynamic_state,
+            target.remote_move_kind,
+            target.grounded,
+            time.elapsed_secs_f64(),
+        );
 
         if let Some(grounded) = target.grounded {
             dynamic_state.ground_height = if grounded { 0.0 } else { 1.0 };
-            dynamic_state.jump_time = -1.0;
         } else if common::structs::server_mode() {
             // a server trusts the broadcast position verbatim: no visual ground-snap or
             // fall. Scene colliders must not be consulted here — co-tenant scenes
@@ -531,5 +560,117 @@ fn update_foreign_user_actual_position(
                     .try_insert(SceneDrivenAnim { active: anim });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::time::TimeUpdateStrategy;
+    use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+
+    use super::*;
+
+    const STEP: Duration = Duration::from_millis(100);
+
+    /// The interpolation system alone, on a clock that advances `STEP` per update. Targets are
+    /// written straight onto the avatar, as the packet receiver does.
+    fn app_with_avatar() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(STEP))
+            .init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .add_systems(Update, update_foreign_user_actual_position);
+        // a spawned remote avatar starts from the default state, as `update_foreign_user_target_position` inserts it
+        let avatar = app
+            .world_mut()
+            .spawn((Transform::default(), AvatarDynamicState::default()))
+            .id();
+        // the clock reads zero until its second update; a jump never happens at exactly zero
+        app.update();
+        (app, avatar)
+    }
+
+    /// One packet's worth of target for the avatar, then one frame.
+    fn receive(app: &mut App, avatar: Entity, kind: Option<MoveKind>, grounded: bool) {
+        let time = app.world().resource::<Time>().elapsed_secs_f64();
+        app.world_mut()
+            .entity_mut(avatar)
+            .insert(PlayerTargetPosition {
+                time,
+                timestamp: Some(time),
+                velocity: Some(Vec3::ZERO),
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                update_freq: 0.1,
+                grounded: Some(grounded),
+                remote_move_kind: kind,
+                teleport: false,
+            });
+        app.update();
+    }
+
+    fn state(app: &App, avatar: Entity) -> (f64, MoveKind) {
+        let d = app.world().get::<AvatarDynamicState>(avatar).unwrap();
+        (d.jump_time, d.move_kind)
+    }
+
+    #[test]
+    fn a_remote_jump_sets_the_take_off_time_once_and_keeps_it_while_airborne() {
+        let (mut app, avatar) = app_with_avatar();
+        receive(&mut app, avatar, None, true);
+        assert!(state(&app, avatar).0 < 0.0);
+
+        receive(&mut app, avatar, Some(MoveKind::Jump), false);
+        let (take_off, _) = state(&app, avatar);
+        assert!(take_off > 0.0);
+
+        // later frames of the same jump, with and without new packets
+        for _ in 0..5 {
+            app.update();
+            receive(&mut app, avatar, Some(MoveKind::Jump), false);
+            assert_eq!(state(&app, avatar).0, take_off);
+        }
+    }
+
+    #[test]
+    fn landing_clears_the_take_off_time_and_a_second_jump_sets_it_again() {
+        let (mut app, avatar) = app_with_avatar();
+        receive(&mut app, avatar, Some(MoveKind::Jump), false);
+        let (first, _) = state(&app, avatar);
+        assert!(first > 0.0);
+
+        receive(&mut app, avatar, None, true);
+        assert!(state(&app, avatar).0 < 0.0);
+
+        receive(&mut app, avatar, Some(MoveKind::Jump), false);
+        let (second, _) = state(&app, avatar);
+        assert!(second > first);
+    }
+
+    #[test]
+    fn a_double_jump_and_a_glide_keep_selecting_their_clips_until_the_jump_ends() {
+        let (mut app, avatar) = app_with_avatar();
+        receive(&mut app, avatar, Some(MoveKind::Jump), false);
+        receive(&mut app, avatar, Some(MoveKind::DoubleJump), false);
+        assert_eq!(state(&app, avatar).1, MoveKind::DoubleJump);
+        receive(&mut app, avatar, Some(MoveKind::Glide), false);
+        assert_eq!(state(&app, avatar).1, MoveKind::Glide);
+
+        receive(&mut app, avatar, None, true);
+        assert_eq!(state(&app, avatar).1, MoveKind::Idle);
+        assert!(state(&app, avatar).0 < 0.0);
+    }
+
+    #[test]
+    fn a_jump_after_a_double_jump_does_not_replay_the_double_jump_clip() {
+        // the landing packet was lost: the next jump follows the double jump directly
+        let (mut app, avatar) = app_with_avatar();
+        receive(&mut app, avatar, Some(MoveKind::DoubleJump), false);
+        receive(&mut app, avatar, Some(MoveKind::Jump), false);
+        assert_ne!(state(&app, avatar).1, MoveKind::DoubleJump);
     }
 }

@@ -216,3 +216,31 @@ fn only_the_wearables_that_failed_are_left_out() {
     ));
     assert!(!AvatarLoadFailures::wearable_failed(None, &hat));
 }
+
+#[test]
+fn a_bone_is_scaled_below_its_avatar_whatever_scales_the_avatar() {
+    let mut world = World::new();
+    // a scene holds the avatar at a scale of nothing while its body is built
+    let scene_entity = world.spawn(Transform::from_scale(Vec3::ZERO)).id();
+    let avatar = world
+        .spawn((Transform::default(), ChildOf(scene_entity)))
+        .id();
+    let armature = world
+        .spawn((Transform::from_scale(Vec3::splat(0.01)), ChildOf(avatar)))
+        .id();
+    let head = world
+        .spawn((Transform::from_scale(Vec3::splat(150.0)), ChildOf(armature)))
+        .id();
+    let stray = world.spawn(Transform::default()).id();
+
+    let (head_scale, stray_scale) = world
+        .run_system_once(move |transforms: Query<(&Transform, &ChildOf)>| {
+            (
+                scale_below(head, avatar, &transforms),
+                scale_below(stray, avatar, &transforms),
+            )
+        })
+        .unwrap();
+    assert!((head_scale.unwrap() - 1.5).abs() < 1e-6, "{head_scale:?}");
+    assert_eq!(stray_scale, None);
+}

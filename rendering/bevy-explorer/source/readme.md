@@ -46,6 +46,10 @@ Platform libraries (needed by the native and headless builds):
 - **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
 - **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio); keep `CARGO_TARGET_DIR` short, free of spaces and on the drive of `CARGO_HOME` ([why](../docs/guidelines/platforms.md#native))
 
+With Nix on Linux and macOS, `nix develop .#explorer` from the repository root replaces these installs: the shell carries the pinned Rust toolchain, `just`, cmake, ninja, pkg-config, protoc, node, pnpm and ffmpeg 6. On macOS the shell compiles and links with Apple's toolchain, so the Xcode command line tools are needed.
+
+The shell sets `CARGO_BUILD_BUILD_DIR` to `~/.cache/dcl-one/explorer-build` unless the variable is set. Every worktree then shares one build directory, and a second worktree compiles only the crates of the workspace; the binaries stay in each worktree's `target`. Cargo locks the build directory, so two builds at one time run one after the other. To build two worktrees at one time, set the variable to a different directory in one of them.
+
 ## Web client
 
 The engine is compiled to wasm and boots **in the React page's own document** (no iframe): the canvas sits behind the HUD, and the bridge scene relays between them.
@@ -86,6 +90,8 @@ export XDG_DATA_DIRS=/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:
 just native-release            # bundles the HUD if stale, then builds + runs everything
 ```
 
+In `nix develop .#explorer` on x86_64 Linux, skip `just setup-cef` and the exports: the shell sets `CEF_PATH`, `LD_LIBRARY_PATH` and the prebuilt V8 from the Nix store.
+
 `just native-debug` is the same in debug. Both pass extra arguments through:
 
 ```bash
@@ -109,17 +115,16 @@ just native-release --places http://localhost:5000 --realm-provider http://local
 Doing it by hand instead of via `just`:
 
 ```bash
-python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-(cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.27.0 --filter @dcl/hashing build)
-corepack pnpm@11.27.0 run bundle:native && cd ..
+cd react-web && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts
+(cd bridge-scene && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@12.21.0 --filter @dcl/hashing build)
+corepack pnpm@12.21.0 run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release
 ```
 
-To build without CEF at all (the engine's own bevy-ui HUD instead of React), after the same `materialise`:
+To build without CEF at all (the engine's own bevy-ui HUD instead of React):
 
 ```bash
 cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
@@ -136,7 +141,6 @@ npx @dcl-regenesislabs/bevy-headless-server --realm http://localhost:8000
 From source (the binary is feature-gated out of default builds, and execs the sidecar from its own directory, so both land in `target/release`):
 
 ```bash
-python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo build --release -p dcl_deno_ipc
 cargo build --release --bin headless --no-default-features --features headless,livekit
 ./target/release/headless --realm <url> --location 0,0 --server-mode
@@ -218,10 +222,9 @@ Console commands:
 ## Testing
 
 ```bash
-python3 ../../../tooling/patched-sources.py materialise   # Bevy and the forked crates cargo reads
 cargo test --all                      # engine
-corepack pnpm@11.27.0 --dir react-web test          # HUD, deterministic (vitest, no engine)
-corepack pnpm@11.27.0 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
+corepack pnpm@12.21.0 --dir react-web test          # HUD, deterministic (vitest, no engine)
+corepack pnpm@12.21.0 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
 ```
 
 CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
@@ -247,8 +250,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/nametag_state` (the nametags: `visible`, `shown` and `hidden` counts, the glyph `atlas` page
-  sizes, the chat `bubbles` setting, and each shown tag's `player`, `name`, `suffix`, `verified`,
+  `/nametag_state` (the nametags: `visible`, `shown`, `sceneAvatars` and `hidden` counts, the glyph `atlas` page
+  sizes, the chat `bubbles` setting, and each shown tag's `player`, `sceneAvatar`, `name`, `suffix`, `verified`,
   `official`, `voice`, `distance`, `opacity`, `scale`, `position`, `headOffset` and `bubble`, which is its
   `kind`, `mention` and `length`, never the message),
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` (shows a message in a chat

@@ -9,6 +9,8 @@ use crate::deny_list::DenyList;
 use std::sync::Arc;
 
 pub struct AppStateInner {
+    #[cfg(feature = "test-support")]
+    pub ws_ping_gate: super::ws::assignment_test_support::PingGate,
     pub settings: Settings,
     pub sockets: Arc<tokio::sync::Semaphore>,
     /// Sockets that have not completed the handshake; released at the welcome.

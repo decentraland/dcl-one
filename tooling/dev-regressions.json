@@ -1,34 +1,45 @@
 {
   "catalyst": {
-    "archipelago_nats_recovery": [
-      "real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and_no_stale_packet",
-      "real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_dispatch_never_retries",
-      "real_pulse_configured_legacy_owner_completes_durable_fenced_takeover",
-      "real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_lift",
-      "public_projections::baseline_pulse_startup_fallback_preserves_room_flow",
-      "public_projections::baseline_livekit_only_client_has_expected_online_projection",
-      "public_projections::baseline_empty_topology_differs_from_feed_loss",
-      "public_projections::advertised_counts_follow_produced_native_discovery"
+    "sockets_3": [
+      "archipelago_nats_recovery::real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and_no_stale_packet",
+      "archipelago_nats_recovery::real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_dispatch_never_retries",
+      "archipelago_nats_recovery::real_pulse_configured_legacy_owner_completes_durable_fenced_takeover",
+      "archipelago_nats_recovery::real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_lift",
+      "archipelago_nats_recovery::public_projections::baseline_pulse_startup_fallback_preserves_room_flow",
+      "archipelago_nats_recovery::public_projections::baseline_livekit_only_client_has_expected_online_projection",
+      "archipelago_nats_recovery::public_projections::baseline_empty_topology_differs_from_feed_loss",
+      "archipelago_nats_recovery::public_projections::advertised_counts_follow_produced_native_discovery"
     ],
-    "archipelago_control_extensions_websocket": [
-      "configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
-      "configured_replica_signaling_cannot_steal_a_fresh_foreign_room",
-      "pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire"
+    "sockets_2": [
+      "archipelago_control_extensions_websocket::configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
+      "archipelago_control_extensions_websocket::configured_replica_signaling_cannot_steal_a_fresh_foreign_room",
+      "archipelago_control_extensions_websocket::pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire",
+      "archipelago_feed_stats::assignment_pressure_preserves_fifo_and_rejects_oversize"
     ],
-    "comms_v4_assignment_fence": [
-      "recovery::a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant",
-      "recovery::a_stale_connect_cannot_refill_a_newer_owners_claim",
-      "recovery::same_room_control_handoffs_refill_same_and_different_session_claims",
-      "recovery::a_move_during_token_mint_rolls_back_then_recovers_the_current_room",
-      "recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn"
+    "node_2": [
+      "comms_v4_assignment_fence::recovery::a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant",
+      "comms_v4_assignment_fence::recovery::a_stale_connect_cannot_refill_a_newer_owners_claim",
+      "comms_v4_assignment_fence::recovery::same_room_control_handoffs_refill_same_and_different_session_claims",
+      "comms_v4_assignment_fence::recovery::a_move_during_token_mint_rolls_back_then_recovers_the_current_room",
+      "comms_v4_assignment_fence::recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn"
     ],
-    "archipelago_ws_island_dedup": [
-      "same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session"
+    "sockets_1": [
+      "archipelago_ws_island_dedup::same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session",
+      "archipelago_ws_island_dedup::production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment",
+      "archipelago_ws_island_dedup::production_full_mailbox_ping_preserves_kick_restart_and_retirement",
+      "archipelago_ws_island_dedup::assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+      "archipelago_ws_island_dedup::assignment_capacity_stays_charged_through_validation_and_physical_flush",
+      "archipelago_ws_island_dedup::full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+      "archipelago_ws_island_dedup::an_assignment_backlog_preserves_every_accepted_room_in_order",
+      "archipelago_ws_island_dedup::source_contract_dedup_compares_received_assignment_bytes",
+      "archipelago_ws_island_dedup::a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+      "archipelago_ws_island_dedup::replacement_socket_has_no_predecessor_delivery_state_or_delayed_predecessor_updates",
+      "archipelago_ws_island_dedup::an_expired_window_delivers_the_identical_assignment_again"
     ]
   },
   "unix": {
-    "archipelago_nats_recovery": [
-      "a_stalled_broker_cannot_hold_readiness"
+    "sockets_3": [
+      "archipelago_nats_recovery::a_stalled_broker_cannot_hold_readiness"
     ]
   },
   "vendor": [

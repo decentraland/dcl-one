@@ -10,7 +10,7 @@ mod gate;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-use crate::db::{ScratchDb, scratch_database};
+use super::db::{ScratchDb, scratch_database};
 
 pub struct Fixture {
     db: Option<ScratchDb>,
