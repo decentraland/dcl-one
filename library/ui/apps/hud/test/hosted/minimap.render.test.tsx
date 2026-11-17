@@ -8,7 +8,9 @@ import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
-const layerData = vi.hoisted(() => ({ events: [] as unknown[], favourite: vi.fn() }))
+// The layer data is one store for the page, read the first time a map asks: the live event is there
+// from the first read.
+const layerData = vi.hoisted(() => ({ events: [{ id: 'e1', name: 'Party', x: 2, y: 3, live: true, world: false }] as unknown[], favourite: vi.fn() }))
 vi.mock('@explorer-core/features/map/mapApi', async (original) => ({
   ...await original<typeof import('@explorer-core/features/map/mapApi')>(),
   fetchPlaceAt: vi.fn(async () => placeAt.place),
@@ -28,7 +30,6 @@ async function renderMinimap(sceneTitle: string, restrictions: string[] = []): P
 beforeEach(() => {
   localStorage.clear()
   placeAt.place = null
-  layerData.events = []
   layerData.favourite.mockReset()
   mapLayers.set('liveEvents', true)
   navigation.stop()
@@ -181,7 +182,6 @@ describe('minimap home pin', () => {
 })
 
 describe('minimap layers', () => {
-  const live = { id: 'e1', name: 'Party', x: 2, y: 3, live: true, world: false }
   async function renderAt(): Promise<HTMLElement> {
     const session = fakeSession()
     const view = await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
@@ -189,7 +189,6 @@ describe('minimap layers', () => {
   }
 
   it("draws the full map's live events, and the Layers panel hides them here too", async () => {
-    layerData.events = [live]
     const container = await renderAt()
     await waitFor(() => expect(container.querySelectorAll('img[src*="live"]').length).toBe(1))
     act(() => mapLayers.set('liveEvents', false))
@@ -204,12 +203,21 @@ describe('minimap layers', () => {
     expect(screen.queryByRole('menuitemradio', { name: 'Only POI' })).toBeNull()
   })
 
-  it('draws the route and its destination while one is set', async () => {
+  it('draws the route, and puts a destination off the map on its edge', async () => {
     const container = await renderAt()
     expect(container.querySelector('[data-marker="destination"]')).toBeNull()
     act(() => navigation.start({ id: 'p', title: 'Far', positions: ['40,40'], base_position: '40,40' } as never))
     expect(container.querySelector('[data-marker="destination"]')).not.toBeNull()
-    expect(container.querySelector('[data-marker="destination-edge"]')).not.toBeNull()
+    const edge = container.querySelector<HTMLElement>('[data-marker="destination-edge"]')
+    await waitFor(() => expect(edge?.hidden).toBe(false))
+  })
+
+  it('leaves a destination on the map off the edge', async () => {
+    const container = await renderAt()
+    act(() => navigation.start({ id: 'p', title: 'Near', positions: ['1,0'], base_position: '1,0' } as never))
+    const edge = container.querySelector<HTMLElement>('[data-marker="destination-edge"]')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(edge?.hidden).toBe(true)
   })
 })
 
@@ -245,6 +253,22 @@ describe('minimap favourite', () => {
     await waitFor(() => expect(heart).toBeEnabled())
     fireEvent.click(heart)
     await waitFor(() => expect(heart).toHaveAttribute('aria-pressed', 'false'))
+  })
+})
+
+describe('minimap place under the player', () => {
+  const plaza = { id: 'p', title: 'Plaza', positions: ['0,0', '1,0'], base_position: '0,0', user_favorite: false }
+
+  it('keeps the place, and asks nothing, while the player crosses parcels inside it', async () => {
+    placeAt.place = plaza
+    const { fetchPlaceAt } = await import('@explorer-core/features/map/mapApi')
+    vi.mocked(fetchPlaceAt).mockClear()
+    const session = fakeSession()
+    const view = await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={{ ...session.map, x: 0, y: 0 }} sceneTitle="" setEngineViewport={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Favorite' })).toBeEnabled())
+    view.rerender(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={{ ...session.map, x: 1, y: 0 }} sceneTitle="" setEngineViewport={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Favorite' })).toBeEnabled()
+    expect(fetchPlaceAt).toHaveBeenCalledTimes(1)
   })
 })
 

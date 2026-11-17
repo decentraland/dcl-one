@@ -17,7 +17,7 @@ import {
 import { isStandingInHome, minimapHomeTarget } from '../features/minimap/minimapHome'
 import { jumpInLink } from '../features/map/shareLinks'
 import { DEFAULT_REALM } from '@hud-host'
-import { destinationOnEdge, edgePoint, mapUnitsToMeters } from '../features/minimap/minimapLayers'
+import { edgePoint, mapUnitsToMeters, offMap } from '../features/minimap/minimapLayers'
 import { parcelCenter, playerMarkerPosition } from '../features/map/mapCoords'
 
 beforeEach(() => localStorage.clear())
@@ -133,10 +133,10 @@ describe('minimap layers', () => {
     expect(mapUnitsToMeters(playerMarkerPosition(40, -24))).toEqual({ x: 40, z: -24 })
   })
 
-  it('leaves a destination about eight parcels away or nearer to the map, and puts a farther one on the edge', () => {
-    const player = parcelCenter({ x: 0, y: 0 })
-    expect(destinationOnEdge(player, parcelCenter({ x: 8, y: 0 }))).toBe(false)
-    expect(destinationOnEdge(player, parcelCenter({ x: 9, y: 0 }))).toBe(true)
+  it('puts a destination on the edge only once it is off the square map', () => {
+    expect(offMap(119, -119, 120)).toBe(false)
+    expect(offMap(0, 121, 120)).toBe(true)
+    expect(offMap(-130, 10, 120)).toBe(true)
   })
 
   it('places a direction on the square edge', () => {

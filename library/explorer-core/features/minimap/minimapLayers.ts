@@ -1,5 +1,5 @@
 // The full map's layers as the minimap draws them: positions in world metres, which the minimap's
-// own atlas layout takes, and when the route's destination leaves the map for the minimap's edge.
+// own atlas layout takes, and when and where the route's destination stands on the minimap's edge.
 
 import { PARCEL_METERS } from '../map/atlas'
 import { PARCEL_UNITS, type Vec2 } from '../map/mapCoords'
@@ -9,15 +9,10 @@ export function mapUnitsToMeters(pos: Vec2): { x: number; z: number } {
   return { x: (pos.x / PARCEL_UNITS + 1) * PARCEL_METERS, z: (pos.y / PARCEL_UNITS + 1) * PARCEL_METERS }
 }
 
-/** Squared map units (about eight parcels): nearer than this the route's destination is left to the
- *  minimap itself, and its pin leaves the minimap's edge. */
-export const EDGE_PIN_HIDE_SQUARED = 26000
-
-/** Whether the destination is far enough that its pin stands on the minimap's edge. */
-export function destinationOnEdge(player: Vec2, destination: Vec2): boolean {
-  const dx = destination.x - player.x
-  const dy = destination.y - player.y
-  return dx * dx + dy * dy > EDGE_PIN_HIDE_SQUARED
+/** Whether a point `dx`, `dy` screen px from the centre of the square minimap, `half` px from
+ *  centre to edge, lies off it: then its pin stands on the edge instead. */
+export function offMap(dx: number, dy: number, half: number): boolean {
+  return Math.max(Math.abs(dx), Math.abs(dy)) > half
 }
 
 /**

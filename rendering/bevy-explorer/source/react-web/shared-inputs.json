@@ -465,6 +465,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapLayerData.ts",
+          "kind": "regular"
+        },
+        {
           "name": "mapLayersStore.ts",
           "kind": "regular"
         },
@@ -825,6 +829,10 @@
         },
         {
           "name": "mapFixtures.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "mapLayerData.test.ts",
           "kind": "regular"
         },
         {
@@ -6292,6 +6300,10 @@
       "sha256": "cabea6f52075d8e1be23d500f35a8a88ea2a831701c23c29fcaec454f6d3022c"
     },
     {
+      "path": "library/explorer-core/features/map/mapLayerData.ts",
+      "sha256": "dec426f6e53b5e88e0675204852fdaf9bbb5e4bc912f31215995a068be8c2a5f"
+    },
+    {
       "path": "library/explorer-core/features/map/mapLayersStore.ts",
       "sha256": "dc1d201e36a8a966f8fb77a23b2b1e55ed29508bb7d84bd861afcb1bf0cad6d4"
     },
@@ -6329,7 +6341,7 @@
     },
     {
       "path": "library/explorer-core/features/minimap/minimapLayers.ts",
-      "sha256": "1d69270e4cf2a850368961f6d4c5e68c71ddd3274b515940d92532a2c61a90c9"
+      "sha256": "2a82f87bb559e0802e433abb0ae11b890ae2c160fb840dec711816186d95d015"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapPrefs.ts",
@@ -6604,8 +6616,12 @@
       "sha256": "226e8547dbc585cb42ed20af48fc9937753ccaf2ab0915c3bccf34ae3dc7ecbf"
     },
     {
+      "path": "library/explorer-core/test/mapLayerData.test.ts",
+      "sha256": "af42996328cc59b527c546edd90f255a52d83811331bd5ef6cb61c2f0c2416b7"
+    },
+    {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "e42b061bb63789ad2385915bce71cbd215f7b7de42061d286b68d1e166dc430d"
+      "sha256": "0e1e368867cd7b0817146e4769d5ff966a14acd4713146656f1e6b85518d512a"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -9121,7 +9137,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "sha256": "bc80c34a7de7280ef5bb0551604351ce9e057fe942b7acf46e051edd6a0e3ee1"
+      "sha256": "1d045f9e433dcbf698d9eb0e8d02a4e0e6cdfaef47e0a8f8e4ef8e11e7a928b9"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
@@ -9153,11 +9169,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "e11c5dd023fce228c9c0754aefc28b5acafc873c1444f12e8e43d698d901f63c"
+      "sha256": "e3f464b7d67127c7282c280f035d1ce396cd62679f4b6c1986f41f21295aac71"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "3e2ab7c173ded8be7c6b963309c9094cb7c75d5f84e8162b24165597a428e231"
+      "sha256": "897f5afe8326b57c650d4b3dc064511ffd6a198a2bd33baf3266ea91c91009ee"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -9933,7 +9949,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "c7778b1bef71317d2396b479fd5132d0bc8e04dfb6fd1831fe7e546465e98e20"
+      "sha256": "fedfbdaa2cb0dde29103828c207c37a874e70540656e1e15f83d161be4d031d2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -11131,6 +11147,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapLayerData.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/features/map/mapMarkers.ts",
       "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "native:runtime"
@@ -12328,6 +12389,51 @@
     {
       "from": "library/explorer-core/test/mapCore.test.ts",
       "to": "library/explorer-core/test/mapFixtures.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/mapLayerData.test.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
       "kind": "test:runtime"
     },
     {
@@ -26987,21 +27093,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
     },
@@ -27017,17 +27108,17 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "to": "library/explorer-core/features/map/mapMarkers.ts",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
       "kind": "test:runtime"
     },
     {
@@ -27403,21 +27494,6 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/explorer-core/features/map/mapCoords.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/explorer-core/features/map/mapCoords.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "test:runtime"
     },
     {
@@ -38069,6 +38145,21 @@
       "from": "library/ui/apps/hud/test/hosted/mePanel.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
@@ -42087,6 +42178,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/map/mapLayerData.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/mapLayersStore.ts",
       "kind": "type"
     },
@@ -42473,6 +42569,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/mapFixtures.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/mapLayerData.test.ts",
       "kind": "type"
     },
     {

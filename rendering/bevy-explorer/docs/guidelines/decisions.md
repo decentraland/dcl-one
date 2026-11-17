@@ -500,10 +500,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   it every frame. Nothing on the map is drawn per frame.
 - **The minimap draws the full map's layers.** As unity-explorer's, it shows live events,
   points of interest, other players, the home pin and the route, and the full map's Layers panel
-  switches them on both; the minimap has no category pins or markers setting of its own. A far
-  destination's pin stands on the minimap's edge in its direction, as unity-explorer's, once it
-  is more than about eight parcels away; here it is the full map's destination pin, and the
-  minimap being square, it runs along the square's edge rather than a circle. Scene map pins are
+  switches them on both, from one read the two maps share; the minimap has no category pins or
+  markers setting of its own. A destination's pin stands on the minimap's edge in its direction,
+  as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
+  fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
+  the destination leaves the visible map. It is the full map's destination pin, and the minimap
+  being square, it runs along the square's edge rather than a circle. Scene map pins are
   on neither (below). The header's heart marks the place the player stands in as a favourite; in
   a World, the World's scene there.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable

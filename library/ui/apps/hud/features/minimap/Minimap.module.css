@@ -412,8 +412,8 @@
   pointer-events: none;
 }
 
-/* The destination's pin on the map's edge, in its direction, while it is far: placed as the
-   compass badges are. */
+/* The destination's pin on the map's edge, in its direction, while it is off the map: centred
+   on its point as the compass badges are, so it stays inside the frame on every side. */
 .edgePin {
   --reach: calc(var(--minimap-map) / 2 - 16px);
 
@@ -422,7 +422,7 @@
   top: 50%;
   width: 22px;
   height: 27px;
-  margin: -27px 0 0 -11px;
+  margin: -13.5px 0 0 -11px;
   transform: translate(calc(var(--edge-x, 0) * var(--reach)), calc(var(--edge-y, 0) * var(--reach)));
   pointer-events: none;
 }

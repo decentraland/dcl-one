@@ -25,8 +25,8 @@ import { MaskIcon } from '../../design/MaskIcon'
 import { useMapLayerData } from '../map/useMapLayerData'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
-import { playerMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
-import { destinationOnEdge, edgePoint, mapUnitsToMeters } from '@explorer-core/features/minimap/minimapLayers'
+import type { Vec2 } from '@explorer-core/features/map/mapCoords'
+import { edgePoint, mapUnitsToMeters, offMap } from '@explorer-core/features/minimap/minimapLayers'
 import { homeOf } from '@explorer-core/features/map/home'
 import { fetchPlaceAt, isEmptyPlace, setPlaceFavorite } from '@explorer-core/features/map/mapApi'
 import { jumpInLink } from '@explorer-core/features/map/shareLinks'
@@ -167,7 +167,7 @@ export const Minimap = memo(function Minimap({
       surface.style.setProperty('--compass-y', String(-Math.cos(north) / edge))
 
       // The route: a line from the player to the destination in the map layer, and, while the
-      // destination is far, its pin on the minimap's edge in its direction.
+      // destination is off the map at this zoom, its pin on the minimap's edge in its direction.
       const dest = destinationRef.current
       const route = routeRef.current
       const edgePin = edgePinRef.current
@@ -177,12 +177,14 @@ export const Minimap = memo(function Minimap({
         const dy = to.top - here.y
         route.style.setProperty('--route-length', String(Math.hypot(dx, dy)))
         route.style.setProperty('--route-angle', `${Math.atan2(-dy, -dx)}rad`)
-        const onEdge = destinationOnEdge(playerMarkerPosition(p.x, p.z), dest.position)
+        // the layer's direction turned with the map (CSS turns clockwise, y down), in screen px
+        const yaw = (mapYaw * Math.PI) / 180
+        const sx = (dx * Math.cos(yaw) - dy * Math.sin(yaw)) * scale
+        const sy = (dx * Math.sin(yaw) + dy * Math.cos(yaw)) * scale
+        const onEdge = offMap(sx, sy, MAP_SIZE / 2)
         edgePin.hidden = !onEdge
         if (onEdge) {
-          // the layer's direction, turned with the map (CSS turns clockwise, y down)
-          const yaw = (mapYaw * Math.PI) / 180
-          const at = edgePoint(dx * Math.cos(yaw) - dy * Math.sin(yaw), dx * Math.sin(yaw) + dy * Math.cos(yaw))
+          const at = edgePoint(sx, sy)
           edgePin.style.setProperty('--edge-x', String(at.x))
           edgePin.style.setProperty('--edge-y', String(at.y))
         }
@@ -287,21 +289,30 @@ export const Minimap = memo(function Minimap({
   // The place under the player, read again on every parcel and realm: Set as Home counts any parcel
   // of the home place, and the favourite button marks it. In a World, that World's scene.
   const home = useMemo(() => homeOf(map.home), [map.home])
-  const [placeHere, setPlaceHere] = useState<{ at: string; place: DiscoverPlace | null } | null>(null)
+  const [placeHere, setPlaceHere] = useState<{ at: string; realm: string; place: DiscoverPlace | null } | null>(null)
   const parcelKey = `${linkRealm ?? ''}|${map.x},${map.y}`
+  // The place read last still holds while the player stays inside it: a crossing within one
+  // place keeps it, and asks the service nothing.
+  const covers = (held: typeof placeHere): boolean =>
+    held != null && held.realm === linkRealm && (held.at === parcelKey || (held.place?.positions.includes(`${map.x},${map.y}`) ?? false))
+  const heldRef = useRef(placeHere)
+  heldRef.current = placeHere
   useEffect(() => {
     if (linkRealm == null) return
+    if (covers(heldRef.current)) return
     let alive = true
     // without the place, home is told by the parcel alone and there is nothing to favourite
     const settle = (place: DiscoverPlace | null): void => {
-      if (alive) setPlaceHere({ at: parcelKey, place: place != null && !isEmptyPlace(place) ? place : null })
+      if (alive) setPlaceHere({ at: parcelKey, realm: linkRealm, place: place != null && !isEmptyPlace(place) ? place : null })
     }
     fetchPlaceAt({ x: map.x, y: map.y }, inWorld ? linkRealm : undefined).then(settle, () => settle(null))
     return () => {
       alive = false
     }
+    // `covers` reads this render's realm and parcel, which the deps already name
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkRealm, inWorld, parcelKey, map.x, map.y])
-  const currentPlace = placeHere?.at === parcelKey ? placeHere.place : null
+  const currentPlace = covers(placeHere) ? (placeHere?.place ?? null) : null
   const homeHere = linkRealm != null && isStandingInHome(home, linkRealm, { x: map.x, y: map.y }, currentPlace)
 
   // The favourite button: shown at once, then what the service answers; a refused change goes back.
@@ -311,17 +322,18 @@ export const Minimap = memo(function Minimap({
     const before = currentPlace
     const next = before.user_favorite !== true
     const run = ++favouriteRun.current
-    const at = parcelKey
-    setPlaceHere({ at, place: { ...before, user_favorite: next } })
+    // kept on the place itself, so the answer lands however far the player has walked inside it
+    const mark = (favourite: boolean): void =>
+      setPlaceHere((now) => (now?.place?.id === before.id ? { ...now, place: { ...now.place, user_favorite: favourite } } : now))
+    mark(next)
     const settle = (favourite: boolean): void => {
-      if (run !== favouriteRun.current) return
-      setPlaceHere((now) => (now?.at === at && now.place != null ? { at, place: { ...now.place, user_favorite: favourite } } : now))
+      if (run === favouriteRun.current) mark(favourite)
     }
     setPlaceFavorite(before.id, next).then(
       (r) => settle(r.user_favorite),
       () => settle(before.user_favorite === true)
     )
-  }, [currentPlace, parcelKey])
+  }, [currentPlace])
   const setHomeHere = useCallback(() => {
     if (linkRealm == null) return
     const target = minimapHomeTarget(linkRealm, { x: map.x, y: map.y })
