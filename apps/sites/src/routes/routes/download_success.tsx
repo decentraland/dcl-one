@@ -1,13 +1,10 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
 import { DownloadSuccessFooter } from "@dcl/one-ui/apps/sites/download/DownloadSuccessFooter";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import {
-  installerSelection,
-  installerUrl,
-} from "@/features/download/installers";
+import { installerUrl } from "@/data/lib/download/installers";
+import { installerSelection } from "@/features/download/installers";
 import {
   detectDownloadBrowser,
   stepImages,
@@ -58,8 +55,13 @@ export function loader({ request }: Route.LoaderArgs) {
   const locale: SuccessLocale = Object.hasOwn(successCopy, requested)
     ? (requested as SuccessLocale)
     : "en";
+  const selection = installerSelection(params);
+  // The installers come from the host the deployment configures; without one there is nothing to start.
+  const url = installerUrl(selection.os, selection.arch);
+  if (!url) throw new Response(null, { status: 404, statusText: "Not Found" });
   return {
-    ...installerSelection(params),
+    ...selection,
+    url,
     locale,
     year: new Date().getUTCFullYear(),
   };
@@ -68,14 +70,13 @@ export function loader({ request }: Route.LoaderArgs) {
 export default function DownloadSuccessRoute({
   loaderData,
 }: Route.ComponentProps) {
-  const { os, arch, locale, year } = loaderData;
+  const { os, url: href, locale, year } = loaderData;
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
   const copy = successCopy[locale];
   const success = copy.success;
   const footer = copy.footer;
-  const href = installerUrl(os, arch);
   const navigate = useNavigate();
   const started = useRef<string | null>(null);
   const [browser, setBrowser] = useState<DownloadBrowser>("chrome");

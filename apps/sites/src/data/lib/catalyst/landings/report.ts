@@ -17,89 +17,19 @@ export const REPORT_LIMITS = {
   descriptionMax: 500,
   commentsMax: 500,
   maxFiles: 5,
-  maxFileSizeMb: 10,
+  maxFileSizeMb: 5,
 } as const;
 
-const ReasonOptionSchema = z.object({
-  value: z.string().min(1),
-  label: z.string().min(1),
-});
-export type ReasonOption = z.infer<typeof ReasonOptionSchema>;
+/** The evidence types the node accepts; `report.limits.test.ts` holds this list and the limits to the node's. */
+export const REPORT_EVIDENCE_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4", "video/webm", "application/pdf"];
 
-const EvidenceFileSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  size: z.number().nonnegative(),
-});
-type EvidenceFile = z.infer<typeof EvidenceFileSchema>;
-
-export type EvidenceUpload = EvidenceFile & {
+export type EvidenceUpload = {
+  id: string;
+  name: string;
+  size: number;
   blob?: Blob;
   contentType?: string;
 };
-
-const ReportCopySchema = z
-  .object({
-    reportedLabel: z.string(),
-    reportedHelper: z.string(),
-    reportedPlaceholder: z.string(),
-    reasonLabel: z.string(),
-    descriptionLabel: z.string(),
-    descriptionPlaceholder: z.string(),
-    descriptionHint: z.string(),
-    evidenceLabel: z.string(),
-    evidenceHelper: z.string(),
-    additionalLabel: z.string(),
-    additionalHelper: z.string(),
-    additionalPlaceholder: z.string(),
-    confirmationLabel: z.string(),
-    submit: z.string(),
-    submitFailed: z.string(),
-    yourWalletHelper: z.string(),
-    signInAlert: z.string(),
-    walletMismatch: z.string(),
-    errors: z.object({
-      invalidAddress: z.string(),
-      missingReason: z.string(),
-      missingDescription: z.string(),
-      missingEvidence: z.string(),
-      mustConfirm: z.string(),
-    }),
-  })
-  .partial();
-
-const ReportFixtureSchema = z.object({
-  title: z.string(),
-  successTitle: z.string(),
-  successBody: z.string(),
-  successDismiss: z.string(),
-  limits: z
-    .object({
-      descriptionMax: z.number(),
-      commentsMax: z.number(),
-      maxFiles: z.number(),
-      maxFileSizeMb: z.number(),
-      acceptedFileTypes: z.array(z.string()),
-    })
-    .partial(),
-  reasonOptions: z.array(ReasonOptionSchema),
-  copy: ReportCopySchema,
-  sampleReporter: z.object({ playerAddress: z.string() }).partial(),
-  sampleTarget: z
-    .object({
-      reportedAddress: z.string(),
-      reason: z.string(),
-      description: z.string(),
-      evidence: z.array(EvidenceFileSchema),
-      additionalComments: z.string(),
-    })
-    .partial(),
-});
-export type ReportFixture = z.infer<typeof ReportFixtureSchema>;
-
-export function parseReportFixture(raw: unknown): ReportFixture {
-  return ReportFixtureSchema.parse(raw);
-}
 
 export type ReportDraft = {
   playerAddress: string;
@@ -131,13 +61,14 @@ const E = {
   mustConfirm: "You must confirm this information is accurate",
 } as const;
 
-function validateTarget(reportedAddress: string): string {
-  return isEthAddress(reportedAddress) ? "" : E.invalidAddress;
+/** The field error of a wallet address input: empty when the value is an address. */
+export function validateAddress(address: string): string {
+  return isEthAddress(address) ? "" : E.invalidAddress;
 }
 
 export function validateDraft(draft: ReportDraft): ReportFieldErrors {
   return {
-    reportedAddress: validateTarget(draft.reportedAddress),
+    reportedAddress: validateAddress(draft.reportedAddress),
     reason: draft.reason ? "" : E.missingReason,
     description: draft.description.trim() ? "" : E.missingDescription,
     evidence: draft.evidence.length === 0 ? E.missingEvidence : "",
@@ -161,13 +92,12 @@ export type SubmitReportFn = (args: {
   signal?: AbortSignal;
 }) => Promise<SubmitReportResult>;
 
-export const failClosedSubmitReport: SubmitReportFn = async () => {
-  throw new Error("report submission unavailable: report service not configured");
-};
-
-const COMMS_PREFIX = "/comms";
-const REPORT_PRESIGN_PATH = "/reports/players/presign";
-const REPORT_CREATE_PATH = "/reports/players";
+// The node's report-user area (services/catalyst/comms/src/gatekeeper/reports.rs):
+// each request is signed over the path it is sent to (the mount included);
+// the upload paths the presign answers are relative to the mount.
+const REPORT_USER_PREFIX = "/report-user";
+const REPORT_PRESIGN_PATH = "/api/reports/players/presign";
+const REPORT_CREATE_PATH = "/api/reports/players";
 
 const NOT_CONNECTED_MESSAGE = "Connect your wallet to submit a report.";
 const MISSING_BYTES_MESSAGE =
@@ -190,6 +120,18 @@ const CreatedReportSchema = z.object({
   }),
 });
 
+/** Where a submission stopped. Telemetry sends this code, never the message: the message can name a file. */
+export type ReportFailureStep = "not_connected" | "invalid_draft" | "missing_bytes" | "upload_plan" | "upload" | "response";
+
+export class ReportSubmitError extends Error {
+  readonly step: ReportFailureStep;
+  constructor(step: ReportFailureStep, message: string) {
+    super(message);
+    this.name = "ReportSubmitError";
+    this.step = step;
+  }
+}
+
 function contentTypeOf(file: EvidenceUpload): string {
   return file.contentType || file.blob?.type || "";
 }
@@ -198,23 +140,23 @@ export function buildSubmitReport(
   identity: AuthIdentity | null,
 ): SubmitReportFn {
   return async ({ draft, signal }): Promise<SubmitReportResult> => {
-    if (!identity) throw new Error(NOT_CONNECTED_MESSAGE);
+    if (!identity) throw new ReportSubmitError("not_connected", NOT_CONNECTED_MESSAGE);
 
     const errors = validateDraft(draft);
     const invalid = invalidFields(errors);
     if (invalid.length > 0) {
-      throw new Error(errors[invalid[0] as keyof ReportFieldErrors]);
+      throw new ReportSubmitError("invalid_draft", errors[invalid[0] as keyof ReportFieldErrors]);
     }
 
     const uploads = draft.evidence.map((file) => {
       const blob = file.blob;
       const contentType = contentTypeOf(file);
-      if (!blob || !contentType) throw new Error(MISSING_BYTES_MESSAGE);
+      if (!blob || !contentType) throw new ReportSubmitError("missing_bytes", MISSING_BYTES_MESSAGE);
       return { name: file.name, blob, contentType };
     });
 
     const presignRaw = await postJSON<unknown>(
-      `${COMMS_PREFIX}${REPORT_PRESIGN_PATH}`,
+      `${REPORT_USER_PREFIX}${REPORT_PRESIGN_PATH}`,
       {
         files: uploads.map((u) => ({
           filename: u.name,
@@ -222,11 +164,11 @@ export function buildSubmitReport(
           fileSize: u.blob.size,
         })),
       },
-      { identity, signPath: REPORT_PRESIGN_PATH, signal },
+      { identity, signal },
     );
     const presign = PresignResponseSchema.safeParse(presignRaw);
     if (!presign.success || presign.data.files.length !== uploads.length) {
-      throw new Error("Report service returned an unexpected upload plan.");
+      throw new ReportSubmitError("upload_plan", "Report service returned an unexpected upload plan.");
     }
 
     const base = catalystBase();
@@ -234,26 +176,25 @@ export function buildSubmitReport(
       const upload = uploads[index];
       const res = await signedFetch(
         identity,
-        `${base}${COMMS_PREFIX}${slot.uploadPath}`,
+        `${base}${REPORT_USER_PREFIX}${slot.uploadPath}`,
         {
           method: "PUT",
-          signPath: slot.uploadPath,
           metadata: {},
           headers: { "content-type": upload.contentType },
           body: upload.blob,
           signal,
         },
       );
+      // Neither answer of the upload is read: drop its body, so the connection is free at once.
+      await res.body?.cancel().catch(() => undefined);
       if (!res.ok) {
-        throw new Error(
-          `Evidence upload failed for ${upload.name} (${res.status}).`,
-        );
+        throw new ReportSubmitError("upload", `Evidence upload failed for ${upload.name} (${res.status}).`);
       }
     }
 
     const comments = draft.additionalComments.trim();
     const createdRaw = await postJSON<unknown>(
-      `${COMMS_PREFIX}${REPORT_CREATE_PATH}`,
+      `${REPORT_USER_PREFIX}${REPORT_CREATE_PATH}`,
       {
         reportId: presign.data.reportId,
         reportedAddress: draft.reportedAddress.trim().toLowerCase(),
@@ -263,11 +204,11 @@ export function buildSubmitReport(
         confirmAccuracy: draft.confirmAccuracy,
         evidenceKeys: presign.data.files.map((f) => f.key),
       },
-      { identity, signPath: REPORT_CREATE_PATH, signal },
+      { identity, signal },
     );
     const created = CreatedReportSchema.safeParse(createdRaw);
     if (!created.success) {
-      throw new Error("Report service returned an unexpected response.");
+      throw new ReportSubmitError("response", "Report service returned an unexpected response.");
     }
 
     return {

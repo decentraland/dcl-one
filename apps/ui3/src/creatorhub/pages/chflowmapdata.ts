@@ -30,14 +30,14 @@ export const SECTIONS: FlowSection[] = [
     tracks: [
       {
         chain: "home",
-        items: [route("/create", { sub: "HOME" })],
+        items: [route("/create/home", { sub: "HOME" })],
         branches: [
           {
             chain: "home",
             chips: true,
             note: "the rail \u{2014} Land \u{2192} /shop and Names \u{2192} /marketplace/names stay in-product; Curate appears only for committee wallets",
             items: [
-              node("chip", "Home", { href: "/create" }),
+              node("chip", "Home", { href: "/create/home" }),
               node("chip", "Scenes", { href: "/create/scenes" }),
               node("chip", "Templates", { href: "/create/templates" }),
               node("chip", "Collections", { href: "/create/wearables" }),
