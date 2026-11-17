@@ -221,7 +221,7 @@ struct ColliderState {
     translation: Vec3,
     rotation: Quat,
     scale: Vec3,
-    /// its scaled size is at least `COLLIDER_DISABLE_SIZE`
+    /// its scaled size was at least `COLLIDER_DISABLE_SIZE` at its last rescale
     large_enough: bool,
     /// it lies within the scene's bounds
     in_bounds: bool,
@@ -491,8 +491,7 @@ impl SceneColliderData {
 
                 let state_mut = self.collider_state.get_mut(id).unwrap();
                 state_mut.large_enough = large_enough;
-                state_mut.in_bounds =
-                    collider.is_sensor() || self.bounds.contains(&collider.compute_aabb());
+                state_mut.in_bounds = collider.is_sensor() || self.bounds.contains(collider);
                 let enabled = state_mut.large_enough && state_mut.in_bounds;
                 if enabled != collider.is_enabled() {
                     collider.set_enabled(enabled);

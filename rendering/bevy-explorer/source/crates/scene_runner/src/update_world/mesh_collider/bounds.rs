@@ -1,6 +1,6 @@
 use bevy::math::{DVec2, IVec2};
 use common::partition::PARCEL_SIZE;
-use rapier3d_f64::parry::bounding_volume::Aabb;
+use rapier3d_f64::prelude::Collider;
 use scene_material::BoundRegion;
 
 /// How far a collider's box may reach past the edge of its scene, in metres.
@@ -44,7 +44,7 @@ impl ColliderBounds {
         }
         // one limit for the whole scene: that of its parcel count, or a higher one its regions
         // carry
-        let height = height.max(BoundRegion::new(IVec2::ZERO, IVec2::ZERO, parcels).height);
+        let height = height.max(BoundRegion::height_for_parcels(parcels));
 
         let parcel_size = f64::from(PARCEL_SIZE);
         Self(Some(Limits {
@@ -54,13 +54,14 @@ impl ColliderBounds {
         }))
     }
 
-    /// Whether a collider with this world-space box lies inside the scene: within its rectangle
-    /// and no higher than its limit. A box that leaves is outside as a whole.
-    pub(super) fn contains(&self, aabb: &Aabb) -> bool {
+    /// Whether a collider lies inside the scene: its world-space box within the rectangle and
+    /// no higher than the limit. A box that leaves is outside as a whole.
+    pub(super) fn contains(&self, collider: &Collider) -> bool {
         let Some(limits) = &self.0 else {
             return true;
         };
 
+        let aabb = collider.compute_aabb();
         let min = DVec2::new(aabb.mins.x, aabb.mins.z);
         let max = DVec2::new(aabb.maxs.x, aabb.maxs.z);
         let inset = ((max - min).min_element() * 0.25).min(MAX_INSET);

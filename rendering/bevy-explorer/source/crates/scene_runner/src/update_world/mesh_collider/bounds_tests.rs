@@ -406,6 +406,43 @@ fn removing_a_collider_that_is_off_leaves_the_others_in_place() {
 }
 
 #[test]
+fn a_collider_turned_off_removed_and_replaced_before_the_next_query_leaves_no_trace() {
+    let mut colliders = scene(&[(0, 0)]);
+    let size = Vec3::splat(2.0);
+    let first = add_box(&mut colliders, 0);
+    place(&mut colliders, &first, Vec3::new(8.0, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+    let slot = |colliders: &SceneColliderData, id: &ColliderId| {
+        colliders
+            .get_collider_handle(id)
+            .unwrap()
+            .into_raw_parts()
+            .0
+    };
+    let first_slot = slot(&colliders, &first);
+
+    // it leaves the scene, is removed, and its slot is taken over, all before the next query
+    place(&mut colliders, &first, Vec3::new(24.0, 1.0, -8.0), size);
+    colliders.remove_collider(&first);
+    let replacement = add_box(&mut colliders, 1);
+    assert_eq!(
+        slot(&colliders, &replacement),
+        first_slot,
+        "the replacement is meant to take over the removed collider's slot"
+    );
+    place(
+        &mut colliders,
+        &replacement,
+        Vec3::new(4.0, 1.0, -4.0),
+        size,
+    );
+
+    assert!(hit_at(&mut colliders, 4.0, -4.0));
+    assert!(!hit_at(&mut colliders, 8.0, -8.0));
+    assert!(!hit_at(&mut colliders, 24.0, -8.0));
+}
+
+#[test]
 fn the_colliders_off_for_bounds_are_counted() {
     let mut colliders = scene(&[(0, 0)]);
     let size = Vec3::splat(2.0);

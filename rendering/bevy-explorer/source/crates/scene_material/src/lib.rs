@@ -331,9 +331,14 @@ impl BoundRegion {
         Self {
             min: ((min.x as i16 as u16 as u32) << 16) | (-(max.y + 1) as i16 as u16 as u32),
             max: (((max.x + 1) as i16 as u16 as u32) << 16) | (-min.y as i16 as u16 as u32),
-            height: f32::log2(parcel_count as f32 + 1.0) * 20.0,
+            height: Self::height_for_parcels(parcel_count),
             parcel_count,
         }
+    }
+
+    /// The height limit, in metres, over `parcel_count` parcels.
+    pub fn height_for_parcels(parcel_count: u32) -> f32 {
+        f32::log2(parcel_count as f32 + 1.0) * 20.0
     }
 }
 
