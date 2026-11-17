@@ -7,7 +7,7 @@ use bevy::{
     ecs::{
         change_detection::DetectChanges,
         event::{Event, EventReader, EventWriter},
-        schedule::{common_conditions::resource_changed, Condition, IntoScheduleConfigs},
+        schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
         system::{Local, Res, ResMut},
     },
     log::{info, warn},
@@ -21,6 +21,7 @@ use common::{
     structs::CurrentRealm,
     util::{TaskCompat, TaskExt},
 };
+use comms::access_status::{AccessScope, AccessStatus};
 use console::DoAddConsoleCommand;
 use serde::Deserialize;
 use wallet::Wallet;
@@ -67,44 +68,67 @@ fn ban_from_body(body: BanStatusBody) -> Option<PlatformBanInfo> {
     }))
 }
 
-/// True while the known ban came from a scene-admission refusal and the admission still shows
-/// that refusal.
-fn refusal_outranks_not_banned(
-    source: Option<PlatformBanSource>,
-    admission: &SceneAdmission,
-) -> bool {
-    source == Some(PlatformBanSource::SceneAdmissionRefusal)
-        && matches!(
-            admission.view(),
-            AdmissionView::Refused {
-                scope: BanScope::Platform,
-                ..
-            }
-        )
+/// The platform-scoped refusal the scene admission shows, as `(message, scene_id)`.
+fn platform_refusal(admission: &SceneAdmission) -> Option<(&str, &str)> {
+    match admission.view() {
+        AdmissionView::Refused {
+            scope: BanScope::Platform,
+            message,
+            scene_id,
+        } => Some((message, scene_id)),
+        _ => None,
+    }
 }
 
-/// Records a platform-scoped admission refusal as the platform ban while none is known.
+/// Records the endpoint's "not banned". The endpoint matches the address only, so a platform
+/// refusal still standing stays the ban, and its scene's denial is dropped so the gatekeeper is
+/// asked again: its next answer keeps or lifts the ban.
+fn apply_not_banned(
+    status: &mut PlatformBanStatus,
+    admission: &SceneAdmission,
+    access: &mut AccessStatus,
+    now: f64,
+) {
+    let Some((message, scene_id)) = platform_refusal(admission) else {
+        status.apply_platform_ban(None, PlatformBanSource::BanStatusEndpoint, now);
+        return;
+    };
+    if status.source() != Some(PlatformBanSource::SceneAdmissionRefusal) {
+        status.apply_platform_ban(
+            Some(PlatformBanInfo::from_refusal(message)),
+            PlatformBanSource::SceneAdmissionRefusal,
+            now,
+        );
+    }
+    access.remove_scope(&AccessScope::Scene(scene_id.to_owned()));
+}
+
+/// Records a platform-scoped admission refusal as the platform ban while none is known, and lifts
+/// a ban learnt from a refusal once the gatekeeper admits the user.
 fn cross_feed_admission_refusal(
     admission: Res<SceneAdmission>,
     mut status: ResMut<PlatformBanStatus>,
     time: Res<Time>,
 ) {
-    let AdmissionView::Refused {
-        scope: BanScope::Platform,
-        message,
-        ..
-    } = admission.view()
-    else {
-        return;
-    };
-    if status.ban().is_some() {
-        return;
+    let now = time.elapsed_secs_f64();
+    match admission.view() {
+        AdmissionView::Refused {
+            scope: BanScope::Platform,
+            message,
+            ..
+        } if status.ban().is_none() => status.apply_platform_ban(
+            Some(PlatformBanInfo::from_refusal(message)),
+            PlatformBanSource::SceneAdmissionRefusal,
+            now,
+        ),
+        AdmissionView::Allowed { .. }
+            if status.source() == Some(PlatformBanSource::SceneAdmissionRefusal) =>
+        {
+            info!("[ban_block] the gatekeeper admitted the user: lifting the refusal's ban");
+            status.apply_platform_ban(None, PlatformBanSource::SceneAdmissionRefusal, now);
+        }
+        _ => (),
     }
-    status.apply_platform_ban(
-        Some(PlatformBanInfo::from_refusal(message)),
-        PlatformBanSource::SceneAdmissionRefusal,
-        time.elapsed_secs_f64(),
-    );
 }
 
 /// `/ban_block_refresh` asks for the platform ban to be checked again now.
@@ -144,13 +168,9 @@ impl Plugin for PlatformBanPlugin {
             )
             .add_systems(
                 PostUpdate,
-                // before the realm change, so a refusal learnt this frame refuses it; also on a
-                // status change, so a refusal still standing returns once another ban is lifted
+                // before the realm change, so a refusal learnt this frame refuses it
                 cross_feed_admission_refusal
-                    .run_if(
-                        resource_changed::<SceneAdmission>
-                            .or(resource_changed::<PlatformBanStatus>),
-                    )
+                    .run_if(resource_changed::<SceneAdmission>)
                     .before(ipfs::change_realm),
             );
     }
@@ -269,6 +289,7 @@ fn check_platform_ban(
     wallet: Res<Wallet>,
     realm: Option<Res<CurrentRealm>>,
     admission: Res<SceneAdmission>,
+    mut access: ResMut<AccessStatus>,
     time: Res<Time>,
     mut refresh: EventReader<PlatformBanRefreshRequested>,
     mut schedule: Local<BanCheckSchedule>,
@@ -294,18 +315,12 @@ fn check_platform_ban(
         schedule.in_flight = None;
         if for_address == address {
             match result {
-                Ok(None) if refusal_outranks_not_banned(status.source(), &admission) => {
-                    info!("[ban_block] platform ban check: not banned, keeping the refusal");
+                Ok(None) => {
+                    info!("[ban_block] platform ban check: not banned");
+                    apply_not_banned(&mut status, &admission, &mut access, now);
                 }
                 Ok(ban) => {
-                    info!(
-                        "[ban_block] platform ban check: {}",
-                        if ban.is_some() {
-                            "banned"
-                        } else {
-                            "not banned"
-                        }
-                    );
+                    info!("[ban_block] platform ban check: banned");
                     status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now);
                 }
                 Err(failure) => {
@@ -383,6 +398,7 @@ fn retry_after_secs(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::change_detection::Mut;
     use common::platform_ban::PlatformBanState;
 
     fn address(n: u8) -> Address {
@@ -523,24 +539,115 @@ mod tests {
     }
 
     #[test]
-    fn a_not_banned_is_dropped_only_while_the_refusal_is_on_screen() {
+    fn a_not_banned_keeps_a_standing_refusal_and_asks_the_gatekeeper_again() {
         let refusal = SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s");
-        let scene_ban =
-            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s");
-        let from_refusal = Some(PlatformBanSource::SceneAdmissionRefusal);
-        let from_endpoint = Some(PlatformBanSource::BanStatusEndpoint);
-        assert!(refusal_outranks_not_banned(from_refusal, &refusal));
-        assert!(!refusal_outranks_not_banned(
-            from_refusal,
-            &SceneAdmission::unknown()
-        ));
-        assert!(!refusal_outranks_not_banned(
-            from_refusal,
-            &SceneAdmission::allowed("s")
-        ));
-        assert!(!refusal_outranks_not_banned(from_refusal, &scene_ban));
-        assert!(!refusal_outranks_not_banned(from_endpoint, &refusal));
-        assert!(!refusal_outranks_not_banned(None, &refusal));
+        let scene = AccessScope::Scene("s".to_owned());
+        let endpoint_ban = PlatformBanInfo {
+            reason: "spam".into(),
+            expires_at: Some("2026-12-01T00:00:00.000Z".into()),
+            ..PlatformBanInfo::from_refusal("")
+        };
+
+        // an endpoint ban expires while its refusal stands: the refusal is the ban now
+        let mut status = PlatformBanStatus::new();
+        status.apply_platform_ban(
+            Some(endpoint_ban),
+            PlatformBanSource::BanStatusEndpoint,
+            1.0,
+        );
+        let mut access = AccessStatus::default();
+        access.set_denied(scene.clone());
+        apply_not_banned(&mut status, &refusal, &mut access, 2.0);
+        assert_eq!(
+            status.source(),
+            Some(PlatformBanSource::SceneAdmissionRefusal)
+        );
+        assert!(!access.is_denied(&scene), "the gatekeeper is asked again");
+
+        // the refusal's ban is kept, and asked about again, on the next "not banned"
+        access.set_denied(scene.clone());
+        apply_not_banned(&mut status, &refusal, &mut access, 3.0);
+        assert!(status.ban().is_some());
+        assert!(!access.is_denied(&scene));
+
+        // with no platform refusal standing, "not banned" lifts any ban
+        for admission in [
+            SceneAdmission::unknown(),
+            SceneAdmission::allowed("s"),
+            SceneAdmission::from_refusal(403, Some("User is banned from this scene"), false, "s"),
+        ] {
+            let mut status = PlatformBanStatus::new();
+            status.apply_platform_ban(
+                Some(PlatformBanInfo::from_refusal(PLATFORM_BANNED)),
+                PlatformBanSource::SceneAdmissionRefusal,
+                1.0,
+            );
+            let mut access = AccessStatus::default();
+            access.set_denied(scene.clone());
+            apply_not_banned(&mut status, &admission, &mut access, 2.0);
+            assert_eq!(status.ban(), None, "{admission:?}");
+            assert!(access.is_denied(&scene), "{admission:?}");
+        }
+    }
+
+    #[test]
+    fn an_expired_ban_ends_once_the_gatekeeper_admits_the_user() {
+        let mut app = cross_feed_app();
+        let refusal = SceneAdmission::from_refusal(403, Some(PLATFORM_BANNED), false, "s");
+        app.world_mut()
+            .resource_mut::<PlatformBanStatus>()
+            .apply_platform_ban(
+                Some(PlatformBanInfo {
+                    reason: "spam".into(),
+                    ..PlatformBanInfo::from_refusal("")
+                }),
+                PlatformBanSource::BanStatusEndpoint,
+                1.0,
+            );
+        set_admission(&mut app, refusal.clone());
+
+        // expiry, then "not banned": the refusal still stands, so the ban does
+        let mut access = AccessStatus::default();
+        app.world_mut()
+            .resource_scope(|world, mut status: Mut<PlatformBanStatus>| {
+                apply_not_banned(
+                    &mut status,
+                    world.resource::<SceneAdmission>(),
+                    &mut access,
+                    2.0,
+                )
+            });
+        app.update();
+        assert!(app.world().resource::<PlatformBanStatus>().ban().is_some());
+
+        // the gatekeeper asked again refuses: the ban stands
+        set_admission(&mut app, refusal);
+        assert!(app.world().resource::<PlatformBanStatus>().ban().is_some());
+
+        // it admits the user: the ban ends
+        set_admission(&mut app, SceneAdmission::allowed("s"));
+        assert_eq!(app.world().resource::<PlatformBanStatus>().ban(), None);
+    }
+
+    #[test]
+    fn an_admission_lifts_only_a_ban_learnt_from_a_refusal() {
+        let mut app = cross_feed_app();
+        let record = PlatformBanInfo {
+            reason: "spam".into(),
+            ..PlatformBanInfo::from_refusal("")
+        };
+        app.world_mut()
+            .resource_mut::<PlatformBanStatus>()
+            .apply_platform_ban(
+                Some(record.clone()),
+                PlatformBanSource::BanStatusEndpoint,
+                1.0,
+            );
+        set_admission(&mut app, SceneAdmission::allowed("s"));
+        assert_eq!(
+            app.world().resource::<PlatformBanStatus>().ban(),
+            Some(&record)
+        );
     }
 
     /// An app with the admission, the status and the clock, running the cross-feed.

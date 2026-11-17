@@ -132,6 +132,23 @@ describe('the ban notice', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: PLATFORM_BAN_TITLE })).toBeNull())
   })
 
+  it('an open notice words the period again as time passes', () => {
+    vi.useFakeTimers({ now: NOW })
+    try {
+      resetPopups()
+      render(<PopupHost />)
+      act(() => {
+        openPlatformBanDialog({ ...BAN, expiresAt: '2026-11-13T02:30:00.000Z' }, { signOut: vi.fn() })
+      })
+      const dialog = screen.getByRole('alertdialog', { name: PLATFORM_BAN_TITLE })
+      expect(dialog.textContent).toContain('Ban period: 3 hours.')
+      act(() => vi.advanceTimersByTime(90 * 60_000))
+      expect(dialog.textContent).toContain('Ban period: 1 hour.')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('after a refused travel: OK closes it', async () => {
     resetPopups()
     render(<PopupHost />)

@@ -10,13 +10,14 @@
 // | not banned: the realm is entered                     | New              |
 // | banned: a realm change is refused                    | New, native only |
 // | a failed check: a realm change enters                | New, native only |
-// | banned at sign-in: known before any realm change     | New, native only |
+// | banned at sign-in: a later realm change is refused   | New, native only |
 //
 // Asserts every realm change is refused while a ban is known.
 //
 // Zone's live accounts cannot be banned by a test, so the stub scenarios start their own
 // standalone pointed at a loopback gatekeeper stub (`--comms-gatekeeper`). On the web a service
-// override stops the boot at the launch gate before the console is up: those two are todos there.
+// override stops the boot at the launch gate before the console is up: those scenarios are todos
+// there.
 import assert from 'node:assert/strict'
 import { before } from 'node:test'
 import { bannedReply, NOT_BANNED, readTarget, refusal, sharedGatekeeperStub, spec, until, type BanBlockState, type Explorer, type GatekeeperStub } from '../driver/index.ts'
@@ -154,12 +155,13 @@ scenario(
 )
 
 scenario(
-  'banned at sign-in: known before any realm change',
+  'banned at sign-in: a later realm change is refused',
   async ({ explorer }) => {
     assert.ok(stub)
     stub.banStatus(bannedReply('e2e'))
     try {
-      // the new wallet's ban is known before any realm change is asked for
+      // the new wallet's ban is checked at sign-in; whether it is known before the first entry is
+      // the documented fail-open race, not asserted here
       await explorer.logout()
       await explorer.loginGuest()
       const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.isBanned === true, {

@@ -32,6 +32,23 @@ export function banLines(ban: PlatformBanNotice, now: number): string[] {
   return lines
 }
 
+/** The ban lines, worded again each minute while the ban has a period. */
+function BanLines({ ban }: { ban: PlatformBanNotice }): React.JSX.Element {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (ban.expiresAt == null || ban.expiresAt === '') return
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [ban.expiresAt])
+  return (
+    <>
+      {banLines(ban, now).map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+    </>
+  )
+}
+
 const openHelpPage = (): void => {
   window.open(siteUrl('/help/'), '_blank', 'noopener')
 }
@@ -44,7 +61,6 @@ export function openPlatformBanDialog(
 ): () => void {
   const signOut = options.signOut
   const openSupport = options.openSupport ?? openHelpPage
-  const lines = banLines(ban, Date.now())
   const close = openPopup(
     (dismiss) => (
       <ModalShell
@@ -74,9 +90,7 @@ export function openPlatformBanDialog(
           </>
         }
       >
-        {lines.map((line) => (
-          <p key={line}>{line}</p>
-        ))}
+        <BanLines ban={ban} />
       </ModalShell>
     ),
     signOut != null ? { backdropClickCloses: false, confirmClose: () => false, onClose: options.onClose } : { onClose: options.onClose }

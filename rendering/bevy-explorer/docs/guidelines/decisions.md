@@ -316,8 +316,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `expiresAt` passes it is checked again once, after any `Retry-After`); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
-  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
-  stands. The local user's scene ban is the refusal of the
+  marks the platform ban. The endpoint's "not banned" does not lift it while the refusal stands:
+  it asks the gatekeeper for that scene's room again, and the gatekeeper's admission lifts it, so
+  a ban that expired or was lifted ends without a scene or realm change. The local user's scene
+  ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
@@ -330,10 +332,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   learnt while a change waits on world access (a world's password prompt) stops it with the same
   answer; one learnt after the realm's own fetch has started does not stop that change. The
   HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
-  picker or loader with a blocking notice that only a sign-out leaves (B1); a refused in-world
+  picker or loader with a blocking notice that a sign-out or a "not banned" answer closes, and a
+  ban answered during the first entry keeps it open over the world (B1); a refused in-world
   travel shows the same notice, dismissible, and the player stays put (B5). A ban learnt after the
-  first world entry opens nothing until a travel is refused, and the notice words the period
-  when it opens. Differences from
+  first world entry opens nothing until a travel is refused, and an open notice words the period
+  again each minute. Differences from
   unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
   Exit and Support:
   - Entering does not wait for the first check: an unknown or failed check lets the player in,
