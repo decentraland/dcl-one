@@ -126,6 +126,34 @@ async function pointer(type: string, selector: string) {
     ...point
   })
 }
+for (const variant of ['backpack', 'places', 'shop'])
+  describe('when the ' + variant + ' search box renders', () => {
+    it('should draw the Figma searchbar-white magnifier, size and gap', async () => {
+      await navigate(variant, 1920, true)
+      expect(
+        await browser.evaluate(
+          `(()=>{const i=document.querySelector('[data-control=search] input'),s=i.parentElement.querySelector('svg'),r=s.getBoundingClientRect(),c=getComputedStyle(s);const paints=[...s.querySelectorAll('path')].map(p=>getComputedStyle(p).stroke);return{color:c.color,paints:[...new Set(paints)],width:r.width,height:r.height,textStart:Math.round((i.getBoundingClientRect().left-r.left)*10)/10}})()`
+        )
+      ).toEqual({
+        color: 'rgb(113, 107, 124)',
+        paints: ['rgb(113, 107, 124)'],
+        width: 22,
+        height: 20,
+        textStart: 29.2
+      })
+    })
+  })
+for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'])
+  describe('when the ' + variant + ' sections render their icons', () => {
+    it('should fit every icon in its 20px slot', async () => {
+      await navigate(variant, 1920, true)
+      const boxes = await browser.evaluate<{ width: number; height: number }[]>(
+        `[...document.querySelectorAll('[data-region=primary] [role=group] > * svg')].map(s=>{const r=s.getBoundingClientRect();return{width:r.width,height:r.height}})`
+      )
+      expect(boxes.length).toBe(sectionNames[variant as keyof typeof sectionNames].length)
+      for (const box of boxes) expect(box).toEqual({ width: 20, height: 20 })
+    })
+  })
 const snowOnOrange = {
   text: 'rgb(252, 252, 252)',
   icon: ['rgb(252, 252, 252)'],

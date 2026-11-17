@@ -22,14 +22,23 @@
     border-radius: var(--dcl-radius-md);
     font: inherit;
   }
+  /* Figma searchbar-white (16959:905): a 20px slot, a 9.2px gap and the cloudy-sky magnifier. */
   .search {
     display: flex;
     align-items: center;
-    gap: var(--dcl-space-12);
+    gap: 9.2px;
     width: 100%;
     padding: 8px 12px;
     background: var(--dcl-neutrals-white);
     color: var(--dcl-neutrals-shadow);
+  }
+  /* The magnifier's 22x20 glyph overflows its 20px slot on the end side, as Figma draws it. */
+  .searchIcon {
+    flex: none;
+    width: 22px;
+    height: 20px;
+    margin-inline-end: -2px;
+    color: var(--dcl-neutrals-cloudy-sky);
   }
   .search input {
     min-width: 0;

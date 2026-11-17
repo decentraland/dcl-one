@@ -196,7 +196,7 @@ function App() {
   const sortLabel = sortOptions.find(([value]) => value === sort)![1]
   const search = (
     <div className={styles.search} data-focus={searchFocus}>
-      <GeneralSearchBold size={20} aria-hidden="true" />
+      <GeneralSearchBold className={styles.searchIcon} aria-hidden="true" />
       <input
         aria-label="Fixture search"
         value={query}
