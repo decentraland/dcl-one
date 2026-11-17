@@ -60,4 +60,12 @@ describe("StWhatSOn, the Upcoming card's hover actions", () => {
     const actions = renderUpcoming({});
     expect(() => fireEvent.click(actions.querySelector('button[aria-label="Copy link"]')!)).not.toThrow();
   });
+
+  it("should open the event page from the icon form of Remind me", () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const actions = renderUpcoming({ id: "e 1" });
+    fireEvent.click(actions.querySelector('button[aria-label="Remind me"]')!);
+    expect(assign).toHaveBeenCalledWith("/whats-on/e%201");
+  });
 });

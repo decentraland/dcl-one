@@ -42,7 +42,7 @@ const measure = `(() => {
   const actions = card.querySelector(".wo-sm__actions");
   const box = (el) => { const r = el.getBoundingClientRect(), s = getComputedStyle(el); return { width: r.width, height: r.height, left: r.left, right: r.right, radius: s.borderRadius, background: s.backgroundColor, color: s.color }; };
   const size = (el) => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
-  const remind = actions.querySelector("a"), share = actions.querySelector("button");
+  const remind = actions.querySelector("a"), share = actions.querySelector('button[aria-label="Copy link"]');
   const text = getComputedStyle(remind);
   return {
     visible: getComputedStyle(actions).visibility === "visible" && getComputedStyle(actions).opacity === "1",
@@ -89,7 +89,8 @@ afterAll(async () => {
 }, 30_000);
 
 // Figma Events > card-hover, state=hover, live=false (16295:37451): CTAs 16295:37459.
-describe.each([1280, 1440])("when an Upcoming card is hovered at %ipx", (width) => {
+// At 1920px the grid card is 430px, the Figma card's width, so the full row shows.
+describe.each([1920])("when an Upcoming card is hovered at %ipx", (width) => {
   it("should hide the actions until the card is hovered", async () => {
     await load(width);
     expect((await evaluate<Actions>(measure)).visible).toBe(false);
@@ -139,7 +140,40 @@ describe.each([1280, 1440])("when an Upcoming card is hovered at %ipx", (width) 
       return evaluate<string>(`getComputedStyle(document.querySelector(".wo-up__grid .wo-sm ${selector}")).backgroundColor`);
     };
     expect(await hover(".wo-sm__actions a")).toBe("rgba(255, 255, 255, 0.2)");
-    expect(await hover(".wo-sm__actions button")).toBe("rgba(255, 255, 255, 0.2)");
+    expect(await hover(".wo-sm__actions button[aria-label='Copy link']")).toBe("rgba(255, 255, 255, 0.2)");
+  });
+});
+
+// Every width where the hover actions show: each visible action sits inside its card and is what a click there hits.
+describe.each([900, 1024, 1280, 1440, 1920])("when an Upcoming card is hovered at %ipx, where its actions show", (width) => {
+  it("should keep both visible actions inside the card and hit-testable", async () => {
+    await load(width);
+    const { x, y } = await evaluate<{ x: number; y: number }>(
+      `(() => { const r = document.querySelector(".wo-up__grid .wo-sm").getBoundingClientRect(); return { x: r.x + r.width * 0.8, y: r.y + 10 }; })()`,
+    );
+    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    const result = await evaluate<{ pane: number; controls: { name: string; full: boolean; inside: boolean; hit: boolean }[] }>(`(() => {
+      const card = document.querySelector(".wo-up__grid .wo-sm");
+      const c = card.getBoundingClientRect();
+      const controls = [...card.querySelectorAll(".wo-sm__actions a, .wo-sm__actions button")].filter((el) => getComputedStyle(el).display !== "none");
+      return {
+        pane: card.querySelector(".wo-sm__text").getBoundingClientRect().width,
+        controls: controls.map((el) => {
+          const r = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return {
+            name: el.getAttribute("aria-label") ?? el.textContent.trim(),
+            full: el.tagName === "A",
+            inside: r.left >= c.left - 0.5 && r.right <= c.right + 0.5 && r.top >= c.top - 0.5 && r.bottom <= c.bottom + 0.5,
+            hit: !!hit && (hit === el || el.contains(hit)),
+          };
+        }),
+      };
+    })()`);
+    expect(result.controls.map((control) => control.name)).toEqual(["Remind me", "Copy link"]);
+    // The labelled Remind me shows only where its 178px row fits the pane; otherwise the icon form does.
+    expect(result.controls[0]!.full).toBe(result.pane >= 202);
+    expect(result.controls).toEqual(result.controls.map((control) => ({ ...control, inside: true, hit: true })));
   });
 });
 

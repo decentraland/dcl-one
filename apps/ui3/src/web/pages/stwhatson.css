@@ -391,8 +391,15 @@
 .wo-sm:focus-within .wo-sm__actions { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
 /* Figma Events > card-hover CTAs (16295:37459): 12px between Remind me and Share. */
 .wo-sm__actions { gap: var(--dcl-space-12); }
-/* Figma Remind me (16326:4330) is a fixed 134px instance with its content centred, wider than the label hugs. */
-.wo-sm__remind { min-width: 134px; }
+/* Figma Remind me (16326:4330) is a fixed 134px instance with its content centred, wider than the label hugs. The row
+   (134 + 12 + 32 = 178px) fits a text pane whose content box is at least that wide; a narrower pane, as the four-column grid
+   gives, shows the icon form the Figma small card uses, so both actions stay inside the card. */
+.wo-sm__text { container: wo-sm-text / inline-size; }
+.wo-sm__remind { display: none; min-width: 134px; }
+@container wo-sm-text (min-width: 178px) {
+  .wo-sm__remind { display: inline-flex; }
+  .wo-sm__remindicon { display: none; }
+}
 .wo-sm:hover [data-role="time-pill"],
 .wo-sm:focus-within [data-role="time-pill"] { opacity: 0; }
 

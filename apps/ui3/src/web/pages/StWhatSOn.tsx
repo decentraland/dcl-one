@@ -248,6 +248,13 @@ function SmallCard({ event, priority, signedIn = false }: { event: WoUpcomingCar
           <Button variant="secondary" size="sm" className="wo-sm__remind" href={eventHref(event.id)} leadingIcon={event.attending ? <GeneralReminderOn size={16} /> : <GeneralReminderOff size={16} />}>
             Remind me
           </Button>
+          {/* Figma card-hover's row is 178px; a narrower text pane gets the small card's icon form of Remind me. */}
+          <CardActionButton
+            className="wo-sm__iconbtn wo-sm__remindicon"
+            aria-label="Remind me"
+            icon={event.attending ? <GeneralReminderOn size={24} /> : <GeneralReminderOff size={24} />}
+            onClick={() => window.location.assign(eventHref(event.id))}
+          />
           <CardActionButton className="wo-sm__iconbtn" aria-label="Copy link" icon={<MenusShare size={24} />} onClick={() => copyEventLink(event.id)} />
         </div>
       </div>
