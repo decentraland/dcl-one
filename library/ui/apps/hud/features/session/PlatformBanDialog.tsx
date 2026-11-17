@@ -115,9 +115,9 @@ export function usePlatformBanNotices(input: {
   openExternalUrl: (url: string) => Promise<boolean>
 }): void {
   const { phase, notice, travelRefused } = input
-  // the native HUD has no browser tabs of its own: the engine opens the help page
+  // the native HUD opens the help page through `openExternalUrl`
   const openSupport = isNativeHud() ? () => void input.openExternalUrl(helpUrl()) : undefined
-  // an in-world travel passes through `entering` too
+  // tells an in-world travel's `entering` from the first entry since sign-in
   const [reachedWorld, setReachedWorld] = useState(false)
   useEffect(() => {
     if (phase === 'login') setReachedWorld(false)

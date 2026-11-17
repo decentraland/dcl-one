@@ -791,7 +791,7 @@ pub fn change_realm(
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
     mut ids: Local<RealmChangeIds>,
-    // the latest issued id, watched by the issued changes so the earlier ones stand down
+    // the latest issued id and the refusal it carries
     mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
     wallet: Option<Res<Wallet>>,
@@ -877,7 +877,7 @@ pub fn change_realm(
     let platform_ban = platform_ban.filter(|status| status.ban().is_some());
     let newly_banned = platform_ban.is_some() && !ids.was_banned;
     ids.was_banned = platform_ban.is_some();
-    // a platform ban learnt while changes are in flight stops those still waiting on world access
+    // a platform ban learnt while changes are in flight issues an id carrying the ban's refusal
     if newly_banned && !in_flight.is_empty() {
         ids.issued += 1;
         if let Some(latest_issued) = latest_issued.as_ref() {

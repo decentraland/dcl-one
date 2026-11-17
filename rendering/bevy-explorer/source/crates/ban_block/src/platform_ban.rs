@@ -80,9 +80,8 @@ fn platform_refusal(admission: &SceneAdmission) -> Option<(&str, &str)> {
     }
 }
 
-/// Records the endpoint's "not banned". The endpoint matches the address only, so a platform
-/// refusal still standing stays the ban, and its scene's denial is dropped so the gatekeeper is
-/// asked again: its next answer keeps or lifts the ban.
+/// Records the endpoint's "not banned". While a platform refusal stands, keeps it as the ban and
+/// clears its scene's denial from `AccessStatus`.
 fn apply_not_banned(
     status: &mut PlatformBanStatus,
     admission: &SceneAdmission,
@@ -104,7 +103,7 @@ fn apply_not_banned(
 }
 
 /// Records a platform-scoped admission refusal as the platform ban while none is known, and lifts
-/// a ban learnt from a refusal once the gatekeeper admits the user.
+/// a ban learnt from a refusal once the admission is allowed.
 fn cross_feed_admission_refusal(
     admission: Res<SceneAdmission>,
     mut status: ResMut<PlatformBanStatus>,
@@ -168,7 +167,7 @@ impl Plugin for PlatformBanPlugin {
             )
             .add_systems(
                 PostUpdate,
-                // before the realm change, so a refusal learnt this frame refuses it
+                // records this frame's refusal before `change_realm` runs
                 cross_feed_admission_refusal
                     .run_if(resource_changed::<SceneAdmission>)
                     .before(ipfs::change_realm),

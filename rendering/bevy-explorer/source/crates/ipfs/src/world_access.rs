@@ -27,8 +27,7 @@ pub struct Issued {
     pub refusal: &'static str,
 }
 
-/// Whether a later id has been issued since the change this belongs to, which then stands down
-/// rather than finish behind it.
+/// Whether a later id has been issued since the change this belongs to.
 pub struct Superseded {
     pub latest: watch::Receiver<Issued>,
     pub id: u64,

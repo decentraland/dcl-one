@@ -4176,8 +4176,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setPortables([])
     portableStates.current = null
     portableToasts.current = false
-    // no ban or refused travel carries over to the next account; a travel still in flight
-    // answers an id no longer awaited, and its loader goes with it
+    // clears the ban and the refused travel, and retires the travel id and loader in flight
     setPlatformBan(null)
     setBanRefusedTravel(false)
     travelSeq.current++
