@@ -55,6 +55,10 @@
     outline-offset: 2px;
     box-shadow: none;
   }
+  /* ?selectedtext=dark keeps the earlier dark selected label for comparison with Figma's light one. */
+  .darkSelected [data-active] {
+    color: var(--dcl-neutrals-shadow);
+  }
   .search input::placeholder {
     color: var(--dcl-neutrals-cloudy-sky);
   }
@@ -69,16 +73,19 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--dcl-space-4);
+    gap: var(--dcl-space-8);
     width: 100%;
-    padding: 8px 10px;
+    padding: 6px 6px 6px 14px;
     background: var(--dcl-neutrals-snow);
     color: var(--dcl-neutrals-shadow);
     font-size: 15px;
     font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
   }
   .date {
     width: 100%;
+    border-radius: 100px;
     background: var(--dcl-transparencies-white-10);
     color: var(--dcl-neutrals-snow);
     font-size: 18px;
@@ -88,10 +95,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 10px;
     width: 100%;
-    padding: 8px 24px;
-    background: var(--dcl-primary-alt-primary-alt);
+    padding: 8px 14px 8px 10px;
+    border: 2px solid var(--dcl-neutrals-snow);
+    background: var(--dcl-transparencies-black-40);
     color: var(--dcl-neutrals-snow);
+    font-weight: 600;
     text-transform: uppercase;
     text-decoration: none;
   }
@@ -129,12 +139,15 @@
     position: absolute;
     top: 0;
     right: 0;
+    box-sizing: border-box;
     min-width: 16px;
-    background: var(--dcl-primary-alt-primary-alt);
+    padding: 0 4px;
+    border: 2px solid var(--dcl-neutrals-charcoal);
+    background: var(--dcl-primary-primary);
     color: var(--dcl-neutrals-snow);
-    border-radius: 8px;
+    border-radius: 100px;
     font-size: 10px;
-    line-height: 16px;
+    line-height: 12px;
   }
   .filterHost {
     position: relative;

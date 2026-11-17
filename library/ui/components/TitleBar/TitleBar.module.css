@@ -67,9 +67,10 @@
     overflow-wrap: anywhere;
     cursor: pointer;
   }
+  /* Figma TitleBar (15843:56922): the selected section's label and icon are #fcfcfc on #ff7439. */
   .section[data-active] {
     background: var(--dcl-primary-alt-primary-alt);
-    color: var(--dcl-neutrals-shadow);
+    color: var(--dcl-neutrals-snow);
   }
   .section:focus-visible {
     outline: 2px solid var(--dcl-neutrals-snow);

@@ -16,6 +16,8 @@ import {
   GeneralName,
   GeneralFilters,
   GeneralDownArrow,
+  GeneralUpArrow,
+  GeneralAdd,
   GeneralSearchBold,
   ShopCart
 } from '@dcl/one-ui/foundations'
@@ -30,6 +32,7 @@ const variant =
   requested === 'shop'
     ? requested
     : 'settings'
+const darkSelected = new URLSearchParams(location.search).get('selectedtext') === 'dark'
 const searchFocus =
   new URLSearchParams(location.search).get('searchfocus') === 'offset' ? 'offset' : undefined
 const definitions: Record<typeof variant, readonly [string, string, React.ReactNode][]> = {
@@ -161,6 +164,14 @@ const collections = [
   ['Decentraland', 'Decentraland'],
   ['Fixture collection', 'Fixture collection']
 ] as const
+/** Figma draws general/down-arrow on a closed trigger; an open one points up. */
+function Chevron({ open }: { open: boolean }) {
+  return open ? (
+    <GeneralUpArrow size={24} aria-hidden="true" />
+  ) : (
+    <GeneralDownArrow size={24} aria-hidden="true" />
+  )
+}
 function Floating({
   disclosure,
   end = false,
@@ -207,7 +218,7 @@ function App() {
     <button {...filterPanel.trigger} className={styles.control}>
       <GeneralFilters size={24} aria-hidden="true" />
       Filter &amp; Sort
-      <GeneralDownArrow size={24} aria-hidden="true" />
+      <Chevron open={filterPanel.open} />
     </button>
   )
   const compatibleView = (
@@ -235,7 +246,12 @@ function App() {
       {compatibleView}
     </div>
   ) : null
-  const common = { sections, activeId, onSelect: setActiveId }
+  const common = {
+    sections,
+    activeId,
+    onSelect: setActiveId,
+    className: darkSelected ? styles.darkSelected : undefined
+  }
   return (
     <main className={styles.canvas}>
       <p>
@@ -258,7 +274,7 @@ function App() {
                   aria-label={'Fixture collection, ' + collection}
                 >
                   <span className={styles.value}>{collection}</span>
-                  <GeneralDownArrow size={24} aria-hidden="true" />
+                  <Chevron open={collectionPanel.open} />
                 </button>
                 <Floating disclosure={collectionPanel}>
                   <div
@@ -298,6 +314,7 @@ function App() {
             ),
             create: (
               <a className={styles.create} href="#fixture-create">
+                <GeneralAdd size={12} aria-hidden="true" />
                 create hangout
               </a>
             )
@@ -315,7 +332,7 @@ function App() {
                 <button {...shopFilterPanel.trigger} className={styles.control}>
                   <GeneralFilters size={24} aria-hidden="true" />
                   Filters
-                  <GeneralDownArrow size={24} aria-hidden="true" />
+                  <Chevron open={shopFilterPanel.open} />
                 </button>
                 <Floating disclosure={shopFilterPanel}>
                   <div
@@ -344,10 +361,10 @@ function App() {
                 <button
                   {...sortPanel.trigger}
                   className={styles.control}
-                  aria-label={'Fixture shop sort, ' + sortLabel}
+                  aria-label={'Sort by, ' + sortLabel}
                 >
-                  <span className={styles.value}>{sortLabel}</span>
-                  <GeneralDownArrow size={24} aria-hidden="true" />
+                  <span className={styles.value}>sort by</span>
+                  <Chevron open={sortPanel.open} />
                 </button>
                 <Floating disclosure={sortPanel} end>
                   <div

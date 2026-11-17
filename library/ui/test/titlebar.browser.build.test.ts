@@ -113,15 +113,34 @@ for (const [variant, slot, id, inputs] of [
         }
       )
   })
-describe('when a section is selected', () => {
-  it('should keep its source-orange background and a readable text contrast', async () => {
-    await navigate('settings')
-    const ratio = await browser.evaluate<number>(
-      `(()=>{const s=getComputedStyle(document.querySelector('[data-active]'));const L=c=>{const v=c.match(/[0-9.]+/g).slice(0,3).map(n=>{const x=Number(n)/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4});return .2126*v[0]+.7152*v[1]+.0722*v[2]};const a=L(s.color),b=L(s.backgroundColor);return(Math.max(a,b)+.05)/(Math.min(a,b)+.05)})()`
-    )
-    expect(ratio).toBeGreaterThanOrEqual(4.5)
+const selectedPaint = `(()=>{const e=document.querySelector('[data-active]'),s=getComputedStyle(e),i=getComputedStyle(e.querySelector('svg'));const L=c=>{const v=c.match(/[0-9.]+/g).slice(0,3).map(n=>{const x=Number(n)/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4});return .2126*v[0]+.7152*v[1]+.0722*v[2]};const a=L(s.color),b=L(s.backgroundColor);return{text:s.color,icon:i.color,background:s.backgroundColor,ratio:Math.round((Math.max(a,b)+.05)/(Math.min(a,b)+.05)*100)/100}})()`
+for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'])
+  describe('when a ' + variant + ' section is selected', () => {
+    it('should paint its label and icon with the Figma snow token on the source orange', async () => {
+      await navigate(variant)
+      // Figma TitleBar 15843:56922 draws the selected label and icon #fcfcfc on #ff7439, a 2.62:1 pair.
+      expect(await browser.evaluate(selectedPaint)).toEqual({
+        text: 'rgb(252, 252, 252)',
+        icon: 'rgb(252, 252, 252)',
+        background: 'rgb(255, 116, 57)',
+        ratio: 2.62
+      })
+    })
+    it('should keep the dark comparison label above 4.5:1 only when the parameter asks for it', async () => {
+      await browser.session.navigate(
+        browser.origin + '?variant=' + variant + '&closed=1&selectedtext=dark'
+      )
+      await browser.evaluate(
+        '(async()=>{for(let n=0;n<100&&!document.querySelector("[data-variant]");n++)await new Promise(r=>setTimeout(r,20))})()'
+      )
+      const paint = await browser.evaluate<{ text: string; icon: string; ratio: number }>(
+        selectedPaint
+      )
+      expect(paint.text).toBe('rgb(22, 21, 24)')
+      expect(paint.icon).toBe('rgb(22, 21, 24)')
+      expect(paint.ratio).toBeGreaterThanOrEqual(4.5)
+    })
   })
-})
 async function tab(reverse = false) {
   await browser.session.send('Input.dispatchKeyEvent', {
     type: 'keyDown',
@@ -166,12 +185,7 @@ for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'] as co
                   ? ['Today', 'create hangout']
                   : variant === 'places'
                     ? ['Filter & Sort', 'Fixture search']
-                    : [
-                        'Filters',
-                        'Fixture shop sort, Trending',
-                        'Fixture search',
-                        'Fixture cart, 0'
-                      ]
+                    : ['Filters', 'Sort by, Trending', 'Fixture search', 'Fixture cart, 0']
           const order = [...sectionNames[variant], ...controls, 'outside']
           const forward: string[] = []
           for (let n = 0; n < order.length; n++) {
@@ -257,7 +271,7 @@ describe('when the app controls section state and panel lifetime', () => {
   })
 })
 describe('when the selected section receives keyboard focus', () => {
-  it('should keep a bright visible ring independent of the darker selected text', async () => {
+  it('should keep a bright visible ring around the selected section', async () => {
     await navigate('settings')
     await tab()
     const focus = await browser.evaluate<{
@@ -271,7 +285,7 @@ describe('when the selected section receives keyboard focus', () => {
     expect(focus.selected).toBe(true)
     expect(focus.style).toBe('solid')
     expect(focus.ring).toBe('rgb(252, 252, 252)')
-    expect(focus.text).toBe('rgb(22, 21, 24)')
+    expect(focus.text).toBe('rgb(252, 252, 252)')
   })
 })
 describe('when pointer focus enters the supplied filter panel padding', () => {
@@ -422,7 +436,7 @@ for (const variant of ['shop', 'places', 'backpack'])
   })
 const panels = [
   ['shop', 'Filters', 'fixture-shop-filters'],
-  ['shop', 'Fixture shop sort, Trending', 'fixture-sort'],
+  ['shop', 'Sort by, Trending', 'fixture-sort'],
   ['backpack', 'Fixture collection, Decentraland', 'fixture-collections'],
   ['backpack', 'Filter & Sort', 'fixture-filters'],
   ['places', 'Filter & Sort', 'fixture-filters']
@@ -442,7 +456,14 @@ for (const [variant, name, id] of panels)
       await clickAt(point)
     }
     it('should open its custom panel instead of a native select', async () => {
+      await navigate(variant, 1920, true)
+      const closedChevron = await browser.evaluate<string>(
+        `[...document.querySelectorAll(${JSON.stringify(triggerSelector(name))})].find(e=>(e.getAttribute('aria-label')??e.textContent.trim())===${JSON.stringify(name)}).lastElementChild.innerHTML`
+      )
       await open()
+      expect(await browser.evaluate('window.fixtureTrigger.lastElementChild.innerHTML')).not.toBe(
+        closedChevron
+      )
       const state = await browser.evaluate<{
         selects: number
         expanded: string | null
@@ -506,12 +527,14 @@ for (const [variant, name, id] of panels)
     })
   })
 describe('when a shop sort option is chosen', () => {
-  it('should show the chosen order on the trigger', async () => {
+  it('should keep the Figma sort by label and name the chosen order', async () => {
     await navigate('shop', 1920, true)
     await clickControl('[data-control=sort] button')
     await clickControl('#fixture-sort label:nth-of-type(2)')
     expect(
-      await browser.evaluate('document.querySelector("[data-control=sort] button").textContent')
-    ).toBe('Most Active')
+      await browser.evaluate(
+        '[document.querySelector("[data-control=sort] button")].map(b=>[b.textContent,b.getAttribute("aria-label")])[0]'
+      )
+    ).toEqual(['sort by', 'Sort by, Most Active'])
   })
 })
