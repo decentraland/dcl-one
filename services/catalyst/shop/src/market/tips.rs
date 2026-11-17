@@ -46,8 +46,8 @@ use super::SharedState;
 use super::chain_walk::{self, ChainNet, INDEXER_MANA};
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedPath};
-use crate::social::notifications::store::{NewNotification, insert_notifications};
 
 pub const KIND: &str = "tip_received";
 const SUBTYPE: &str = "tip-received";

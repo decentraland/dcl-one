@@ -179,6 +179,14 @@
     "primitives": 0,
     "tokens": 6
   },
+  "library/ui/components/CardImage/CardImage.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "library/ui/components/InputField/InputField.module.css": {
+    "primitives": 0,
+    "tokens": 42
+  },
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
     "tokens": 25
@@ -225,10 +233,10 @@
   },
   "library/ui/components/Tabs/Tabs.module.css": {
     "primitives": 0,
-    "tokens": 21
+    "tokens": 38
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 5
+    "tokens": 23
   }
 }

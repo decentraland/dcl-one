@@ -35,10 +35,6 @@ pnpm run gpu-probe                     # the GPU the browser gives, started as t
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The app uses the browser origin `http://localhost:<port>` over an IPv4 loopback listener.
-The services accept `localhost` for development CORS requests; its numeric loopback spelling
-is a distinct origin and may be refused.
-
 The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
@@ -147,8 +143,7 @@ What the driver does for every scenario, so a spec need not:
   typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
   closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
   Escape twice only when a field holds the keys, and falls back to the page's Close button when a
-  field keeps them. If the page is already closed, `closePage` sends no key, so a restore does
-  not send an extra Escape into the world before reopening it. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
+  field keeps them. A client whose `/world_state` has no `keyboardClaimed` is older than the suite
   and is refused, not raced: run the suite against a web build of its own commit.
 - **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
   slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
@@ -157,14 +152,11 @@ What the driver does for every scenario, so a spec need not:
   (the emotes, the communities) are read once they show.
 - **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
   3 s (`Entity rate limited`), a rule of the server's clock that the client cannot observe;
-  closing the Backpack on a changed look and saving the passport are deployments. Before either,
-  `profileDeployWindow()` waits for `/profile_requests` to report no pending deployment and the
-  own version equal to the version peers may see, then counts the window from that confirmation.
-  A local version bump alone does not confirm the HTTP request completed. A confirmed version
-  spends the window once; a rollback of an observed edit fails instead of issuing another write.
-  This also keeps a change and its restore from overlapping the server's deployment window.
+  closing the Backpack on a changed look and saving the passport are deployments, so they first
+  wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
+  change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, compares the Legacy avatar events queue counts with `/legacy_social`, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change, checks that the player walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
@@ -227,7 +219,7 @@ Specs with no explorer-automation counterpart, outside the counts above:
 
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
-| `debug-panel` | every debug reading resolves; the panel shows live data and legacy avatar queue counts, stays open while the player walks and uses the world and HUD, and plays an emote | |
+| `debug-panel` | every debug reading resolves; the panel shows live data, stays open while the player walks and uses the world and HUD, and plays an emote | |
 | `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
 
 The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
@@ -247,16 +239,14 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 outer browser window (the screenshot uses the actual canvas dimensions; see
-[references/README.md](references/README.md)), turns the nametags off and holds the landscape's trees still (`/nametags false`:
+960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-and teleports to each scene. After its entities and settle time, it pins the cloud field with
-`/cloud_motion false`, retaining scene sky times and authored cloud settings. It waits 128 CPU
-sky updates as a conservative refresh window for the sky and reflections, not a GPU fence,
-then compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
-pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
+the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
+show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 

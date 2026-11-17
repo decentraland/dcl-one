@@ -82,6 +82,8 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
       FOUNDATION_DEV_STARTUP_TIMEOUT: '120'
+      # The cluster holds only scratch databases; see tooling/dev.py DISPOSABLE_POSTGRES_SETTINGS.
+      FOUNDATION_DEV_DISPOSABLE_POSTGRES: '1'
     steps:
       - name: Reserve disk space for the Rust test build
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
@@ -354,9 +356,14 @@ jobs:
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/ui3 test
       - name: Run Sites unit tests
+        id: sites-tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/sites test
+      - name: Diagnose isolated header geometry startup
+        if: ${{ failure() && steps.sites-tests.outcome == 'failure' && steps.sites-tests.outputs.capture-missing-port == 'true' }}
+        timeout-minutes: 4
+        run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts
       - name: Run editor scene unit tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20

@@ -1,6 +1,6 @@
 // Voice activity: who is talking right now.
 //   from: BevyApi.getVoiceStream() (LiveKit active-speaker changes, local player included)
-//   to:   the page (Nearby list) + the nametag speaking badge (isSpeaking, isSpeakingInCall)
+//   to:   the page (Nearby list); the engine draws the nametag badge by the same rule (isSpeaking, isSpeakingInCall)
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
@@ -13,7 +13,7 @@ const call = new Set<string>()
 let nearbyBlocked = false
 let send: Ctx['send'] | undefined
 
-/** One rule for the nametag badge and the page: a call speaker always shows, a nearby one unless the scene blocks nearby voice. */
+/** The rule the engine's nametag badge follows too: a call speaker always shows, a nearby one unless the scene blocks nearby voice. */
 function shown(address: string): boolean {
   return call.has(address) || (!nearbyBlocked && nearby.has(address))
 }

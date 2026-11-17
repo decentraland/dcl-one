@@ -24,13 +24,6 @@ const control = (extra: Record<string, unknown> = {}) =>
   JSON.stringify({ found: true, role: 'button', name: 'Backpack', text: 'Backpack', disabled: false, visible: true, actionable: true, x: 10, y: 20, width: 40, height: 30, ...extra })
 
 describe('Explorer', () => {
-  test('legacy avatar diagnostics expose bounded scene queues and recovery counts', async () => {
-    const state = { subscribedScenes: 2, queuedEvents: 1024, resyncScenes: 1, trackedPeers: 3 }
-    const fake = new FakeConsole({ legacy_social: JSON.stringify(state) })
-    assert.deepEqual(await new Explorer(fake).legacySocial(), state)
-    assert.deepEqual(fake.lines, ['/legacy_social'])
-  })
-
   test('connectivity reads safe status and requests immediate engine recovery', async () => {
     const fake = new FakeConsole({
       connectivity_state: JSON.stringify({ connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [{ scope: 'scene', state: 'denied', retryAt: null }] }),
@@ -164,6 +157,21 @@ describe('Explorer', () => {
     const state = await new Explorer(fake).voiceState()
     assert.equal(state.call?.status, 'receivedCall')
     assert.equal(state.call?.peer, '0xabc')
+  })
+
+  test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
+    const tag = { player: 'local', sceneAvatar: false, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const fake = new FakeConsole({
+      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_bubble: JSON.stringify({ bubbles: 1 })
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.nametags()
+    assert.equal(state.shown, 1)
+    assert.equal(state.tags[0]?.suffix, '#12ab')
+    assert.equal(state.tags[0]?.sceneAvatar, false)
+    assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
+    assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
   })
 
   test('nearbyMute sends the switch then the address, and nearbyMutes reads the list', async () => {
@@ -427,10 +435,7 @@ describe('Explorer', () => {
 
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
-    const fake = new FakeConsole({
-      get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true`,
-      profile_requests: () => JSON.stringify({ ownVersion: version, peerVersion: version, deployPending: false })
-    })
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
     const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
     let started = Date.now()
     await explorer.profileDeployWindow()
@@ -445,10 +450,7 @@ describe('Explorer', () => {
   })
 
   test('profileDeployWindow counts a deployment it was told of, such as a first login', async () => {
-    const fake = new FakeConsole({
-      get_user_data: () => `tester (0x${'a'.repeat(40)}): v1, web3=true`,
-      profile_requests: JSON.stringify({ ownVersion: 1, peerVersion: 1, deployPending: false })
-    })
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v1, web3=true` })
     const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
     explorer.profileDeployed()
     const started = Date.now()

@@ -18,6 +18,8 @@ for ten. Comms already accepted only 60 seconds either way.
 surface's past window (five minutes by default) and caps the future side at
 `MAX_FUTURE_SKEW_SECS`, 60 seconds, on every surface that verifies a signed
 fetch: the node's routes and sockets and the SDK's preview server.
+`check_past_window`, which camera reel uses for its 60-second past-only
+window, applies the same future cap.
 
 ## Consequences
 

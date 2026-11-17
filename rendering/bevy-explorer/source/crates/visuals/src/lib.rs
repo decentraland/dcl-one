@@ -1,5 +1,4 @@
 mod atmosphere_params;
-mod cloud_motion;
 mod coast;
 mod day_night;
 mod debug_panel;
@@ -32,7 +31,7 @@ use nishita_cloud::{init_noise, NishitaCloud};
 
 use bevy_console::ConsoleCommand;
 use common::{
-    sets::{SceneSets, SetupSets},
+    sets::SetupSets,
     structs::{
         sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
         PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
@@ -81,8 +80,7 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 apply_global_light
-                    .in_set(SceneSets::PostLoop)
-                    .after(scene_runner::update_world::lights::update_directional_light),
+                    .before(scene_runner::update_world::lights::update_directional_light),
             )
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
@@ -107,7 +105,6 @@ impl Plugin for VisualsPlugin {
         app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
-        app.add_plugins(cloud_motion::CloudMotionPlugin);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
         app.add_console_command::<CloudDensityConsoleCommand, _>(cloud_density_console_command);
         app.add_console_command::<CloudShadowConsoleCommand, _>(cloud_shadow_console_command);
@@ -184,7 +181,7 @@ fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,
     mut atmosphere: AtmosphereMut<NishitaCloud>,
-    cloud_settings: (Res<CloudCover>, Option<Res<cloud_motion::CloudMotion>>),
+    cloud: Res<CloudCover>,
     mut sun: Query<(
         Entity,
         &DirectionalLightLayer,
@@ -197,20 +194,17 @@ fn apply_global_light(
     scene_distance: Res<SceneLoadDistance>,
     scene_light: (Res<SceneGlobalLight>, Res<environment::SceneEnvironment>),
     time_of_day: Res<TimeOfDay>,
-    envmap_settings: Res<SkyEnvmapSettings>,
+    mut envmap_settings: ResMut<SkyEnvmapSettings>,
     shadow_bias: Res<ShadowBiasOverride>,
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_primary_distance: Local<f32>,
 ) {
-    let (cloud, cloud_motion) = cloud_settings;
-    let pinned_clouds = cloud_motion.is_some_and(|motion| !motion.enabled());
     let (scene_global_light, environment) = scene_light;
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
 
-    let mut next_light = if prev.0 >= TRANSITION_TIME && prev.1.source == scene_global_light.source
-    {
+    let next_light = if prev.0 >= TRANSITION_TIME && prev.1.source == scene_global_light.source {
         scene_global_light.clone()
     } else {
         // transition part way
@@ -242,23 +236,11 @@ fn apply_global_light(
                 .into(),
             ambient_brightness: scene_global_light.ambient_brightness * new_amount
                 + prev.1.ambient_brightness * old_amount,
+            sun_hidden: scene_global_light.sun_hidden,
             layers: scene_global_light.layers.clone(),
         }
     };
 
-    // Keep the transition history free of scene multipliers so they never compound.
-    let base_light = next_light.clone();
-    if let Some(color) = environment.sun_color {
-        next_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
-    }
-    if let Some(intensity) = environment.sun_intensity {
-        next_light.dir_illuminance *= intensity;
-        next_light.sun_illuminance *= intensity;
-    }
-    if let Some(direction) = environment.sun_direction {
-        next_light.dir_direction = direction;
-        next_light.sun_direction = direction;
-    }
     let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, next_light.dir_direction);
 
     // physically-simulated sky: the rayleigh coefficient (hue) follows the light colour, so a
@@ -266,7 +248,7 @@ fn apply_global_light(
     // sun sets naturally (no floor), and a flat night colour (added in-shader) provides the
     // night sky
     let sun_elevation = -next_light.sun_direction.y;
-    let light_ratio = base_light.dir_color.to_srgba().to_vec3() / SUN_COLOR_NOON;
+    let light_ratio = next_light.dir_color.to_srgba().to_vec3() / SUN_COLOR_NOON;
     atmosphere.sun_position = -next_light.sun_direction;
     atmosphere.rayleigh_coefficient = atmosphere_params::RAYLEIGH_NOON * light_ratio.powf(3.0);
     atmosphere.mie_coefficient = atmosphere_params::mie(sun_elevation);
@@ -274,9 +256,7 @@ fn apply_global_light(
     // the moon is drawn where the night light comes from
     atmosphere.moon_position = -moon_direction(time_of_day.elapsed_secs() / 3600.0);
     atmosphere.dir_light_intensity = next_light.sun_illuminance;
-    atmosphere.sun_color = environment
-        .sun_color
-        .unwrap_or_else(|| next_light.dir_color.to_srgba().to_vec3());
+    atmosphere.sun_color = next_light.dir_color.to_srgba().to_vec3();
     atmosphere.tick += 1;
     let band = |color: Option<Vec3>| color.map(|c| c.extend(1.0)).unwrap_or(Vec4::ZERO);
     atmosphere.scene_zenith = band(environment.zenith);
@@ -289,14 +269,8 @@ fn apply_global_light(
         .cloud_opacity
         .filter(|_| procedural_clouds)
         .unwrap_or(1.0);
-    atmosphere.scene_sun_visible = if environment.sun_visible.unwrap_or(true) {
-        1.0
-    } else {
-        0.0
-    };
-    if pinned_clouds {
-        atmosphere.scene_cloud_rotation = 0.0;
-    } else if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
+    atmosphere.scene_sun_visible = if next_light.sun_hidden { 0.0 } else { 1.0 };
+    if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
         atmosphere.scene_cloud_rotation = (atmosphere.scene_cloud_rotation as f64
             + speed as f64 * time.delta_secs_f64())
         .rem_euclid(std::f64::consts::TAU) as f32;
@@ -304,12 +278,7 @@ fn apply_global_light(
         atmosphere.scene_cloud_rotation = 0.0;
     }
 
-    if pinned_clouds {
-        // A fixed phase and coverage must not depend on time spent loading the scene.
-        atmosphere.time = 0.0;
-        atmosphere.cloudy = cloud.cover;
-        *cloud_dt = cloud.speed;
-    } else if atmosphere.cloudy != cloud.cover {
+    if atmosphere.cloudy != cloud.cover {
         *cloud_dt = (*cloud_dt + time.delta_secs() * 20.0)
             .min(80.0 * (atmosphere.cloudy - cloud.cover).abs())
             .max(1.0);
@@ -323,7 +292,7 @@ fn apply_global_light(
     }
 
     // An explicit angular speed controls the authored cloud layer, including a static zero.
-    if !pinned_clouds && (environment.cloud_speed.is_none() || !procedural_clouds) {
+    if environment.cloud_speed.is_none() || !procedural_clouds {
         atmosphere.time += time.delta_secs() * *cloud_dt;
     }
 
@@ -342,6 +311,12 @@ fn apply_global_light(
         .iter()
         .find_map(|(maybe_primary, _)| maybe_primary.map(|camera| camera.distance))
         .unwrap_or(0.0);
+    // an authored nadir: the envmap generates the lower hemisphere, and the pbr lookups stop
+    // mirroring it (flagged in the ambient alpha below)
+    let authored_lower = environment.nadir.is_some();
+    if envmap_settings.authored_lower_hemisphere != authored_lower {
+        envmap_settings.authored_lower_hemisphere = authored_lower;
+    }
     // a (re)inserted DistanceFog fires `is_added` and must be written even when the light has
     // settled. reading the tick through the existing `&mut` access avoids the query conflict an
     // `Added<DistanceFog>` filter would have with `cameras`; `is_added` (not `is_changed`) is used
@@ -362,7 +337,7 @@ fn apply_global_light(
 
     if skip_writes {
         prev.0 += time.delta_secs();
-        prev.1 = base_light;
+        prev.1 = next_light;
         return;
     }
 
@@ -482,12 +457,7 @@ fn apply_global_light(
         * next_light.ambient_brightness)
         .max(MIN_AMBIENT_BRIGHTNESS);
     ambient.color = next_light.ambient_color.with_alpha(
-        -(envmap_settings.compression
-            + if environment.nadir.is_some() {
-                2.0
-            } else {
-                0.0
-            })
+        -(envmap_settings.compression + if authored_lower { 2.0 } else { 0.0 })
             / ambient.brightness,
     );
 
@@ -496,7 +466,7 @@ fn apply_global_light(
     } else {
         prev.0 = time.delta_secs()
     };
-    prev.1 = base_light;
+    prev.1 = next_light;
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

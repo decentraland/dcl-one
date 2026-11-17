@@ -16,10 +16,7 @@ use multihash_codetable::MultihashDigest;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    global_crdt::GlobalCrdtState,
-    profile::name_color::{name_color_from_address, UNCLAIMED_NAME_COLOR},
-};
+use crate::{global_crdt::GlobalCrdtState, profile::name_color::name_color};
 
 use super::{
     broadcast,
@@ -1402,13 +1399,16 @@ impl UserProfile {
             .is_none_or(|shape| shape.to_lowercase() == "basefemale")
     }
 
+    /// A claimed name's chosen colour, else the colour hashed from the name.
     pub fn name_color(&self) -> Color {
-        if !self.content.has_claimed_name {
-            UNCLAIMED_NAME_COLOR
-        } else if let Some(custom_name_color) = self.content.name_color {
-            custom_name_color.convert_srgb()
-        } else {
-            name_color_from_address(self.content.eth_address.as_h160().unwrap_or_default())
+        match self.content.name_color {
+            Some(custom) if self.content.has_claimed_name => custom.convert_srgb(),
+            // lowercased as the HUD has it: the tag's letters are part of what is hashed
+            _ => name_color(
+                &self.content.name,
+                &self.content.eth_address.to_lowercase(),
+                self.content.has_claimed_name,
+            ),
         }
     }
 }
