@@ -1,0 +1,433 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_gltf): skip animation channels whose accessors don't fit, fail undecoded draco
+Date: 2026-11-17T23:24:41+00:00
+
+---
+diff --git a/crates/bevy_gltf/src/loader/mod.rs b/crates/bevy_gltf/src/loader/mod.rs
+index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f62709eb85a1e 100644
+--- a/crates/bevy_gltf/src/loader/mod.rs
++++ b/crates/bevy_gltf/src/loader/mod.rs
+@@ -121,6 +121,10 @@ pub enum GltfError {
+     #[error("Missing sampler for animation {0}")]
+     #[from(ignore)]
+     MissingAnimationSampler(usize),
++    /// An accessor's data is in a draco stream, which this loader does not decode.
++    #[error("accessor {0} has no data: its geometry is KHR_draco_mesh_compression, not decoded")]
++    #[from(ignore)]
++    DracoCompressed(usize),
+     /// Failed to generate tangents.
+     #[error("failed to generate tangents: {0}")]
+     GenerateTangentsError(#[from] bevy_mesh::GenerateTangentsError),
+@@ -243,53 +247,147 @@ impl AssetLoader for GltfLoader {
+     }
+ }
+ 
+-/// Parses and validates a glTF, tolerating two kinds of validation error:
+-/// - the gltf crate requires every non-sparse accessor to have a bufferView, but the spec allows
+-///   both to be omitted (the accessor is zero-filled, optionally overlaid with sparse data -
+-///   blender exports morph targets like this). the accessor readers already yield zeros in that
+-///   case. draco-compressed accessors also lack bufferViews but their data is not readable, so
+-///   those still fail.
+-/// - the gltf crate only allows a required `EXT_texture_webp` behind its own feature, which reads
+-///   the extension into a typed field that overrides `source`; this loader reads the extension's
+-///   image itself (`prefer_extension_sources`).
++/// Parses and validates a glTF.
+ ///
+-/// Validation reports every error, so when those are the only ones the rest of the document
+-/// validated and it is parsed again without validation.
++/// - The gltf crate only allows a required `EXT_texture_webp` behind its own feature, which reads
++///   the extension into a typed field that overrides `source`; this loader reads the extension's
++///   image itself (`prefer_extension_sources`). Validation reports every error, so when that is
++///   the only one the rest of the document validated and it is parsed again without validation.
++/// - An accessor with neither a bufferView nor sparse data is zero-filled (the spec allows it;
++///   blender exports morph targets like this), unless the file uses `KHR_draco_mesh_compression`:
++///   then the accessor's data is in a draco stream this loader cannot decode, and the load fails
++///   with an error naming the extension, which the host can repair (decode it) and reload.
+ fn parse_gltf(bytes: &[u8]) -> Result<gltf::Gltf, GltfError> {
+     use gltf::json::validation::Error;
+-    let errors = match gltf::Gltf::from_slice(bytes) {
+-        Ok(gltf) => return Ok(gltf),
+-        Err(gltf::Error::Validation(errors)) => errors,
++    let gltf = match gltf::Gltf::from_slice(bytes) {
++        Ok(gltf) => gltf,
++        Err(gltf::Error::Validation(errors))
++            if errors.iter().all(|(path, error)| {
++                matches!(error, Error::Unsupported)
++                    && path.0.starts_with("extensionsRequired[")
++                    && path.0.ends_with("= \"EXT_texture_webp\"")
++            }) =>
++        {
++            gltf::Gltf::from_slice_without_validation(bytes)?
++        }
+         Err(e) => return Err(e.into()),
+     };
+-    let missing_buffer_view = |(path, error): &(gltf::json::Path, Error)| {
+-        matches!(error, Error::Missing)
+-            && path.0.starts_with("accessors[")
+-            && path.0.ends_with(".bufferView")
+-    };
+-    let required_webp = |(path, error): &(gltf::json::Path, Error)| {
+-        matches!(error, Error::Unsupported)
+-            && path.0.starts_with("extensionsRequired[")
+-            && path.0.ends_with("= \"EXT_texture_webp\"")
+-    };
+-    if !errors
+-        .iter()
+-        .all(|e| missing_buffer_view(e) || required_webp(e))
++    if gltf
++        .document
++        .extensions_used()
++        .any(|ext| ext == "KHR_draco_mesh_compression")
+     {
+-        return Err(gltf::Error::Validation(errors).into());
+-    }
+-    let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
+-    if errors.iter().any(missing_buffer_view)
+-        && gltf
++        if let Some(accessor) = gltf
+             .document
+-            .extensions_used()
+-            .any(|ext| ext == "KHR_draco_mesh_compression")
+-    {
+-        return Err(gltf::Error::Validation(errors).into());
++            .accessors()
++            .find(|accessor| accessor.view().is_none() && accessor.sparse().is_none())
++        {
++            return Err(GltfError::DracoCompressed(accessor.index()));
++        }
+     }
+     Ok(gltf)
+ }
+ 
++/// The node an animation channel animates, or why the channel is skipped. The gltf crate
++/// validates none of what is checked here, and its channel reader panics on each of these:
++/// - a target path it does not know (`Target::property` unwraps it);
++/// - a sampler input other than float scalars, or an output whose type does not fit the path
++///   (`read_outputs` hits `unreachable!` for a rotation or weights of another component type;
++///   a translation or scale read from an accessor of another type reads past each element);
++/// - a bufferView `byteStride` smaller than the accessor's element (`[f32; 3]::from_slice`
++///   asserts on the short slice);
++/// - fewer output values than keyframes (the loader indexes the first value of a single
++///   keyframe).
++///
++/// A `KHR_animation_pointer` channel animates the property a JSON pointer names (a material's
++/// emissive, a camera's fov), not a node; `bevy_animation` only drives an entity's components.
++#[cfg(feature = "bevy_animation")]
++fn animated_node<'a>(
++    document: &'a Document,
++    channel: &gltf::animation::Channel<'a>,
++) -> Result<Node<'a>, String> {
++    use gltf::{
++        accessor::{Accessor, DataType, Dimensions},
++        animation::{Interpolation, Property},
++        json::validation::Checked,
++    };
++    let json_target = &document.as_json().animations[channel.animation().index()].channels
++        [channel.index()]
++        .target;
++    if matches!(json_target.path, Checked::Invalid) {
++        return Err("unknown target path".into());
++    }
++    let target = channel.target();
++    let property = target.property();
++    if property == Property::Pointer {
++        return Err(format!(
++            "KHR_animation_pointer to {} (only node transforms and morph weights are animated)",
++            target.animation_pointer().unwrap_or("(no pointer)")
++        ));
++    }
++    let node = target.node_opt().ok_or("no target node")?;
++
++    let sampler = channel.sampler();
++    let (input, output) = (sampler.input(), sampler.output());
++    let describe = |accessor: &Accessor| {
++        format!(
++            "accessor {} ({:?} {:?})",
++            accessor.index(),
++            accessor.dimensions(),
++            accessor.data_type()
++        )
++    };
++    if input.dimensions() != Dimensions::Scalar || input.data_type() != DataType::F32 {
++        return Err(format!("input {} is not float scalars", describe(&input)));
++    }
++    // rotations and weights may also be normalized integers (KHR_mesh_quantization)
++    let (dimensions, integers) = match property {
++        Property::Translation | Property::Scale => (Dimensions::Vec3, false),
++        Property::Rotation => (Dimensions::Vec4, true),
++        Property::MorphTargetWeights => (Dimensions::Scalar, true),
++        Property::Pointer => unreachable!("skipped above"),
++    };
++    let data_type_fits = match output.data_type() {
++        DataType::F32 => true,
++        DataType::I8 | DataType::U8 | DataType::I16 | DataType::U16 => integers,
++        DataType::U32 => false,
++    };
++    if output.dimensions() != dimensions || !data_type_fits {
++        return Err(format!(
++            "output {} does not fit a {property:?} target",
++            describe(&output)
++        ));
++    }
++    for accessor in [&input, &output] {
++        let views = accessor
++            .view()
++            .into_iter()
++            .chain(accessor.sparse().map(|sparse| sparse.values().view()));
++        for view in views {
++            if view.stride().is_some_and(|stride| stride < accessor.size()) {
++                return Err(format!(
++                    "{} has a byteStride shorter than its element",
++                    describe(accessor)
++                ));
++            }
++        }
++    }
++    let values_per_keyframe = match sampler.interpolation() {
++        // an in-tangent, the value and an out-tangent
++        Interpolation::CubicSpline => 3,
++        Interpolation::Linear | Interpolation::Step => 1,
++    };
++    let keyframes = input.count();
++    if output.count() < keyframes.saturating_mul(values_per_keyframe) {
++        return Err(format!(
++            "output {} has {} values for {keyframes} keyframes",
++            describe(&output),
++            output.count()
++        ));
++    }
++    Ok(node)
++}
++
+ /// Loads an entire glTF file.
+ async fn load_gltf<'a, 'b, 'c>(
+     loader: &GltfLoader,
+@@ -337,39 +435,17 @@ async fn load_gltf<'a, 'b, 'c>(
+         let mut animation_roots = <HashSet<_>>::default();
+         for animation in gltf.animations() {
+             let mut animation_clip = AnimationClip::default();
+-            let mut skipped_pointers = 0;
+-            let mut first_pointer = None;
++            // channels skipped, warned of once for the animation: how many, and the first
++            let mut skipped = 0;
++            let mut first_skipped = None;
+             for (channel_index, channel) in animation.channels().enumerate() {
+-                let target = channel.target();
+-                // the gltf crate never validates a channel's target, and `property()` unwraps its
+-                // path: one it does not know (not a transform, the weights or a pointer) panics
+-                let json_target = &gltf.document.as_json().animations[animation.index()].channels
+-                    [channel_index]
+-                    .target;
+-                if matches!(json_target.path, gltf::json::validation::Checked::Invalid) {
+-                    warn!(
+-                        "{}: animation {} channel {channel_index} has an unknown target path; skipped",
+-                        load_context.asset_path(),
+-                        animation.index(),
+-                    );
+-                    continue;
+-                }
+-                // a KHR_animation_pointer channel animates the property a JSON pointer names
+-                // (a material's emissive, a camera's fov), not a node; bevy_animation only
+-                // drives an entity's components, so the channel is skipped and the rest of
+-                // the clip still plays
+-                if target.property() == gltf::animation::Property::Pointer {
+-                    skipped_pointers += 1;
+-                    first_pointer = first_pointer.or(target.animation_pointer());
+-                    continue;
+-                }
+-                let Some(node) = target.node_opt() else {
+-                    warn!(
+-                        "{}: animation {} channel {channel_index} has no target node; skipped",
+-                        load_context.asset_path(),
+-                        animation.index(),
+-                    );
+-                    continue;
++                let node = match animated_node(&gltf.document, &channel) {
++                    Ok(node) => node,
++                    Err(reason) => {
++                        skipped += 1;
++                        first_skipped.get_or_insert((channel_index, reason));
++                        continue;
++                    }
+                 };
+                 let interpolation = channel.sampler().interpolation();
+                 let reader = channel.reader(|buffer| Some(&buffer_data[buffer.index()]));
+@@ -600,13 +676,13 @@ async fn load_gltf<'a, 'b, 'c>(
+                     );
+                 }
+             }
+-            if skipped_pointers > 0 {
++            if let Some((channel_index, reason)) = first_skipped {
+                 warn!(
+-                    "{}: animation {} skips {skipped_pointers} KHR_animation_pointer channel(s), \
+-                    first targeting {}: only node transforms and morph weights are animated",
++                    "{}: animation {} skips {skipped} of {} channel(s), the rest still play; \
++                    the first, channel {channel_index}: {reason}",
+                     load_context.asset_path(),
+                     animation.index(),
+-                    first_pointer.unwrap_or("(no pointer)"),
++                    animation.channels().count(),
+                 );
+             }
+             let handle = load_context.add_labeled_asset(
+@@ -2358,6 +2434,160 @@ mod test {
+         assert_eq!(clip.curves().len(), 1, "only the node channel is kept");
+     }
+ 
++    /// How many curves the clip of a one-animation glTF holds, for its `samplers` and `channels`
++    /// over these accessors:
++    /// 0. two keyframe times;
++    /// 1. two VEC3 floats;
++    /// 2. two VEC4 unsigned ints;
++    /// 3. two SCALAR unsigned ints;
++    /// 4. one keyframe time;
++    /// 5. zero VEC3 floats;
++    /// 6. zero VEC4 floats;
++    /// 7. zero SCALAR floats;
++    /// 8. two SCALAR floats, in a bufferView with a `byteStride` of 4;
++    /// 9. two VEC3 floats, in the same bufferView;
++    /// 10. two VEC3 floats, as keyframe times.
++    #[cfg(feature = "bevy_animation")]
++    fn animation_curve_count(samplers: &str, channels: &str) -> usize {
++        let gltf_path = "test.gltf";
++        let gltf = r#"
++{
++    "asset": { "version": "2.0" },
++    "nodes": [{ "name": "Animated" }],
++    "scene": 0,
++    "scenes": [{ "nodes": [0] }],
++    "buffers": [{
++        "byteLength": 40,
++        "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPw=="
++    }],
++    "bufferViews": [
++        { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
++        { "buffer": 0, "byteOffset": 8, "byteLength": 32 },
++        { "buffer": 0, "byteOffset": 8, "byteLength": 32, "byteStride": 4 }
++    ],
++    "accessors": [
++        { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR",
++          "min": [0], "max": [1] },
++        { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" },
++        { "bufferView": 1, "componentType": 5125, "count": 2, "type": "VEC4" },
++        { "bufferView": 1, "componentType": 5125, "count": 2, "type": "SCALAR" },
++        { "bufferView": 0, "componentType": 5126, "count": 1, "type": "SCALAR",
++          "min": [0], "max": [0] },
++        { "bufferView": 1, "componentType": 5126, "count": 0, "type": "VEC3" },
++        { "bufferView": 1, "componentType": 5126, "count": 0, "type": "VEC4" },
++        { "bufferView": 1, "componentType": 5126, "count": 0, "type": "SCALAR" },
++        { "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR" },
++        { "bufferView": 2, "componentType": 5126, "count": 2, "type": "VEC3" },
++        { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3" }
++    ],
++    "animations": [{ "samplers": SAMPLERS, "channels": CHANNELS }]
++}
++"#
++        .replace("SAMPLERS", samplers)
++        .replace("CHANNELS", channels);
++        let app = load_gltf_into_app(gltf_path, &gltf);
++        let asset_server = app.world().resource::<AssetServer>();
++        let handle = asset_server.load(gltf_path);
++        let gltf_root = app.world().resource::<Assets<Gltf>>().get(&handle).unwrap();
++        let clips = app
++            .world()
++            .resource::<Assets<bevy_animation::AnimationClip>>();
++        let clip = clips.get(&gltf_root.animations[0]).unwrap();
++        clip.curves().values().map(Vec::len).sum()
++    }
++
++    // `gltf` reads a rotation or weights of any other component type through `unreachable!`
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_outputs_of_another_component_type_are_skipped() {
++        let curves = animation_curve_count(
++            r#"[{ "input": 0, "output": 1 }, { "input": 0, "output": 2 },
++                { "input": 0, "output": 3 }]"#,
++            r#"[{ "sampler": 0, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "rotation" } },
++                { "sampler": 2, "target": { "node": 0, "path": "weights" } }]"#,
++        );
++        assert_eq!(curves, 1, "only the translation is kept");
++    }
++
++    // a translation read from scalars reads past each one, a rotation from VEC3s past the last
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_outputs_of_another_accessor_type_are_skipped() {
++        let curves = animation_curve_count(
++            r#"[{ "input": 0, "output": 1 }, { "input": 0, "output": 8 }]"#,
++            r#"[{ "sampler": 0, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "scale" } },
++                { "sampler": 0, "target": { "node": 0, "path": "rotation" } }]"#,
++        );
++        assert_eq!(curves, 1, "only the translation is kept");
++    }
++
++    // a VEC3 every 4 bytes asserts on the short slice
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_accessors_with_a_short_byte_stride_are_skipped() {
++        let curves = animation_curve_count(
++            r#"[{ "input": 0, "output": 1 }, { "input": 0, "output": 9 }]"#,
++            r#"[{ "sampler": 0, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "scale" } }]"#,
++        );
++        assert_eq!(curves, 1, "only the translation is kept");
++    }
++
++    // a single keyframe indexes the first value; a cubic spline needs three values a keyframe
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_outputs_with_too_few_values_are_skipped() {
++        let curves = animation_curve_count(
++            r#"[{ "input": 0, "output": 1 }, { "input": 4, "output": 5 },
++                { "input": 4, "output": 6 }, { "input": 4, "output": 7 },
++                { "input": 0, "output": 1, "interpolation": "CUBICSPLINE" }]"#,
++            r#"[{ "sampler": 0, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 2, "target": { "node": 0, "path": "rotation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "scale" } },
++                { "sampler": 3, "target": { "node": 0, "path": "weights" } },
++                { "sampler": 4, "target": { "node": 0, "path": "scale" } }]"#,
++        );
++        assert_eq!(curves, 1, "only the first translation is kept");
++    }
++
++    #[cfg(feature = "bevy_animation")]
++    #[test]
++    fn animation_inputs_other_than_float_scalars_are_skipped() {
++        let curves = animation_curve_count(
++            r#"[{ "input": 0, "output": 1 }, { "input": 10, "output": 1 }]"#,
++            r#"[{ "sampler": 0, "target": { "node": 0, "path": "translation" } },
++                { "sampler": 1, "target": { "node": 0, "path": "scale" } }]"#,
++        );
++        assert_eq!(curves, 1, "only the translation is kept");
++    }
++
++    // an accessor with no data is zero-filled, unless the file uses draco: then the load fails
++    // with an error naming the extension, which the host repairs
++    #[test]
++    fn accessors_without_data_fail_only_with_draco() {
++        let json = |extensions_used: &str| {
++            r#"
++{
++    "asset": { "version": "2.0" },
++    "extensionsUsed": EXTENSIONS,
++    "accessors": [{ "componentType": 5126, "count": 3, "type": "VEC3" }]
++}
++"#
++            .replace("EXTENSIONS", extensions_used)
++        };
++        assert!(super::parse_gltf(json("[]").as_bytes()).is_ok());
++        let error = super::parse_gltf(json(r#"["KHR_draco_mesh_compression"]"#).as_bytes())
++            .err()
++            .expect("draco accessors without data fail");
++        assert!(
++            error.to_string().contains("KHR_draco_mesh_compression"),
++            "{error}"
++        );
++    }
++
+     #[test]
+     fn node_hierarchy_no_hierarchy() {
+         let gltf_path = "test.gltf";

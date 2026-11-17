@@ -144,12 +144,17 @@ across workers:
   `cargo test --manifest-path ../bevy/Cargo.toml -p
   bevy_image -p bevy_gltf --lib --features
   bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`.
-- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
-- `KHR_animation_pointer` channels (and any channel with no target node or an unknown target
-  path, which `gltf` never validates) are skipped with a warning naming the file, the animation
-  and the first pointer; the rest of the clip plays.
-  Upstream bevy panics on them. Animating the pointed-to property (a material's emissive, say)
-  is not supported.
+- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). In a
+  file that uses `KHR_draco_mesh_compression`, an accessor with neither a `bufferView` nor sparse
+  data fails the load with an error naming the extension, so `image_processing` decodes the
+  geometry and reloads it.
+- Animation channels `gltf` would panic on are skipped, and the rest of the clip plays:
+  `KHR_animation_pointer` channels, channels with no target node or an unknown target path, and
+  samplers whose accessors don't fit the target (an input other than float scalars, an output of
+  another type or component type, a `byteStride` shorter than the element, fewer values than
+  keyframes). `gltf` validates none of these, and upstream bevy panics on them. One warning per
+  animation names the file, the number skipped and the first one's reason. Animating a
+  pointed-to property (a material's emissive, say) is not supported.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't
