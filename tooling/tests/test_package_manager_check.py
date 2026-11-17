@@ -16,7 +16,7 @@ def write(root, rel, text=''):
 
 
 class PackageManagerTest(unittest.TestCase):
-    def test_pnpm_projects_publishing_and_creator_scenes_pass(self):
+    def test_pnpm_projects_and_creator_scenes_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, 'apps/x/pnpm-lock.yaml')
@@ -38,9 +38,10 @@ class PackageManagerTest(unittest.TestCase):
                 "      paths: ['**/yarn.lock', '**/package-lock.json']",
                 '      - run: corepack enable && pnpm install --frozen-lockfile && pnpm run build',
                 '      - run: corepack pnpm@12.21.0 install --frozen-lockfile',
-                '      - run: npm pack && npm publish "$tgz" --access public && npm whoami',
-                '      - run: npm --registry https://registry.npmjs.org view "$pkg" version && npm pkg set x=1',
-                '      - run: npm view "$pkg" dist-tags --json && npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"')))
+                '      - run: pnpm pack && pnpm publish "$tgz" --access public --no-git-checks && pnpm whoami',
+                '      - run: corepack pnpm@12.21.0 view "$pkg" dist-tags --json && pnpm dist-tag rm "$pkg" "$TAG"',
+                '      - run: echo "Verifying npm authentication" && npm_preview_field pr-1 version',
+                "      - run: link=$(artifact_link 'headless-' 'npm package')")))
             self.assertEqual(check.offenders(root), [])
 
     def test_npm_lockfiles_unread_settings_and_npm_in_workflows_fail(self):
@@ -59,12 +60,13 @@ class PackageManagerTest(unittest.TestCase):
             commands = (
                 'npm ci', 'cd app && npm run build', 'npx tsc', 'npm --prefix app ci', 'npm -w pkg run build',
                 'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@12.21.0 install', 'yarn install',
-                'cd app && yarnpkg add thing', 'corepack pnpm@11.0.0 install')
+                'cd app && yarnpkg add thing', 'npm pack && npm publish "$tgz"', 'npm --registry https://r.example view x',
+                'npm whoami', 'npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"', 'corepack pnpm@11.0.0 install')
             write(root, '.github/workflows/x.yml', ''.join(f'      - run: {command}\n' for command in commands))
             write(root, '.github/actions/a/run.sh', 'npm install --global thing\n')
             self.assertEqual(check.offenders(root), [
-                '.github/actions/a/run.sh:1: installs or runs with npm or yarn; use pnpm',
-                *(f'.github/workflows/x.yml:{line}: installs or runs with npm or yarn; use pnpm'
+                '.github/actions/a/run.sh:1: runs npm or yarn; use pnpm',
+                *(f'.github/workflows/x.yml:{line}: runs npm or yarn; use pnpm'
                   for line in range(1, len(commands))),
                 f'.github/workflows/x.yml:{len(commands)}: fetches pnpm 11.0.0; the projects pin {check.PNPM_VERSION}',
                 f'apps/p/package.json: pins `pnpm@10.19.0`; set packageManager to pnpm@{check.PNPM_VERSION}',

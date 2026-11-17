@@ -135,12 +135,9 @@ impl From<PbMeshCollider> for MeshCollider<CtCollider> {
 }
 
 pub fn add_collider_systems<T: ColliderType>(app: &mut App) {
-    // collider components are created in SceneSets::Loop (by PbMeshCollider messages) and
-    // in SceneSets::PostLoop (by gltf processing).
-    // they are positioned in SceneSets::PostInit and
-    // they are used in SceneSets::Input (for raycasts).
-    // we want to avoid using CoreSet::PostUpdate as that's where we create/destroy scenes,
-    // so we use SceneSets::Init for adding colliders to the scene collider data (qbvh).
+    // Collider components are created in RunLoop (by scene messages) and in the SpawnScene
+    // schedule (by glTF processing). PostUpdate propagates their global transforms before
+    // the next Init registers and positions them for Input raycasts and triggers.
     app.add_systems(Update, update_colliders::<T>.in_set(SceneSets::Init));
 
     // update collider transforms before queries and scenes are run, but after global transforms are updated (at end of prior frame)
@@ -1234,6 +1231,7 @@ fn update_colliders<T: ColliderType>(
             Entity,
             &MeshCollider<T>,
             &ContainerEntity,
+            &GlobalTransform,
             Has<HasCollider<T>>,
         ),
         Or<(Changed<MeshCollider<T>>, Without<HasCollider<T>>)>,
@@ -1253,7 +1251,7 @@ fn update_colliders<T: ColliderType>(
 
     // add colliders
     // any entity with a mesh collider that we're not using, or where the mesh collider has changed
-    for (ent, collider_def, container, has_collider) in new_colliders.iter() {
+    for (ent, collider_def, container, global_transform, has_collider) in new_colliders.iter() {
         // still unmatched by `Without<HasCollider>`, so it comes back next frame
         if waits_for_reveal(
             ent,
@@ -1337,6 +1335,9 @@ fn update_colliders<T: ColliderType>(
         };
 
         scene_data.set_collider(&collider_id, collider, Some(ent));
+        // Input runs before the next PostUpdate transform sync. Publishing a new
+        // or replaced shape at identity would cause spurious intersections there.
+        let _ = scene_data.update_collider_transform(&collider_id, global_transform);
         commands
             .entity(ent)
             .try_insert(HasCollider::<T>(collider_id, Default::default()));
@@ -1640,6 +1641,8 @@ fn waits_for_reveal(
     model_in_progress && !has_collider && entity != container.container
 }
 
+#[cfg(test)]
+mod initial_transform_tests;
 #[cfg(test)]
 mod ownership_tests;
 #[cfg(test)]

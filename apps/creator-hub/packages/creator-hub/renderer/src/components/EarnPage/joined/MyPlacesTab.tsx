@@ -18,6 +18,7 @@ import {
   metricValue,
   placeLocation,
   placeTitle,
+  totalPlaytimeSeconds30d,
 } from './format';
 import { MyPlacesEmpty } from './MyPlacesEmpty';
 import {
@@ -54,11 +55,16 @@ type PlaceMetricsReading =
   | { status: 'ready'; metrics: LocationMetrics | undefined };
 
 function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale: string }) {
-  const stat = (name: string, format: (value: number) => string): MetricReading => {
+  const readStat = (
+    read: (metrics: LocationMetrics | undefined) => number | null,
+    format: (value: number) => string,
+  ): MetricReading => {
     if (reading.status === 'loading') return reading;
-    const value = metricValue(reading.metrics, name);
+    const value = read(reading.metrics);
     return { status: 'ready', value: value === null ? null : format(value) };
   };
+  const stat = (name: string, format: (value: number) => string) =>
+    readStat(metrics => metricValue(metrics, name), format);
   return (
     <div className={styles.stats}>
       <dl className={styles.statsList}>
@@ -87,11 +93,13 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             name: t('earn.joined.my_places.metrics.playtime_info_label'),
             tooltip: t('earn.joined.my_places.metrics.playtime_info'),
           }}
-          reading={stat('avg_playtime_seconds_30d', value =>
-            t('earn.joined.my_places.metrics.minutes', {
-              value: formatCount(value / SECONDS_PER_MINUTE, locale),
-            }),
-          )}
+          reading={readStat(totalPlaytimeSeconds30d, seconds => {
+            const minutes = Math.round(seconds / SECONDS_PER_MINUTE);
+            return t('earn.joined.my_places.metrics.minutes', {
+              minutes,
+              value: formatCount(minutes, locale),
+            });
+          })}
         />
       </dl>
     </div>

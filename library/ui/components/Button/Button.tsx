@@ -37,6 +37,11 @@ type NativeProps =
 
 export type ButtonProps = NativeProps &
   Content & {
+    /**
+     * Button owns its content, so native HTML cannot replace it. Omit this key before spreading a
+     * typed `ButtonHTMLAttributes` or `AnchorHTMLAttributes` object into Button.
+     */
+    dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
@@ -140,6 +145,7 @@ export function Button({
       <a
         {...anchor}
         {...common}
+        dangerouslySetInnerHTML={undefined}
         href={unavailable ? undefined : href}
         target={target}
         rel={secureRel(target, rel)}
@@ -164,6 +170,7 @@ export function Button({
     <button
       {...button}
       {...common}
+      dangerouslySetInnerHTML={undefined}
       type={type}
       disabled={disabled}
       onClick={guardClick(onClick)}
