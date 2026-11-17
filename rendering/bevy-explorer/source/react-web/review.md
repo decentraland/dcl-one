@@ -414,6 +414,29 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Preview texture optimization
+
+A scene preview served by `dcl-scene-cli start` reports its background texture import on the
+preview socket; the engine relays it (`textureOptimization`, from `getTextureOptimizationStream`,
+`bridge-scene/src/domains/textureOptimization.ts`) and the shared HUD's
+`library/ui/apps/hud/features/preview/textureOptimizationToast.ts` shows it as one toast per scene, under its own key. Expectations:
+
+- With the project's setting on: `running` updates one busy progress toast in place, with no
+  Dismiss (the next update would bring it back), until 60 s pass with no update (the CLI stopped,
+  the socket dropped or the player left the realm), when it goes and the scene's progress is
+  forgotten; `ready` shows
+  the size saved and **Reload** (accessible name "Reload scene to see optimized textures"), which
+  posts `reloadScene` with the status's scene id; `failed` says how many textures stay PNG, or that
+  the import failed, with Dismiss and no action. With it off, nothing shows.
+- A `ready` marked `replay` (the preview server's last status, sent again as the socket connects)
+  offers **Reload** only when the HUD showed that scene's progress, since the run ended while the
+  socket was down. Otherwise it leaves the toast as it is: the scene was loaded from those files.
+- `?mock=1&textures=1` plays a run and the Reload offer.
+- Tests: `library/ui/apps/hud/test/textureOptimization.test.tsx` (the Toast primitive's keyed, persistent and action
+  toasts; each state; the replay rule; the stale progress timeout; one toast per scene; Reload
+  through the session),
+  `src/test/bridgeTextureOptimization.test.ts` (the relay).
+
 ## Gallery (camera reel)
 
 The Gallery page and the passport's Photos tab (`library/ui/apps/hud/features/gallery`, bridge `domains/gallery.ts`).

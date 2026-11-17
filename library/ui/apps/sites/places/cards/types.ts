@@ -10,6 +10,8 @@ type PlaceCardCreator = {
   /** The creator's profile; without it the name is plain text. */
   href?: string
   avatarUrl?: string
+  /** A CSS colour behind the face, the creator's ADR-292 colour; the design's default otherwise. */
+  avatarBackground?: string
   /** Shows the Decentraland logo as the avatar, as source does for the Foundation's scenes. */
   foundation?: boolean
 }
