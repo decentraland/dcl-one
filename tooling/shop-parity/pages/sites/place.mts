@@ -36,6 +36,6 @@ export const PLACE_UNRECORDED: NonNullable<PageSpec["unrecorded"]> = [
   },
   {
     match: /^POST gatekeeper \/cast\/watcher-token /,
-    why: "without a scene room the chat falls back to a cast watcher token whose body carries a name drawn at random, so its hash never meets the recorded key; the recorded answer is 400 and the node's 501, and either side shows the unavailable state",
+    why: "without a scene room the chat falls back to a cast watcher token whose body carries a name drawn at random, so its hash never meets the recorded key; the recorded answer is 400",
   },
 ];

@@ -83,7 +83,7 @@ function serve(services: Services = {}): MapRequest[] {
 
 function renderMap(over: Partial<MapState> = {}, genesis = true): MapState {
   const session = fakeSession()
-  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn(), setHome: vi.fn(), ...over }
+  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
   render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
   return map
@@ -602,7 +602,7 @@ describe('map view size', () => {
     vi.stubGlobal('ResizeObserver', Observer)
     serve()
     const session = fakeSession()
-    const closed: MapState = { ...session.map, open: false, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const closed: MapState = { ...session.map, open: false, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn() }
     const rest = { minimap: session.minimap, profile: fakeProfileState(), gallery: session.gallery, onNavigate: vi.fn() }
     // the page is mounted with the map closed, as the HUD mounts it
     const { rerender } = render(<MapPage map={closed} {...rest} />)
@@ -625,7 +625,7 @@ describe('map live events', () => {
     const stopped = vi.spyOn(globalThis, 'clearInterval')
     serve()
     const session = fakeSession()
-    const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn() }
     const { unmount } = render(<MapPage map={map} minimap={session.minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
     const polls = started.mock.results.filter((_, i) => started.mock.calls[i][1] === 5 * 60 * 1000).map((r) => r.value as unknown)
     expect(polls).toHaveLength(1)
