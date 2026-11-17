@@ -26,8 +26,8 @@ use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
-use crate::social::notifications::templates::format_mana;
+use crate::shared::notifications::format_mana;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND: &str = notice_cursor::ROYALTIES_EARNED;
 /// MarketplaceV2 on Polygon, the one emitter whose sales carry royalties.

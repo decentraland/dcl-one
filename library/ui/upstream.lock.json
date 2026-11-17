@@ -2250,8 +2250,9 @@
           "sha256": "e4618c8d40e35dcf2d207cdb531c6c08e7227a9204a2017285141e45cc5c96d7",
           "fds": null,
           "deviation": [
-            "dcl-one-only",
             "bot-review-279-b",
+            "dcl-one-only",
+            "headless-desktop-pointer",
             "startup-diagnostics",
             "start-time-limit",
             "headless-desktop-pointer"

@@ -468,7 +468,7 @@ pub(super) async fn comms_states(
         social_directory,
     )
     .with_ban_status(ban_status.clone())
-    .with_name_owner_reader(market.clone())
+    .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
     .with_deny_list_url(config.worlds.deny_list())
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),

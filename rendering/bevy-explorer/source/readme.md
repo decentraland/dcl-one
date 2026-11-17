@@ -116,9 +116,9 @@ Doing it by hand instead of via `just`:
 
 ```bash
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts
-(cd bridge-scene && corepack pnpm@11.27.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.27.0 --filter @dcl/hashing build)
-corepack pnpm@11.27.0 run bundle:native && cd ..
+cd react-web && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts
+(cd bridge-scene && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.28.12 --filter @dcl/hashing build)
+corepack pnpm@11.28.12 run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release
@@ -223,8 +223,8 @@ Console commands:
 
 ```bash
 cargo test --all                      # engine
-corepack pnpm@11.27.0 --dir react-web test          # HUD, deterministic (vitest, no engine)
-corepack pnpm@11.27.0 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
+corepack pnpm@11.28.12 --dir react-web test          # HUD, deterministic (vitest, no engine)
+corepack pnpm@11.28.12 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
 ```
 
 CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
