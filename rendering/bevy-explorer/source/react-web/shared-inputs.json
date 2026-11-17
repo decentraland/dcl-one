@@ -9429,7 +9429,7 @@
     },
     {
       "path": "library/ui/foundations/icons/chat.tsx",
-      "sha256": "c849e519b1f16d12fb837933217ad1a59c94f04a60142f8b3f8fdf284c67f4dd"
+      "sha256": "105b1a03d9ccae4eae235dae82d4eb5a8d9ba447f4c2a1f5e698729fba4f5138"
     },
     {
       "path": "library/ui/foundations/icons/component.tsx",
@@ -9437,7 +9437,7 @@
     },
     {
       "path": "library/ui/foundations/icons/editor.tsx",
-      "sha256": "d839402b39a04f1136bd3f497b5bb0fc46fba004e3f95a4c7e366d738b0b7167"
+      "sha256": "6ec7ddc6d6ed9302a23a6d1d90fbd31e05f7c42e66e8862e2f41863586bc0a50"
     },
     {
       "path": "library/ui/foundations/icons/emotes.tsx",
@@ -9445,11 +9445,11 @@
     },
     {
       "path": "library/ui/foundations/icons/general.tsx",
-      "sha256": "fbe5bfcee0e8169e52be176f29a8693c037e727947d51fe06477a011dfdfc645"
+      "sha256": "258c25b18c60219457637e1952b8213e9b052228f991e7d4e551fb5b84fa7921"
     },
     {
       "path": "library/ui/foundations/icons/iconMeta.ts",
-      "sha256": "03d71c6e092ce4e19772a598fd5dfb48694b16c755e3f74aebbd51055a9f1e34"
+      "sha256": "b4c9dbfe1ff62fe86194f11735672f2786970af7a9b608d600e45c1decca21a8"
     },
     {
       "path": "library/ui/foundations/icons/index.ts",
@@ -9473,7 +9473,7 @@
     },
     {
       "path": "library/ui/foundations/icons/profile.tsx",
-      "sha256": "fa722613657aab1c35151cfa2b6b108d754212ee96c7f2a6bc465a5175d89d29"
+      "sha256": "0293fa770e5028345a2eab52233b98faad4abe00f9cf7f316e7c05e3f37c59f7"
     },
     {
       "path": "library/ui/foundations/icons/shop.tsx",

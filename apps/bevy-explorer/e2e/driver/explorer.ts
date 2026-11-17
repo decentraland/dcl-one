@@ -157,6 +157,8 @@ export interface ChatHistory {
 export interface NametagTag {
   /** An address, `local`, or null for an avatar with no wallet. */
   player: string | null
+  /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
+  sceneAvatar: boolean
   name: string
   suffix: string
   verified: boolean
@@ -168,7 +170,7 @@ export interface NametagTag {
   /** Metres per tag unit. */
   scale: number
   position: [number, number, number]
-  /** Metres over the head bone; null until the avatar is built. */
+  /** Metres over the head bone for an avatar at a scale of one; null until the avatar is built. */
   headOffset: number | null
   bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
 }
@@ -176,7 +178,9 @@ export interface NametagTag {
 export interface NametagState {
   visible: boolean
   shown: number
-  /** Tags of players whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  /** Of those shown, the tags over a scene's avatars. */
+  sceneAvatars: number
+  /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
   hidden: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
   atlas: [number, number]

@@ -54,6 +54,7 @@ pub mod nametag;
 pub mod npc_dynamics;
 pub mod point_at_ik;
 pub mod point_at_marker;
+pub mod spring_bones;
 mod two_bone_ik;
 
 #[cfg(test)]
@@ -918,10 +919,12 @@ fn update_render_avatar(
         }
 
         if let Some(attach_points) = maybe_attach_points {
-            // reparent attach points
+            // reparent attach points. they leave the bones the nametag's offset was measured
+            // on: it is measured again on the new body
             commands
                 .entity(entity)
-                .try_push_children(&attach_points.entities());
+                .try_push_children(&attach_points.entities())
+                .try_remove::<NametagHeadOffset>();
         }
 
         if let Some(scene_ent) = maybe_scene_ent {
@@ -1226,8 +1229,17 @@ fn process_avatar(
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+    (
+        name_and_parent,
+        local_transforms,
+        previous_avatar,
+        scene_ent,
+        previous_animator,
+        mut contexts,
+        timestamp,
+    ): (
         Query<(&Name, &ChildOf)>,
+        Query<(&Transform, &ChildOf)>,
         Query<&PreviousAvatar>,
         Query<&SceneEntity>,
         Query<
@@ -1805,11 +1817,12 @@ fn process_avatar(
             .entity(avatar_ent)
             .try_insert((AvatarProcessed, Visibility::Inherited));
 
-        // the head bone's units, in metres
+        // the head bone's units, in the avatar's own: the nametag's anchor applies a scene's
+        // scale of the avatar, which the local transforms below the avatar leave out. A scene
+        // may hold the avatar at a scale of nothing while it is built
         let head_scale = target_armature_entities
             .get("avatar_head")
-            .and_then(|head| instance_ents.get(*head).ok())
-            .map(|(_, _, gt, ..)| gt.compute_transform().scale.y);
+            .and_then(|head| scale_below(*head, avatar_ent, &local_transforms));
         commands.entity(root_player_entity.parent()).try_insert((
             AvatarMaterials(instance_scene_materials.values().map(|h| h.id()).collect()),
             NametagHeadOffset::above_head(
@@ -1927,6 +1940,23 @@ fn reparent_attach_point(
             target_armature_entities.keys()
         );
     }
+}
+
+/// The height scale of `entity` in the units of its ancestor `root`: its own and that of each
+/// entity between them. Nothing for an entity not below `root`.
+fn scale_below(
+    entity: Entity,
+    root: Entity,
+    transforms: &Query<(&Transform, &ChildOf)>,
+) -> Option<f32> {
+    let mut scale = 1.0;
+    let mut current = entity;
+    while current != root {
+        let (transform, parent) = transforms.get(current).ok()?;
+        scale *= transform.scale.y;
+        current = parent.parent();
+    }
+    Some(scale)
 }
 
 /// How far a skinned mesh reaches above the head bone, along that bone and in its units, read
@@ -2239,7 +2269,11 @@ fn remove_attach_points_from_avatar_shape(
         for attach_point in attach_points.entities() {
             commands.entity(attach_point).try_despawn();
         }
-        commands.entity(entity).try_remove::<AttachPoints>();
+        // the offset was measured on the body that goes with the shape: the next body's
+        // nametag waits for its own
+        commands
+            .entity(entity)
+            .try_remove::<(AttachPoints, NametagHeadOffset)>();
     }
 }
 

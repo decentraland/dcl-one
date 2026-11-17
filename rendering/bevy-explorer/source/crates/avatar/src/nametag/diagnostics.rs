@@ -17,7 +17,7 @@ use super::{
     layout::Voice,
     tag_opacity, tag_scale,
     text::TextShaper,
-    ChatBubble, Nametag, NametagContent, NametagVoice, OfficialWallets,
+    ChatBubble, Nametag, NametagContent, NametagVoice, OfficialWallets, SceneAvatarNametag,
 };
 use crate::dynamic_nametag::{NametagHeadOffset, NametagsVisible};
 
@@ -26,6 +26,7 @@ pub const SECTION: DebugSection = DebugSection {
     query: "/nametag_state",
     fields: &[
         ("Shown", "shown"),
+        ("Of scene avatars", "sceneAvatars"),
         ("Hidden", "hidden"),
         ("Glyph atlas (distance field / colour px)", "atlas"),
         ("Chat bubbles", "bubbles"),
@@ -42,16 +43,18 @@ pub const SECTION: DebugSection = DebugSection {
     }],
 };
 
-/// Report the nametags as JSON: `visible` (the nametags toggle), `shown` and `hidden` (the
-/// players' tags that show, and those that don't: out of range, blocked, or hidden by the
-/// scene or a setting), `atlas` (the glyph atlas' distance-field and colour page sizes in
-/// pixels, 0 for a page not made), `bubbles` (the chat bubble setting) and `tags`, one per
-/// shown tag: `player` (an address, or `local`, or null for an avatar with no wallet), `name`,
-/// `suffix`, `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance`
-/// in metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit), `position`
-/// (world, metres; all four as of the last frame drawn), `headOffset` (how far over the head
-/// bone the tag sits, in metres; null until the avatar is built) and `bubble` (null, or its
-/// `kind`, `mention` and message `length`; never the message).
+/// Report the nametags as JSON: `visible` (the nametags toggle), `shown`, `sceneAvatars` (of
+/// those shown, the ones over a scene's avatars) and `hidden` (the tags that don't show: out
+/// of range, blocked, or hidden by the scene or a setting), `atlas` (the glyph atlas'
+/// distance-field and colour page sizes in pixels, 0 for a page not made), `bubbles` (the chat
+/// bubble setting) and `tags`, one per shown tag: `player` (an address, or `local`, or null
+/// for an avatar with no wallet), `sceneAvatar` (the tag is over an avatar a scene made),
+/// `name`, `suffix`, `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`),
+/// `distance` in metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit),
+/// `position` (world, metres; all four as of the last frame drawn), `headOffset` (how far over
+/// the head bone the tag sits, in metres for an avatar at a scale of one; null until the
+/// avatar is built) and `bubble` (null, or its `kind`, `mention` and message `length`; never
+/// the message).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;
@@ -70,6 +73,7 @@ pub fn nametag_state(
         Option<&ForeignPlayer>,
         Option<&NametagHeadOffset>,
         Option<&ChatBubble>,
+        Has<SceneAvatarNametag>,
     )>,
     local: Res<common::structs::PrimaryPlayerRes>,
 ) {
@@ -96,7 +100,9 @@ pub fn nametag_state(
             hidden += 1;
             continue;
         }
-        let Ok((content, voice, foreign, head_offset, bubble)) = owners.get(owner.parent()) else {
+        let Ok((content, voice, foreign, head_offset, bubble, scene_avatar)) =
+            owners.get(owner.parent())
+        else {
             continue;
         };
         let player = match foreign {
@@ -111,6 +117,7 @@ pub fn nametag_state(
             .map(|(distance, fov)| tag_scale(distance, fov));
         shown.push(json!({
             "player": player,
+            "sceneAvatar": scene_avatar,
             "name": content.name,
             "suffix": content.suffix,
             "verified": content.verified,
@@ -142,6 +149,7 @@ pub fn nametag_state(
         json!({
             "visible": visible.0,
             "shown": shown.len(),
+            "sceneAvatars": shown.iter().filter(|tag| tag["sceneAvatar"] == true).count(),
             "hidden": hidden,
             "atlas": atlas,
             "bubbles": format!("{:?}", config.chat_bubble_visibility),

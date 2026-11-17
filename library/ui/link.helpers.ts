@@ -58,3 +58,25 @@ export function linkHref(value: unknown, allowLaunch = false): string | undefine
     return undefined
   }
 }
+
+type NavigationEntry = { id?: unknown; label?: unknown; href?: unknown }
+
+/**
+ * Validate caller-owned sections or routes before rendering: every entry is an object with a unique, non-empty
+ * string ID (else `messages.id`), a non-empty label and a destination `isValidHref` accepts (else
+ * `messages.entry`).
+ */
+export function assertNavigationEntries(
+  entries: readonly unknown[],
+  isValidHref: (href: unknown) => boolean,
+  messages: { id: string; entry: string }
+): void {
+  const ids = new Set<string>()
+  for (const entry of entries as readonly (NavigationEntry | null | undefined)[]) {
+    if (!entry || typeof entry.id !== 'string' || !entry.id.trim() || ids.has(entry.id))
+      throw new Error(messages.id)
+    if (typeof entry.label !== 'string' || !entry.label.trim() || !isValidHref(entry.href))
+      throw new Error(messages.entry)
+    ids.add(entry.id)
+  }
+}

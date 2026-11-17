@@ -244,7 +244,9 @@ the scenes hide avatars, not the nametag over the hidden guest, whose name chang
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
 teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
-pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
+the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
+show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 

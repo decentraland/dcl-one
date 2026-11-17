@@ -29,6 +29,12 @@ EXTERNAL = [
 EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "archipelago::ws::io::bounds_tests::congestion_requires_ten_continuously_full_seconds_and_emits_1013_at_a_frame_boundary",
+        "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
+        "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
+        "archipelago::registry::mailbox::tests::capacity_follows_accepted_assignments_through_validation_until_drop",
+        "archipelago::ws::io::bounds_tests::blocked_direct_output_keeps_original_stamp_while_servicing_full_mailbox",
+        "archipelago::registry::tests::full_assignment_retries_even_after_older_accepted_frames_flush",
         "gatekeeper::admission::relay_authority::tests::failed_generation_check_clears_only_the_matching_renewal_without_extending_its_lease",
         "protocol::bus::selection_view::tests::complete_bad_digest_fails_at_the_last_page_and_valid_empty_views_complete",
         "pulse::application_relay::http::tests::generation_loss_refuses_a_late_http_lease_and_further_cached_admission",
@@ -235,6 +241,16 @@ MANDATORY_ARCHIPELAGO = {
         "comms_v4_assignment_fence::recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn",
     ],
     ("sockets_1", "test"): [
+        "archipelago_ws_island_dedup::production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment",
+        "archipelago_ws_island_dedup::production_full_mailbox_ping_preserves_kick_restart_and_retirement",
+        "archipelago_ws_island_dedup::assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+        "archipelago_ws_island_dedup::assignment_capacity_stays_charged_through_validation_and_physical_flush",
+        "archipelago_ws_island_dedup::full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+        "archipelago_ws_island_dedup::an_assignment_backlog_preserves_every_accepted_room_in_order",
+        "archipelago_ws_island_dedup::source_contract_dedup_compares_received_assignment_bytes",
+        "archipelago_ws_island_dedup::a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+        "archipelago_ws_island_dedup::replacement_socket_has_no_predecessor_delivery_state_or_delayed_predecessor_updates",
+        "archipelago_ws_island_dedup::an_expired_window_delivers_the_identical_assignment_again",
         "archipelago_hot_scenes::active_content_updates_are_visible_without_a_tile_cache",
         "archipelago_ws_island_dedup::a_later_authentication_completion_replaces_the_same_sessions_socket",
         "pulse_generation::current_view_retains_exact_predecessor_until_reseed_and_reclaims_absent_slots_at_capacity",
@@ -291,6 +307,7 @@ MANDATORY_ARCHIPELAGO = {
         "rpc_validator::tests::selector_degenerate_and_provider_number_cases_fail_closed_or_preserve_selection",
     ],
     ("sockets_2", "test"): [
+        "archipelago_feed_stats::assignment_pressure_preserves_fifo_and_rejects_oversize",
         "archipelago_control_extensions_websocket::configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
         "archipelago_control_extensions_websocket::configured_authority_failure_keeps_authenticated_signaling_available",
         "archipelago_control_extensions_websocket::later_configured_authentication_completion_replaces_the_same_session_without_sql",

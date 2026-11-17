@@ -13,7 +13,8 @@
     "sockets_2": [
       "archipelago_control_extensions_websocket::configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
       "archipelago_control_extensions_websocket::configured_replica_signaling_cannot_steal_a_fresh_foreign_room",
-      "archipelago_control_extensions_websocket::pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire"
+      "archipelago_control_extensions_websocket::pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire",
+      "archipelago_feed_stats::assignment_pressure_preserves_fifo_and_rejects_oversize"
     ],
     "node_2": [
       "comms_v4_assignment_fence::recovery::a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant",
@@ -23,7 +24,17 @@
       "comms_v4_assignment_fence::recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn"
     ],
     "sockets_1": [
-      "archipelago_ws_island_dedup::same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session"
+      "archipelago_ws_island_dedup::same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session",
+      "archipelago_ws_island_dedup::production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment",
+      "archipelago_ws_island_dedup::production_full_mailbox_ping_preserves_kick_restart_and_retirement",
+      "archipelago_ws_island_dedup::assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+      "archipelago_ws_island_dedup::assignment_capacity_stays_charged_through_validation_and_physical_flush",
+      "archipelago_ws_island_dedup::full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+      "archipelago_ws_island_dedup::an_assignment_backlog_preserves_every_accepted_room_in_order",
+      "archipelago_ws_island_dedup::source_contract_dedup_compares_received_assignment_bytes",
+      "archipelago_ws_island_dedup::a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+      "archipelago_ws_island_dedup::replacement_socket_has_no_predecessor_delivery_state_or_delayed_predecessor_updates",
+      "archipelago_ws_island_dedup::an_expired_window_delivers_the_identical_assignment_again"
     ]
   },
   "unix": {
