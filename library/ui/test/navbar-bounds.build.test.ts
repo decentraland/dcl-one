@@ -115,6 +115,12 @@ async function key(value: string, code: number) {
     })
   await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))')
 }
+async function waitForExit() {
+  await evaluate(
+    `Promise.all(Array.from(document.querySelectorAll('[data-exiting]')).flatMap(panel=>panel.getAnimations().map(animation=>animation.finished.catch(()=>{}))))`
+  )
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+}
 type Bounds = {
   width: number
   height: number
@@ -174,6 +180,7 @@ describe('native public NavBar bounds, independently of captured Review selectio
         }
         expect(panelStops).toBeGreaterThan(0)
         await key('Escape', 27)
+        await waitForExit()
         expect(await evaluate('document.querySelector(\'[role="dialog"]\')===null')).toBe(true)
         expect(await evaluate('document.activeElement?.getAttribute("aria-label")')).toBe(
           'Open menu'
