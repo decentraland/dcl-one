@@ -132,6 +132,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Visible unique materials", "visibleMaterials"),
                     ("Material textures", "textures"),
                     ("Colliders", "colliders"),
+                    ("Colliders off outside scene bounds", "collidersOutOfBounds"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -537,7 +538,8 @@ fn scene_content(
         "allBodies": all_bodies, "allTriangles": all_triangles.display(),
         "geometries": geometry.len(), "visibleGeometries": visible_geometry.len(), "materials": material_ids.len(),
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
-        "colliders": colliders.map_or(0, SceneColliderData::collider_count)}).to_string());
+        "colliders": colliders.map_or(0, SceneColliderData::collider_count),
+        "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

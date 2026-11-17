@@ -442,7 +442,8 @@ of the contract.
 
 - **Out-of-bounds culling can't be tested against localhost.** A loopback realm forces
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
-  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
+  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders outside the
+  bounds are off on every realm: the debug panel's Scene Content section counts them.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
   source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.
