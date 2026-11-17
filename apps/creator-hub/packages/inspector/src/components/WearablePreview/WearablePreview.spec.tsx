@@ -132,13 +132,18 @@ describe('WearablePreview', () => {
       expect(onUpdate).toHaveBeenCalledTimes(1);
     });
 
-    it('should send them one time when the frame repeats the message', async () => {
-      const { postMessage, receive } = setup({ blob });
+    it('should send them again each time the frame repeats the message, as after a reload', async () => {
+      const { postMessage, receive, onUpdate } = setup({ blob });
 
       await receive({ type: 'ready' });
       await receive({ type: 'ready' });
 
-      expect(postMessage).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenCalledTimes(2);
+      expect(postMessage).toHaveBeenLastCalledWith(
+        { type: 'update', payload: { options: { blob } } },
+        PREVIEW_ORIGIN,
+      );
+      expect(onUpdate).toHaveBeenCalledTimes(2);
     });
 
     it('should send the options again when one changes', async () => {

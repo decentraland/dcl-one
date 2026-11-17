@@ -13,7 +13,13 @@ export type Entry = {
 
 declare function extract(
   zipPath: string,
-  options: { dir: string; onEntry?: (entry: Entry) => void },
+  options: {
+    dir: string;
+    onEntry?: (entry: Entry) => void;
+    // Called for each entry that is not written, such as a link. Without it, each skip is a
+    // process warning.
+    onSkip?: (entry: Entry, reason: string) => void;
+  },
 ): Promise<void>;
 
 export default extract;

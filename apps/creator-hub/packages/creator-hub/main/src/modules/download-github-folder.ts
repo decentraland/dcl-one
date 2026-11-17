@@ -3,6 +3,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import extract from '@dcl/zip-extract';
+import log from 'electron-log/main';
 import { fetch } from '/shared/fetch';
 
 // Function to parse GitHub URL for root or subfolder
@@ -45,7 +46,13 @@ export async function downloadGithubRepo(githubUrl: string, destination: string)
     const tempZipPath = path.join(destination, `${repo}.zip`);
     const zipContent = await ghResponse.arrayBuffer();
     await fs.writeFile(tempZipPath, new Uint8Array(zipContent));
-    await extract(tempZipPath, { dir: destination });
+    await extract(tempZipPath, {
+      dir: destination,
+      onSkip: (entry, reason) =>
+        log.warn(
+          `[download-github-folder] skipped "${entry.fileName}" from ${githubUrl}: ${reason}`,
+        ),
+    });
     await fs.rm(tempZipPath);
 
     // Determine the extracted folder name.

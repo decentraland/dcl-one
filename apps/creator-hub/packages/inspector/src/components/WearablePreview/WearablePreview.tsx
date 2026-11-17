@@ -60,8 +60,9 @@ export function buildPreviewUrl(options: PreviewOptions): string {
 }
 
 /**
- * The hosted avatar preview in a frame. The URL carries the options the frame starts with; once
- * the frame reports it is ready it gets all of them in a message, and again when one changes.
+ * The hosted avatar preview in a frame. The URL carries the options the frame starts with; each
+ * time the frame reports it is ready it gets all of them in a message, and again when one changes.
+ * A frame that reloads reports ready again, so it gets the model again.
  */
 export function WearablePreview({
   id,
@@ -81,7 +82,7 @@ export function WearablePreview({
   disableDefaultWearables,
 }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const [ready, setReady] = useState(false);
+  const ready = useRef(false);
   const callbacks = useRef({ onLoad, onError, onUpdate });
   callbacks.current = { onLoad, onError, onUpdate };
 
@@ -115,13 +116,22 @@ export function WearablePreview({
     ],
   );
   const [url] = useState(() => buildPreviewUrl(options));
+  const latest = useRef(options);
+  latest.current = options;
+
+  const send = () => {
+    if (!frame.current) return;
+    postToPreview(frame.current, PreviewMessageType.UPDATE, { options: latest.current });
+    callbacks.current.onUpdate?.();
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!isPreviewMessage(event, frame.current)) return;
       switch (event.data?.type) {
         case PreviewMessageType.READY:
-          setReady(true);
+          ready.current = true;
+          send();
           break;
         case PreviewMessageType.LOAD:
           callbacks.current.onLoad?.();
@@ -136,10 +146,8 @@ export function WearablePreview({
   }, []);
 
   useEffect(() => {
-    if (!ready || !frame.current) return;
-    postToPreview(frame.current, PreviewMessageType.UPDATE, { options });
-    callbacks.current.onUpdate?.();
-  }, [ready, options]);
+    if (ready.current) send();
+  }, [options]);
 
   return (
     <iframe

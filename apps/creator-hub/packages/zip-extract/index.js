@@ -4,7 +4,8 @@
 // `extract-zip` (`extract(zipPath, { dir, onEntry })`), so a package that requires `extract-zip`
 // can be pointed at this one.
 //
-// It never makes a link: a link entry is skipped. It writes below `dir` only: a name that leaves
+// It never makes a link: it skips a link entry and reports it to `onSkip(entry, reason)`, or as a
+// process warning when `onSkip` is not given. It writes below `dir` only: a name that leaves
 // `dir`, and a folder of `dir` that is a link to another place, both stop the extraction.
 // It reads stored and deflated entries, also in zip64 archives. Encrypted and multi-disk archives
 // are refused.
@@ -227,6 +228,11 @@ function pathParts(fileName, folder) {
   }
   const parts = fileName.split('/').filter(part => part !== '' && part !== '.');
   if (parts.includes('..')) throw new Error(`Entry name "${fileName}" leaves the target folder`);
+  // Windows drops trailing dots and spaces when it opens a name, so a part of dots and spaces only
+  // (`...`, `.. `) means `.` or `..` there.
+  if (parts.some(part => /^[. ]+$/.test(part))) {
+    throw new Error(`Invalid entry name "${fileName}": a part has only dots and spaces`);
+  }
   if (parts.length === 0 && !folder) throw new Error(`Invalid entry name "${fileName}"`);
   return parts;
 }
@@ -296,6 +302,11 @@ async function writeContent(handle, fileSize, entry, target) {
   await output.close();
 }
 
+function skip(options, entry, reason) {
+  if (options.onSkip) options.onSkip(entry, reason);
+  else process.emitWarning(`Skipped zip entry "${entry.fileName}": ${reason}`, 'ZipExtractWarning');
+}
+
 async function extract(zipPath, options) {
   if (!options || typeof options.dir !== 'string' || !path.isAbsolute(options.dir)) {
     throw new Error('Target directory is expected to be absolute');
@@ -312,7 +323,11 @@ async function extract(zipPath, options) {
       const type = entry.mode & TYPE_MASK;
       const folder = type === TYPE_FOLDER || entry.fileName.endsWith('/');
       const parts = pathParts(entry.fileName, folder);
-      if (type === TYPE_LINK || parts.length === 0) continue;
+      if (type === TYPE_LINK) {
+        skip(options, entry, 'it is a link');
+        continue;
+      }
+      if (parts.length === 0) continue;
       const target = path.join(root, ...parts);
 
       if (folder) {

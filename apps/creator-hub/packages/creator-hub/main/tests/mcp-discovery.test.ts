@@ -373,11 +373,13 @@ describe('outside access to the MCP server', () => {
     });
   });
 
-  describe('when an agent asks for access', () => {
+  // fs.watch can deliver late while the whole suite runs in parallel, so a wait allows 5 s. Each
+  // case's timeout stays well above its waits, so a late event fails at waitFor with its own
+  // message, not at the test limit.
+  const WATCH = { timeout: 5_000 };
+
+  describe('when an agent asks for access', { timeout: 15_000 }, () => {
     const request = () => fs.writeFileSync(accessRequestFilePath(mocks.userData), '');
-    // fs.watch delivers late while the whole suite runs in parallel; vi.waitFor's 1 s default
-    // made the first case flaky in `pnpm run test:unit`.
-    const WATCH = { timeout: 5_000 };
 
     describe('and access is off', () => {
       it('should ask the creator once, consume the request and grant nothing', async () => {

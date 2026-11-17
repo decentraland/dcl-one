@@ -167,6 +167,9 @@ describe('extract', () => {
     '/escape.txt',
     'C:/escape.txt',
     'a\\..\\escape.txt',
+    '.../escape.txt',
+    '.. /escape.txt',
+    'a/. ./escape.txt',
   ]) {
     it(`should refuse the entry name ${name}`, async () => {
       write([
@@ -182,17 +185,53 @@ describe('extract', () => {
     });
   }
 
+  it('should keep a name that ends with a dot or a space after other characters', async () => {
+    write([
+      { name: 'notes.', content: 'dot' },
+      { name: 'a b /c.txt', content: 'space' },
+    ]);
+
+    await extract(archive, { dir: target });
+
+    assert.equal(fs.readFileSync(path.join(target, 'notes.'), 'utf8'), 'dot');
+    assert.equal(fs.readFileSync(path.join(target, 'a b ', 'c.txt'), 'utf8'), 'space');
+  });
+
   it('should not make a link, so a later entry cannot go through it', async () => {
     write([
       { name: 'link', content: outside, mode: LINK, method: 0 },
       { name: 'link/escape.txt', content: 'escape' },
     ]);
 
-    await extract(archive, { dir: target });
+    const skipped = [];
+    await extract(archive, {
+      dir: target,
+      onSkip: (entry, reason) => skipped.push([entry.fileName, reason]),
+    });
 
+    assert.deepEqual(skipped, [['link', 'it is a link']]);
     assert.deepEqual(fs.readdirSync(outside), []);
     assert.equal(fs.lstatSync(path.join(target, 'link')).isDirectory(), true);
     assert.equal(fs.readFileSync(path.join(target, 'link/escape.txt'), 'utf8'), 'escape');
+  });
+
+  it('should report a skipped link as a process warning without onSkip', async () => {
+    write([{ name: 'link', content: outside, mode: LINK, method: 0 }]);
+    const warnings = [];
+    const listen = warning => warnings.push(warning);
+    process.on('warning', listen);
+    try {
+      await extract(archive, { dir: target });
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      process.off('warning', listen);
+    }
+
+    assert.deepEqual(
+      warnings.map(warning => [warning.name, warning.message]),
+      [['ZipExtractWarning', 'Skipped zip entry "link": it is a link']],
+    );
+    assert.deepEqual(fs.readdirSync(target), []);
   });
 
   it('should refuse a folder that is a link to another place', { skip: !unix }, async () => {
