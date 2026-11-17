@@ -1,5 +1,5 @@
 import { siteUrl } from "@/data/lib/catalyst/bases";
-import type { Community, JoinRequest } from "@/data/lib/catalyst/social/community-detail";
+import type { CommunityInfo, JoinRequest } from "@/data/lib/catalyst/social/community-detail";
 
 export const COMMUNITY_PATH = "/social/communities";
 
@@ -26,9 +26,25 @@ export function signInReturnHref(id: string, action: CommunityAction, nonce: str
   return `${communityHref(id)}?${query}`;
 }
 
-/** The community's own image, served from the node's asset CDN alias. */
-export function thumbnailUrl(id: string): string {
-  return siteUrl(`/assets-cdn/social/communities/${encodeURIComponent(id)}/raw-thumbnail.png`);
+const THUMBNAIL_PATH = /^\/social\/communities\/[0-9a-f-]{36}\/raw-thumbnail\.png$/i;
+
+/**
+ * The community's image. A URL the API names wins: on the communities CDN it is read through this
+ * site's asset alias, any other http(s) URL (a mirrored community's) as given. Without one, the
+ * image the node keeps for the community, which answers 404 when there is none.
+ */
+export function thumbnailUrl(community: { id: string; thumbnailUrl: string | null }): string {
+  const named = community.thumbnailUrl?.trim();
+  if (named && named !== "N/A") {
+    try {
+      const url = new URL(named);
+      if (THUMBNAIL_PATH.test(url.pathname)) return siteUrl(`/assets-cdn${url.pathname}`);
+      if (url.protocol === "https:" || url.protocol === "http:") return url.href;
+    } catch {
+      // Not a URL: the node's own image below.
+    }
+  }
+  return siteUrl(`/assets-cdn/social/communities/${encodeURIComponent(community.id)}/raw-thumbnail.png`);
 }
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", compactDisplay: "short" });
@@ -37,12 +53,12 @@ export function membersLabel(count: number): string {
   return `${compact.format(count)} Members`;
 }
 
-export function isMember(community: Pick<Community, "role">): boolean {
+export function isMember(community: Pick<CommunityInfo, "role">): boolean {
   return community.role !== null && community.role !== "none";
 }
 
 /** A private community shows its members and events to members only. */
-export function canViewContent(community: Pick<Community, "role" | "privacy">): boolean {
+export function canViewContent(community: Pick<CommunityInfo, "role" | "privacy">): boolean {
   return community.privacy === "public" || isMember(community);
 }
 
@@ -64,8 +80,8 @@ export type MembershipState =
 export function membershipState(input: {
   signedIn: boolean;
   /** The community read as the member; undefined while that read runs. */
-  viewer: Pick<Community, "role" | "privacy"> | undefined;
-  privacy: Community["privacy"];
+  viewer: Pick<CommunityInfo, "role" | "privacy"> | undefined;
+  privacy: CommunityInfo["privacy"];
   /** The member's pending requests; undefined while that read runs. */
   requests: readonly JoinRequest[] | undefined;
   communityId: string;

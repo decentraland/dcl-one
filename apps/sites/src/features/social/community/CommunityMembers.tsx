@@ -7,7 +7,7 @@ import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
 import { useAuth } from "@/data/lib/auth/context";
 import { profileFaceUrl } from "@/data/lib/auth/profile-face-url";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
-import type { Community, CommunityMember } from "@/data/lib/catalyst/social/community-detail";
+import type { CommunityInfo, CommunityMember } from "@/data/lib/catalyst/social/community-detail";
 import { membersQuery } from "@/data/lib/community/queries";
 
 import styles from "./CommunityLists.module.css";
@@ -18,12 +18,12 @@ import { roleLabel } from "./view";
  * A private community's members are read signed, as the member viewing it (only members see them);
  * a public one's as anyone, which is what the server prefetched.
  */
-function useMembers(community: Community) {
+function useMembers(community: CommunityInfo) {
   const { identity } = useAuth();
   return useInfiniteQuery(membersQuery(community.id, community.privacy === "private" ? identity : null));
 }
 
-export function CommunityMembers({ community }: { community: Community }) {
+export function CommunityMembers({ community }: { community: CommunityInfo }) {
   const titleId = useId();
   const query = useMembers(community);
   const members = query.data?.pages.flatMap((page) => page.members) ?? [];

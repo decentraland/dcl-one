@@ -63,6 +63,7 @@ const community = {
   ownerName: null,
   privacy: "private" as const,
   membersCount: 1,
+  thumbnailUrl: null,
   role: null,
 };
 

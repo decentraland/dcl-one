@@ -100,6 +100,8 @@ describe("communityLoader", () => {
     if (!result.ok) return;
     expect(keys(result.data)).toEqual([JSON.stringify(communityKeys.detail(ID))]);
     expect(calls).toHaveLength(1);
+    // The page hides a private community's description from non-members; so does its meta.
+    expect(result.data.description).toBe("");
   });
 
   it("still renders when the optional members and events reads fail", async () => {

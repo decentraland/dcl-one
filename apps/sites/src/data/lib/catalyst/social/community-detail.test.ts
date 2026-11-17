@@ -4,6 +4,7 @@ import { CatalystError } from "../client";
 import {
   CommunityNotFoundError,
   fetchCommunity,
+  fetchCommunityEvents,
   fetchCommunityMembers,
   fetchJoinRequests,
   requestToJoin,
@@ -100,5 +101,16 @@ describe("member requests", () => {
     await requestToJoin(identity, ID);
     const init = vi.mocked(fetch).mock.calls[0]![1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({ targetedAddress: "0xabc", type: "request_to_join" });
+  });
+});
+
+describe("fetchCommunityEvents", () => {
+  it("asks for the community's events with no list filter, as the source does (upcoming and in progress)", async () => {
+    body = { ok: true, data: { events: [], total: 0 } };
+    await fetchCommunityEvents(ID, 12);
+    const url = new URL(String(vi.mocked(fetch).mock.calls[0]![0]));
+    expect(url.searchParams.get("community_id")).toBe(ID);
+    expect(url.searchParams.get("offset")).toBe("12");
+    expect(url.searchParams.has("list")).toBe(false);
   });
 });

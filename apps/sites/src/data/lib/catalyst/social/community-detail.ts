@@ -15,7 +15,7 @@ const nullableStr = z
   .nullish()
   .transform((value) => value ?? null);
 
-export const CommunitySchema = z.object({
+export const CommunityInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: nullableStr,
@@ -23,6 +23,8 @@ export const CommunitySchema = z.object({
   ownerName: nullableStr,
   privacy: z.enum(["public", "private"]),
   membersCount: z.number(),
+  /** The image the API names, when it names one (a list row, a mirrored community). */
+  thumbnailUrl: nullableStr,
   /** The signed-in member's role; absent on an anonymous read. */
   role: z
     .enum(["owner", "moderator", "member", "none"])
@@ -30,7 +32,7 @@ export const CommunitySchema = z.object({
     .catch(null)
     .transform((value) => value ?? null),
 });
-export type Community = z.infer<typeof CommunitySchema>;
+export type CommunityInfo = z.infer<typeof CommunityInfoSchema>;
 
 const MemberSchema = z.object({
   memberAddress: z.string(),
@@ -84,8 +86,8 @@ export class CommunityNotFoundError extends Error {
 
 const path = (id: string, rest = "") => `/v1/communities/${encodeURIComponent(id)}${rest}`;
 
-function parseCommunity(raw: unknown, url: string): Community {
-  const parsed = z.object({ data: CommunitySchema }).safeParse(raw);
+function parseCommunity(raw: unknown, url: string): CommunityInfo {
+  const parsed = z.object({ data: CommunityInfoSchema }).safeParse(raw);
   if (!parsed.success) throw new CatalystError("Community failed validation", url);
   return parsed.data.data;
 }
@@ -97,7 +99,7 @@ function parseCommunity(raw: unknown, url: string): Community {
 export async function fetchCommunity(
   id: string,
   opts: { identity?: AuthIdentity | null; signal?: AbortSignal } = {},
-): Promise<Community> {
+): Promise<CommunityInfo> {
   if (!isCommunityId(id)) throw new CommunityNotFoundError(id);
   try {
     const raw = opts.identity

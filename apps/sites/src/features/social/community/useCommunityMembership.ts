@@ -7,7 +7,7 @@ import {
   cancelJoinRequest,
   joinCommunity,
   requestToJoin,
-  type Community,
+  type CommunityInfo,
   type JoinRequest,
 } from "@/data/lib/catalyst/social/community-detail";
 import {
@@ -37,10 +37,10 @@ type Write =
 export type Membership = {
   state: MembershipState;
   /** The community as the member reads it (with their role), once known. */
-  viewer: Community | undefined;
+  viewer: CommunityInfo | undefined;
   pending: boolean;
-  /** The last write failed; the member's standing is what it was before it. */
-  failed: boolean;
+  /** The write that last failed, if any; the member's standing is what it was before it. */
+  failed: Write["kind"] | null;
   /** Reads the member's standing again after it failed. */
   retry: () => void;
   join: () => void;
@@ -55,13 +55,13 @@ export type Membership = {
  * write succeeds, so a failed one leaves the page as it was. A sign-in started here comes back with
  * `?action=` and runs that action once.
  */
-export function useCommunityMembership(community: Community, identity: AuthIdentity | null): Membership {
+export function useCommunityMembership(community: CommunityInfo, identity: AuthIdentity | null): Membership {
   const client = useQueryClient();
   const id = community.id;
   const viewer = useQuery(viewerCommunityQuery(identity, id));
   const wantsRequests = Boolean(identity) && community.privacy === "private";
   const requests = useQuery(joinRequestsQuery(wantsRequests ? identity : null));
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<Write["kind"] | null>(null);
 
   const mutation = useMutation({
     mutationFn: async (write: Write): Promise<JoinRequest | null> => {
@@ -73,8 +73,8 @@ export function useCommunityMembership(community: Community, identity: AuthIdent
       await cancelJoinRequest(write.identity, id, write.requestId);
       return null;
     },
-    onMutate: () => setFailed(false),
-    onError: () => setFailed(true),
+    onMutate: () => setFailed(null),
+    onError: (_error, write) => setFailed(write.kind),
     onSuccess: async (created, write) => {
       const signer = write.identity.signer;
       if (write.kind === "request" && created) {

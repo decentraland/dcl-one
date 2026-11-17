@@ -45,7 +45,8 @@ export async function communityLoader(
   try {
     const community = await client.fetchQuery(communityQuery(id));
     title = community.name;
-    description = community.description ?? "";
+    // The page shows a private community's description to members only, so its meta leaves it out.
+    description = community.privacy === "private" ? "" : (community.description ?? "");
     if (community.privacy === "public") {
       await withinBudget(
         Promise.all([client.prefetchInfiniteQuery(membersQuery(id)), client.prefetchInfiniteQuery(eventsQuery(id))]),

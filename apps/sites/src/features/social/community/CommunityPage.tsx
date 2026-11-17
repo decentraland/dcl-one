@@ -8,7 +8,7 @@ import { GeneralCheck, GeneralLock, GeneralPlayers, GeneralPrivate } from "@dcl/
 
 import { useAuth } from "@/data/lib/auth/context";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
-import type { Community } from "@/data/lib/catalyst/social/community-detail";
+import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail";
 import { communityQuery } from "@/data/lib/community/queries";
 
 import { useCreatorProfiles } from "../../events/useCreatorProfiles";
@@ -21,6 +21,12 @@ import { useCommunityMembership, type Membership } from "./useCommunityMembershi
 import { canViewContent, membersLabel, thumbnailUrl } from "./view";
 
 type Section = "members" | "events";
+
+const FAILED_COPY = {
+  join: "Failed to join community",
+  request: "Failed to send your request to join",
+  cancel: "Failed to cancel your request",
+} as const;
 
 /**
  * `/social/communities/:id`: the community's card (image, name, privacy, members, owner, the member's
@@ -52,7 +58,7 @@ function CommunityLoading() {
   );
 }
 
-function CommunityBody({ community: anonymous, now }: { community: Community; now: number }) {
+function CommunityBody({ community: anonymous, now }: { community: CommunityInfo; now: number }) {
   const { identity } = useAuth();
   const membership = useCommunityMembership(anonymous, identity);
   // The member's own read adds their role and the freshest count.
@@ -62,7 +68,7 @@ function CommunityBody({ community: anonymous, now }: { community: Community; no
   const deciding = !visible && community.privacy === "private" && membership.state.kind === "loading";
   return (
     <>
-      <CommunityInfo community={community} membership={membership} showDescription={visible} />
+      <CommunityCard community={community} membership={membership} showDescription={visible} />
       {visible ? (
         <CommunitySections community={community} now={now} />
       ) : deciding ? (
@@ -76,12 +82,12 @@ function CommunityBody({ community: anonymous, now }: { community: Community; no
   );
 }
 
-function CommunityInfo({
+function CommunityCard({
   community,
   membership,
   showDescription,
 }: {
-  community: Community;
+  community: CommunityInfo;
   membership: Membership;
   showDescription: boolean;
 }) {
@@ -125,7 +131,7 @@ function CommunityInfo({
           </div>
           {membership.failed ? (
             <p className={styles.error} role="alert">
-              Failed to join community
+              {FAILED_COPY[membership.failed]}
             </p>
           ) : null}
         </div>
@@ -137,8 +143,8 @@ function CommunityInfo({
   );
 }
 
-function CommunityThumbnail({ community }: { community: Community }) {
-  const src = thumbnailUrl(community.id);
+function CommunityThumbnail({ community }: { community: CommunityInfo }) {
+  const src = thumbnailUrl(community);
   const { broken, ref, onError } = useBrokenImage(src);
   return (
     <div className={styles.thumbnail}>
@@ -217,7 +223,7 @@ function PrivateNotice() {
   );
 }
 
-function CommunitySections({ community, now }: { community: Community; now: number }) {
+function CommunitySections({ community, now }: { community: CommunityInfo; now: number }) {
   const ids = useId();
   const [section, setSection] = useState<Section>("members");
   const tabId = (value: Section) => `${ids}-tab-${value}`;

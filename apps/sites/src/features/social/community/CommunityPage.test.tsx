@@ -25,6 +25,7 @@ const net = vi.hoisted(() => ({
 }));
 const auth = vi.hoisted(() => ({ identity: null as null | { signer: string } }));
 const signIn = vi.hoisted(() => ({ openSignIn: vi.fn() }));
+const reminders = vi.hoisted(() => ({ failed: null as string | null }));
 
 vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/community-detail")>()),
@@ -35,10 +36,11 @@ vi.mock("../../components/auth/signin-store", () => signIn);
 vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../../events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
 vi.mock("../../events/useEventReminders", () => ({
-  useEventReminders: () => ({ get: () => ({ active: false, pending: false, toggle: () => {} }) }),
+  REMIND_FAILED: "Couldn't update your reminder. Try again.",
+  useEventReminders: () => ({ failed: reminders.failed, get: () => ({ active: false, pending: false, toggle: () => {} }) }),
 }));
 
-import type { Community } from "@/data/lib/catalyst/social/community-detail";
+import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail";
 
 import { CommunityPage } from "./CommunityPage";
 import { PENDING_ACTION_TTL_MS, rememberAction } from "./pendingAction";
@@ -46,7 +48,7 @@ import { PENDING_ACTION_TTL_MS, rememberAction } from "./pendingAction";
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
 const ME = "0x1111111111111111111111111111111111111111";
 
-const community = (over: Partial<Community> = {}): Community => ({
+const community = (over: Partial<CommunityInfo> = {}): CommunityInfo => ({
   id: ID,
   name: "Decentraland Foundation",
   description: "Official updates.",
@@ -54,6 +56,7 @@ const community = (over: Partial<Community> = {}): Community => ({
   ownerName: "DCLOfficial",
   privacy: "public",
   membersCount: 1340,
+  thumbnailUrl: null,
   role: null,
   ...over,
 });
@@ -74,7 +77,7 @@ function show(path = `/social/communities/${ID}`) {
 }
 
 /** The anonymous read, then the member's own read with `role`. */
-function serve(anonymous: Community, viewer?: Partial<Community>) {
+function serve(anonymous: CommunityInfo, viewer?: Partial<CommunityInfo>) {
   net.fetchCommunity.mockImplementation(async (_id: string, opts: { identity?: unknown } = {}) =>
     opts.identity ? { ...anonymous, ...viewer } : anonymous,
   );
@@ -84,6 +87,7 @@ beforeEach(() => {
   for (const fn of Object.values(net)) fn.mockReset();
   signIn.openSignIn.mockReset();
   auth.identity = null;
+  reminders.failed = null;
   net.fetchCommunityMembers.mockResolvedValue({
     members: [{ memberAddress: ME, role: "owner", name: "Alice", profilePictureUrl: null, hasClaimedName: true }],
     total: 1,
@@ -171,7 +175,7 @@ describe("CommunityPage", () => {
 
   it("joins a public community and shows the member as joined", async () => {
     auth.identity = { signer: ME };
-    let role: Community["role"] = "none";
+    let role: CommunityInfo["role"] = "none";
     net.fetchCommunity.mockImplementation(async (_id: string, opts: { identity?: unknown } = {}) =>
       community(opts.identity ? { role } : {}),
     );
@@ -225,7 +229,7 @@ describe("CommunityPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Cancel request" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("Failed to join community");
+    expect((await screen.findByRole("alert")).textContent).toBe("Failed to cancel your request");
     expect(screen.getByRole("button", { name: "Cancel request" })).toHaveProperty("disabled", false);
     expect(net.cancelJoinRequest).toHaveBeenCalledWith(auth.identity, ID, "r1");
     expect(client.getQueryData(["private", ME, "community", "requests"])).toEqual([
@@ -338,7 +342,7 @@ describe("CommunityPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Request to join" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("Failed to join community");
+    expect((await screen.findByRole("alert")).textContent).toBe("Failed to send your request to join");
     expect(screen.getByRole("button", { name: "Request to join" })).toHaveProperty("disabled", false);
     expect(client.getQueryData(["private", ME, "community", "requests"])).toEqual([]);
   });
@@ -375,9 +379,9 @@ describe("CommunityPage", () => {
   it("does not flash the private notice to a member while their read runs", async () => {
     auth.identity = { signer: ME };
     const anonymous = community({ privacy: "private" });
-    let release: (value: Community) => void = () => {};
+    let release: (value: CommunityInfo) => void = () => {};
     net.fetchCommunity.mockImplementation((_id: string, opts: { identity?: unknown } = {}) =>
-      opts.identity ? new Promise<Community>((resolve) => (release = resolve)) : Promise.resolve(anonymous),
+      opts.identity ? new Promise<CommunityInfo>((resolve) => (release = resolve)) : Promise.resolve(anonymous),
     );
     show();
 
@@ -450,6 +454,14 @@ describe("CommunityPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Bob")).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+
+  it("says so when a Remind me toggle fails", async () => {
+    serve(community());
+    reminders.failed = "e1";
+    show();
+
+    expect(await screen.findByText("Couldn't update your reminder. Try again.")).toBeTruthy();
   });
 
   it("switches between members and events with the tabs", async () => {

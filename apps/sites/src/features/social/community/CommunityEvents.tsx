@@ -11,7 +11,7 @@ import { eventsQuery } from "@/data/lib/community/queries";
 import { openSignIn } from "../../components/auth/signin-store";
 import { creatorWallets, eventHref, upcomingCardProps, type Zone } from "../../events/view";
 import { useCreatorProfiles } from "../../events/useCreatorProfiles";
-import { useEventReminders } from "../../events/useEventReminders";
+import { REMIND_FAILED, useEventReminders } from "../../events/useEventReminders";
 import styles from "./CommunityLists.module.css";
 import { useLoadMore } from "./useLoadMore";
 
@@ -52,6 +52,11 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
       <h2 id={titleId} className={styles.title}>
         Upcoming Events
       </h2>
+      {reminders.failed ? (
+        <p className={styles.notice} role="alert">
+          {REMIND_FAILED}
+        </p>
+      ) : null}
       {query.isPending ? (
         <div className={styles.loader}>
           <Spinner variant="light" label="Loading events" />
