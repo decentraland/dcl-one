@@ -220,7 +220,7 @@ it("sends a location that leaves /create to the Explorer once and steps back to 
   expect(host.openLink).toHaveBeenCalledOnce();
 
   const fresh = hubLocationKeeper(host);
-  expect(fresh(at("/play/?position=3,4", "c"), base)).toBe("/create");
+  expect(fresh(at("/play/?position=3,4", "c"), base)).toBe("/create/home");
   expect(host.openLink).toHaveBeenLastCalledWith("https://node.example/play/?position=3,4");
 });
 

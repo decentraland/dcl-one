@@ -5,12 +5,16 @@ import { useRouteLoaderData } from "react-router";
 import { ChromeAuthContext } from "@ui/web/frames/chrome-auth";
 
 import { useAuth } from "@/data/lib/auth/index";
+import { installSitesShopClient } from "@/data/lib/auth/shop-client";
 import { useProfileIdentity } from "@/data/lib/auth/use-profile-name";
 import { NOTIFICATIONS_PREFIX } from "@/data/lib/catalyst/bases";
 import { catalystBase } from "@/data/lib/catalyst/client";
 import { openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
 import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
+
+// The top bar's credits chip reads the balance through the document's Shop client: install it before any render.
+installSitesShopClient();
 
 export default function ChromeAuthBridge({ children }: { children: ReactNode }) {
   const rootData = useRouteLoaderData("root") as
@@ -30,7 +34,7 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
 
   usePrivateQueryLifecycle(effSignedIn ? effAddress : null);
 
-  const { name, avatarUrl } = useProfileIdentity(effAddress || null, effSignedIn);
+  const { name, avatarUrl, avatarColor } = useProfileIdentity(effAddress || null, effSignedIn);
 
   const fetchNotifications = useCallback(async (signal?: AbortSignal): Promise<unknown> => {
     const res = await signedFetch(`${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`, {
@@ -52,11 +56,12 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
       name,
       committee,
       avatarUrl: avatarUrl || undefined,
+      avatarColor: avatarColor || undefined,
       onSignIn: openSignIn,
       ...hubAccountActions(disconnect),
       fetchNotifications,
     }),
-    [effSignedIn, effAddress, name, committee, avatarUrl, fetchNotifications, disconnect],
+    [effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, fetchNotifications, disconnect],
   );
 
   return <ChromeAuthContext.Provider value={value}>{children}</ChromeAuthContext.Provider>;

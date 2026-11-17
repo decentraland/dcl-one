@@ -6,7 +6,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
-import type { AuthIdentity } from './sso'
+import type { AuthIdentity, StoredLogin } from './sso'
 import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
 
 /** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
@@ -19,6 +19,8 @@ export interface GuestBackend {
   /** Keep `sessionId` as this device's guest (replacing any earlier one) and sign it in. */
   login(sessionId: string): Promise<GuestWallet>
   sign(token: string, message: string): Promise<string>
+  /** This device's guest session id, kept from an earlier `login`: it reaches the same wallet again. */
+  keptSessionId?(): string | null | Promise<string | null>
 }
 
 export const webGuestBackend: GuestBackend = {
@@ -26,7 +28,8 @@ export const webGuestBackend: GuestBackend = {
     localStorage.setItem(GUEST_SESSION_KEY, sessionId)
     return guestLogin(sessionId)
   },
-  sign: guestSign
+  sign: guestSign,
+  keptSessionId: () => localStorage.getItem(GUEST_SESSION_KEY)
 }
 
 // thirdweb only serves the guest wallet to the origins it allowlists, Decentraland's own.
@@ -96,15 +99,21 @@ export function signedIdentity(delegation: EphemeralDelegation, signer: string, 
   }
 }
 
-/** Create a new guest wallet and an identity it has signed. Any earlier guest is replaced. */
+/** An identity signed by this device's guest wallet: the kept session's, so the guest that signed out
+ *  comes back the same, as unity-explorer's does; a new wallet when there is none. */
 export async function createGuestIdentity(backend: GuestBackend): Promise<AuthIdentity> {
-  const sessionId = bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+  const sessionId = (await backend.keptSessionId?.()) || bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
   const { token, walletAddress } = await backend.login(sessionId)
 
   const delegation = newEphemeralDelegation()
   const signature = await backend.sign(token, delegation.payload)
   return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
 }
+
+/** PLAY AS GUEST's wallet step: a new wallet, the kept wallet session again, or none (the kept guest's
+ *  sign-in still runs). */
+export type GuestWalletStep = 'new' | 'existing' | null
+export type GuestLogin = StoredLogin & { wallet: GuestWalletStep }
 
 /** Where an email sign-in's thirdweb calls run: the shell page on web, the bridge scene on native. */
 export interface EmailBackend {

@@ -1645,11 +1645,11 @@ default, and social writes are), each a reader of tables other areas own, with o
   indexed before `nft_event.tx_hash` was recorded counted by its chain
   position until a re-index fills the hash). An off-chain good counts for
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
-  or cross-chain relay or a CreditsManager counts for the recipient of the
-  relay's own first `transfer` of the token after the order in the same
-  block (transfer rows keep no transaction hash), and for nobody while a
-  relay holds it (one
-  `nft_event_token_idx` probe per such order). Step
+  or cross-chain relay, a fee-taking order router or a CreditsManager counts
+  for the recipient of the relay's own first `transfer` of the token after
+  the order in the same block (transfer rows keep no transaction hash), and
+  for nobody while a relay holds it (one `nft_event_token_idx` probe per
+  such order). Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
   a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
   `shop.nft_event`, held until `migrate` commits, so the nft index's writes
@@ -1797,7 +1797,8 @@ pass without counting until the event has been queued for an hour, then counts
 too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
 reports the age of the oldest queued event of a wallet not waiting for a
 scene, each pass (one `presence_events_seq_idx` scan that stops at the first
-such row).
+such row); a failed read keeps the last value, counts in
+`badges_presence_queue_age_read_failures` and does not fail the pass.
 
 Every presence transaction first takes one advisory lock: the engine and the
 `badges-presence-sweep` job are a single writer fleet-wide, so the runtime

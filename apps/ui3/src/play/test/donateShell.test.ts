@@ -14,8 +14,9 @@ import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { CatalystError } from '../../data/catalyst/client'
 import { isShellError } from '@explorer-core/lib/shellReply'
 import { DONATE_BUSY, DONATE_EVENT, DONATE_UNAVAILABLE } from '../lib/donateProtocol'
-import { createShellDonate, parsePresets, safeCreator, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
+import { createShellDonate, parsePresets, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
 import type { ShellShopWallet } from '../shell/shop/purchase'
+import { safeCreator } from '../shell/safeDisplay'
 
 const TIPPER = '0x' + 'aa'.repeat(20)
 const CREATOR = '0x' + 'bb'.repeat(20)

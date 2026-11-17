@@ -14,11 +14,12 @@ export function realmAboutUrl(realm: string): string {
 }
 
 export async function checkRealm(realm: string): Promise<RealmCheck> {
-  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS))
   try {
-    const r = await Promise.race([fetch(realmAboutUrl(realm)), timeout])
-    if (r?.ok) return 'ok'
-    return r?.status === 404 ? 'not-found' : 'unreachable'
+    const r = await fetch(realmAboutUrl(realm), { signal: AbortSignal.timeout(TIMEOUT_MS) })
+    // only the status is read: the body is released, not left to hold its connection
+    void r.body?.cancel()
+    if (r.ok) return 'ok'
+    return r.status === 404 ? 'not-found' : 'unreachable'
   } catch {
     return 'unreachable'
   }

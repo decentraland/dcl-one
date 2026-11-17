@@ -1640,7 +1640,17 @@ fn debug_modifiers(
         commands.entity(child).try_remove::<ShadowCasterOverride>();
     };
 
-    // turn Cube1_4 into Cube1/Primitive4
+    fn path_matches(node: &[&str], modifier: &[String]) -> bool {
+        !modifier.is_empty()
+            && node.windows(modifier.len()).any(|window| {
+                window
+                    .iter()
+                    .zip(modifier)
+                    .all(|(node, modifier)| node == modifier)
+            })
+    }
+
+    // Legacy primitive alias: Cube1_4 can refer to Cube1/Primitive4.
     fn path_subsegments(segment: &str) -> Vec<String> {
         let Some(last_underscore) = segment.rfind('_') else {
             return vec![segment.to_owned()];
@@ -1657,6 +1667,19 @@ fn debug_modifiers(
     }
 
     for (modifiers, processed, def) in q {
+        let node_paths = processed
+            .named_nodes
+            .iter()
+            .map(|(path, child)| {
+                (
+                    *child,
+                    path.split('/')
+                        .filter(|segment| !segment.is_empty())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+
         let mut modifiers = modifiers
             .0
             .modifiers
@@ -1665,14 +1688,26 @@ fn debug_modifiers(
                 let path = if modifier.path.is_empty() {
                     None
                 } else {
+                    let literal = modifier
+                        .path
+                        .split('/')
+                        .filter(|segment| !segment.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    // Numbered suffixes can be authored node names, not primitive aliases.
+                    // Prefer a literal hierarchy match before translating importer names.
                     Some(
-                        modifier
-                            .path
-                            .as_str()
-                            .split('/')
-                            .filter(|segment| !segment.is_empty())
-                            .flat_map(path_subsegments)
-                            .collect::<Vec<_>>(),
+                        if node_paths
+                            .iter()
+                            .any(|(_, path)| path_matches(path, &literal))
+                        {
+                            literal
+                        } else {
+                            literal
+                                .iter()
+                                .flat_map(|segment| path_subsegments(segment))
+                                .collect()
+                        },
                     )
                 };
 
@@ -1697,15 +1732,10 @@ fn debug_modifiers(
             .flat_map(|(path, _)| path)
             .collect::<HashSet<_>>();
 
-        for (path, child) in processed.named_nodes.iter() {
+        for (child, node_path_components) in &node_paths {
             let Ok((existing_material, existing_hidden)) = child_nodes.get(*child) else {
                 continue;
             };
-
-            let node_path_components = path
-                .split('/')
-                .filter(|segment| !segment.is_empty())
-                .collect::<Vec<_>>();
 
             reset_shadows(&mut commands, *child);
 
@@ -1715,15 +1745,7 @@ fn debug_modifiers(
                     modifier_path_components
                         .as_ref()
                         .is_none_or(|modifier_path_components| {
-                            node_path_components
-                                .windows(modifier_path_components.len())
-                                .any(|window| {
-                                    window.iter().zip(modifier_path_components).all(
-                                        |(node_segment, modifier_segment)| {
-                                            node_segment == modifier_segment
-                                        },
-                                    )
-                                })
+                            path_matches(node_path_components, modifier_path_components)
                         })
                 })
             {
@@ -2503,6 +2525,9 @@ fn update_gltf_linked_visibility(
 
 #[cfg(test)]
 mod processing_tests;
+
+#[cfg(test)]
+mod modifier_tests;
 
 #[cfg(test)]
 mod tests {

@@ -9,6 +9,7 @@ import monday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/monday.webp";
 import tuesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/tuesday.webp";
 import wednesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/wednesday.webp";
 import type { HomeContent } from "@/data/lib/catalyst/landings/home";
+import { VIBE_CREATORS } from "@/data/lib/catalyst/landings/vibe-creators";
 import { homeEventHref } from "./links";
 
 // Home media and recurring events from decentraland/sites at cfdfa1a51216f9dc90c5b148686a95e7ee9c2862 (src/data/static-content.ts).
@@ -18,14 +19,14 @@ export const VIBE_CLIPS = [
   {
     id: "alan",
     name: "AlanHowick",
-    address: "0xd82d005e8f8d5385db40ba23884a5c967bb1e8af",
+    address: VIBE_CREATORS.alan,
     image: alanImage,
     video: alanVideo,
   },
   {
     id: "roustan",
     name: "Roustan",
-    address: "0x54e93609eb454a1f152edefdf022480794ce2130",
+    address: VIBE_CREATORS.roustan,
     image: roustanImage,
     video: roustanVideo,
   },

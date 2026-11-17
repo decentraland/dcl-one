@@ -2,14 +2,17 @@
    with the HUD. Tabs (ruby underline) · collapsible sections · hover actions. */
 .root {
   position: fixed;
-  left: 56px;
-  bottom: 10px;
+  left: calc(var(--rail-panel-left) * var(--ui-scale));
+  /* the bottom-left corner beside the rail, 6px off the screen's bottom, as unity-explorer's */
+  bottom: calc(6px * var(--ui-scale));
   z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
-  width: min(400px, calc(100vw - 80px));
-  height: min(680px, calc(100vh - 20px));
-  background: var(--panel-translucent);
+  width: min(400px, calc(100vw / var(--ui-scale) - var(--rail-panel-left) - 14px));
+  height: min(638px, calc(100vh / var(--ui-scale) - 12px));
+  /* the alphas of the panel's layers over the world */
+  --friends-rule: rgba(122, 122, 122, 0.527);
+  background: rgba(0, 0, 0, 0.651);
   border-radius: var(--r-md);
   font-family: var(--font-family);
   transform: scale(var(--ui-scale)) translateZ(0);
@@ -24,7 +27,8 @@
   align-items: center;
   height: 46px;
   padding: 0 8px 0 0;
-  background: var(--panel-head);
+  /* over the panel's own tint this comes to a 0.78 band */
+  background: rgba(0, 0, 0, 0.37);
   flex: none;
 }
 .tabs {
@@ -55,8 +59,8 @@
   padding: 0 0 0 28px;
   box-sizing: border-box;
   border: none;
-  border-top: 1px solid var(--divider-strong);
-  border-bottom: 1px solid var(--divider-strong);
+  border-top: 1px solid var(--friends-rule);
+  border-bottom: 1px solid var(--friends-rule);
   background: transparent;
   color: var(--text);
   font-family: inherit;
@@ -205,14 +209,15 @@
 .empty {
   display: flex;
   align-items: center;
-  height: 42px;
+  height: 45px;
   margin: 3px 9px 0;
   padding-left: 19px;
   font-size: var(--type-14);
   color: var(--text-dim);
 }
 
-/* Tab placeholders (guest / no blocked). */
+/* Tab placeholders (guest / no friends / no blocked): a 72px badge, the title, the text; the block
+   sits above the body's middle. */
 .placeholder {
   display: flex;
   flex-direction: column;
@@ -220,28 +225,40 @@
   justify-content: center;
   height: 100%;
   text-align: center;
-  padding: 0 25px;
+  padding: 0 25px 36px;
   box-sizing: border-box;
 }
+.phFriends {
+  padding-bottom: 62px;
+}
+/* The glyph draws its 72px frame inside an 84px box. */
 .phIcon {
-  margin-bottom: 22px;
+  margin: -6px 0 4px;
+  color: var(--text);
+}
+.phBadge {
+  display: flex;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 10px;
   color: var(--text);
 }
 .phTitle {
   font-size: var(--type-18);
   font-weight: var(--fw-semibold);
+  line-height: 22px;
   color: var(--text);
 }
 .phText {
   max-width: 350px;
-  margin-top: 9px;
+  margin-top: 12px;
   font-size: var(--type-16);
   line-height: 19px;
   color: var(--text-dim);
 }
 .phHint {
-  max-width: 282px;
-  margin-top: 16px;
+  max-width: 322px;
+  margin-top: 3px;
   font-size: var(--type-14);
   line-height: 17px;
   color: var(--text-dim);

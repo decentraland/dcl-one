@@ -1,6 +1,7 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
 import { useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { EmptyState, Spinner } from '../../design'
 import type { GalleryPhotoMeta } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
@@ -31,11 +32,26 @@ export interface PassportPhotoActions {
   remove: (id: string) => Promise<ReelWrite>
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   loadPhoto: (id: string) => void
-  onTeleport: (x: number, y: number) => void
+  /** False when the travel is refused: the photo stays open. */
+  onTeleport: (x: number, y: number) => boolean
   onViewPerson?: (user: ChatUser) => void
 }
 
-export function PassportPhotos({ address, isSelf, actions }: { address: string; isSelf: boolean; actions?: PassportPhotoActions }): React.JSX.Element {
+export function PassportPhotos({
+  address,
+  isSelf,
+  actions,
+  empty,
+  viewerHost
+}: {
+  address: string
+  isSelf: boolean
+  actions?: PassportPhotoActions
+  /** Shown for a reel with no public photos. */
+  empty: React.ReactNode
+  /** The passport panel: the photo viewer covers it, not only the tab's own area. */
+  viewerHost: HTMLElement | null
+}): React.JSX.Element {
   const key = address.toLowerCase()
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
   const list = useReelList(key, fetchPage)
@@ -55,11 +71,7 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
       ) : list.error && list.photos.length === 0 ? (
         <EmptyState variant="inline" tone="error" title="Photos couldn't be loaded" actions={[{ label: 'RETRY', onClick: list.retry }]} />
       ) : list.photos.length === 0 ? (
-        <EmptyState
-          variant="inline"
-          title="No photos here yet!"
-          subtitle="✨ Set your photos as public to make them visible in your Profile & Communities ✨"
-        />
+        empty
       ) : (
         <ReelGrid
           photos={list.photos}
@@ -71,7 +83,7 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
           aria-label="Photos"
         />
       )}
-      {selected != null && index != null && (
+      {selected != null && index != null && viewerHost != null && createPortal(
         <PhotoDetail
           photos={list.photos}
           index={index}
@@ -84,8 +96,7 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
           onLoadMeta={actions?.loadPhoto ?? noop}
           onClose={() => setIndex(null)}
           onTeleport={(x, y) => {
-            setIndex(null)
-            actions?.onTeleport(x, y)
+            if (actions?.onTeleport(x, y)) setIndex(null)
           }}
           onDelete={
             menu != null
@@ -96,7 +107,8 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
               : undefined
           }
           onViewPerson={actions?.onViewPerson}
-        />
+        />,
+        viewerHost
       )}
     </section>
   )

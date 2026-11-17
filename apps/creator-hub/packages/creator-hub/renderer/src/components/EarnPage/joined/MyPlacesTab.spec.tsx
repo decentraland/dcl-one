@@ -358,7 +358,7 @@ describe('MyPlacesTab', () => {
       expect(within(entry).getByText('5,7')).toBeTruthy();
       expect(await within(entry).findByText('1,234')).toBeTruthy();
       expect(within(entry).getByText('10.2%')).toBeTruthy();
-      expect(within(entry).getByText('128 min')).toBeTruthy();
+      expect(within(entry).getByText('5,120 minutes')).toBeTruthy();
       expect(within(entry).getByText('New Players Attributable')).toBeTruthy();
       expect(within(entry).queryByText('Ranking Position')).toBeNull();
     });
@@ -389,10 +389,7 @@ describe('MyPlacesTab', () => {
       try {
         act(() => info.focus());
 
-        await expectTooltip(
-          info,
-          'Average time each player spent in your place over the last 30 days.',
-        );
+        await expectTooltip(info, 'Total time players spent in your place over the last 30 days.');
       } finally {
         keyboardFocus.mockRestore();
       }
@@ -439,6 +436,38 @@ describe('MyPlacesTab', () => {
           value => value.previousElementSibling?.getAttribute('aria-hidden') === 'true',
         ),
       ).toBe(true);
+    });
+
+    it.each([
+      [95.4, 3, '5 minutes'],
+      [50, 1, '1 minute'],
+      [20, 1, '0 minutes'],
+    ])(
+      'should show Total Playtime for an average of %ss over %s visits as %j',
+      async (average, visits, shown) => {
+        vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
+          metricsBatch(PLACES, { avg_playtime_seconds_30d: average, unique_visits_30d: visits }),
+        );
+        renderTab();
+
+        const entry = await screen.findByRole('article', { name: 'Example Place a' });
+        expect(await within(entry).findByText(shown)).toBeTruthy();
+      },
+    );
+
+    it('should show Total Playtime as "No data" when the visit count is missing', async () => {
+      vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
+        metricsBatch(PLACES, {
+          new_decentraland_players_30d: 3,
+          d3_retention_rate_30d: 0.102,
+          avg_playtime_seconds_30d: 7680,
+        }),
+      );
+      renderTab();
+
+      const entry = await screen.findByRole('article', { name: 'Example Place a' });
+      await within(entry).findByText('3');
+      expect(within(entry).getAllByText('No data')).toHaveLength(1);
     });
 
     it('should hold every metric in a busy placeholder named "Loading" while the metrics load', async () => {

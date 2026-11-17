@@ -53,3 +53,11 @@ it("reloads root's data too (the wallet and its committee seat) when the Explore
   expect(rootLoader).toHaveBeenCalledTimes(2);
   router.dispose();
 });
+
+it("reloads root's data when a visitor enters the Creator Hub, which alone reads the committee seat", () => {
+  const args = (from: string, to: string) =>
+    ({ currentUrl: new URL(`https://sites.test${from}`), nextUrl: new URL(`https://sites.test${to}`), defaultShouldRevalidate: false }) as never;
+  expect(shouldRevalidate(args("/profile/me", "/create/scenes"))).toBe(true);
+  expect(shouldRevalidate(args("/create/scenes", "/create/collections"))).toBe(false);
+  expect(shouldRevalidate(args("/create/scenes", "/blog"))).toBe(false);
+});

@@ -219,6 +219,29 @@ class PruneTest(unittest.TestCase):
         self.assert_pruned()
         self.assertRegex(stdout.getvalue(), r'^\d+ entries pruned; \d+ MB left in \S+\n$')
 
+    def test_the_size_does_not_follow_a_link_and_skips_what_it_cannot_read(self):
+        # A build script of a git dependency leaves a link to the crate's checkout in its output.
+        outside = self.target.parent / 'checkout'
+        (outside / 'src').mkdir(parents=True)
+        (outside / 'src/lib.rs').write_bytes(b'x' * 4096)
+        out = self.target / 'release/build/webrtc-sys-5a/out/cxxbridge/crate'
+        out.mkdir(parents=True)
+        os.symlink(outside, out / 'webrtc-sys', target_is_directory=True)
+        os.symlink(self.target / 'missing', self.target / 'dangling')
+        measured = cache.size(self.target)
+        self.assertLess(measured, 4096)
+        scandir = os.scandir
+
+        def refuse(path):  # On Windows a listing at the link failed with WinError 5.
+            if Path(path) == out:
+                raise PermissionError(13, 'Access is denied')
+            return scandir(path)
+        with patch.object(cache.os, 'scandir', side_effect=refuse):
+            self.assertEqual(cache.size(self.target), measured)
+        with patch.object(cache.os, 'lstat', side_effect=PermissionError(13, 'Access is denied')):
+            self.assertEqual(cache.size(self.target), 0)
+        self.assertEqual(cache.size(self.target / 'absent'), 0)
+
 
 class WorkflowTest(unittest.TestCase):
     """The native jobs key after their tool steps, build after the restore and save from main's first attempts;
