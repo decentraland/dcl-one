@@ -28,28 +28,17 @@
   flex: 1 1 100%;
 }
 
+/* The places grid and its messages, shared rather than copied. */
 .grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--dcl-space-16);
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  composes: grid from '../places/PlaceGrid.module.css';
 }
 
 .message {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--dcl-space-16);
-  padding: var(--dcl-space-32) var(--dcl-space-16);
+  composes: message from '../places/PlaceGrid.module.css';
 }
 
 .messageText {
-  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
-  margin: 0;
-  color: var(--dcl-text-secondary);
-  text-align: center;
+  composes: messageText from '../places/PlaceGrid.module.css';
 }
 
 @media (min-width: 768px) {
@@ -57,24 +46,8 @@
     padding: 0 var(--dcl-space-32);
   }
 
+  /* The search's width beside the heading; a width has no token. */
   .search {
     flex: 0 1 360px;
-  }
-
-  .grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1024px) {
-  .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-/* The places grid's 4-up step (source's 1200px breakpoint); no foundations token. */
-@media (min-width: 1200px) {
-  .grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }

@@ -116,7 +116,8 @@ describe("when the communities load", () => {
   it("should say so when there are no communities", async () => {
     serve([]);
     renderPage();
-    expect(await screen.findByText("No communities found.")).toBeTruthy();
+    // Shown, and announced through the page status.
+    expect(await screen.findAllByText("No communities found.")).toHaveLength(2);
     expect(screen.queryByRole("list", { name: "Communities" })).toBeNull();
   });
 });
@@ -169,6 +170,15 @@ describe("when the visitor searches", () => {
   });
 });
 
+describe("when the URL's search changes from history", () => {
+  it("should not send a search of only spaces", async () => {
+    serve([community("a")]);
+    renderPage("/places/communities?search=%20%20%20%20");
+    await screen.findByRole("link", { name: "Community a" });
+    expect(vi.mocked(fetchCommunitiesPage).mock.calls.every(([params]) => params.search === "")).toBe(true);
+  });
+});
+
 describe("when there are more communities than a page", () => {
   it("should load the next page from the offset after the first and append it", async () => {
     serve(fullPage("p"), 30);
@@ -193,6 +203,22 @@ describe("when there are more communities than a page", () => {
     serve([community("next", { name: "Next one" })], 30);
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("link", { name: "Next one" })).toBeTruthy();
+  });
+
+  it("should say nothing matched yet and still offer the next page when a whole first page is unusable", async () => {
+    vi.mocked(fetchCommunitiesPage).mockResolvedValue({ rows: [], received: 24, total: 30 });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Load more communities" })).toBeTruthy();
+    expect(screen.getAllByText("No communities found.")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Load more communities" })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Communities" })).toBeNull();
+  });
+
+  it("should announce how many communities are listed", async () => {
+    serve(fullPage("p"), 30);
+    renderPage();
+    await screen.findByRole("link", { name: "Community p0" });
+    expect(screen.getAllByRole("status").map((node) => node.textContent)).toContain("24+ communities");
   });
 
   it("should offer no next page after the last one", async () => {

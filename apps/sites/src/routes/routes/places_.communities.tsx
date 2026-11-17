@@ -36,6 +36,8 @@ const COPY = {
 const CARD_LABELS = { public: "Public", private: "Private", view: "View" };
 
 const COUNT = new Intl.NumberFormat("en-US");
+const resultsLabel = (count: number, more: boolean) =>
+  count === 0 ? COPY.empty : `${COUNT.format(count)}${more ? "+" : ""} ${count === 1 && !more ? "community" : "communities"}`;
 const membersLabel = (count: number | null) =>
   count === null ? undefined : `${COUNT.format(count)} ${count === 1 ? "member" : "members"}`;
 
@@ -132,7 +134,8 @@ function CommunitiesExplorer({ unavailable }: { unavailable: boolean }) {
     return () => clearTimeout(timer);
   }, [searchInput, setParams]);
 
-  const status = !held && list.isPending ? COPY.loading : "";
+  // Announces the loading state, then the outcome of the read or search.
+  const status = held ? "" : list.isPending ? COPY.loading : list.isSuccess ? resultsLabel(rows.length, list.hasNextPage) : "";
 
   return (
     <SitesChrome active="explore">
@@ -170,6 +173,8 @@ function CommunitiesExplorer({ unavailable }: { unavailable: boolean }) {
       );
     }
     if (!rows.length && !list.hasNextPage) return <CommunitiesMessage message={COPY.empty} />;
+    // A first page whose rows were all unusable: nothing to list yet, but more to read.
+    if (!rows.length) return <CommunitiesMessage message={COPY.empty} action={loadMore()} />;
     return (
       <>
         <CommunityGrid label={COPY.grid}>
@@ -193,12 +198,13 @@ function CommunitiesExplorer({ unavailable }: { unavailable: boolean }) {
         {list.isFetchNextPageError ? (
           <CommunitiesMessage tone="alert" message={COPY.error} action={{ label: COPY.retry, onClick: () => void list.fetchNextPage() }} />
         ) : list.hasNextPage ? (
-          <CommunitiesMessage
-            message=""
-            action={{ label: COPY.loadMore, loading: list.isFetchingNextPage, onClick: () => void list.fetchNextPage() }}
-          />
+          <CommunitiesMessage action={loadMore()} />
         ) : null}
       </>
     );
+  }
+
+  function loadMore() {
+    return { label: COPY.loadMore, loading: list.isFetchingNextPage, onClick: () => void list.fetchNextPage() };
   }
 }

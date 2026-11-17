@@ -58,7 +58,7 @@ type CommunityGridProps = {
   children: ReactNode
 }
 
-/** The grid: 1 column on phones, 2 on tablets, 3 on desktops and 4 on wide screens, as the places grid. */
+/** The places grid (1 to 4 columns) holding community cards. */
 function CommunityGrid({ label, busy = false, children }: CommunityGridProps) {
   return (
     <ul className={styles.grid} aria-label={label} aria-busy={busy || undefined}>
@@ -68,7 +68,8 @@ function CommunityGrid({ label, busy = false, children }: CommunityGridProps) {
 }
 
 type CommunitiesMessageProps = {
-  message: string
+  /** Without it only the action shows, e.g. Load more under the grid. */
+  message?: string
   /** `alert` for a failure, so it is announced; plain text otherwise. */
   tone?: 'info' | 'alert'
   action?: { label: string; onClick: () => void; loading?: boolean }
