@@ -528,6 +528,39 @@ mod test {
     }
 
     #[test]
+    fn identical_grow_only_payload_is_accepted_after_taking_updates() {
+        let mut store = CrdtStore::default();
+        let component = SceneComponentId(1);
+
+        for _ in 0..2 {
+            assert_eq!(
+                store.update_if_different(
+                    component,
+                    CrdtType::GO_ANY,
+                    entity(1),
+                    Some(&mut DclReader::new(b"event")),
+                ),
+                Some(SceneCrdtTimestamp(0)),
+            );
+            assert_eq!(
+                store.update_if_different(
+                    component,
+                    CrdtType::GO_ANY,
+                    entity(1),
+                    Some(&mut DclReader::new(b"event")),
+                ),
+                None,
+            );
+
+            let updates = store.take_updates();
+            let entries = &updates.go[&component].0[&entity(1)];
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].data.as_slice(), b"event");
+            assert_eq!(store.retained_data_bytes(), 0);
+        }
+    }
+
+    #[test]
     fn repeated_append_frames_are_scoped_to_their_component_and_entity() {
         let mut store = CrdtStore::default();
         let mut context = CrdtContext::new(

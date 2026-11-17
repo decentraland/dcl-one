@@ -68,6 +68,20 @@ mod tests {
     }
 
     #[test]
+    fn repeated_value_after_distinct_value_keeps_first_occurrence_order() {
+        let mut state = CrdtGOState::default();
+        assert!(state.append(ENTITY, &mut DclReader::new(b"A")));
+        assert!(state.append(ENTITY, &mut DclReader::new(b"B")));
+        assert!(!state.append(ENTITY, &mut DclReader::new(b"A")));
+
+        let values: Vec<_> = state.0[&ENTITY]
+            .iter()
+            .map(|entry| entry.data.as_slice())
+            .collect();
+        assert_eq!(values, [b"A".as_slice(), b"B".as_slice()]);
+    }
+
+    #[test]
     fn duplicates_at_capacity_do_not_evict_or_refresh_values() {
         let mut state = CrdtGOState::default();
         for value in 0..SET_SIZE as u32 {
