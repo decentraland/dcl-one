@@ -29,6 +29,9 @@ describe("Sites paths", () => {
       "/landings/report-abuse",
       "/landings/cast-not-found",
       "/landings/creator-hub-download",
+      "/landings/event-subscriptions",
+      "/landings/rsvp-event",
+      "/landings/submit-hangout",
     ])("should serve no route for %s, so it answers 404", (path) => {
       expect(served(path)).toBeNull();
     });
@@ -43,6 +46,10 @@ describe("Sites paths", () => {
       ["/invite/0xabc", "routes/invite.($referrer).tsx"],
       ["/report", "routes/report._index.tsx"],
       ["/cast", "routes/cast._index.tsx"],
+      ["/events/subscriptions", "routes/events_.subscriptions.tsx"],
+      ["/events/ev-1/rsvp", "routes/events_.$id.rsvp.tsx"],
+      ["/events/new-event", "routes/events_.new-event.tsx"],
+      ["/events/edit-event/ev-1", "routes/events_.edit-event.$id.tsx"],
     ])("should serve %s from %s", (path, file) => {
       expect(served(path)).toBe(file);
     });

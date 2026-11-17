@@ -20,7 +20,7 @@ import RsvpWizard, {
   type RsvpEventView,
 } from "@/features/social/rsvp-event/RsvpWizard";
 
-import type { Route } from "./+types/landings.rsvp-event";
+import type { Route } from "./+types/events_.$id.rsvp";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "landings/rsvp-event";
@@ -29,10 +29,10 @@ const FALLBACK: PageDefaults = {
   variant: "confirm",
 };
 
-export async function loader({ request, context }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
-  const requestedId = url.searchParams.get("event")?.trim() || null;
+  const requestedId = params.id.trim() || null;
 
   const { sid, assignment, wrap } = await pageLoader(
     request,

@@ -19,7 +19,7 @@ import SubscriptionWizard, {
   type SubscriptionGroup,
 } from "@/features/social/event-subscriptions/SubscriptionWizard";
 
-import type { Route } from "./+types/landings.event-subscriptions";
+import type { Route } from "./+types/events_.subscriptions";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "landings/event-subscriptions";

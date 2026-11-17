@@ -2,7 +2,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import SubmitHangoutRoute from "./landings.submit-hangout";
+import SubmitHangoutRoute from "./events_.new-event";
 
 const auth = vi.hoisted(() => ({ identity: null as AuthIdentity | null, address: null as string | null, isConnected: false }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
@@ -16,8 +16,8 @@ describe("when the actual hangout route renders the details step", () => {
     auth.address = auth.identity.signer;
     auth.isConnected = true;
     renderRoute = () => {
-      const router = createMemoryRouter([{ id: "hangout", path: "/landings/submit-hangout", Component: SubmitHangoutRoute as never }], {
-        initialEntries: ["/landings/submit-hangout?step=details"],
+      const router = createMemoryRouter([{ id: "hangout", path: "/events/new-event", Component: SubmitHangoutRoute as never }], {
+        initialEntries: ["/events/new-event?step=details"],
         hydrationData: { loaderData: { hangout: { sid: "test-session", mode: "create", eventId: null, communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } } } },
       });
       return renderToString(<RouterProvider router={router} />);

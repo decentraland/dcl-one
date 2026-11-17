@@ -8,7 +8,7 @@ import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
 import * as authoring from "@/data/lib/catalyst/landings/submit-hangout";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
-import SubmitHangoutRoute from "./landings.submit-hangout";
+import SubmitHangoutRoute from "./events_.new-event";
 
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
 
@@ -50,9 +50,9 @@ describe("when editing a hangout through its route", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const loaderData = { sid: "test", mode: "edit", eventId: "existing-event", communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } };
     router = createMemoryRouter([
-      { id: "hangout", path: "/landings/submit-hangout", Component: SubmitHangoutRoute as never, loader: () => loaderData },
+      { id: "hangout", path: "/events/edit-event/:id", Component: SubmitHangoutRoute as never, loader: () => loaderData },
       { path: "/events", element: <h1>What's On</h1> },
-    ], { initialEntries: ["/landings/submit-hangout?mode=edit&id=existing-event&step=details"], hydrationData: { loaderData: { hangout: loaderData } } });
+    ], { initialEntries: ["/events/edit-event/existing-event?step=details"], hydrationData: { loaderData: { hangout: loaderData } } });
     render(<RouterProvider router={router} />);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); });
@@ -132,7 +132,7 @@ describe("when editing a hangout through its route", () => {
       vi.mocked(authoring.deleteHangout).mockRejectedValueOnce(new Error("Delete denied"));
       await user.click(screen.getByRole("button", { name: "Delete hangout" }));
       expect(screen.getByRole("alert").textContent).toBe("Delete denied");
-      expect(router.state.location.pathname).toBe("/landings/submit-hangout");
+      expect(router.state.location.pathname).toBe("/events/edit-event/existing-event");
     });
   });
 });
