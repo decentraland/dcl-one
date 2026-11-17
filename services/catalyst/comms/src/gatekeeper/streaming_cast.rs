@@ -938,6 +938,35 @@ pub(crate) async fn evict_revoked_publishers(
     Ok(())
 }
 
+// ── scene admins on join ──
+
+/// Upstream's join hook (`comms-scene-handler.ts`, `cast.addPresenter` for
+/// `isSceneOwnerOrAdmin`): a scene owner or admin who joins a scene room is
+/// added to its presenters. Here only a room with an active Cast credential
+/// is looked at (one indexed read; the admin decision runs for those joins
+/// alone), and the caller runs it off the response: like upstream, a failure
+/// never refuses the join.
+pub async fn add_admin_presenter_on_join(
+    state: &CommsState,
+    room: &str,
+    identity: &crate::Address,
+) -> Result<bool, ApiError> {
+    if !state.livekit.configured {
+        return Ok(false);
+    }
+    let Some(access) = access_by_room(&state.pool, room).await? else {
+        return Ok(false);
+    };
+    let place = PlaceLookup::new(state, &access.place_id);
+    match scene::scene_owner_or_admin_decision(state, &place, identity).await {
+        PermissionDecision::Allowed => {
+            add_presenter(state, room, identity.as_str()).await?;
+            Ok(true)
+        }
+        PermissionDecision::Refused(_) => Ok(false),
+    }
+}
+
 // ── /cast/presenters ──
 
 /// Upstream's `isValidPresenterIdentity`: a wallet, or a streamer identity

@@ -1736,3 +1736,109 @@ async fn livekit_failures_and_absence_on_the_cast_routes() {
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 }
+
+#[tokio::test]
+async fn a_scene_admin_joining_a_casting_room_becomes_a_presenter() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let admin = Address::parse(&address_of(KEY)).unwrap();
+    let add = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join;
+
+    // No Cast credential for the room: nothing is read from LiveKit or written.
+    assert!(!add(&h.state, &scene.room, &admin).await.unwrap());
+    assert_eq!(h.livekit.metadata(&scene.room), Value::Null);
+
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    h.livekit.set_metadata(
+        &scene.room,
+        json!({"presenters": ["stream:p:x"], "sceneAdmins": []}),
+    );
+    assert!(add(&h.state, &scene.room, &admin).await.unwrap());
+    // Twice is once, and the rest of the metadata survives.
+    assert!(add(&h.state, &scene.room, &admin).await.unwrap());
+    assert_eq!(
+        h.livekit.metadata(&scene.room),
+        json!({"presenters": ["stream:p:x", admin.as_str()], "sceneAdmins": []})
+    );
+}
+
+#[tokio::test]
+async fn a_visitor_joining_a_casting_room_is_not_a_presenter() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(
+        pool.clone(),
+        Some(room),
+        PermissionDecision::refused("not an admin"),
+        None,
+    )
+    .await;
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    h.livekit.set_metadata(&scene.room, json!({}));
+    let visitor = Address::parse(&address_of(OUTSIDER_KEY)).unwrap();
+    let add = crate::gatekeeper::streaming::cast::add_admin_presenter_on_join;
+    assert!(!add(&h.state, &scene.room, &visitor).await.unwrap());
+    assert_eq!(h.livekit.metadata(&scene.room), json!({}));
+}
+
+/// Through `/get-scene-adapter`: the join answers at once and the admin
+/// shows up in the room's presenters right after.
+#[tokio::test]
+async fn the_scene_adapter_adds_a_joining_admin_to_the_presenters() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let metadata = json!({
+        "signer": "dcl:explorer",
+        "sceneId": scene.id,
+        "parcel": scene.parcel,
+        "realm": { "serverName": "main", "hostname": "peer.example", "protocol": "v3" },
+    });
+    let (status, body) = h
+        .signed(
+            KEY,
+            "POST",
+            "/get-scene-adapter",
+            &metadata,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["adapter"].as_str().unwrap().starts_with("livekit:"));
+    let admin = address_of(KEY);
+    let mut presenters = Value::Null;
+    for _ in 0..100 {
+        presenters = h.livekit.metadata(&scene.room)["presenters"].clone();
+        if presenters != Value::Null {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(presenters, json!([admin]));
+}
