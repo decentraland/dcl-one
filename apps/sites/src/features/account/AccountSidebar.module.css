@@ -162,16 +162,18 @@
   }
 }
 
-/* The rail sticks below the site's sticky top bar and keeps log out in view at rest: one screen less
- * the top bar and the frame's top and bottom padding. */
+/* The rail sticks just below the overlaid top bar, as the source's does (4px under it), and keeps log
+ * out in view at rest: one screen less the frame's top padding (bar, 48px and 12px) and its 64px foot. */
 @media (min-width: 1024px) {
   .root {
     position: sticky;
-    top: calc(var(--site-header-h, 80px) + var(--dcl-space-24));
+    top: calc(var(--site-header-h, 92px) + var(--dcl-space-4));
     flex: none;
     align-self: flex-start;
     width: 264px;
-    min-height: calc(100dvh - var(--site-header-h, 80px) - var(--dcl-space-48) - var(--dcl-space-64));
+    min-height: calc(
+      100dvh - var(--site-header-h, 92px) - var(--dcl-space-48) - var(--dcl-space-12) - var(--dcl-space-64)
+    );
   }
 }
 

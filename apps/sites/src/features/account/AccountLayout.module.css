@@ -10,9 +10,10 @@
   flex-direction: column;
   box-sizing: border-box;
   width: 100%;
-  /* One screen below the site's top bar, so the phone menu ends at the bottom edge. */
-  min-height: calc(100dvh - var(--site-header-h, 64px));
-  padding-top: var(--dcl-space-24);
+  /* The top bar overlays the page (as on the source), so the frame is one screen tall and its top
+   * padding clears the bar: 24px below it on a section screen, flush for the phone menu. */
+  min-height: 100dvh;
+  padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-24));
   padding-bottom: var(--dcl-space-64);
   background: radial-gradient(
     123.58% 82% at 9.01% 25.79%,
@@ -24,7 +25,7 @@
 }
 
 .root[data-view='menu'] {
-  padding-top: 0;
+  padding-top: var(--site-header-h, 64px);
   padding-bottom: 0;
 }
 
@@ -126,9 +127,10 @@
 }
 
 @media (min-width: 1024px) {
+  /* The source's content starts 59px below its 92px bar; the 60px of spacing tokens stand in for it. */
   .root,
   .root[data-view='menu'] {
-    padding-top: var(--dcl-space-48);
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-48) + var(--dcl-space-12));
     padding-bottom: var(--dcl-space-64);
   }
 
