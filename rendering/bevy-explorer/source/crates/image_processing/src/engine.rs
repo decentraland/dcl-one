@@ -289,14 +289,6 @@ fn check_assets(
                         return None;
                     };
 
-                    // a cached copy of this file failed to load and was dropped: processing it
-                    // again could write the same bytes back
-                    if ipfs.cache_entry_dropped(&hash) {
-                        skip_shouldnt_cache += 1;
-                        drop_ktx2_result(ty, &base_path);
-                        return None;
-                    }
-
                     // loopback content is never cached (see `IpfsIo::read`), so there is
                     // nothing to process
                     let url = ipfs_path.to_url(&ctx);

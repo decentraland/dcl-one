@@ -1505,19 +1505,20 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
-    /// cache entry goes through `web_cache`).
+    /// Drops the cached bytes under `key`, if there are any, and says whether there were (native
+    /// only: on web the worker's cache entry goes through `web_cache`).
     #[cfg(not(target_arch = "wasm32"))]
-    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
             .cache_path()
             .and_then(|root| root.join_relative(key.name()))
         else {
-            return Ok(());
+            return Ok(false);
         };
         match async_fs::remove_file(&cached).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
