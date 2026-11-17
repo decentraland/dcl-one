@@ -23,7 +23,6 @@ scene_material = { workspace = true }
 platform = { workspace = true }
 system_bridge = { workspace = true }
 social = { workspace = true }
-ban_block = { workspace = true }
 
 bevy = { workspace = true }
 bevy_kira_audio = { workspace = true }

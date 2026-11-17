@@ -19,7 +19,7 @@ use bevy::{
     },
     platform::collections::HashSet,
 };
-use comms::{global_crdt::ForeignPlayer, HiddenByModeration};
+use comms::{global_crdt::ForeignPlayer, BlockedOrBanned};
 use serde::Serialize;
 use social::SocialClient;
 use wallet::Wallet;
@@ -39,26 +39,26 @@ impl Plugin for BanBlockPlugin {
 
 /// True when the local user must not see `addr`: either side blocked the other, or the
 /// connected scene room bans them. Unknown blocks and a room that is down hide no one.
-pub fn hides_player(blocks: &Blocks, room: &SceneRoomView, addr: Address) -> bool {
+fn hides_player(blocks: &Blocks, room: &SceneRoomView, addr: Address) -> bool {
     blocks.is_blocked_either_way(addr) || room.is_addr_banned_in_scene(addr)
 }
 
-/// Keeps [`HiddenByModeration`] on exactly the remote players [`hides_player`] answers for,
+/// Keeps [`BlockedOrBanned`] on exactly the remote players [`hides_player`] answers for,
 /// so they disappear on a block or ban and come back when it is lifted.
 fn mark_hidden_players(
     mut commands: Commands,
     ban_block: BanBlock,
-    players: Query<(Entity, &ForeignPlayer, Has<HiddenByModeration>)>,
+    players: Query<(Entity, &ForeignPlayer, Has<BlockedOrBanned>)>,
 ) {
     let blocks = ban_block.blocks();
     let room = ban_block.scene_room();
     for (entity, player, hidden) in &players {
         match (hides_player(&blocks, &room, player.address), hidden) {
             (true, false) => {
-                commands.entity(entity).try_insert(HiddenByModeration);
+                commands.entity(entity).try_insert(BlockedOrBanned);
             }
             (false, true) => {
-                commands.entity(entity).try_remove::<HiddenByModeration>();
+                commands.entity(entity).try_remove::<BlockedOrBanned>();
             }
             _ => (),
         }

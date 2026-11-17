@@ -30,7 +30,7 @@ use comms::{
     nearby_mutes::NearbyMutes,
     profile::{CurrentUserProfile, UserProfile},
     speaking::Speaking,
-    HiddenByModeration,
+    BlockedOrBanned,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use scene_runner::update_world::{
@@ -575,7 +575,7 @@ fn show_tags(
             Has<PrimaryUser>,
             Has<HiddenNametag>,
             Has<BeyondMaxAvatars>,
-            Has<HiddenByModeration>,
+            Has<BlockedOrBanned>,
             Option<&PlayerModifiers>,
         ),
         With<AttachPoints>,
