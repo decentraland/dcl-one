@@ -147,7 +147,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unaffected.
   - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
     hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
-  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
+  - A scene room that refuses the player as banned (a platform, world or scene ban, as
+    `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
+    every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
+    realm or wallet, lifts it without reopening the mic. A recheck with no answer (a network
+    error, a 503) keeps the refusal. The interval bounds both the gatekeeper requests from a
+    player who stays banned and the wait before an unban is noticed. Platform bans recheck here
+    too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
+    again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
+    room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **Blocked and scene-banned players are not heard nearby.** A player blocked in either
+  direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
+  voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
+  source. Calls and community streams still carry them. Scene bans apply without the
+  `alfa-banned-users-from-scene` flag unity-explorer reads, as in Nearby chat.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -551,6 +564,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
+  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
@@ -580,6 +600,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **Only a url's cached file is dropped when its asset fails to load.** A load its loader rejects
+  drops the entry it read, once per entry per session, when that entry is filed under a url, and
+  every asset that failed on it is then reloaded once. So a url whose bytes never decode is
+  downloaded again in every session. An entry under a content hash is never dropped this way: it
+  was checked against the hash before it was written, so a bad one is the asset processor's
+  output or disk damage, which belong to the processor and the disk, not to a retry.
 - **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
   `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
   client), so the worker passes the request to the network untouched; a lookup there could only

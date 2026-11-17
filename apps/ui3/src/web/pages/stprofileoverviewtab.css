@@ -67,7 +67,6 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  outline: none;
 }
 .stprofileoverviewtab__badgeinit {
   font-size: 30px;

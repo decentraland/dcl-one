@@ -1,5 +1,5 @@
 // Displaces ground and grass meshes by the empty-parcel terrain height. The height function
-// matches `common::terrain::height`, reading eased per-parcel step values from `terrain_steps`.
+// matches `common::terrain::height`, reading per-parcel step values from `terrain_steps`.
 
 #import bevy_pbr::{
     mesh_functions,

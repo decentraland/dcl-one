@@ -475,12 +475,13 @@ mod io {
         store(&cache, &own, data).await
     }
 
-    /// Drops the entry under the url's own key, if there is one.
-    pub async fn forget(url: &str) -> Result<(), JsValue> {
+    /// Drops the entry under the url's own key, if there is one, and says whether there was.
+    pub async fn forget(url: &str) -> Result<bool, JsValue> {
         let [_, own] = keys(url).ok_or("not a url")?;
         let cache = open().await?;
-        JsFuture::from(cache.delete_with_str(&own)).await?;
-        Ok(())
+        // `Cache.delete` resolves to whether it found an entry
+        let deleted = JsFuture::from(cache.delete_with_str(&own)).await?;
+        Ok(deleted.as_bool().unwrap_or(false))
     }
 
     /// Stores `data`, the bytes `url` answered with, under the shared key for `hash`, if
