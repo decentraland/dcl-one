@@ -1997,15 +1997,25 @@ identities (100 per network). No production rate is measured.
   deletes it and answers 410, and the sweep drops the rest 5 minutes later.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
+  The key is stored in clear, as the upstream auth server keeps it in Redis:
+  it is never logged, but the row reaches the WAL, the streaming replicas and
+  the backups, which keep it after the row is deleted for as long as they
+  are retained. A copy of the key signs for the identity's account until the
+  expiration in its auth chain.
   The pickup consumes it with `DELETE ... RETURNING` in the transaction that
   writes its tombstone, so exactly one pickup gets it; a concurrent one waits
   on the row, finds it gone and reads the tombstone.
 - `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
   `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
   operator's revoke), for the 404 bodies, kept 14 days and at most 50,000
-  rows (a create past that stores none).
+  rows: a create past that stores none, and a pickup sets the reason of the
+  row its create stored or, when there is none, inserts one only under the
+  same cap. Pickups take no lock, so concurrent ones can pass the count
+  together; the overshoot is at most the pickups in flight.
 
-Caps: a create takes `pg_advisory_xact_lock` on one key per table
+Caps: a request create first counts its network's live requests without any
+lock and refuses one over the per-network cap (429) there, so a flood from one
+network does not queue on the lock. Then a create takes `pg_advisory_xact_lock` on one key per table
 (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica

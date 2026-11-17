@@ -797,12 +797,11 @@ pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Resp
     (status, axum::Json(json!({ "error": message.into() }))).into_response()
 }
 
+/// A 500 whose body names only `context`, a fixed text: `err` (a database or
+/// pool error, say) goes to the log, never to the caller.
 pub(crate) fn internal_error(context: &str, err: impl std::fmt::Display) -> Response {
     tracing::error!(%err, "{context}");
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("{context}: {err}"),
-    )
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, context)
 }
 
 #[cfg(test)]

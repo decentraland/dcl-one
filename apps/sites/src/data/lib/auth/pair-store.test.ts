@@ -1,9 +1,9 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { action } from "@/routes/routes/internal.pair";
 import { buildEphemeralMessage, generateEphemeralKey } from "./identity";
-import { allowPairCreate, createMemoryPairStore } from "./pair-store.server";
+import { allowPairCreate, createMemoryPairStore, pairStore, rateKey } from "./pair-store.server";
 import type { PairStore } from "./pair-store.server";
 
 async function mustCreate(store: PairStore) {
@@ -163,5 +163,37 @@ describe("pair store", () => {
     const store = createMemoryPairStore();
     const s = await mustCreate(store);
     expect(await store.get(s.id)).not.toHaveProperty("pollToken");
+  });
+});
+
+describe("the pair API when the session store fails", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("answers 503 with no detail of the failure", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(pairStore, "poll").mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.1:5432"));
+    const res = await post({ kind: "poll", id: "a".repeat(20), pollToken: "b".repeat(20) });
+    expect(res.status).toBe(503);
+    const body = await res.text();
+    expect(JSON.parse(body)).toEqual({ error: "pairing is unavailable, try again shortly" });
+    expect(body).not.toContain("ECONNREFUSED");
+  });
+});
+
+describe("the pair create limit's network", () => {
+  it("counts IPv4 by address and IPv6 by its /64", () => {
+    expect(rateKey("203.0.113.7")).toBe("203.0.113.7");
+    expect(rateKey("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(rateKey("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(rateKey("2001:DB8:1:2:bbbb:cccc:dddd:eeee")).toBe("2001:db8:1:2::/64");
+    expect(rateKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(rateKey("2001:0db8:0001:0002::9")).toBe("2001:db8:1:2::/64");
+  });
+
+  it("refuses the 31st create from one /64 across addresses", () => {
+    const now = Date.now();
+    for (let i = 0; i < 30; i++) expect(allowPairCreate(`2001:db8:77:1::${i.toString(16)}`, now)).toBe(true);
+    expect(allowPairCreate("2001:db8:77:1::ffff", now)).toBe(false);
+    expect(allowPairCreate("2001:db8:77:2::1", now)).toBe(true);
   });
 });

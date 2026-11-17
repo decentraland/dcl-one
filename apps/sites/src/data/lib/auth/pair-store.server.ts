@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { Pool } from "pg";
 
-import { catalystDatabaseConfigured, catalystPool } from "../catalyst/pool.server";
+import { pairingDatabaseUrl, pairingPool } from "../catalyst/pool.server";
 
 const PAIR_TTL_MS = 5 * 60_000;
 const MAX_SESSIONS = 500;
@@ -291,17 +291,17 @@ export function createPgPairStore(pool: Pool, ttlMs = PAIR_TTL_MS): PairStore {
 let selected: PairStore | null = null;
 
 /**
- * The PostgreSQL store when Sites has a catalyst database (every deployment with more than one
- * replica must), otherwise one process's memory, like the places reads fall back to the API.
+ * The PostgreSQL store when `CATALYST_DATABASE_URL` names the catalyst database (every deployment
+ * with more than one replica must set it), otherwise one process's memory.
  */
 function selectStore(): PairStore {
   if (!selected) {
-    if (catalystDatabaseConfigured()) {
-      selected = createPgPairStore(catalystPool());
+    if (pairingDatabaseUrl()) {
+      selected = createPgPairStore(pairingPool());
     } else {
       if (process.env.NODE_ENV === "production") {
         console.warn(
-          "[pair] no catalyst database configured: pairing sessions live in this process only",
+          "[pair] CATALYST_DATABASE_URL is not set: pairing sessions live in this process only",
         );
       }
       selected = createMemoryPairStore();
@@ -322,15 +322,32 @@ const RATE_WINDOW_MS = 5 * 60_000;
 const RATE_MAX_CREATES = 30;
 const rateBuckets = new Map<string, { windowStart: number; count: number }>();
 
+/**
+ * The network a create is counted against: an IPv4 address itself, an IPv6 address by its /64
+ * (one client usually holds a whole /64, so per address it could rotate past the limit), as the
+ * catalyst's own per-network caps do.
+ */
+export function rateKey(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return mapped[1];
+  const [head, tail = ""] = ip.toLowerCase().split("::", 2);
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
 export function allowPairCreate(ip: string, now = Date.now()): boolean {
   if (rateBuckets.size > 10_000) {
     for (const [key, b] of rateBuckets) {
       if (now - b.windowStart > RATE_WINDOW_MS) rateBuckets.delete(key);
     }
   }
-  const bucket = rateBuckets.get(ip);
+  const key = rateKey(ip);
+  const bucket = rateBuckets.get(key);
   if (!bucket || now - bucket.windowStart > RATE_WINDOW_MS) {
-    rateBuckets.set(ip, { windowStart: now, count: 1 });
+    rateBuckets.set(key, { windowStart: now, count: 1 });
     return true;
   }
   bucket.count += 1;

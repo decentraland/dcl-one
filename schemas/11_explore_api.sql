@@ -107,8 +107,9 @@ CREATE TABLE explore_api.auth_requests (
 CREATE INDEX auth_requests_expiration_idx ON explore_api.auth_requests (expiration);
 
 -- A signed identity parked for one pickup within an hour; the pickup deletes
--- the row. It holds an ephemeral private key: never copied, logged or kept
--- past its pickup or expiry.
+-- the row. It holds an ephemeral private key, never logged: like every row it
+-- reaches the WAL, the replicas and the backups (DATABASE.md, "Auth API relay
+-- state workload").
 CREATE TABLE explore_api.auth_identities (
     identity_id text PRIMARY KEY,
     identity json NOT NULL,

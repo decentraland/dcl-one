@@ -433,16 +433,32 @@ async fn pick_up_identity(
                 .into_response(),
         )
     };
-    sqlx::query(
-        "INSERT INTO explore_api.auth_identity_tombstones (identity_id, created_at, deletion_reason) \
-         VALUES ($1, $2, $3) \
-         ON CONFLICT (identity_id) DO UPDATE SET deletion_reason = EXCLUDED.deletion_reason",
+    // The create stored the tombstone while fewer than the cap were kept: the
+    // pickup sets its reason. One that has none (the table was full at the
+    // create) gets one only under the same cap, so pickups never grow the
+    // table past it.
+    let updated = sqlx::query(
+        "UPDATE explore_api.auth_identity_tombstones SET deletion_reason = $2 \
+         WHERE identity_id = $1",
     )
     .bind(id)
-    .bind(naive(now))
     .bind(reason.as_str())
     .execute(&mut *tx)
     .await?;
+    if updated.rows_affected() == 0 {
+        sqlx::query(
+            "INSERT INTO explore_api.auth_identity_tombstones (identity_id, created_at, deletion_reason) \
+             SELECT $1, $2, $3 \
+             WHERE (SELECT count(*) FROM explore_api.auth_identity_tombstones) < $4 \
+             ON CONFLICT (identity_id) DO UPDATE SET deletion_reason = EXCLUDED.deletion_reason",
+        )
+        .bind(id)
+        .bind(naive(now))
+        .bind(reason.as_str())
+        .bind(MAX_IDENTITY_TOMBSTONES as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(answer)
 }

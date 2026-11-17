@@ -341,16 +341,44 @@ pub struct CheckpointRequest {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Whether a key or a string anywhere in `value` holds a NUL.
+fn json_has_nul(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => text.contains('\0'),
+        serde_json::Value::Array(items) => items.iter().any(json_has_nul),
+        serde_json::Value::Object(fields) => fields
+            .iter()
+            .any(|(key, value)| key.contains('\0') || json_has_nul(value)),
+        _ => false,
+    }
+}
+
 fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if body.checkpoint_id < MIN_CHECKPOINT || body.checkpoint_id > MAX_CHECKPOINT {
         return Err("checkpointId must be an integer between 1 and 7".to_string());
     }
-    let ulen = body.user_identifier.chars().count();
-    if !(1..=MAX_USER_IDENTIFIER_LEN).contains(&ulen) {
-        return Err("userIdentifier must be between 1 and 255 characters".to_string());
-    }
     if body.identifier_type != "email" && body.identifier_type != "wallet" {
         return Err("identifierType must be one of 'email', 'wallet'".to_string());
+    }
+    // PostgreSQL stores no NUL in text or jsonb: refused here, not a 500 at the insert.
+    let texts = [
+        Some(&body.user_identifier),
+        body.email.as_ref(),
+        body.wallet.as_ref(),
+        body.source.as_ref(),
+    ];
+    if texts.into_iter().flatten().any(|text| text.contains('\0')) {
+        return Err("text fields must not contain NUL characters".to_string());
+    }
+    // A wallet identifier is stored lowercased, and lowercasing can lengthen a
+    // string ('İ' is two characters lowercased): the stored form is measured.
+    let ulen = if body.identifier_type == "wallet" {
+        body.user_identifier.to_lowercase().chars().count()
+    } else {
+        body.user_identifier.chars().count()
+    };
+    if !(1..=MAX_USER_IDENTIFIER_LEN).contains(&ulen) {
+        return Err("userIdentifier must be between 1 and 255 characters".to_string());
     }
     if body.action != "reached" && body.action != "completed" {
         return Err("action must be one of 'reached', 'completed'".to_string());
@@ -361,7 +389,7 @@ fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
         return Err("email must be at most 255 characters".to_string());
     }
     if let Some(wallet) = &body.wallet
-        && wallet.chars().count() > MAX_WALLET_LEN
+        && wallet.to_lowercase().chars().count() > MAX_WALLET_LEN
     {
         return Err("wallet must be at most 255 characters".to_string());
     }
@@ -373,6 +401,10 @@ fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if let Some(metadata) = &body.metadata {
         if !metadata.is_object() {
             return Err("metadata must be an object".to_string());
+        }
+        // jsonb refuses a NUL, in a key or a value alike.
+        if json_has_nul(metadata) {
+            return Err("metadata must not contain NUL characters".to_string());
         }
         if metadata.to_string().len() > MAX_METADATA_BYTES {
             return Err(format!(
@@ -924,6 +956,68 @@ mod tests {
         let mut empty_user = base(1, "email", "reached");
         empty_user.user_identifier = String::new();
         assert!(validate_checkpoint(&empty_user).is_err());
+    }
+
+    /// What PostgreSQL would refuse at the insert is a 400 here, not a 500 there.
+    #[test]
+    fn validation_refuses_what_the_table_cannot_store() {
+        let base = || CheckpointRequest {
+            checkpoint_id: 1,
+            user_identifier: "u".to_string(),
+            identifier_type: "wallet".to_string(),
+            action: "reached".to_string(),
+            email: None,
+            wallet: None,
+            source: None,
+            metadata: None,
+        };
+        let nul = "a\0b".to_string();
+        for set in [
+            (|r: &mut CheckpointRequest, v: String| r.user_identifier = v)
+                as fn(&mut CheckpointRequest, String),
+            |r, v| r.email = Some(v),
+            |r, v| r.wallet = Some(v),
+            |r, v| r.source = Some(v),
+        ] {
+            let mut request = base();
+            set(&mut request, nul.clone());
+            assert_eq!(
+                validate_checkpoint(&request).unwrap_err(),
+                "text fields must not contain NUL characters"
+            );
+        }
+        for metadata in [
+            serde_json::json!({ "k": "a\0b" }),
+            serde_json::json!({ "a\0b": 1 }),
+            serde_json::json!({ "k": ["a\0"] }),
+        ] {
+            let mut request = base();
+            request.metadata = Some(metadata);
+            assert_eq!(
+                validate_checkpoint(&request).unwrap_err(),
+                "metadata must not contain NUL characters"
+            );
+        }
+        // a literal backslash-u text is no NUL
+        let mut escaped = base();
+        escaped.metadata = Some(serde_json::json!({ "k": "\\u0000" }));
+        assert!(validate_checkpoint(&escaped).is_ok());
+
+        // 'İ' lowercases to two characters: 255 of them store as 510
+        let mut wallet = base();
+        wallet.wallet = Some("İ".repeat(MAX_WALLET_LEN));
+        assert_eq!(
+            validate_checkpoint(&wallet).unwrap_err(),
+            "wallet must be at most 255 characters"
+        );
+        let mut identifier = base();
+        identifier.user_identifier = "İ".repeat(MAX_USER_IDENTIFIER_LEN);
+        assert!(validate_checkpoint(&identifier).is_err());
+        identifier.identifier_type = "email".to_string();
+        assert!(
+            validate_checkpoint(&identifier).is_ok(),
+            "an email identifier is stored as sent"
+        );
     }
 }
 

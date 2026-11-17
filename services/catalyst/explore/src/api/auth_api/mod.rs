@@ -709,16 +709,19 @@ async fn request_capacity_refusal(
         ));
     }
     Ok(
-        (source.is_some() && from_source >= MAX_REQUESTS_PER_SOURCE as i64).then(|| {
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(ErrorBody {
-                    error: "Too many pending requests from this network, try again later".into(),
-                }),
-            )
-                .into_response()
+        (source.is_some() && from_source >= MAX_REQUESTS_PER_SOURCE as i64)
+            .then(too_many_from_network),
+    )
+}
+
+fn too_many_from_network() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ErrorBody {
+            error: "Too many pending requests from this network, try again later".into(),
         }),
     )
+        .into_response()
 }
 
 async fn create_request(
@@ -785,6 +788,22 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
+    // A network over its cap is refused before the admission lock: a flood
+    // from one network does not queue on the lock every create takes, holding
+    // pool connections. Under the lock the count is taken again, exactly.
+    if let Some(source) = record.source.as_deref() {
+        let from_source: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore_api.auth_requests \
+             WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'",
+        )
+        .bind(source)
+        .bind(naive(now))
+        .fetch_one(&state.pool)
+        .await?;
+        if from_source >= MAX_REQUESTS_PER_SOURCE as i64 {
+            return Ok(Some(too_many_from_network()));
+        }
+    }
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;
     if let Some(refusal) = request_capacity_refusal(&mut tx, record.source.as_deref(), now).await? {

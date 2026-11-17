@@ -55,7 +55,17 @@ export async function action({ request }: { request: Request }) {
   } catch {
     return json(400, { error: "invalid JSON" });
   }
+  try {
+    return await answer(body, request);
+  } catch (err) {
+    // The session store is unreachable (the database is down, a checkout timed out): the client
+    // retries; the detail stays in the log, never in the answer.
+    console.error(`[pair] ${body.kind ?? "request"} failed: ${err instanceof Error ? err.message : String(err)}`);
+    return json(503, { error: "pairing is unavailable, try again shortly" });
+  }
+}
 
+async function answer(body: PairBody, request: Request): Promise<Response> {
   if (body.kind === "create") {
     const { ephemeral, expiration } = body;
     if (typeof ephemeral !== "string" || !ADDR_RE.test(ephemeral)) {
