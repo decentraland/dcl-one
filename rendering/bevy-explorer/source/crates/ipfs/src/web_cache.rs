@@ -12,6 +12,8 @@
 //! `trim_interval` bytes written, when the cap changes, and before retrying a write that failed
 //! for quota.
 
+use serde::Deserialize;
+
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
 
@@ -122,47 +124,57 @@ pub enum TrimReply {
     Done(TrimReport),
 }
 
-/// Reads the worker's reply (`trimContentCache`), as JSON: `JSON.stringify` writes an infinite
-/// quota as null.
-pub fn parse_trim_reply(value: &serde_json::Value) -> TrimReply {
-    if value.is_null() {
-        return TrimReply::Missing;
-    }
-    if let Some(error) = value.get("error") {
-        return TrimReply::Failed(
-            error
-                .as_str()
-                .map_or_else(|| error.to_string(), str::to_owned),
-        );
-    }
-    let number = |name: &str| value.get(name).and_then(serde_json::Value::as_f64);
-    let flag = |name: &str| value.get(name).and_then(serde_json::Value::as_bool) == Some(true);
-    let Some(cap_bytes) = number("capBytes") else {
-        return TrimReply::Failed(format!("a reply without capBytes: {value}"));
-    };
-    if flag("preempted") {
-        return TrimReply::Preempted { cap_bytes };
-    }
-    let report = (|| {
-        Some(TrimReport {
-            cap_bytes,
-            usage: number("usage")?,
-            quota: match value.get("quota")? {
-                serde_json::Value::Null => f64::INFINITY,
-                quota => quota.as_f64()?,
-            },
-            caches_usage: number("cachesUsage")?,
-            evicted_entries: number("evictedEntries")?,
-            evicted_bytes: number("evictedBytes")?,
-            persisted: flag("persisted"),
-            content_bytes: number("contentBytes"),
-            indexed_entries: number("indexedEntries"),
+/// The worker's reply to a trim (`trimContentCache`), as structured clone delivers it: an
+/// infinite quota arrives as `Infinity`. No reply at all is [`TrimReply::Missing`].
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum WorkerTrimReply {
+    Failed { error: String },
+    Report(WorkerTrimReport),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerTrimReport {
+    cap_bytes: f64,
+    usage: f64,
+    quota: f64,
+    caches_usage: f64,
+    evicted_entries: f64,
+    evicted_bytes: f64,
+    #[serde(default)]
+    persisted: bool,
+    /// null when nothing was sized
+    content_bytes: Option<f64>,
+    /// absent when the cache was not enumerated, and from a worker without the last-use record
+    indexed_entries: Option<f64>,
+    #[serde(default)]
+    preempted: bool,
+}
+
+impl From<WorkerTrimReply> for TrimReply {
+    fn from(reply: WorkerTrimReply) -> Self {
+        let report = match reply {
+            WorkerTrimReply::Failed { error } => return TrimReply::Failed(error),
+            WorkerTrimReply::Report(report) => report,
+        };
+        if report.preempted {
+            return TrimReply::Preempted {
+                cap_bytes: report.cap_bytes,
+            };
+        }
+        TrimReply::Done(TrimReport {
+            cap_bytes: report.cap_bytes,
+            usage: report.usage,
+            quota: report.quota,
+            caches_usage: report.caches_usage,
+            evicted_entries: report.evicted_entries,
+            evicted_bytes: report.evicted_bytes,
+            persisted: report.persisted,
+            content_bytes: report.content_bytes,
+            indexed_entries: report.indexed_entries,
         })
-    })();
-    report.map_or_else(
-        || TrimReply::Failed(format!("a reply missing a reading: {value}")),
-        TrimReply::Done,
-    )
+    }
 }
 
 /// The engine side's readings, for the debug panel.
@@ -301,8 +313,8 @@ pub use io::*;
 mod io {
     use super::{
         crosses_interval, forced_trim_allowed, keys, names, page_content_cache_touch,
-        page_content_cache_trim, parse_trim_reply, sends_uses_before_trim, trim_interval_for,
-        TrimReply, TrimReport, UsedKeys, WebCacheState, WEB_CACHE_CAP_BYTES,
+        page_content_cache_trim, sends_uses_before_trim, trim_interval_for, TrimReply, TrimReport,
+        UsedKeys, WebCacheState, WorkerTrimReply, WEB_CACHE_CAP_BYTES,
     };
     use js_sys::Uint8Array;
     use std::sync::{
@@ -485,18 +497,14 @@ mod io {
             .await
             .map_err(|e| bevy::log::warn!("content cache trim failed: {e:?}"))
             .ok()?;
-        // only no reply is `Missing`: one that does not read as JSON is a failure to log
+        // only no reply is `Missing`: one that does not read as a reply is a failure to log
         let parsed = if reply.is_null() || reply.is_undefined() {
             TrimReply::Missing
         } else {
-            js_sys::JSON::stringify(&reply)
-                .ok()
-                .and_then(|text| text.as_string())
-                .and_then(|text| serde_json::from_str(&text).ok())
-                .map_or_else(
-                    || TrimReply::Failed(format!("an unreadable reply: {reply:?}")),
-                    |json| parse_trim_reply(&json),
-                )
+            serde_wasm_bindgen::from_value::<WorkerTrimReply>(reply.clone()).map_or_else(
+                |e| TrimReply::Failed(format!("an unreadable reply ({e}): {reply:?}")),
+                TrimReply::from,
+            )
         };
         let report = match parsed {
             TrimReply::Done(report) => report,
@@ -638,6 +646,13 @@ mod io {
 mod tests {
     use super::*;
 
+    // `serde_wasm_bindgen::from_value` needs a JS engine: these read the same type from JSON, or
+    // from serde's own map deserializer where JSON cannot carry the value (an infinite quota).
+    fn read_reply(reply: serde_json::Value) -> TrimReply {
+        serde_json::from_value::<WorkerTrimReply>(reply)
+            .map_or_else(|e| TrimReply::Failed(e.to_string()), TrimReply::from)
+    }
+
     #[test]
     fn shared_key_is_the_hash_whichever_server_and_path() {
         let [catalyst, _] = keys("https://peer.example/content/contents/bafkreihash").unwrap();
@@ -702,7 +717,7 @@ mod tests {
             "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
             "evictedEntries": 0.0, "evictedBytes": 0.0, "contentBytes": null, "preempted": false,
         });
-        let TrimReply::Done(report) = parse_trim_reply(&reply) else {
+        let TrimReply::Done(report) = read_reply(reply) else {
             panic!("not a report");
         };
         assert_eq!(report.content_bytes, None);
@@ -791,66 +806,92 @@ mod tests {
     }
 
     #[test]
-    fn a_trim_reply_is_read_with_an_infinite_quota_as_null() {
+    fn a_trim_reply_keeps_every_reading() {
         let reply = serde_json::json!({
-            "capBytes": 1000.0, "usage": 900.0, "quota": null, "cachesUsage": 800.0,
+            "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
             "evictedEntries": 3.0, "evictedBytes": 300.0, "persisted": true,
-            "contentBytes": 750.0, "preempted": false,
+            "contentBytes": 750.0, "preempted": false, "indexedEntries": 7,
         });
         assert_eq!(
-            parse_trim_reply(&reply),
+            read_reply(reply),
             TrimReply::Done(TrimReport {
                 cap_bytes: 1000.0,
                 usage: 900.0,
-                quota: f64::INFINITY,
+                quota: 1e9,
                 caches_usage: 800.0,
                 evicted_entries: 3.0,
                 evicted_bytes: 300.0,
                 persisted: true,
                 content_bytes: Some(750.0),
-                indexed_entries: None,
+                indexed_entries: Some(7.0),
             })
         );
     }
 
     #[test]
-    fn a_trim_reply_carries_the_entries_it_ordered_by_use() {
-        let reply = serde_json::json!({
-            "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
-            "evictedEntries": 3.0, "evictedBytes": 300.0, "indexedEntries": 7.0,
-        });
-        let TrimReply::Done(report) = parse_trim_reply(&reply) else {
+    fn a_trim_reply_keeps_an_infinite_quota() {
+        // the numeric readings alone, as a self-describing format hands them over: `quota` is
+        // `Infinity` when the browser reports none
+        let readings = [
+            ("capBytes", 1000.0),
+            ("usage", 900.0),
+            ("quota", f64::INFINITY),
+            ("cachesUsage", 800.0),
+            ("evictedEntries", 0.0),
+            ("evictedBytes", 0.0),
+        ];
+        let reply = WorkerTrimReply::deserialize(serde::de::value::MapDeserializer::<
+            _,
+            serde::de::value::Error,
+        >::new(readings.into_iter()))
+        .unwrap();
+        let TrimReply::Done(report) = TrimReply::from(reply) else {
             panic!("not a report");
         };
-        assert_eq!(report.indexed_entries, Some(7.0));
+        assert_eq!(report.quota, f64::INFINITY);
+        assert!(!report.persisted);
+        assert_eq!(report.content_bytes, None);
+    }
+
+    #[test]
+    fn a_reply_from_a_worker_without_the_last_use_record_is_a_report() {
+        // the reply of a worker installed before the last-use record, plus a reading this
+        // engine does not know
+        let reply = serde_json::json!({
+            "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
+            "evictedEntries": 2.0, "evictedBytes": 200.0, "persisted": false,
+            "contentBytes": 950.0, "preempted": false, "somethingNew": [1, 2],
+        });
+        let TrimReply::Done(report) = read_reply(reply) else {
+            panic!("not a report");
+        };
+        assert_eq!(report.indexed_entries, None);
+        assert_eq!(report.evicted_entries, 2.0);
     }
 
     #[test]
     fn a_preempted_trim_keeps_only_its_cap() {
         let reply = serde_json::json!({
             "capBytes": 500.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
-            "evictedEntries": 0.0, "evictedBytes": 0.0, "preempted": true,
+            "evictedEntries": 0.0, "evictedBytes": 0.0, "persisted": false,
+            "contentBytes": null, "preempted": true,
         });
-        assert_eq!(
-            parse_trim_reply(&reply),
-            TrimReply::Preempted { cap_bytes: 500.0 }
-        );
+        assert_eq!(read_reply(reply), TrimReply::Preempted { cap_bytes: 500.0 });
     }
 
     #[test]
-    fn no_reply_an_error_and_a_short_reply_are_not_reports() {
+    fn an_error_and_a_short_reply_are_not_reports() {
         assert_eq!(
-            parse_trim_reply(&serde_json::Value::Null),
-            TrimReply::Missing
-        );
-        assert_eq!(
-            parse_trim_reply(
-                &serde_json::json!({ "error": "capBytes must be a non-negative number" })
-            ),
+            read_reply(serde_json::json!({ "error": "capBytes must be a non-negative number" })),
             TrimReply::Failed("capBytes must be a non-negative number".into())
         );
         let short = serde_json::json!({ "capBytes": 500.0, "usage": 900.0 });
-        assert!(matches!(parse_trim_reply(&short), TrimReply::Failed(_)));
+        assert!(matches!(read_reply(short), TrimReply::Failed(_)));
+        let wrong_type = serde_json::json!({
+            "capBytes": "500", "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
+            "evictedEntries": 0.0, "evictedBytes": 0.0,
+        });
+        assert!(matches!(read_reply(wrong_type), TrimReply::Failed(_)));
     }
 
     #[test]
