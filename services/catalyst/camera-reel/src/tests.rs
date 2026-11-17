@@ -1377,6 +1377,63 @@ async fn owner_delete_reports_ownership_and_remaining() {
 }
 
 #[tokio::test]
+async fn a_hash_another_domain_names_is_never_withheld() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let a = s.owner(&random_address());
+    let t = tag();
+    let (h, th) = (s.hash(&format!("h-{t}")), s.hash(&format!("t-{t}")));
+    let entity = format!("profile-{t}");
+    sqlx::query(
+        "INSERT INTO social.profile_images (entity_id, kind, blob_cid, byte_size, source, stored_at) \
+         VALUES ($1, 'face', $2, 1, 'render', timezone('UTC', now()))",
+    )
+    .bind(&entity)
+    .bind(&h)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    let img = image(&a, &h, &th, true, "");
+    s.db().insert_image(&img).await.unwrap();
+    let now = chrono::Utc::now().naive_utc();
+
+    let verdict = s
+        .db()
+        .update_image_review_status(&img.id.to_string(), WITHHELD_REJECTED, now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        verdict.withheld,
+        vec![th.clone()],
+        "the profile image keeps h"
+    );
+    s.db()
+        .update_image_review_status(&img.id.to_string(), "ok", now)
+        .await
+        .unwrap();
+
+    let d = s
+        .db()
+        .delete_image_owned(&img.id.to_string(), Some(&a), now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(d.deleted);
+    assert_eq!(d.withheld, vec![th.clone()]);
+    assert_eq!(s.withheld(&h).await, None);
+    assert_eq!(s.withheld(&th).await.as_deref(), Some(WITHHELD_DELETED));
+
+    sqlx::query("DELETE FROM social.profile_images WHERE entity_id = $1")
+        .bind(&entity)
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    s.done().await;
+}
+
+#[tokio::test]
 async fn visibility_update_keeps_404_403_and_noop_apart() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;

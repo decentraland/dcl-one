@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 use super::dto::{Image, Metadata};
 use crate::shared::cache::{TtlCache, cache_get, cache_put};
+use crate::storage::gc;
 
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 
@@ -140,8 +141,8 @@ fn hashes_of(image_hash: &str, thumbnail_hash: &str) -> Vec<String> {
 }
 
 /// Inside the write's transaction, after the row is rejected or gone:
-/// records `hashes` as withheld unless a non-rejected row, a content file
-/// or a builder upload still names them.
+/// records `hashes` as withheld unless a non-rejected row or any other
+/// domain's reference ([`gc::referenced_elsewhere_on`]) still names them.
 /// Returns the hashes it recorded. A qualifying rejection promotes an older
 /// deletion record; deletion can never downgrade a durable rejection.
 async fn withhold(
@@ -151,19 +152,31 @@ async fn withhold(
     reason: &str,
     now: NaiveDateTime,
 ) -> Result<Vec<String>, sqlx::Error> {
+    let elsewhere = gc::referenced_elsewhere_on(tx, hashes, "camera_reel.images")
+        .await
+        .map_err(|e| match e {
+            gc::GcError::Database(e) => e,
+            other => sqlx::Error::Protocol(other.to_string()),
+        })?;
+    let hashes: Vec<String> = hashes
+        .iter()
+        .filter(|h| !elsewhere.contains(*h))
+        .cloned()
+        .collect();
+    if hashes.is_empty() {
+        return Ok(Vec::new());
+    }
     sqlx::query_scalar::<_, String>(
         "INSERT INTO camera_reel.withheld_blobs (hash, image_id, reason, withheld_at) \
          SELECT h.hash, $2, $3, $4 FROM unnest($1::text[]) AS h(hash) \
          WHERE NOT EXISTS (SELECT 1 FROM camera_reel.images i \
                            WHERE (i.image_hash = h.hash OR i.thumbnail_hash = h.hash) AND i.review_status <> 'rejected') \
-           AND NOT EXISTS (SELECT 1 FROM content.content_files f WHERE f.content_hash = h.hash) \
-           AND NOT EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = h.hash) \
          ON CONFLICT (hash) DO UPDATE \
              SET reason=EXCLUDED.reason, image_id=EXCLUDED.image_id, withheld_at=EXCLUDED.withheld_at \
              WHERE camera_reel.withheld_blobs.reason = 'deleted' AND EXCLUDED.reason = 'rejected' \
          RETURNING hash",
     )
-    .bind(hashes)
+    .bind(&hashes)
     .bind(image_id)
     .bind(reason)
     .bind(now)
