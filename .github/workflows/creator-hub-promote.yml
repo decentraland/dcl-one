@@ -64,14 +64,19 @@ jobs:
             if [ "$(jq -r .prerelease <<<"$release")" != true ]; then
               echo "::error::$VERSION is not a pre-release"; exit 1
             fi
-            # creator-hub-desktop.yml tags creator-hub@X.Y.Z here only after both installers built,
+            # creator-hub-desktop.yml tags creator-hub@X.Y.Z here only after every platform built,
             # signed and passed the Windows signature check. Installers upload before those checks
             # finish, so a pre-release without the tag may be half-built or wrongly signed.
             if ! GH_TOKEN="$DCL_ONE_TOKEN" gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/creator-hub@$VERSION" >/dev/null 2>&1; then
               echo "::error::$GITHUB_REPOSITORY has no tag creator-hub@$VERSION: its release run didn't finish cleanly"; exit 1
             fi
             # The update feeds the installed apps read; without them the release is invisible.
-            for feed in latest.yml latest-mac.yml; do
+            # A release from before the Linux build has no Linux installer and no Linux feed.
+            feeds='latest.yml latest-mac.yml'
+            if jq -e 'any(.assets[]; .name | test("\\.(AppImage|deb)$"))' <<<"$release" >/dev/null; then
+              feeds="$feeds latest-linux.yml"
+            fi
+            for feed in $feeds; do
               if ! jq -e --arg f "$feed" 'any(.assets[]; .name == $f)' <<<"$release" >/dev/null; then
                 echo "::error::$VERSION has no $feed"; exit 1
               fi

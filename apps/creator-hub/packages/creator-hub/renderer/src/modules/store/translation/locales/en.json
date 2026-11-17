@@ -622,6 +622,7 @@
             "invalid_app_extension": "Invalid application selected. Please select a valid .app bundle",
             "invalid_app_bundle": "Invalid application bundle structure",
             "invalid_exe_file": "Invalid application selected. Please select a valid .exe file",
+            "invalid_executable": "Invalid application selected. Please select a file that you can run",
             "unknown": "Failed to set default editor"
           }
         },

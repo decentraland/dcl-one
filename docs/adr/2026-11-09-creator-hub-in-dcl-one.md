@@ -51,7 +51,11 @@ What else changes:
   the last released version of each (and `creator-hub@X.Y.Z` for the installers) is tagged on
   `main` before the import merges, since the merge itself starts the first release. A release on
   `main` fails when it finds no such tag, instead of publishing `0.1.0` as npm `latest`.
-- **Installers.** They keep publishing to `decentraland/creator-hub` releases, which becomes a
+- **Installers.** They are built for macOS, Windows and Linux (an x64 AppImage and deb, not
+  signed, for glibc 2.35 and later: the Linux build runs on Ubuntu 22.04 and fails if a native
+  module needs more). The AppImage needs no libfuse2 and registers its own sign-in link handler
+  for the user when it starts; the deb installs that handler. They keep publishing to
+  `decentraland/creator-hub` releases, which becomes a
   release-only repository: every installed app's updater reads them (`electron-builder.cjs`
   `publish`, `shared/urls.ts`), and GitHub has one "Latest" release per repository, which the
   updater follows. A GitHub App installed on that repository gives `creator-hub-desktop.yml` and
@@ -64,7 +68,7 @@ What else changes:
   and publishes nothing. A person makes a pre-release Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
   back into a pre-release. Both run in the `creator-hub-promote` environment, which requires a
   reviewer. Promotion needs the `creator-hub@X.Y.Z` tag here, which the desktop workflow creates
-  only after both installers built and passed the signature check: the installers upload before
+  only after all installers built and passed the signature check: the installers upload before
   those checks end, so a pre-release alone may be half-built. A newer merge never cancels a
   release in progress on `main`, but GitHub keeps only one *queued* run per concurrency group: when
   several merges land during a release, only the newest of them runs, and it releases only if its
