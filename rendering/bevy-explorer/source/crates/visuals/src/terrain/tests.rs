@@ -247,6 +247,50 @@ fn a_late_parcel_takes_its_heights_at_once() {
     assert!(terrain.changes.targets.is_some());
 }
 
+/// Ground that rises under the player is floored before collisions resolve. Pushing the player
+/// out of it instead would reach the movement scene as a launch velocity.
+#[test]
+fn rising_ground_lifts_the_player_before_collisions_resolve() {
+    #[derive(Resource, Default)]
+    struct SeenByCollisions(Option<f32>);
+
+    let (_, surface) = surface(12);
+    let (x, z) = (6.0 * 16.0 + 8.0, -(6.0 * 16.0 + 8.0));
+    let ground = surface.cell_height_at(Vec3::new(x, 0.0, z));
+    assert!(ground > 1.0);
+    let mut pointers = ScenePointers::default();
+    // a one-parcel realm: the player's parcel lies outside it, so it is empty
+    pointers.set_realm(IVec2::ZERO, IVec2::ZERO);
+
+    let mut app = App::new();
+    app.insert_resource(surface)
+        .insert_resource(pointers)
+        .init_resource::<EngineMovementControl>()
+        .init_resource::<SeenByCollisions>()
+        .configure_sets(
+            PostUpdate,
+            (
+                PostUpdateSets::ColliderUpdate,
+                PostUpdateSets::PlayerUpdate,
+                PostUpdateSets::CameraUpdate,
+            )
+                .chain(),
+        )
+        .add_systems(
+            PostUpdate,
+            (|player: Single<&Transform, With<PrimaryUser>>,
+              mut seen: ResMut<SeenByCollisions>| {
+                seen.0 = Some(player.translation.y);
+            })
+            .in_set(PostUpdateSets::PlayerUpdate),
+        );
+    add_player_floor(&mut app);
+    app.world_mut()
+        .spawn((PrimaryUser::default(), Transform::from_xyz(x, 0.0, z)));
+    app.update();
+    assert_eq!(app.world().resource::<SeenByCollisions>().0, Some(ground));
+}
+
 /// The shortest Landscape Distance still displaces the hills across the `RING_CELL` rings.
 #[test]
 fn hill_reach_never_below_832() {

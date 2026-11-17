@@ -68,11 +68,9 @@ impl Plugin for TerrainPlugin {
                         .in_set(TerrainSet)
                         .before(PostUpdateSets::ColliderUpdate),
                     update_collider.in_set(PostUpdateSets::ColliderUpdate),
-                    floor_player
-                        .after(PostUpdateSets::PlayerUpdate)
-                        .before(PostUpdateSets::CameraUpdate),
                 ),
             );
+        add_player_floor(app);
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(
@@ -701,8 +699,25 @@ pub(crate) fn update_collider(
     );
 }
 
-/// Keep the player on or above the terrain of an empty parcel after movement each tick, as
-/// movement already floors at zero. The avatar then rides rising ground up instead of fighting
+/// Floor the player twice a tick. Before movement, against the heights the collider was just
+/// rebuilt from: collision resolution would push the player out of a rise instead, and the
+/// movement scene reads that push as a launch velocity. After movement, so it ends on the ground.
+pub(crate) fn add_player_floor(app: &mut App) {
+    app.add_systems(
+        PostUpdate,
+        (
+            floor_player
+                .after(PostUpdateSets::ColliderUpdate)
+                .before(PostUpdateSets::PlayerUpdate),
+            floor_player
+                .after(PostUpdateSets::PlayerUpdate)
+                .before(PostUpdateSets::CameraUpdate),
+        ),
+    );
+}
+
+/// Keep the player on or above the terrain of an empty parcel, as movement already floors at
+/// zero. The avatar then rides rising ground up instead of fighting
 /// it through collision; the heightfield collider stays for scene raycasts.
 fn floor_player(
     surface: Res<TerrainSurface>,
