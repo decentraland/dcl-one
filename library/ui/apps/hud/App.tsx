@@ -8,6 +8,7 @@ import { setPublicReelFetcher } from './features/gallery/publicReels'
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
 import { FriendsPanel } from './features/friends/FriendsPanel'
+import { jumpToFriend } from './features/friends/jumpToFriend'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { NotificationsPanel } from './features/notifications/NotificationsPanel'
@@ -489,7 +490,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
-            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} />
+            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} onJump={(address) => jumpToFriend(session.map, address)} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
             <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />

@@ -158,37 +158,44 @@ logout via the profile chip.
 
 ## 4. World-space UI — agent / manual checklist (can't be mocked)
 
-The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine
-scene**, not the DOM, so `?mock=1` can't show them and screenshots can't be deterministic. Verify
-these by hand (or have an agent drive the Chrome extension against a live world) after any change to
-`bridge-scene/src/domains/{nametags,pointer,proximity,avatarPointer}.*`:
+The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine**
+(the nametags by `crates/avatar/src/nametag`, the rest by the bridge scene), not the DOM, so `?mock=1`
+can't show them and screenshots can't be deterministic. Verify these by hand (or have an agent drive
+the Chrome extension against a live world) after any change to `crates/avatar/src/nametag` or
+`bridge-scene/src/domains/{pointer,proximity,avatarPointer}.*`. `/nametag_state` reports every shown
+tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test bubble:
 
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
-- [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
-      show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] Name **colour** = a claimed name's custom colour if set, else the hue hashed from the name (the
+      colour the HUD shows for it); **claimed** names show the verified seal, **unclaimed** show `#abcd`
+      tight to the name, dimmed. The name stays on one line.
+      A name written with its own tag (`Ada#ffff`) still shows the address' tag, and a guest
+      shows no seal whatever its profile claims.
 - [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
       avatar and, for other players, on theirs, without a rename or a reload.
-- [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
-      like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
-      or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
-      because it turned a stranded tag into a giant.)
-- [ ] **Exactly one tag per address — no duplicates / orphans / pile-up.** None accumulate over a long
-      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn (the
-      classic regression). They're pooled — one reusable entity per wallet, never destroyed (engine entity
-      removal is unreliable for attached entities; we show/hide instead).
-- [ ] Tags **fade out** past ~20–40 m. Your **own** tag shows above your head in third person and is
-      hidden in first person.
+- [ ] **Constant size on screen.** A tag looks the same size at 3 m and at 39 m, and at any field of
+      view; its text is sharp at both. It sits clear of what the avatar wears on its head, and follows
+      the head through emotes with no lag.
+- [ ] **Exactly one tag per player — no duplicates / orphans / pile-up.** None accumulate over a long
+      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn. A
+      player who leaves takes their tag with them at once. `/nametag_state` counts the tags as
+      `shown` and `hidden`: together, one per player with a profile.
+- [ ] Tags show from 2 m to 40 m from the camera, **fading out** from 20 m, and not behind a wall.
+      Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
-- [ ] **Community chat bubbles** (`bridge-scene/src/domains/{chat,nametags}.*`): a message said in a
-      community chat by a player standing nearby shows as their bubble with the community's name on
-      a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
-      your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
-- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
-      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
-      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
-      The same player talking in a private call or community stream with you, which the mute leaves
-      audible, shows the green bars.
+- [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
+      message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
+      ring. A message said in a **community** chat by a player standing nearby shows the community's
+      name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
+      head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
+      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      A translated message replaces the bubble's text.
+- [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
+      dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
+      (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
+      nothing when they are quiet; Hear brings the bars back. The same player talking in a private call
+      or community stream with you, which the mute leaves audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on

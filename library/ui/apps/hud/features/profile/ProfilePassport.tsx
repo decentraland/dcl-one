@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
+import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
 import { nativeProfileImage } from '@hud-host'
@@ -323,6 +324,7 @@ export function ProfilePassport({
   onUnblock,
   onBlock,
   onReport,
+  onJump,
   onGift,
   inviteItems = [],
   onClose,
@@ -350,6 +352,9 @@ export function ProfilePassport({
   onUnblock?: (address: string) => void
   onBlock?: (address: string) => void
   onReport?: (address: string) => void
+  /** Travel to where this friend is; set only for a friend who is not offline (unity-explorer's
+   *  Jump to Location, in the header and first in the options menu). */
+  onJump?: (address: string) => void
   /** Open the gift picker for this user; absent where this session can't gift. */
   onGift?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
@@ -378,6 +383,9 @@ export function ProfilePassport({
   const pick = (fn: (address: string) => void) => (): void => {
     setMenuOpen(false)
     fn(profile.address)
+  }
+  if (!isSelf && onJump != null) {
+    options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
   // before Block, as the reference client's menu
   if (!isSelf && onGift != null) options.push({ label: 'Gift', icon: <MaskIcon src={giftIcon} size={16} />, onClick: pick(onGift) })
@@ -494,6 +502,13 @@ export function ProfilePassport({
             )}
           </div>
           <div className={styles.headActions}>
+            {!isSelf && onJump != null && (
+              <Tooltip label="Jump to Location" side="bottom">
+                <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
+                  <img src={jumpInIcon} alt="" width={24} height={24} />
+                </button>
+              </Tooltip>
+            )}
             {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT

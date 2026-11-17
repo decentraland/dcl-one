@@ -18,6 +18,7 @@ import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
 import { openGiftPicker } from '../gifting/GiftPicker'
 import { useGiftingAvailable } from '../gifting/useGifting'
+import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 
 export function Passport({
   userId,
@@ -116,6 +117,11 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onJump={
+        !isSelf && canJumpToFriend(session.friends, userId)
+          ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
+          : undefined
+      }
       onGift={
         canGift
           ? (a) => {
