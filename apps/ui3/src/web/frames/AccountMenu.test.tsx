@@ -57,15 +57,15 @@ describe("top bar profile menu", () => {
     expect(menu()).toBeNull();
   });
 
-  test("signed out shows Sign in instead of the avatar, and Learn > Docs links to the self-hosted mirror", async () => {
+  test("signed out shows Sign in instead of the avatar, and Discover lists Events and Places", async () => {
     const a = auth({ signedIn: false, account: "", name: "" });
     renderBar(a);
     expect(screen.queryByRole("button", { name: "My account" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(a.onSignIn).toHaveBeenCalledTimes(1);
 
-    await userEvent.hover(document.querySelectorAll(".dtb__dd")[1]!);
-    const docs = screen.getAllByRole("menuitem", { name: "Docs", hidden: true })[0];
-    expect(docs).toHaveAttribute("href", "/docs/");
+    await userEvent.hover(document.querySelectorAll(".dtb__dd")[0]!);
+    expect(screen.getAllByRole("menuitem", { name: "Events", hidden: true })[0]).toHaveAttribute("href", "/events");
+    expect(screen.getAllByRole("menuitem", { name: "Places", hidden: true })[0]).toHaveAttribute("href", "/places");
   });
 });

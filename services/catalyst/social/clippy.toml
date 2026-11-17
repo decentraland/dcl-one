@@ -1,0 +1,12 @@
+# Same as the workspace clippy.toml; clippy reads only the nearest file.
+large-error-threshold = 256
+
+# Production routes go through `crate::routing` so axum proves one handler stack per state.
+disallowed-methods = [
+  { path = "axum::routing::get", reason = "use crate::routing::get" },
+  { path = "axum::routing::post", reason = "use crate::routing::post" },
+  { path = "axum::routing::put", reason = "use crate::routing::put" },
+  { path = "axum::routing::patch", reason = "use crate::routing::patch" },
+  { path = "axum::routing::delete", reason = "use crate::routing::delete" },
+  { path = "axum::routing::any", reason = "use crate::routing::any" },
+]

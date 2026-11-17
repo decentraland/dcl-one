@@ -14,6 +14,17 @@ export type {
   NavBarSection,
   NavBarSignIn
 } from './components/NavBar/NavBar'
+export {
+  decentralandNavigation,
+  decentralandNavigationSection,
+  decentralandNavSections
+} from './components/NavBar/NavBar.navigation'
+export type {
+  DecentralandNavigationArea,
+  DecentralandNavigationEntry,
+  DecentralandNavigationItem,
+  DecentralandNavigationSectionId
+} from './components/NavBar/NavBar.navigation'
 
 export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'

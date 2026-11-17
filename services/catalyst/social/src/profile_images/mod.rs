@@ -38,9 +38,9 @@ pub mod resolver;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::routing::get;
 use anyhow::bail;
 use axum::Router;
-use axum::routing::get;
 use sqlx::PgPool;
 
 use crate::content::read_through::ReadThrough;

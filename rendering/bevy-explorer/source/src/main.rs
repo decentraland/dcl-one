@@ -294,9 +294,7 @@ fn default_ui_scene() -> Option<String> {
         None
     }
     #[cfg(not(feature = "react-hud-cef"))]
-    Some(String::from(
-        "https://dcl-regenesislabs.github.io/bevy-ui-scene/BevyUiScene",
-    ))
+    None
 }
 
 #[inline(always)]
