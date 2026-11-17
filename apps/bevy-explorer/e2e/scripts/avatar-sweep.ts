@@ -6,10 +6,11 @@
 // on stdout (progress on stderr), so an agent can run it, change the engine and run it again.
 //
 //   pnpm run avatar-sweep [--counts 0,10,20,50,100,200,400,800] [--caps 20,all]
-//     [--emotes none,dance] [--nametags on] [--window 10] [--settle 3] [--load-timeout 180]
+//     [--emotes none,dance] [--nametags on] [--layout grid|around] [--setup "<console line>"]...
+//     [--window 10] [--settle 3] [--load-timeout 180]
 //     [--realm <url>] [--position x,y] [--web-app <dir> | --url <served app>] [--out <file>]
 //
-// Each line: {"step", "count", "built", "loadSeconds", "cap", "emote", "nametags", "samples",
+// Each line: {"step", "count", "built", "loadSeconds", "cap", "emote", "nametags", "layout", "samples",
 // "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
 // are {median, p95, max} over the window's samples. The session's Max Avatars is restored at the
 // end. `/avatar_demo cap` is session-only, so the stored setting never changes.
@@ -36,6 +37,8 @@ const { values } = parseArgs({
     caps: { type: 'string', default: '20,all' },
     emotes: { type: 'string', default: 'none,dance' },
     nametags: { type: 'string', default: 'on' },
+    layout: { type: 'string', default: 'grid' },
+    setup: { type: 'string', multiple: true, default: [] },
     window: { type: 'string', default: '10' },
     settle: { type: 'string', default: '3' },
     'load-timeout': { type: 'string', default: '180' },
@@ -67,6 +70,7 @@ const nametags = list(values.nametags).map((value) => {
   if (value !== 'on' && value !== 'off') throw new Error('--nametags takes on, off or both')
   return value === 'on'
 })
+if (values.layout !== 'grid' && values.layout !== 'around') throw new Error('--layout takes grid or around')
 const windowMs = seconds('window', values.window) * 1000
 const settleMs = seconds('settle', values.settle) * 1000
 const loadTimeoutMs = seconds('load-timeout', values['load-timeout']) * 1000
@@ -149,6 +153,9 @@ try {
   }
   originalCap = first.cap
   if (values.out) await writeFile(values.out, '')
+  await run(`/avatar_demo layout ${values.layout}`)
+  // console lines that set the build up for this run, such as an engine tunable under comparison
+  for (const line of values.setup) log(`setup ${line}: ${JSON.stringify(await run(line))}`)
 
   for (const cap of caps) {
     for (const emote of emotes) {
@@ -185,6 +192,7 @@ try {
             cap: cap === CAP_ALL ? 'all' : cap,
             emote,
             nametags: tags ? 'on' : 'off',
+            layout: values.layout,
             samples: samples.length,
             fps: stats(samples.map((s) => s.fps)),
             frameMs: stats(samples.map((s) => s.frameMs)),
@@ -205,6 +213,7 @@ try {
   await run('/avatar_demo clear').catch(() => undefined)
   if (originalCap !== undefined) await run(`/avatar_demo cap ${originalCap}`).catch(() => undefined)
   await run('/nametags true').catch(() => undefined)
+  await run('/avatar_demo layout grid').catch(() => undefined)
   await driver.close()
   await server?.close()
 }

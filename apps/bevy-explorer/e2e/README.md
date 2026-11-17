@@ -122,13 +122,15 @@ pnpm run avatar-sweep --url http://localhost:8080/            # an app served al
 | `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`, not saved); `all` shows every avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off` or both (`/nametags`) |
+| `--layout` | `grid` | `grid` puts every demo avatar in view, in front of the player; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
+| `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
 | `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
 | `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
-`emote`, `nametags`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+`emote`, `nametags`, `layout`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give

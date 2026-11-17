@@ -20,6 +20,45 @@ const MAX_CAP: usize = MAX_DEMOS + 1;
 /// Demo avatars stand in a square grid in front of the player, this many to a row.
 const GRID_COLUMNS: u64 = 32;
 const GRID_SPACING: f32 = 1.6;
+/// The turn between one demo avatar and the next in the `around` layout: the golden angle, which
+/// fills a disc evenly from its centre outwards.
+const AROUND_TURN: f32 = 2.399_963;
+
+/// Where the demo avatar in `slot` stands, relative to the player.
+fn demo_offset(layout: DemoLayout, slot: u64) -> Vec3 {
+    match layout {
+        DemoLayout::Grid => Vec3::new(
+            ((slot % GRID_COLUMNS) as f32 - (GRID_COLUMNS - 1) as f32 / 2.0) * GRID_SPACING,
+            0.0,
+            -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
+        ),
+        // one avatar per GRID_SPACING squared, the nearest first
+        DemoLayout::Around => {
+            let radius = GRID_SPACING * ((slot + 1) as f32 / std::f32::consts::PI).sqrt();
+            let (sin, cos) = (slot as f32 * AROUND_TURN).sin_cos();
+            Vec3::new(radius * cos, 0.0, radius * sin)
+        }
+    }
+}
+
+/// How demo avatars are placed.
+#[derive(clap::ValueEnum, Clone, Copy, Default, Debug, PartialEq, Eq)]
+enum DemoLayout {
+    /// a grid in front of the player: every avatar in view
+    #[default]
+    Grid,
+    /// a disc centred on the player, filled from the centre: a crowd on every side
+    Around,
+}
+
+impl DemoLayout {
+    fn name(self) -> &'static str {
+        match self {
+            DemoLayout::Grid => "grid",
+            DemoLayout::Around => "around",
+        }
+    }
+}
 const BASE_AVATARS: &str = "urn:decentraland:off-chain:base-avatars:";
 const CREATOR_EMOTES: &[(&str, &str)] = &[
     ("None", "none"),
@@ -169,6 +208,7 @@ struct Creator {
     male_only: bool,
     wearables: Vec<String>,
     emote: Option<String>,
+    layout: DemoLayout,
     next: u64,
 }
 
@@ -199,6 +239,10 @@ enum DemoAction {
     /// Set Max Avatars for this session only, past the setting's range, to measure crowds.
     Cap {
         max: usize,
+    },
+    /// Where new demo avatars stand: `grid` in front of the player, or `around` them.
+    Layout {
+        layout: DemoLayout,
     },
     Male,
     Female,
@@ -237,6 +281,7 @@ fn demo_command(
             // not through the setting, so nothing writes it to the stored config
             config.max_avatars = max;
         }
+        Some(DemoAction::Layout { layout }) => creator.layout = layout,
         Some(DemoAction::Emote { name }) => {
             if !CREATOR_EMOTES.iter().any(|(_, value)| *value == name) {
                 cmd.reply_failed("unknown creator emote");
@@ -306,11 +351,7 @@ fn demo_command(
                 let index = creator.next;
                 creator.next += 1;
                 let slot = index % MAX_DEMOS as u64;
-                let offset = Vec3::new(
-                    ((slot % GRID_COLUMNS) as f32 - (GRID_COLUMNS - 1) as f32 / 2.0) * GRID_SPACING,
-                    0.0,
-                    -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
-                );
+                let offset = demo_offset(creator.layout, slot);
                 let shape = AvatarShape(PbAvatarShape {
                     id: format!("debug-avatar-{index}"),
                     body_shape: Some(format!(
@@ -375,7 +416,7 @@ fn demo_command(
                 .is_ok_and(|children| children.iter().any(|child| processed.contains(child)))
         })
         .count();
-    cmd.reply_ok(json!({"count":count, "built":built, "cap":config.max_avatars, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "cap":config.max_avatars, "layout":creator.layout.name(), "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -480,6 +521,34 @@ fn fetch_look(
                     .remove::<PendingProfile>()
                     .insert(MissingProfile(pending.0));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_grid_stands_in_front_of_the_player() {
+        for slot in 0..MAX_DEMOS as u64 {
+            assert!(demo_offset(DemoLayout::Grid, slot).z <= -2.0);
+        }
+    }
+
+    #[test]
+    fn the_around_layout_surrounds_the_player_nearest_first() {
+        let offsets: Vec<_> = (0..200)
+            .map(|slot| demo_offset(DemoLayout::Around, slot))
+            .collect();
+        // each avatar stands further out than the one before
+        assert!(offsets
+            .windows(2)
+            .all(|pair| pair[0].length() < pair[1].length()));
+        // and they are on every side of the player
+        for side in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+            let on_side = offsets.iter().filter(|o| o.dot(side) > 0.0).count();
+            assert!((80..=120).contains(&on_side), "{on_side} towards {side}");
         }
     }
 }

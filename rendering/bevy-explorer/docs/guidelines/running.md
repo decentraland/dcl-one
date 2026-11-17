@@ -230,11 +230,13 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/avatar_demo [spawn <n>|clear|cap <n>|emote <name>|...]` (scene preview only): local demo
-  avatars with random base wearables, up to 1024, in a 32-wide grid in front of the player.
+- `/avatar_demo [spawn <n>|clear|cap <n>|layout <grid|around>|emote <name>|...]` (scene preview
+  only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
+  stands new ones in a 32-wide grid in front of the player; `layout around` fills a disc centred
+  on the player, nearest first, so part of the crowd is behind the camera.
   `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range and
   never saved. The reply is JSON: `count`, `built` (demo avatars whose build finished), `cap`,
-  `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
+  `layout`, `maleOnly`, `wearables`, `emote`. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
   bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
   is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
