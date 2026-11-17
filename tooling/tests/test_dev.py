@@ -3,6 +3,7 @@ import importlib.util
 import base64
 import contextlib
 import hashlib
+import hmac
 import gzip
 import io
 import shlex
@@ -19,6 +20,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('foundation_dev', Path(__file__).parents[1] / 'dev.py')
@@ -84,6 +86,67 @@ class DevTest(unittest.TestCase):
         livekit = dev.project(self.config)['processes']['livekit']
         self.assertEqual(livekit['readiness_probe']['http_get']['port'], signaling)
         self.assertIn('livekit', dev.SERVICES)
+
+    def test_stream_keys_reach_the_stacks_own_rtmp_ingress(self):
+        valkey, rtmp, relay, health = dev.ingress_ports(self.config)
+        block = range(self.config['port'], self.config['port'] + 10)
+        self.assertFalse({valkey, rtmp, relay, health} & set(block), "outside the stack's full block")
+        self.assertEqual(len({valkey, rtmp, relay, health}), 4)
+        # LiveKit and the ingress meet in the stack's Valkey; the server hands out the ingress's RTMP URL.
+        yaml = dev.livekit_yaml(self.config)
+        for line in ('redis:', f'  address: 127.0.0.1:{valkey}', 'ingress:',
+                     f'  rtmp_base_url: rtmp://127.0.0.1:{rtmp}/x'):
+            self.assertIn(line + '\n', yaml)
+        ingress = dev.ingress_yaml(self.config)
+        signaling = dev.livekit_ports(self.config)[0]
+        for line in (f"api_key: {self.config['LIVEKIT_API_KEY']}", f"api_secret: {self.config['LIVEKIT_API_SECRET']}",
+                     f'ws_url: ws://127.0.0.1:{signaling}', f'  address: 127.0.0.1:{valkey}',
+                     f'rtmp_port: {rtmp}', 'whip_port: -1', f'http_relay_port: {relay}', f'health_port: {health}',
+                     # A busy development machine still takes a stream.
+                     '  rtmp_cpu_cost: 0.01', '  min_idle_ratio: 0.001'):
+            self.assertIn(line + '\n', ingress)
+        processes = dev.project(self.config)['processes']
+        self.assertEqual(processes['livekit']['depends_on'], {'valkey': {'condition': 'process_healthy'}})
+        self.assertEqual(processes['ingress']['depends_on'], {'livekit': {'condition': 'process_healthy'}})
+        self.assertEqual(processes['ingress']['readiness_probe']['http_get'],
+                         {'host': '127.0.0.1', 'port': health, 'path': '/'})
+        self.assertIn('valkey-ready', processes['valkey']['readiness_probe']['exec']['command'])
+        self.assertTrue({'valkey', 'ingress'} <= set(dev.SERVICES))
+        argv = dev.valkey_argv(self.config)
+        self.assertEqual(argv[argv.index('--port') + 1], str(valkey))
+        self.assertEqual(argv[argv.index('--bind') + 1], '127.0.0.1')
+        self.assertEqual(argv[argv.index('--save') + 1], '', 'nothing is written to disk')
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execvpe') as execvpe:
+            dev.task('ingress')
+        program, argv, env = execvpe.call_args.args
+        self.assertEqual((program, argv), ('ingress', ['ingress']))
+        self.assertEqual(env['INGRESS_CONFIG_BODY'], ingress, 'the secret travels in the environment, not argv')
+        self.assertIn('PATH', env, 'the ingress starts its per-stream handlers from PATH')
+
+    def test_behind_a_public_origin_streamers_get_the_origins_host(self):
+        for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
+            config = {**self.config, 'public_origin': origin}
+            rtmp = dev.ingress_ports(config)[1]
+            self.assertIn(f'  rtmp_base_url: rtmp://{host}:{rtmp}/x\n', dev.livekit_yaml(config))
+
+    def test_a_stack_created_before_the_ingress_gets_a_free_block_and_keeps_it(self):
+        old = {k: v for k, v in self.config.items() if k != 'ingress_port'}
+        dev.save_json(dev.SETTINGS, old)
+        start = old['port'] + 10000
+        with socket.socket() as busy:
+            # A held port in the first candidate block moves the ingress to the next one.
+            busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                busy.bind(('127.0.0.1', start + 2))
+            except OSError:
+                self.skipTest('the test port block is busy')
+            busy.listen()
+            self.assertFalse(dev.ingress_ports_free(start))
+            upgraded = dev.settings()
+        self.assertEqual({k: upgraded[k] for k in old}, old)
+        self.assertGreater(upgraded['ingress_port'], start)
+        self.assertEqual(upgraded['ingress_port'] % 10, start % 10)
+        self.assertEqual(dev.settings(create=True), upgraded, 'the block is stable once written')
 
     def test_a_slow_postgres_probe_does_not_stop_a_healthy_database(self):
         probe = dev.project(self.config)['processes']['postgres']['readiness_probe']
@@ -613,13 +676,8 @@ class DevTest(unittest.TestCase):
         self.assertIsNone(dev.settings()['public_origin'])
         self.assertEqual(dev.runtime_env(dev.settings())['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
 
-    @unittest.skipUnless(shutil.which('livekit-server'), 'livekit-server is supplied by nix develop')
-    def test_livekit_server_starts_on_the_generated_config(self):
-        signaling = dev.livekit_ports(self.config)[0]
-        if not dev.ports_free(self.config['port']):
-            self.skipTest('the test port block is busy')
-        server = subprocess.Popen(['livekit-server'], env={'PATH': os.environ['PATH'],
-                                                            'LIVEKIT_CONFIG': dev.livekit_yaml(self.config)},
+    def start_server(self, argv, env):
+        server = subprocess.Popen(argv, env={'PATH': os.environ['PATH'], **env},
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop():
@@ -630,19 +688,57 @@ class DevTest(unittest.TestCase):
                 server.kill()
                 server.wait()
         self.addCleanup(stop)
-        deadline = time.monotonic() + 20
+        return server
+
+    def wait_http_ok(self, server, port, name, timeout=20):
+        deadline = time.monotonic() + timeout
         for delay in dev.backoff_delays(deadline):
             try:
-                with socket.create_connection(('127.0.0.1', signaling), timeout=1) as sock:
+                with socket.create_connection(('127.0.0.1', port), timeout=1) as sock:
                     sock.sendall(b'GET / HTTP/1.0\r\n\r\n')
-                    self.assertIn(b'OK', sock.recv(4096))
-                    break
+                    self.assertIn(b'200', sock.recv(4096).split(b'\r\n')[0])
+                    return
             except OSError:
-                self.assertIsNone(server.poll(), 'livekit-server exited')
-                self.assertLess(time.monotonic(), deadline, 'livekit-server did not answer')
+                self.assertIsNone(server.poll(), f'{name} exited')
+                self.assertLess(time.monotonic(), deadline, f'{name} did not answer')
                 time.sleep(min(delay, max(0, deadline - time.monotonic())))
-        else:
-            self.fail('livekit-server did not answer')
+        self.fail(f'{name} did not answer')
+
+    @unittest.skipUnless(shutil.which('livekit-server') and shutil.which('valkey-server') and shutil.which('ingress'),
+                         'livekit-server, valkey and livekit-ingress are supplied by nix develop')
+    def test_livekit_and_its_ingress_start_on_the_generated_config(self):
+        if not dev.ports_free(self.config['port']) or not dev.ingress_ports_free(self.config['ingress_port']):
+            self.skipTest('the test port block is busy')
+        valkey = self.start_server(dev.valkey_argv(self.config), {})
+        deadline = time.monotonic() + 20
+        while not dev.valkey_ready(self.config):
+            self.assertIsNone(valkey.poll(), 'valkey-server exited')
+            self.assertLess(time.monotonic(), deadline, 'valkey-server did not answer')
+            time.sleep(0.1)
+        livekit = self.start_server(['livekit-server'], {'LIVEKIT_CONFIG': dev.livekit_yaml(self.config)})
+        self.wait_http_ok(livekit, dev.livekit_ports(self.config)[0], 'livekit-server')
+        ingress = self.start_server(['ingress'], {'INGRESS_CONFIG_BODY': dev.ingress_yaml(self.config)})
+        self.wait_http_ok(ingress, dev.ingress_ports(self.config)[3], 'ingress')
+        # The request /scene-stream-access makes (IngressClient::create_ingress): the server answers
+        # with the stack's RTMP listener, which a streaming app then pushes to.
+        info = self.livekit_twirp('Ingress', 'CreateIngress', {'ingressAdmin': True}, {
+            'inputType': 'RTMP_INPUT', 'name': 'room-ingress', 'roomName': 'room', 'participantIdentity': 'streamer'})
+        self.assertEqual(info['url'], f'rtmp://127.0.0.1:{dev.ingress_ports(self.config)[1]}/x')
+        self.assertTrue(info['stream_key'])
+
+    def livekit_twirp(self, service, method, grant, body):
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
+        now = int(time.time())
+        claims = {'iss': self.config['LIVEKIT_API_KEY'], 'nbf': now - 5, 'exp': now + 60, 'video': grant}
+        unsigned = b64(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode()) + '.' + b64(json.dumps(claims).encode())
+        signature = hmac.new(self.config['LIVEKIT_API_SECRET'].encode(), unsigned.encode(), hashlib.sha256).digest()
+        request = urllib.request.Request(
+            f'http://127.0.0.1:{dev.livekit_ports(self.config)[0]}/twirp/livekit.{service}/{method}',
+            data=json.dumps(body).encode(), method='POST',
+            headers={'Authorization': f'Bearer {unsigned}.{b64(signature)}', 'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
 
     def test_persistent_settings_do_not_rotate_secrets(self):
         warning = io.StringIO()

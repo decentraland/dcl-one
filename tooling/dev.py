@@ -126,14 +126,48 @@ def livekit_credentials():
     return {'LIVEKIT_API_KEY': 'API' + secrets.token_hex(6), 'LIVEKIT_API_SECRET': secrets.token_hex(32)}
 
 
-def missing_secrets(config):
-    """The generated secrets `config` lacks: the LiveKit pair, and the moderator token the API checks and Pulse
-    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment)."""
+def ingress_ports_free(base):
+    # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
+    # the ingress listens so a streaming app on another machine reaches it.
+    sockets = []
+    try:
+        for port, address in ((base, '127.0.0.1'), (base + 1, '0.0.0.0'), (base + 2, '127.0.0.1'),
+                              (base + 3, '127.0.0.1')):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sockets.append(sock)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((address, port))
+        return True
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            return False
+        raise
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+def ingress_block(base):
+    # The stack's ten ports are all taken, so the ingress gets a block of its own 10000 above them
+    # (wrapping to 10000 near the top of the range), the first free one in steps of 10.
+    start = base + 10000 if base + 10000 <= 65000 else 10000
+    for candidate in range(start, 65001, 10):
+        if ingress_ports_free(candidate):
+            return candidate
+    raise RuntimeError('No free ports for LiveKit Ingress; set ingress_port in .cache/dev/settings.json.')
+
+
+def missing_settings(config):
+    """The generated settings `config` lacks: the LiveKit pair, the moderator token the API checks and Pulse
+    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), and the
+    LiveKit Ingress port block."""
     added = {}
     if 'LIVEKIT_API_SECRET' not in config:
         added.update(livekit_credentials())
     if 'MODERATOR_TOKEN' not in config:
         added['MODERATOR_TOKEN'] = secrets.token_hex(32)
+    if 'ingress_port' not in config:
+        added['ingress_port'] = ingress_block(config['port'])
     return added
 
 
@@ -148,13 +182,13 @@ def settings(create=False):
         if create and profile is not None and profile != config['profile']:
             print(f"Using saved profile {config['profile']}; FOUNDATION_DEV_PROFILE={profile} applies only on first "
                   'startup. Change it with foundation-dev profile.', file=sys.stderr)
-        if missing_secrets(config):
-            # A stack from before a generated secret, on whichever command reads it first; the lock
+        if missing_settings(config):
+            # A stack from before a generated setting, on whichever command reads it first; the lock
             # keeps tasks that start together on one value.
             with SETTINGS.with_suffix('.lock').open('w') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 config = json.loads(SETTINGS.read_text())
-                if added := missing_secrets(config):
+                if added := missing_settings(config):
                     config.update(added)
                     save_json(SETTINGS, config)
         return config
@@ -178,7 +212,8 @@ def settings(create=False):
         raise ValueError('FOUNDATION_DEV_PROFILE must be mirror, testnet or offline')
     config = {'port': base, 'profile': profile, 'password': secrets.token_hex(24),
               'ENCRYPTION_KEY': secrets.token_hex(32), 'SESSION_SECRET': secrets.token_hex(32),
-              **missing_secrets({}), **origin_settings(os.environ)}
+              **origin_settings(os.environ)}
+    config.update(missing_settings(config))
     save_json(SETTINGS, config)
     return config
 
@@ -239,10 +274,16 @@ def livekit_ports(config):
 
 def livekit_yaml(config):
     signaling, tcp, udp = livekit_ports(config)
+    valkey, rtmp, _, _ = ingress_ports(config)
+    origin = public(config)
+    rtmp_host = origin[1] if origin else '127.0.0.1'
+    rtmp_host = f'[{rtmp_host}]' if ':' in rtmp_host else rtmp_host
     key = config['LIVEKIT_API_KEY']
     # Signaling listens on loopback, as the rest of the stack. Media cannot: browsers gather no loopback
     # ICE candidates, so the server offers this machine's own interface addresses (no STUN); a session
     # still needs a token signed with the stack's secret. The webhook drives comms presence in the API.
+    # The ingress reaches the server through Valkey; `rtmp_base_url` is the URL /scene-stream-access
+    # hands a streamer, so behind a public origin it names the origin's host.
     return textwrap.dedent(f'''\
         port: {signaling}
         bind_addresses:
@@ -257,9 +298,59 @@ def livekit_yaml(config):
           api_key: {key}
           urls:
             - http://127.0.0.1:{config['port']}/comms-gatekeeper/livekit-webhook
+        redis:
+          address: 127.0.0.1:{valkey}
+        ingress:
+          rtmp_base_url: rtmp://{rtmp_host}:{rtmp}/x
         logging:
           level: info
         ''')
+
+
+def ingress_ports(config):
+    # Valkey (LiveKit and its ingress meet there), the RTMP listener, the ingress HTTP relay and its
+    # health check, in the ingress block.
+    base = config['ingress_port']
+    return base, base + 1, base + 2, base + 3
+
+
+def ingress_yaml(config):
+    # RTMP only: /scene-stream-access creates RTMP ingresses, so WHIP stays off and needs no media ports.
+    # The ingress refuses a stream unless 30% of the machine's CPU stays idle (0 means that default); a
+    # development machine also runs builds, so it reserves almost nothing and counts a stream as a
+    # hundredth of a core.
+    signaling = livekit_ports(config)[0]
+    valkey, rtmp, relay, health = ingress_ports(config)
+    return textwrap.dedent(f'''\
+        api_key: {config['LIVEKIT_API_KEY']}
+        api_secret: {config['LIVEKIT_API_SECRET']}
+        ws_url: ws://127.0.0.1:{signaling}
+        redis:
+          address: 127.0.0.1:{valkey}
+        rtmp_port: {rtmp}
+        whip_port: -1
+        http_relay_port: {relay}
+        health_port: {health}
+        cpu_cost:
+          rtmp_cpu_cost: 0.01
+          min_idle_ratio: 0.001
+        logging:
+          level: info
+        ''')
+
+
+def valkey_argv(config):
+    return ['valkey-server', '--bind', '127.0.0.1', '--port', str(ingress_ports(config)[0]),
+            '--save', '', '--appendonly', 'no']
+
+
+def valkey_ready(config):
+    try:
+        with socket.create_connection(('127.0.0.1', ingress_ports(config)[0]), timeout=5) as sock:
+            sock.sendall(b'PING\r\n')
+            return sock.recv(64).startswith(b'+PONG')
+    except OSError:
+        return False
 
 
 def pulse_ports(config):
@@ -672,9 +763,16 @@ def project(config, postgres_only=False):
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
-    livekit = process('livekit')
+    valkey = process('valkey')
+    valkey['readiness_probe'] = {'exec': {'command': command('valkey-ready')},
+                                 'period_seconds': 1, 'timeout_seconds': 15, 'failure_threshold': 60}
+    livekit = process('livekit', {'valkey': 'process_healthy'})
     livekit['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': livekit_ports(config)[0], 'path': '/'},
                                   'period_seconds': 1, 'failure_threshold': 60}
+    # GStreamer scans its plugins on the first start, which takes a minute or two.
+    ingress = process('ingress', {'livekit': 'process_healthy'})
+    ingress['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': ingress_ports(config)[3], 'path': '/'},
+                                  'period_seconds': 2, 'failure_threshold': 300}
     nats = process('nats')
     nats['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': nats_ports(config)[1], 'path': '/healthz'},
                                'period_seconds': 1, 'failure_threshold': 60}
@@ -684,8 +782,8 @@ def project(config, postgres_only=False):
     processes = {
         'postgres': postgres,
         'api-build': process('api-build', {'postgres': 'process_healthy'}), 'api': api,
-        'web-install': process('web-install'), 'sites': sites, 'livekit': livekit, 'pulse': pulse,
-        'nats': nats,
+        'web-install': process('web-install'), 'sites': sites, 'valkey': valkey, 'livekit': livekit,
+        'ingress': ingress, 'pulse': pulse, 'nats': nats,
     }
     if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
@@ -837,7 +935,8 @@ def import_asset_catalog(config, binary):
 
 # Long-running tasks and the signal that stops each one cleanly.
 SERVICES = {'postgres': signal.SIGINT, 'api': signal.SIGTERM, 'sites': signal.SIGTERM, 'index': signal.SIGTERM,
-            'livekit': signal.SIGTERM, 'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
+            'valkey': signal.SIGTERM, 'livekit': signal.SIGTERM, 'ingress': signal.SIGTERM,
+            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
 
 
 def started(pid):
@@ -910,6 +1009,17 @@ def task(name):
         # The config travels in the environment, so the secret never shows in ps.
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('livekit-server', ['livekit-server'], {**env, 'LIVEKIT_CONFIG': livekit_yaml(config)})
+    elif name == 'valkey':
+        # Holds only LiveKit's routing state for this run: nothing is saved to disk.
+        env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
+        os.execvpe('valkey-server', valkey_argv(config), env)
+    elif name == 'valkey-ready':
+        if not valkey_ready(config):
+            sys.exit(1)
+    elif name == 'ingress':
+        # The ingress starts a handler per stream by running `ingress` again from PATH.
+        env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
+        os.execvpe('ingress', ['ingress'], {**env, 'INGRESS_CONFIG_BODY': ingress_yaml(config)})
     elif name == 'nats':
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
         os.execvpe('nats-server', nats_argv(config), env)
@@ -945,7 +1055,7 @@ def status():
     config = settings()
     print(f"Sites: http://127.0.0.1:{config['port'] + 2}   API: http://127.0.0.1:{config['port']}   "
           f"LiveKit: ws://127.0.0.1:{livekit_ports(config)[0]}   Pulse: https://127.0.0.1:{pulse_ports(config)[0]} (UDP)   "
-          f"NATS: {nats_url(config)}")
+          f"NATS: {nats_url(config)}   RTMP ingress: rtmp://127.0.0.1:{ingress_ports(config)[1]}/x")
     if origin := public(config):
         tls = tls_files(config)
         print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}"
@@ -968,7 +1078,8 @@ def prepare_supervisor(postgres_only=False):
         return None
     # Behind a public origin without a port Pulse's WebTransport sits outside the block; it must be free too.
     webtransport = pulse_ports(config)[0]
-    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None):
+    if not ports_free(config['port'], webtransport if webtransport != config['port'] + 2 else None) \
+            or not ingress_ports_free(config['ingress_port']):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
     temporary = STATE / 'tmp'
     temporary.mkdir(exist_ok=True, mode=0o700)
@@ -1314,8 +1425,8 @@ def main():
         commands.add_parser(command)
     commands.add_parser('up').add_argument('--postgres-only', action='store_true',
                                           help='Start only PostgreSQL for backend tests')
-    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'livekit', 'pulse', 'nats', 'service'))
-    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'livekit', 'pulse', 'nats'))
+    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'service'))
+    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats'))
     commands.add_parser('service', help='Run the stack as a per-user systemd unit or LaunchAgent').add_argument(
         'action', choices=('install', 'uninstall'))
     wait_parser = commands.add_parser('wait')
@@ -1328,7 +1439,8 @@ def main():
     origin_parser.add_argument('--key', default='', help='Its PEM private key')
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
-        'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'livekit', 'pulse', 'nats'))
+        'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'valkey', 'valkey-ready',
+        'livekit', 'ingress', 'pulse', 'nats'))
     args = parser.parse_args()
     if args.command == '_task':
         task(args.task)
