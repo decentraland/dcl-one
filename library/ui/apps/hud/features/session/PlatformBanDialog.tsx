@@ -3,8 +3,9 @@
 // in-world travel.
 
 import { useEffect, useState } from 'react'
-import { siteUrl } from '@hud-host'
+import { isNativeHud, siteUrl } from '@hud-host'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'
+import type { NavAction } from '@explorer-core/engine/protocol'
 import { Button, ModalShell, openPopup } from '../../design'
 import type { SessionPhase } from './useEngineSession'
 
@@ -32,13 +33,18 @@ export function banLines(ban: PlatformBanNotice, now: number): string[] {
   return lines
 }
 
-const openSupport = (): void => {
+const openHelpPage = (): void => {
   window.open(siteUrl('/help/'), '_blank', 'noopener')
 }
 
-/** Opens the notice. With `signOut` it blocks: Escape and the scrim do nothing. */
-export function openPlatformBanDialog(ban: PlatformBanNotice, options: { signOut?: () => void; onClose?: () => void }): () => void {
+/** Opens the notice. With `signOut` it blocks: Escape and the scrim do nothing. `openSupport`
+ *  replaces opening the help page in a new tab. */
+export function openPlatformBanDialog(
+  ban: PlatformBanNotice,
+  options: { signOut?: () => void; onClose?: () => void; openSupport?: () => void }
+): () => void {
   const signOut = options.signOut
+  const openSupport = options.openSupport ?? openHelpPage
   const lines = banLines(ban, Date.now())
   const close = openPopup(
     (dismiss) => (
@@ -90,8 +96,11 @@ export function usePlatformBanNotices(input: {
   travelRefused: boolean
   dismissTravelRefused: () => void
   signOut: () => void
+  nav: (action: NavAction) => void
 }): void {
   const { phase, notice, travelRefused } = input
+  // the native HUD has no browser tabs of its own: the engine opens Support
+  const openSupport = isNativeHud() ? () => input.nav('support') : undefined
   // an in-world travel passes through `entering` too
   const [reachedWorld, setReachedWorld] = useState(false)
   useEffect(() => {
@@ -108,7 +117,7 @@ export function usePlatformBanNotices(input: {
   const blockingKey = blocking ? JSON.stringify(notice) : null
   useEffect(() => {
     if (blockingKey == null || notice == null) return
-    return openPlatformBanDialog(notice, { signOut: input.signOut })
+    return openPlatformBanDialog(notice, { signOut: input.signOut, openSupport })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the notice changes
   }, [blockingKey])
 
@@ -119,7 +128,7 @@ export function usePlatformBanNotices(input: {
   const refusedNotice = travelRefused && !blocking
   useEffect(() => {
     if (!refusedNotice) return
-    return openPlatformBanDialog(notice ?? NO_RECORD, { onClose: input.dismissTravelRefused })
+    return openPlatformBanDialog(notice ?? NO_RECORD, { onClose: input.dismissTravelRefused, openSupport })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
   }, [refusedNotice])
 }

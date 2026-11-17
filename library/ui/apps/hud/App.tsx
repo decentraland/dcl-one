@@ -340,7 +340,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [travelError])
 
   // The platform ban: blocking before the world, dismissible after a refused travel.
-  usePlatformBanNotices({ phase: session.phase, ...session.platformBan, signOut: session.logout })
+  usePlatformBanNotices({ phase: session.phase, ...session.platformBan, signOut: session.logout, nav: session.nav })
 
   // Deploying the Backpack's look failed: try it again, or go back to the last look that deployed.
   // A deliberate choice only: Escape reverts, a stray click outside does nothing.

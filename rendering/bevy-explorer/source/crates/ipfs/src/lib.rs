@@ -866,7 +866,7 @@ pub fn change_realm(
     }
 
     let platform_ban = platform_ban.filter(|status| status.ban().is_some());
-    // a platform ban learnt while changes are in flight stops them before they set the realm
+    // a platform ban learnt while changes are in flight stops those still waiting on world access
     if platform_ban
         .as_ref()
         .is_some_and(|status| status.is_changed())
@@ -913,9 +913,14 @@ pub fn change_realm(
                 })
                 .0
             });
+            // while banned, an earlier change this one supersedes still answers the ban
             latest_issued.send_replace(world_access::Issued {
                 id: *issued,
-                refusal: world_access::SUPERSEDED,
+                refusal: if platform_ban.is_some() {
+                    REALM_CHANGE_BANNED
+                } else {
+                    world_access::SUPERSEDED
+                },
             });
             let superseded = world_access::Superseded {
                 latest: latest_issued.subscribe(),

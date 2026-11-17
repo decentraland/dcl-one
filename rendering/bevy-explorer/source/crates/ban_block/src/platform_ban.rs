@@ -183,6 +183,8 @@ struct BanCheckSchedule {
     retry_after: Option<f64>,
     /// A trigger that arrived while a request was in flight.
     retrigger: bool,
+    /// The `expires_at` of the known ban that a check was already started for once it passed.
+    expiry_checked: Option<String>,
     in_flight: Option<InFlightBanCheck>,
 }
 
@@ -265,10 +267,14 @@ fn check_platform_ban(
         return;
     };
     let refresh_requested = refresh.read().count() > 0;
+    // one check once a known ban's expiry passes, after any delay the server asked for
+    let expiry = status.ban().and_then(|ban| ban.expires_at.clone());
     let expired = ban_expired(&status, web_time::SystemTime::now())
-        && schedule
-            .last_checked
-            .is_none_or(|last| now - last >= MIN_RETRY_SECS);
+        && schedule.retry_after.is_none()
+        && schedule.expiry_checked != expiry;
+    if expired {
+        schedule.expiry_checked = expiry;
+    }
     let triggered = refresh_requested
         || expired
         || realm.is_some_and(|realm| realm.is_changed() && realm.connected);

@@ -312,7 +312,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
   push reaches an idle client here, and the period promises no freshness, as a failed check
   fails open, as there, and the state says so instead of guessing; a failed check keeps a ban
-  already known); a ban whose record the
+  already known, past its `expiresAt` too, since the local clock lifts no ban; once a known ban's
+  `expiresAt` passes it is checked again once, after any `Retry-After`); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
   marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal

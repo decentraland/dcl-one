@@ -139,7 +139,8 @@ describe('the ban notices', () => {
     render(<PopupHost />)
     const dismissTravelRefused = vi.fn()
     const signOut = vi.fn()
-    const hook = renderHook((input: Input) => usePlatformBanNotices({ ...input, dismissTravelRefused, signOut }), { initialProps: initial })
+    const nav = vi.fn()
+    const hook = renderHook((input: Input) => usePlatformBanNotices({ ...input, dismissTravelRefused, signOut, nav }), { initialProps: initial })
     return { ...hook, dismissTravelRefused, signOut }
   }
 
@@ -155,11 +156,15 @@ describe('the ban notices', () => {
     expect(blocking()).toBe(true)
   })
 
-  it('opens nothing over sign-in after Sign Out', async () => {
+  it('Sign Out signs out and opens nothing over sign-in', async () => {
     const h = mount({ phase: 'lobby', notice: BAN, travelRefused: true })
     await waitFor(() => expect(dialog()).not.toBeNull())
-    h.rerender({ phase: 'login', notice: null, travelRefused: false })
+    await userEvent.click(screen.getByRole('button', { name: 'Sign Out' }))
+    expect(h.signOut).toHaveBeenCalledOnce()
     await waitFor(() => expect(dialog()).toBeNull())
+    // what a sign-out leaves in the session
+    h.rerender({ phase: 'login', notice: null, travelRefused: false })
+    expect(dialog()).toBeNull()
   })
 
   it('stays open when entry was under way and the world loads', async () => {
