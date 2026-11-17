@@ -2248,7 +2248,7 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "70015ebdd533b9a23449c46fddaf58715188dfa949e73269da1d5f981c96efee",
+          "sha256": "84d942796f76bb459fbbe9185a4b6f2af58d5f995b8e85fb56f9f5f6b7334618",
           "fds": null,
           "deviation": [
             "bot-review-279-b",

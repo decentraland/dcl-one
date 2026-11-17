@@ -364,7 +364,12 @@ async function stubbedOpenSession(): Promise<typeof openSession> {
   }
 }
 
-const startupBuiltins = { readFile: fs.readFile, setTimeout: timers.setTimeout, error: console.error, now: performance.now }
+const startupBuiltins = {
+  readFile: fs.readFile,
+  setTimeout: timers.setTimeout,
+  error: console.error,
+  now: performance.now
+}
 
 describe('when capture startup waits for a usable port record', () => {
   class StartupBrowser extends EventEmitter {
