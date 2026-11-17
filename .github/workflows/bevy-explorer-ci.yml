@@ -101,7 +101,7 @@
   workflow_dispatch:
     inputs:
       publish-tag:
-        description: 'npm dist-tag to publish the web package under from a branch (empty = build only). Not next/latest; not on main.'
+        description: 'Registry dist-tag to publish the web package under from a branch (empty = build only). Not next/latest; not on main.'
         required: false
         default: ''
 concurrency:
