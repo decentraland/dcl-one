@@ -119,8 +119,8 @@ mod tests {
     }
 
     /// CI runs no clippy over this crate, so this scan keeps production routes on
-    /// `crate::routing`: code after a file's first `#[cfg(test)]`, files named
-    /// `*test*` and `tests/` folders are test code and exempt.
+    /// `crate::routing`. Items under `#[cfg(test)]`, files named `*test*` and
+    /// `tests/` folders are test code and exempt.
     #[test]
     fn production_routes_do_not_use_axum_methods_directly() {
         const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
@@ -152,9 +152,34 @@ mod tests {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
+                // Brace depth, the depth a skipped test item closes at, and whether
+                // a `#[cfg(test)]` item has not reached its `;` or `{` yet.
+                let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
                 for (number, line) in text.lines().enumerate() {
-                    if line.trim() == "#[cfg(test)]" {
-                        break;
+                    let trimmed = line.trim();
+                    let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
+                    if let Some(end) = skip_until {
+                        depth += delta;
+                        if depth <= end {
+                            skip_until = None;
+                        }
+                        continue;
+                    }
+                    if pending {
+                        if delta > 0 {
+                            skip_until = Some(depth);
+                            pending = false;
+                        } else if !trimmed.starts_with("#[")
+                            && (trimmed.ends_with(';') || trimmed.ends_with('}'))
+                        {
+                            pending = false;
+                        }
+                        depth += delta;
+                        continue;
+                    }
+                    if trimmed == "#[cfg(test)]" {
+                        pending = true;
+                        continue;
                     }
                     if line
                         .split_once("axum::routing::")
@@ -162,6 +187,7 @@ mod tests {
                     {
                         found.push(format!("{}:{}", path.display(), number + 1));
                     }
+                    depth += delta;
                 }
             }
         }
