@@ -2,7 +2,7 @@ use std::{
     f32::consts::PI,
     marker::PhantomData,
     num::ParseIntError,
-    ops::{Deref, Range},
+    ops::{Deref, Range, RangeInclusive},
     str::FromStr,
     sync::{atomic::AtomicU32, Arc},
 };
@@ -607,6 +607,13 @@ pub struct PreviousLogin {
 pub fn default_home_realm() -> String {
     crate::base_domain::url(crate::base_domain::Service::RealmProvider, "/main")
 }
+/// The values the "Live Scene Ring" setting takes, in parcel rings.
+pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=3;
+/// The values the "Near LOD Ring" setting takes, in parcel rings.
+pub const NEAR_LOD_RINGS: RangeInclusive<u16> = 1..=8;
+/// The values the "Far LOD Ring" setting takes, in parcel rings.
+pub const FAR_LOD_RINGS: RangeInclusive<u16> = 5..=40;
+
 // app configuration
 #[derive(Serialize, Deserialize, Resource, Clone)]
 #[serde(default)]
@@ -640,6 +647,15 @@ pub struct AppConfig {
     /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
     /// in view and behind the camera together, as `max_near_lods` counts near LODs.
     pub max_far_lods: usize,
+    /// Scenes within this Chebyshev parcel ring of the player's parcel go live whatever the load
+    /// distance, and are kept one ring further. Within [`LIVE_SCENE_RINGS`].
+    pub live_scene_ring: u16,
+    /// A scene that is not live starts a near LOD within this ring, kept one ring further; far
+    /// LODs start past that. Within [`NEAR_LOD_RINGS`].
+    pub near_lod_ring: u16,
+    /// The outer bound of far LODs; the imposter tiles may end them sooner. Within
+    /// [`FAR_LOD_RINGS`].
+    pub far_lod_ring: u16,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -712,6 +728,9 @@ impl Default for AppConfig {
             scene_unload_extra_distance: 10.0,
             max_near_lods: 12,
             max_far_lods: 200,
+            live_scene_ring: 1,
+            near_lod_ring: 3,
+            far_lod_ring: 20,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
