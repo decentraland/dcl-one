@@ -3586,6 +3586,109 @@ async fn a_name_buy_that_failed_before_its_record_is_bought_by_the_next_request(
     delete_key(&pool, "broker_purchases", &key).await;
 }
 
+/// A claim still being signed when its credits checkout is frozen is fenced:
+/// its caller's record then matches no row, so nothing is sent. A buy request
+/// on a frozen checkout's line, claimed or not, answers 409 and says why.
+#[tokio::test]
+async fn a_frozen_credits_checkout_line_is_fenced_and_refused() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let checkout: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) \
+         VALUES ($1, $2, 'fulfilling') RETURNING id",
+    )
+    .bind(format!("frozen-{}", Uuid::new_v4()))
+    .bind(BUYER)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (signing, unclaimed) = (
+        format!("checkout:{checkout}:1"),
+        format!("checkout:{checkout}:2"),
+    );
+    let claimed_at = now();
+    let claim = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &signing,
+            collection: COLLECTION,
+            item_id: Some("4"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: RULE_ESCROW,
+            price_wei: "1000000000000000000",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        claimed_at,
+    )
+    .await
+    .unwrap();
+    assert!(claim.claimed);
+
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fenced = crate::checkout::claims::fence_unrecorded(
+        &mut pool.acquire().await.unwrap(),
+        &[signing.clone(), unclaimed.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(fenced, 1);
+
+    let signer = state.eth_signer.as_ref().unwrap();
+    let call = crate::checkout::calls::BrokerCall {
+        to: Address::repeat_byte(0x11),
+        data: Bytes::new(),
+    };
+    let late =
+        crate::checkout::broker::send_recorded_buy(&state, signer, &signing, claimed_at, call)
+            .await;
+    assert!(matches!(late, Err(ApiError::Conflict(_))), "{late:?}");
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+    assert_eq!(recorded_purchase(&pool, &signing).await.status, "error");
+
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+    for key in [&signing, &unclaimed] {
+        let (status, reply) = keyed_post(&app, "/v1/broker/buy", key, &body).await;
+        assert_eq!(status, 409, "{reply}");
+        assert!(reply.to_string().contains("frozen"), "{reply}");
+    }
+    assert!(chain.accepted_hashes().is_empty());
+
+    delete_key(&pool, "broker_purchases", &signing).await;
+    sqlx::query("DELETE FROM credits.checkouts WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    clear_items_pass(&pool).await;
+}
+
 /// A wearable broker buy whose signing failed is re-armed and bought by the
 /// next request, and both of its legs record their signed transaction before
 /// it is sent.

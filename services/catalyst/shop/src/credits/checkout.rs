@@ -240,6 +240,9 @@ impl Credits {
         }))
     }
 
+    /// Refunds `amount` and closes a `fulfilling` checkout as `failed`; a
+    /// closed checkout's unrecorded broker claims are fenced in the same
+    /// transaction, as compensation fences them.
     pub async fn refund_checkout_manual(
         &self,
         id: i64,
@@ -261,6 +264,10 @@ impl Credits {
         .await?
         .rows_affected()
             > 0;
+        if closed {
+            // after the freeze's row lock, so no claim of a line lands unfenced
+            super::fulfillment::fence_unsent_lines(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok((outcome, closed))
     }
@@ -299,6 +306,9 @@ impl Credits {
         .bind(&detail)
         .fetch_one(&mut *tx)
         .await?;
+        if closed {
+            super::fulfillment::fence_unsent_lines(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok((outcome, closed))
     }

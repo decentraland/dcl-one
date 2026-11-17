@@ -4,9 +4,14 @@
 //! [`claim_broker_purchase`]) was reset to 'pending', otherwise the pre-existing row's
 //! `status`/`tx_hash`. Both `None` with nothing claimed means another claim
 //! landed concurrently, read as in flight. `$now` is the request clock.
+//!
+//! Credits shares two SQL edges with the broker claim: the claim reads
+//! `credits.checkouts` (`FOR SHARE`, by the id in a `checkout:{id}:{line}`
+//! key) and refuses a frozen checkout's line, and credits fences a frozen
+//! checkout's unrecorded claims through [`fence_unrecorded`].
 
 use chrono::NaiveDateTime;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Claim {
@@ -151,6 +156,40 @@ pub async fn claim_broker_purchase(
     .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
     .fetch_one(pool)
     .await
+}
+
+/// Whether `key` names a line of a frozen credits checkout (`reversing`,
+/// `reversed`, `failed`), whose claims [`claim_broker_purchase`] refuses.
+pub async fn checkout_frozen(pool: &PgPool, key: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM credits.checkouts \
+         WHERE id = substring($1 from '^checkout:([0-9]{1,18}):[0-9]+$')::bigint \
+           AND status IN ('reversing', 'reversed', 'failed'))",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+}
+
+/// Marks the unrecorded write-ahead claims under `keys` `error`. Credits runs
+/// it once their checkout is frozen, after the statement that froze it: the
+/// claimant's record (fenced on `pending`) then matches no row, and
+/// [`claim_broker_purchase`] neither takes nor re-arms the keys again.
+pub async fn fence_unrecorded(
+    conn: &mut PgConnection,
+    keys: &[String],
+) -> Result<u64, sqlx::Error> {
+    if keys.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = ANY($1) AND status = 'pending' AND write_ahead AND tx_hash IS NULL",
+    )
+    .bind(keys)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 pub struct NameTransferClaim<'a> {

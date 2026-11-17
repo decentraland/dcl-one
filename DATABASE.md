@@ -1456,6 +1456,29 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Credits checkout and broker claim edges
+
+A credits checkout line buys through the shop broker under the claim key
+`checkout:{checkout_id}:{outbox_id}` in `shop.broker_purchases`. Two SQL edges
+cross the areas. The broker claim (`shop/src/checkout/claims.rs`,
+`claim_broker_purchase`) reads `credits.checkouts` by the id in such a key,
+`FOR SHARE`, and neither inserts nor re-arms the claim while that checkout is
+`reversing`, `reversed` or `failed`; `checkout_frozen` reads the same predicate
+to answer a refused request. Credits writes `shop.broker_purchases` through
+`claims::fence_unrecorded`, called by compensation (`credits/fulfillment.rs`)
+and, in its closing transaction, by the manual refund
+(`credits/checkout.rs`): it marks the frozen checkout's unconfirmed lines'
+`pending` write-ahead claims with no `tx_hash` as `error`.
+
+Invariants: once a checkout is frozen, no line of it gains a recorded buy. The
+freeze is a row update of the checkout, which conflicts with the claim's
+`FOR SHARE` read: a claim that commits first is fenced, one that waits reads
+the frozen status and is refused, and the claimant's record (fenced on
+`pending` and its claim time) matches no fenced row. A transaction that locks
+both takes the checkout row before the claim row, so the edges add no lock
+cycle. Changing the
+key format, the frozen statuses or either statement updates this section.
+
 ## Camera reel photo events workload
 
 `camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox

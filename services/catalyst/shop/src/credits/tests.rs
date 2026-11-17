@@ -6392,6 +6392,14 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
 
 /// Claims `key` through the broker's own claim statement.
 async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::claims::Claim {
+    claim_through_broker_at(pool, key, crate::evm::now()).await
+}
+
+async fn claim_through_broker_at(
+    pool: &PgPool,
+    key: &str,
+    now: chrono::NaiveDateTime,
+) -> crate::checkout::claims::Claim {
     crate::checkout::claims::claim_broker_purchase(
         pool,
         &crate::checkout::claims::BrokerPurchaseClaim {
@@ -6408,7 +6416,7 @@ async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::clai
             usd_amount_wei: None,
             mana_usd_rate_wei: None,
         },
-        crate::evm::now(),
+        now,
     )
     .await
     .unwrap()
@@ -6438,19 +6446,13 @@ async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_ch
         format!("checkout:{checkout}:{failed}"),
         format!("checkout:{checkout}:{signing}"),
     );
-    let claimed_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
-        .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap();
-    claim_broker_buy(&pool, &signing_key, "pending", None).await;
-    sqlx::query(
-        "UPDATE shop.broker_purchases SET tx_hash = NULL, updated_at = $2 WHERE idempotency_key = $1",
-    )
-    .bind(&signing_key)
-    .bind(claimed_at)
-    .execute(&pool)
-    .await
-    .unwrap();
+    // A fresh claim: its caller may still record and broadcast it.
+    let claimed_at = crate::evm::now();
+    assert!(
+        claim_through_broker_at(&pool, &signing_key, claimed_at)
+            .await
+            .claimed
+    );
     sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
         .bind(failed)
         .execute(&pool)
@@ -6495,6 +6497,56 @@ async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_ch
             .claimed
     );
     assert_reconciles(&pool, &addr, "after fencing the unrecorded claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_fences_its_checkout_lines_unrecorded_claims() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line's claim is still being signed; its sibling is unclaimed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (signing_key, unclaimed_key) = (
+        format!("checkout:{checkout}:{}", lines[0].0),
+        format!("checkout:{checkout}:{}", lines[1].0),
+    );
+    assert!(claim_through_broker(&pool, &signing_key).await.claimed);
+
+    let (_, closed) = state
+        .credits
+        .refund_checkout_manual(checkout, &addr, "6")
+        .await
+        .unwrap();
+    assert!(closed);
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM shop.broker_purchases WHERE idempotency_key = $1")
+            .bind(&signing_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        status, "error",
+        "the record fenced on 'pending' matches no row"
+    );
+    for key in [&signing_key, &unclaimed_key] {
+        let claim = claim_through_broker(&pool, key).await;
+        assert!(!claim.claimed && !claim.rearmed, "{key}");
+    }
 
     cleanup(&pool, &addr).await;
 }
