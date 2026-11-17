@@ -5553,7 +5553,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "53ab608ff61273e83ab384c01cfa204723c38610bb19c4aef5ce89a8f33540a7"
+      "sha256": "7cdbb1ef31b47d1c15ede42de0e966371d18a9702d047f119e4df3c6a818dca1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -5781,7 +5781,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "e198917656df52a78d6a75871c9517cd379e087977f84f54a9837eb5e0f79dd0"
+      "sha256": "0eb9cb7c5bb0cc6e79302f40d07078cd6388bb5315ac0fb33a8037f6c6e33b38"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",

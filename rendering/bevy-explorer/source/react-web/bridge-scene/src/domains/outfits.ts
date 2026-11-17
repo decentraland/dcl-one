@@ -1,13 +1,12 @@
 // Outfits: the player's saved avatar looks (backpack Outfits tab).
 //   load  ← what this session last saved or read, else catalyst GET /lambdas/outfits/:address
-//           (404 → the outfits this device saved before they were deployed, else none; any other
-//           failure refuses the save or delete; never for a guest)
+//           (404 → none; any other failure refuses the save or delete; never for a guest)
 //   save/delete → BevyApi.deployOutfits: the engine signs and deploys the `outfits` entity
 //                 (slots past FREE_SLOTS carry names the player owns now)
 //                 (a guest's saves last until the scene restarts)
 //                 a save only fills an empty slot
 //                 a refused one → outfitSaveFailed to the page
-//   pictures → localStorage, per account and slot: never deployed
+//   pictures → localStorage, per account and slot: a cache, never deployed, recaptured on equip
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
@@ -21,7 +20,7 @@ import type { OutfitColor, OutfitData, OutfitsData } from '@explorer-core/engine
 import type { Ctx } from '../bridge'
 import type { Outfit, OutfitsMetadata, RGBColor } from '@explorer-core/engine/protocol'
 
-// The engine gives system scenes a persistent localStorage.
+// The engine gives system scenes a persistent localStorage, keyed by the scene hash: a deploy empties it.
 declare const localStorage: {
   getItem: (key: string) => string | null
   setItem: (key: string, value: string) => void
@@ -37,17 +36,24 @@ const MAX_NAMES = 5
 // Wait for an equipped outfit's wearables to load before picturing it.
 const EQUIP_THUMBNAIL_DELAY_FRAMES = 180
 
+// Pictures are rendered as <img src>, so only a PNG data URL up to 1 MiB is kept or shown.
+const THUMBNAIL_PREFIX = 'data:image/png;base64,'
+const MAX_THUMBNAIL_LENGTH = 1024 * 1024
+
 // The catalyst's lambdas lag a deploy, so this session's last known outfits win over a fresh read.
 const known = new Map<string, OutfitsMetadata>()
 
-// Outfits saved on this device before they were deployed; read once, when the catalyst has none.
-const savedKey = (address: string): string => `outfits:${address.toLowerCase()}`
 // One picture per slot, so a save rewrites one image.
 const thumbKey = (address: string, slot: number): string => `outfit-thumb:${address.toLowerCase()}:${slot}`
 
+function isThumbnail(value: string | null): value is string {
+  return value != null && value.startsWith(THUMBNAIL_PREFIX) && value.length <= MAX_THUMBNAIL_LENGTH
+}
+
 function thumbnailOf(address: string, slot: number): string | null {
   try {
-    return localStorage.getItem(thumbKey(address, slot))
+    const value = localStorage.getItem(thumbKey(address, slot))
+    return isThumbnail(value) ? value : null
   } catch {
     return null
   }
@@ -65,30 +71,11 @@ function withThumbnails(address: string, metadata: OutfitsMetadata): OutfitsMeta
 
 function writeThumbnail(address: string, slot: number, thumbnail: string | null): void {
   try {
-    if (thumbnail != null) localStorage.setItem(thumbKey(address, slot), thumbnail)
+    if (isThumbnail(thumbnail)) localStorage.setItem(thumbKey(address, slot), thumbnail)
     else localStorage.removeItem(thumbKey(address, slot))
   } catch (e) {
     console.error('[outfits] thumbnail write failed', e)
   }
-}
-
-function readSaved(address: string): OutfitsMetadata | null {
-  try {
-    const raw = localStorage.getItem(savedKey(address))
-    if (raw == null) return null
-    const saved = JSON.parse(raw) as Partial<OutfitsData> | null
-    if (!Array.isArray(saved?.outfits) || saved.outfits.length === 0) return null
-    return { outfits: saved.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) })), namesForExtraSlots: [] }
-  } catch (e) {
-    console.error('[outfits] saved outfits unreadable', e)
-    return null
-  }
-}
-
-function forgetSaved(address: string): void {
-  try {
-    localStorage.removeItem(savedKey(address))
-  } catch {}
 }
 
 // Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
@@ -113,6 +100,10 @@ function normalized(outfit: OutfitData): Outfit {
   }
 }
 
+function normalizedMetadata(metadata: OutfitsData): OutfitsMetadata {
+  return { ...metadata, outfits: metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) })) }
+}
+
 // The entity's metadata alone: pictures stay on the device.
 function toDeploy(metadata: OutfitsMetadata): OutfitsData {
   return {
@@ -135,7 +126,6 @@ async function store(address: string, isGuest: boolean, next: OutfitsMetadata): 
   if (!isGuest) {
     kept = { ...next, namesForExtraSlots: await namesFor(address, next) }
     await BevyApi.deployOutfits(address, toDeploy(kept))
-    forgetSaved(address)
   }
   known.set(address.toLowerCase(), kept)
   return kept
@@ -150,8 +140,7 @@ function serially<T>(change: () => Promise<T>): Promise<T> {
 }
 
 // This session's outfits, else the catalyst lambdas endpoint, which returns
-// { metadata: OutfitsMetadata }, or 404 for an address that never deployed one: then the outfits this
-// device saved before, deployed with the first change. A guest never deploys.
+// { metadata: OutfitsMetadata }, or 404 for an address that never deployed one. A guest never reads it.
 async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsMetadata> {
   const key = address.toLowerCase()
   const local = known.get(key)
@@ -165,22 +154,16 @@ async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsM
   // A change stored while this read was in flight is newer; a stored entry is never dropped.
   const stored = known.get(key)
   if (stored != null) return stored
-  if (res?.metadata == null) return readSaved(address) ?? EMPTY
-  const metadata = {
-    ...res.metadata,
-    outfits: res.metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) }))
-  }
+  if (res?.metadata == null) return EMPTY
+  const metadata = normalizedMetadata(res.metadata)
   known.set(key, metadata)
   return metadata
 }
 
-// Same look, whatever the key order or a missing alpha.
+// Same look, whatever the key order. Both sides are normalized: opaque colours, a forceRender list.
 function sameOutfit(a: Outfit, b: Outfit): boolean {
-  const color = (c: OutfitColor): string => {
-    const { r, g, b, a } = opaque(c)
-    return `${r},${g},${b},${a}`
-  }
-  const list = (l: string[] | undefined): string => JSON.stringify(l ?? [])
+  const color = ({ r, g, b, a }: OutfitColor): string => `${r},${g},${b},${a}`
+  const list = (l: string[]): string => JSON.stringify(l)
   return (
     a.bodyShape === b.bodyShape &&
     color(a.eyes.color) === color(b.eyes.color) &&
@@ -319,7 +302,7 @@ export function registerOutfits(ctx: Ctx): void {
         // A save or delete may have changed the slot meanwhile.
         const now = await loadMetadata(me.userId, me.isGuest).catch(() => null)
         const held = now?.outfits.find((o) => o.slot === msg.slot)
-        if (now == null || held == null || JSON.stringify(held.outfit) !== JSON.stringify(outfit)) return
+        if (now == null || held == null || !sameOutfit(held.outfit, outfit)) return
         if (thumbnailOf(me.userId, msg.slot) != null) return
         writeThumbnail(me.userId, msg.slot, thumbnail)
         await emit(me.userId, now)

@@ -241,68 +241,6 @@ describe('the bridge outfits domain', () => {
     })
   })
 
-  describe('when the catalyst has no outfits but this device saved some before', () => {
-    beforeEach(async () => {
-      player = { userId: '0xA', isGuest: false }
-      const { HttpError } = await import('../../bridge-scene/src/http')
-      getJson.mockRejectedValue(new HttpError(404, '{"error":"Not Found","message":"Outfits not found"}'))
-      storage.set('outfits:0xa', JSON.stringify({ outfits: [{ slot: 0, outfit: outfit(['urn:saved']) }], namesForExtraSlots: [] }))
-    })
-
-    it('should show the outfits saved on this device', async () => {
-      const { request, lastOutfits } = await bridge()
-      await request({ kind: 'getOutfits' })
-      expect(lastOutfits()?.outfits).toEqual([{ slot: 0, outfit: deployed(['urn:saved']) }])
-    })
-
-    it('should deploy them with the first change and forget the device copy', async () => {
-      const { request } = await bridge()
-      await request({ kind: 'saveOutfit', slot: 1 })
-      expect(deployOutfits).toHaveBeenCalledWith('0xA', {
-        outfits: [
-          { slot: 0, outfit: deployed(['urn:saved']) },
-          { slot: 1, outfit: deployed(['urn:a']) }
-        ],
-        namesForExtraSlots: []
-      })
-      expect(storage.has('outfits:0xa')).toBe(false)
-    })
-
-    describe('and the catalyst refuses the deploy', () => {
-      beforeEach(() => {
-        deployOutfits.mockRejectedValue(new Error('failed to deploy'))
-      })
-
-      it('should keep the device copy for the next change', async () => {
-        const { request } = await bridge()
-        await request({ kind: 'saveOutfit', slot: 1 })
-        expect(storage.has('outfits:0xa')).toBe(true)
-      })
-    })
-  })
-
-  describe('when the catalyst has no outfits and the device copy is unreadable', () => {
-    let error: ReturnType<typeof vi.spyOn>
-
-    beforeEach(async () => {
-      player = { userId: '0xA', isGuest: false }
-      const { HttpError } = await import('../../bridge-scene/src/http')
-      getJson.mockRejectedValue(new HttpError(404, '{"error":"Not Found","message":"Outfits not found"}'))
-      storage.set('outfits:0xa', '{not json')
-      error = vi.spyOn(console, 'error').mockImplementation(() => {})
-    })
-
-    afterEach(() => {
-      error.mockRestore()
-    })
-
-    it('should show no outfits', async () => {
-      const { request, lastOutfits } = await bridge()
-      await request({ kind: 'getOutfits' })
-      expect(lastOutfits()?.outfits).toEqual([])
-    })
-  })
-
   describe('when a name owner saves into an extra slot', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }
@@ -594,6 +532,32 @@ describe('the bridge outfits domain', () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'getOutfits' })
       expect(lastOutfits()?.outfits[0]?.thumbnail).toBe(PICTURE)
+    })
+  })
+
+  describe('when this device holds a picture that is not a PNG data URL', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      storage.set('outfit-thumb:0xa:0', 'https://tracker.example/pixel.gif')
+    })
+
+    it('should show the outfit without a picture', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'getOutfits' })
+      expect(lastOutfits()?.outfits[0]?.thumbnail).toBeUndefined()
+    })
+  })
+
+  describe('when this device holds a picture over 1 MiB', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      storage.set('outfit-thumb:0xa:0', PICTURE + 'A'.repeat(1024 * 1024))
+    })
+
+    it('should show the outfit without a picture', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'getOutfits' })
+      expect(lastOutfits()?.outfits[0]?.thumbnail).toBeUndefined()
     })
   })
 })
