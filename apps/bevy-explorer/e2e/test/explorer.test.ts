@@ -477,6 +477,18 @@ describe('Explorer', () => {
     assert.ok(Date.now() - started < 150, 'and then there is room again')
   })
 
+  test('profileDeployWindow counts every version a read skipped as a deployment', async () => {
+    let version = 3
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 5
+    await explorer.userData()
+    const started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
+  })
+
   test('a long reply is cut in the record, not in the result', async () => {
     const fake = new FakeConsole({ screenshot: Buffer.alloc(9000, 1).toString('base64') })
     const explorer = new Explorer(fake)

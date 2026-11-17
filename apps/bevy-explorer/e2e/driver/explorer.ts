@@ -497,6 +497,8 @@ function scrubbed(line: string, error: unknown): unknown {
 export class Explorer {
   readonly console: Console
   readonly hud: Hud
+  /** When this client's driver was made: before its sign-in, so before anything the sign-in did. */
+  readonly openedAt = Date.now()
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
@@ -703,7 +705,10 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#deploymentSeen()
+      // Each edit is one version above the last (`bump_version`), so a read that skipped some counts
+      // them all; a version a failed deploy used and the next edit skips counts too, which only
+      // waits longer.
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#deploymentSeen(Math.max(1, data.version - this.#ownVersion))
       this.#ownVersion = data.version
     }
     return data
@@ -715,9 +720,9 @@ export class Explorer {
     this.#deploymentSeen()
   }
 
-  #deploymentSeen(): void {
+  #deploymentSeen(count = 1): void {
     this.#ownVersionChangedAt = Date.now()
-    this.#deploymentsSeenAt.push(this.#ownVersionChangedAt)
+    for (let i = 0; i < count; i++) this.#deploymentsSeenAt.push(this.#ownVersionChangedAt)
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
