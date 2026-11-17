@@ -10,7 +10,7 @@ import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
-import type { MapState } from '../../features/session/useEngineSession'
+import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
 const place = (id: string, title: string, positions: string[], extra: Partial<DiscoverPlace> = {}): DiscoverPlace =>
@@ -83,7 +83,7 @@ function serve(services: Services = {}): MapRequest[] {
 
 function renderMap(over: Partial<MapState> = {}, genesis = true, compact?: { onTravel: () => void }): MapState {
   const session = fakeSession()
-  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn(), setHome: vi.fn(), ...over }
+  const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn(), setHome: vi.fn(), ...over }
   const minimap = genesis ? session.minimap : { ...session.minimap, satelliteView: null }
   render(<MapPage map={map} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} compact={compact} onNavigate={vi.fn()} />)
   return map
@@ -570,7 +570,7 @@ describe('map navigation', () => {
   it("keeps the search and the route in the lobby's modal when the startup lobby refuses the jump", async () => {
     serve({ search: [CLUB] })
     const onTravel = vi.fn()
-    const teleportToPlace = vi.fn(() => false)
+    const teleportToPlace = vi.fn((): TravelOutcome => 'refused')
     const map = renderMap({ teleportToPlace }, true, { onTravel })
     await search('club')
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
@@ -581,7 +581,7 @@ describe('map navigation', () => {
     expect(vi.mocked(map.toggle)).not.toHaveBeenCalled()
     expect(navigation.getSnapshot()).not.toBeNull()
     expect(screen.getByRole('textbox', { name: 'Search' })).toHaveValue('Sugar Club')
-    teleportToPlace.mockReturnValue(true)
+    teleportToPlace.mockReturnValue('sent')
     await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
     expect(onTravel).toHaveBeenCalledOnce()
     expect(navigation.getSnapshot()).toBeNull()
@@ -623,7 +623,7 @@ describe('map view size', () => {
     vi.stubGlobal('ResizeObserver', Observer)
     serve()
     const session = fakeSession()
-    const closed: MapState = { ...session.map, open: false, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const closed: MapState = { ...session.map, open: false, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn() }
     const rest = { minimap: session.minimap, profile: fakeProfileState(), gallery: session.gallery, onNavigate: vi.fn() }
     // the page is mounted with the map closed, as the HUD mounts it
     const { rerender } = render(<MapPage map={closed} {...rest} />)
@@ -646,7 +646,7 @@ describe('map live events', () => {
     const stopped = vi.spyOn(globalThis, 'clearInterval')
     serve()
     const session = fakeSession()
-    const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(), changeRealm: vi.fn(), toggle: vi.fn() }
+    const map: MapState = { ...session.map, open: true, teleportToPlace: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), toggle: vi.fn() }
     const { unmount } = render(<MapPage map={map} minimap={session.minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
     const polls = started.mock.results.filter((_, i) => started.mock.calls[i][1] === 5 * 60 * 1000).map((r) => r.value as unknown)
     expect(polls).toHaveLength(1)

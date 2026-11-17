@@ -43,9 +43,11 @@ function renderPanel(): SettingsState {
 
 describe('settings panel controls', () => {
   let settings: SettingsState
-  beforeEach(() => {
+  // the panel opens on Graphics; the toggle and the slider are in the engine's General category
+  beforeEach(async () => {
     resetSettingsTab()
     settings = renderPanel()
+    await userEvent.click(screen.getByRole('tab', { name: 'General' }))
   })
 
   it('toggle control sets 1 when turned on', async () => {
@@ -128,7 +130,7 @@ describe('compact settings', () => {
   it('shows the same tabs without the menu bar, even while the full page is closed, and re-reads the settings', () => {
     const settings: SettingsState = { ...fakeSession().settings, open: false, list: [TOGGLE, SELECT], refresh: vi.fn() }
     render(compact(settings))
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['General', 'Graphics', 'Chat', 'Lobby', 'Key Bindings'])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Graphics', 'Controls', 'Chat', 'General', 'Lobby'])
     expect(screen.queryByRole('button', { name: /close/i })).toBeNull()
     expect(settings.refresh).toHaveBeenCalledOnce()
   })
@@ -136,9 +138,9 @@ describe('compact settings', () => {
   it('opens on the tab last picked in the other form', async () => {
     const settings: SettingsState = { ...fakeSession().settings, open: true, list: [TOGGLE, SELECT] }
     render(compact(settings))
-    await userEvent.click(screen.getByRole('tab', { name: 'Graphics' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'General' }))
     cleanup()
     render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
-    expect(screen.getByRole('tab', { name: 'Graphics' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true')
   })
 })

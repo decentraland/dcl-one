@@ -4,10 +4,13 @@
 // (parcel) or visits (world) and closes the page.
 
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
+import { openDestinationCard, placeInfo } from './DestinationCard'
 import { PlacesBrowser } from './PlacesBrowser'
 import { openPlaceDetail } from './PlaceDetail'
 import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
-import type { ProfileState } from '../session/useEngineSession'
+import type { ProfileState, TravelOutcome } from '../session/useEngineSession'
+import styles from './PlacesPage.module.css'
 
 export interface PlacesState {
   open: boolean
@@ -32,14 +35,14 @@ export function PlacesPage({
   /** Shown in the lobby's section modal; `onTravel` closes it once a jump goes ahead. */
   compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
-  onTeleport: (x: number, y: number) => boolean
-  onVisitWorld: (realm: string) => boolean
+  onTeleport: (x: number, y: number) => TravelOutcome
+  onVisitWorld: (realm: string) => TravelOutcome
 }): React.JSX.Element | null {
   if (!places.open && compact == null) return null
 
-  const travel = (place: DiscoverPlace): boolean => {
+  const travel = (place: DiscoverPlace): TravelOutcome => {
     const t = placeTeleport(place)
-    if (!t) return false
+    if (!t) return 'refused'
     return t.kind === 'world' ? onVisitWorld(t.realm) : onTeleport(t.x, t.y)
   }
 
@@ -49,7 +52,7 @@ export function PlacesPage({
       openPlaceDetail({
         place,
         onJumpIn: (picked) => {
-          if (!travel(picked)) return false
+          if (travel(picked) === 'refused') return false
           onTravel()
           return true
         }
@@ -57,9 +60,12 @@ export function PlacesPage({
     return <PlacesBrowser account={account} columns={COMPACT_PLACES_COLUMNS} onPick={open} />
   }
 
-  // a jump from the startup lobby has closed every page already: a toggle would reopen this one
+  // the startup lobby's pick closes every page itself: a toggle would reopen this one
   const visit = (place: DiscoverPlace): void => {
-    if (travel(place)) places.close()
+    if (placeTeleport(place) == null) return
+    openDestinationCard(placeInfo(place), () => {
+      if (travel(place) === 'sent') places.close()
+    })
   }
 
   const p = profile.data
@@ -72,8 +78,12 @@ export function PlacesPage({
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
       onClose={places.toggle}
+      transparentBody
     >
-      <PlacesBrowser account={account} onPick={visit} />
+      <div className={styles.page}>
+        <MenuBackdrop />
+        <PlacesBrowser account={account} onPick={visit} />
+      </div>
     </MainMenuShell>
   )
 }

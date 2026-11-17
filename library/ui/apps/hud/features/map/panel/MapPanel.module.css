@@ -72,7 +72,8 @@
   position: absolute;
   top: 10px;
   left: 10px;
-  width: 450px;
+  /* 10px short of the panel's edge; a presenting card keeps its close button clear (--menu-title-end) */
+  width: calc(460px - var(--menu-title-end, 10px));
   height: 42px;
   border-radius: var(--r-md);
   background: var(--text);

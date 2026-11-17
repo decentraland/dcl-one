@@ -6,6 +6,7 @@ import { Button, MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import type { EventsState, FriendsState, ProfileState } from '../session/useEngineSession'
 import addIcon from '../../assets/events/add-icn.png'
 import { openEventDetail, type EventJumpIn } from './EventDetail'
@@ -106,7 +107,7 @@ export function EventsPage({
   const p = profile.data
   const page = (
     <div className={inModal ? `${styles.page} ${styles.compact}` : styles.page}>
-      <div className={styles.backdrop} />
+      <MenuBackdrop />
       <header className={styles.header}>
         <div className={styles.headerFrame}>
           <h1 className={styles.title}>Events</h1>

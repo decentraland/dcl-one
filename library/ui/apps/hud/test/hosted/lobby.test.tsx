@@ -517,7 +517,7 @@ describe('lobby VIEW ALL of Communities and Gallery', () => {
 
   it('keeps the photo and the modal when the jump is refused', async () => {
     const session = withWidgets()
-    vi.mocked(session.map.teleport).mockReturnValue(false)
+    vi.mocked(session.map.teleport).mockReturnValue('refused')
     render(lobbyWithPopups(session))
     viewAll('Gallery')
     await openFirstPhoto()
@@ -824,15 +824,28 @@ describe('lobby layout editor', () => {
 })
 
 describe('lobby profile menu and visit', () => {
-  it('signs out from the menu and offers no Exit on the web', () => {
+  it('signs out from the menu once confirmed, and offers no Exit on the web', async () => {
     const session = fakeSession()
-    render(lobby(session))
+    render(lobbyWithPopups(session))
     fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
     const menu = screen.getByRole('menu', { name: 'Profile menu' })
     expect(within(menu).queryByRole('menuitem', { name: 'Exit' })).not.toBeInTheDocument()
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Sign Out' }))
-    expect(session.logout).toHaveBeenCalledOnce()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    const ask = await screen.findByRole('dialog', { name: 'Sign out?' })
+    expect(session.logout).not.toHaveBeenCalled()
+    fireEvent.click(within(ask).getByRole('button', { name: 'Sign Out' }))
+    await waitFor(() => expect(session.logout).toHaveBeenCalledOnce())
+  })
+
+  it('asks before signing out, and Cancel keeps the session', async () => {
+    const session = fakeSession()
+    render(lobbyWithPopups(session))
+    fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Profile menu' })).getByRole('menuitem', { name: 'Sign Out' }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Sign out?' })).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sign out?' })).toBeNull())
+    expect(session.logout).not.toHaveBeenCalled()
   })
 
   it('closes the menu on Cancel (the key or a gamepad button) and leaves the lobby up', () => {

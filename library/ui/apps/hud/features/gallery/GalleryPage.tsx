@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 import { EmptyState, Icon, Spinner, openPopup } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PhotoDetail } from './PhotoDetail'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
 import { useOwnReelActions } from './useOwnReelActions'
-import type { GalleryState, ProfileState } from '../session/useEngineSession'
+import type { GalleryState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 
@@ -62,8 +63,8 @@ export function GalleryPage({
   gallery: GalleryState
   profile: ProfileState
   onNavigate: (page: string) => void
-  /** Jump to a photo's parcel (closes the gallery); false when the jump is refused. */
-  onTeleport: (x: number, y: number) => boolean
+  /** Jump to a photo's parcel (closes the gallery). */
+  onTeleport: (x: number, y: number) => TravelOutcome
   /** Open a captured person's passport. */
   onViewProfile?: (user: ChatUser) => void
   /** Hosted in the lobby's section modal; a photo opens over the whole screen. */
@@ -101,15 +102,12 @@ export function GalleryPage({
           onLoadMeta: gallery.loadPhoto,
           onClose: () => setIndex(null),
           onTeleport: (x, y) => {
-            if (compact != null) {
-              if (!onTeleport(x, y)) return
-              setIndex(null)
-              compact.onTravel()
-              return
-            }
+            const outcome = onTeleport(x, y)
+            if (outcome === 'refused') return
             setIndex(null)
-            gallery.toggle() // close the gallery so the teleport lands in-world
-            onTeleport(x, y)
+            if (compact != null) compact.onTravel()
+            // over the startup lobby the pick has closed the gallery already
+            else if (outcome === 'sent') gallery.toggle()
           },
           onDelete: (photo) =>
             void actions.remove(photo).then((removed) => {
@@ -142,12 +140,12 @@ export function GalleryPage({
         <h1 className={styles.title}>Gallery</h1>
         {list.loaded && list.max > 0 && (
           <div className={styles.storage} title={`${list.total} of ${list.max} photos used`}>
-            <div className={styles.storageBar}>
-              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
-            </div>
             <span className={styles.storageText}>
               Storage {list.total}/{list.max} photos taken
             </span>
+            <div className={styles.storageBar}>
+              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
+            </div>
           </div>
         )}
       </div>
@@ -199,9 +197,12 @@ export function GalleryPage({
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
       onClose={gallery.toggle}
-      flushBody
+      transparentBody
     >
-      {body}
+      <div className={styles.page}>
+        <MenuBackdrop />
+        {body}
+      </div>
       {detail != null && <PhotoDetail {...detail} />}
     </MainMenuShell>
   )

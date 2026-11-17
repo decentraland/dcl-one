@@ -7,7 +7,7 @@ import playersIcon from '../../assets/map/panel/players.png'
 import settingsIcon from '../../assets/lobby/settings-icn.png'
 import signOutIcon from '../../assets/lobby/sign-out-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
-import { MaskIcon } from '../../design'
+import { MaskIcon, showConfirm } from '../../design'
 import { siteUrl } from '@hud-host'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { profilePictureStyle } from './LobbyCards'
@@ -15,6 +15,12 @@ import { moveFocus } from '../../lib/arrowKeys'
 import styles from './LobbyProfileMenu.module.css'
 
 const COPIED_MS = 1000
+
+function askSignOut(signOut: () => void): void {
+  void showConfirm({ title: 'Sign out?', body: 'You return to the start screen.', cancelLabel: 'Cancel', confirmLabel: 'Sign Out' }).then((confirmed) => {
+    if (confirmed) signOut()
+  })
+}
 
 export const menuAddress = (a: string): string => (a.length > 12 ? `${a.slice(0, 5)}...${a.slice(-5)}` : a)
 
@@ -43,7 +49,9 @@ export function LobbyProfileMenu({
   onProfile: () => void
   onSettings: () => void
   onReportBug: (() => void) | null
-  onSignOut: () => void
+  /** Asked first. Null where the page cannot end the sign-in (the desktop client in world, a
+   *  sign-in the scene owns). */
+  onSignOut: (() => void) | null
   onExit: (() => void) | null
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
@@ -119,7 +127,7 @@ export function LobbyProfileMenu({
         {item('Settings', settingsIcon, onSettings)}
         {onReportBug && item('Report a Bug', bugIcon, onReportBug)}
         <div className={styles.separator} />
-        {item('Sign Out', signOutIcon, onSignOut)}
+        {onSignOut && item('Sign Out', signOutIcon, () => askSignOut(onSignOut))}
         {onExit && item('Exit', leaveIcon, onExit)}
         <div className={styles.footer}>
           <a className={styles.link} href={siteUrl('/terms')} target="_blank" rel="noopener noreferrer">

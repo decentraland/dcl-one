@@ -17,7 +17,7 @@ import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import type { GalleryState, MapState, MinimapState, ProfileState } from '../session/useEngineSession'
+import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import { CategoryStrip } from './CategoryStrip'
 import { DestinationBanner } from './DestinationBanner'
 import { LayersPanel } from './LayersPanel'
@@ -103,18 +103,14 @@ export function MapPage({
     return () => clearInterval(timer)
   }, [destination, pose])
 
-  // The full map closes before a jump starts: a jump from the startup lobby closes every page
-  // itself, and a toggle after it would reopen the map. On a refused pick the lobby's modal and
-  // what `travelled` clears stay.
-  const go = (travel: () => boolean, travelled: () => void): void => {
-    if (compact == null) {
-      travelled()
-      map.toggle()
-      travel()
-    } else if (travel()) {
-      travelled()
-      compact.onTravel()
-    }
+  // A refused pick leaves the page as it is; the startup lobby's pick closes the page itself, so a
+  // toggle after it would reopen the map.
+  const go = (travel: () => TravelOutcome, travelled: () => void): void => {
+    const outcome = travel()
+    if (outcome === 'refused') return
+    travelled()
+    if (compact != null) compact.onTravel()
+    else if (outcome === 'sent') map.toggle()
   }
 
   const onParcel = useCallback(

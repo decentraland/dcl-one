@@ -303,7 +303,7 @@ repository root.
 - CI reuses cached engine builds until their inputs change: Cargo would otherwise rebuild a path
   dependency after every checkout, since a checkout makes every file new.
   `tooling/bevy-mtimes.py` records the engine, in-tree crate and protocol files' blob ids and
-  times with the cache and gives unchanged files their times back; every job that caches the
-  explorer's target runs it.
+  times with the cache and gives unchanged files, and directories that hold the same names, their
+  times back; every job that caches the explorer's target runs it.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).

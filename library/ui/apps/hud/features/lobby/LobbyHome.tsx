@@ -43,6 +43,7 @@ import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { openPlaceDetail } from '../places/PlaceDetail'
 import { openPassport } from '../profile/Passport'
+import { signOutOfWorld } from '../gate/signOutOfWorld'
 import { useSession } from '../session/SessionContext'
 import { SIGNING_IN_PICK, type Destination } from '../session/useEngineSession'
 import { profilePictureStyle, type ConnectedFriend } from './LobbyCards'
@@ -501,7 +502,7 @@ export function LobbyHome({
     rotateAt.current = at
     placeAt(rotateRef.current, at)
     setRotating(true)
-    session.backpack.rotate(((e.clientX - p.lastX) / scale) * DEGREES_PER_PX)
+    session.turnLobbyAvatar(((e.clientX - p.lastX) / scale) * DEGREES_PER_PX)
     p.lastX = e.clientX
   }
   const onAvatarUp = (e: React.PointerEvent): void => {
@@ -659,7 +660,8 @@ export function LobbyHome({
           }}
           onSettings={() => openSection('settings')}
           onReportBug={() => window.open(bugReportUrl(), '_blank', 'noopener')}
-          onSignOut={session.logout}
+          // in world the engine keeps its account while a realm is loaded
+          onSignOut={onClose == null ? session.logout : session.login.signedInAs != null && !isNativeHud() ? signOutOfWorld : null}
           onExit={isNativeHud() ? session.quit : null}
         />
       )}

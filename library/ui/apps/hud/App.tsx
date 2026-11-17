@@ -28,10 +28,10 @@ import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
-import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
+import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
@@ -367,17 +367,19 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   }, [session.backpack.open])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
-  const viewMyProfile = (): void => {
+  const viewMyProfile = (tab?: PassportTab): void => {
     const me = session.profile.data
-    if (me) openPassport(me.address)
+    if (me) openPassport(me.address, tab)
   }
 
   // Top-nav navigation between the full-screen menu pages (Settings/Backpack/Map)
   // and the Communities panel. Each toggle is mutually exclusive.
   const goToMenuPage = (page: string): void => {
-    // the startup lobby opens the pages a destination can be found in (a pick there starts the world
-    // there); the Shop, the editor and the in-world lobby wait for the world
-    if (session.phase === 'lobby' && !STARTUP_LOBBY_PAGES.includes(page)) return
+    // over the startup lobby LOBBY closes the menus, and only the pages a destination is found in open
+    if (session.phase === 'lobby') {
+      if (page === 'lobby') return session.closeAllPanels()
+      if (!STARTUP_LOBBY_PAGES.includes(page)) return
+    }
     if (page === 'lobby') session.lobbyPage.toggle()
     else if (page === 'settings') session.settings.toggle()
     else if (page === 'backpack') session.backpack.toggle()
@@ -490,14 +492,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
-          {chrome && (
-            <Minimap
-              minimap={session.minimap}
-              map={session.map}
-              sceneTitle={session.minimap.sceneTitle}
-              setEngineViewport={session.setEngineViewport}
-            />
-          )}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
           {!pageOpen && editorMode !== 'edit' && (
             <Pointer

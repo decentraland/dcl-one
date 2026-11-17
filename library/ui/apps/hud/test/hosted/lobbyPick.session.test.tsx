@@ -2,6 +2,7 @@
 import { act, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderSession } from '../harness'
+import type { TravelOutcome } from '../../features/session/useEngineSession'
 
 describe('lobby: a pick from a page over the startup lobby', () => {
   it('picks where the world starts from a page opened over the startup lobby', async () => {
@@ -30,11 +31,11 @@ describe('lobby: a pick from a page over the startup lobby', () => {
     expect(h.session().login.busy).toBe(true)
 
     act(() => h.session().map.toggle())
-    let picked: boolean | undefined
+    let picked: TravelOutcome | undefined
     act(() => {
       picked = h.session().map.teleportToPlace(5, 6)
     })
-    expect(picked).toBe(false)
+    expect(picked).toBe('refused')
     expect(h.session().map.open).toBe(true)
     expect(h.session().phase).toBe('lobby')
     expect(h.driver.sentOf('teleport')).toHaveLength(0)

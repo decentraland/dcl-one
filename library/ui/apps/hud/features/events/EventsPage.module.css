@@ -18,38 +18,6 @@
   }
 }
 
-.backdrop {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: linear-gradient(90deg, var(--lava-1) 0%, var(--lava-1) 30%, color-mix(in srgb, var(--lava-1) 55%, var(--lava-2)) 65%, var(--lava-2) 100%);
-}
-.backdrop::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 140%;
-  height: 140%;
-  background: radial-gradient(ellipse 60% 45% at 25% 100%, var(--lava-3) 0%, transparent 100%);
-  transform: translate(0, -28.571%);
-  animation: lava 24s var(--ease-inout) infinite alternate;
-  will-change: transform;
-}
-.backdrop::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--lava-4) 55%, transparent) 0%, transparent 22%);
-}
-@keyframes lava {
-  from {
-    transform: translate(0, -28.571%);
-  }
-  to {
-    transform: translate(-28.571%, -22.857%);
-  }
-}
 
 .header {
   position: absolute;
@@ -57,6 +25,8 @@
   right: 0;
   left: 0;
   height: 68px;
+  /* the frame sits 25px in; a presenting card keeps its close button clear (--menu-title-end) */
+  padding-right: calc(var(--menu-title-end, 25px) - 25px);
   background: var(--scrim-head);
   animation: headerIn var(--dur-panel) var(--ease-outquad);
 }
@@ -134,8 +104,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .page,
-  .header,
-  .backdrop::before {
+  .header {
     animation: none;
   }
 }

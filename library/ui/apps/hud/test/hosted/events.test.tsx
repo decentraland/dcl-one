@@ -41,12 +41,12 @@ function renderHud(options: { compact?: { onTravel: () => void }; refused?: bool
     // mounted after the session is up: the modal reads on mount
     const [inModal, setInModal] = useState(false)
     showModal = () => setInModal(true)
-    const picked = (): boolean => {
+    const picked = (): 'lobby' => {
       engine.closeAllPanels()
-      return true
+      return 'lobby'
     }
     const session = options.refused
-      ? { ...engine, map: { ...engine.map, changeRealm: () => false, teleportToPlace: () => false } }
+      ? { ...engine, map: { ...engine.map, changeRealm: () => 'refused' as const, teleportToPlace: () => 'refused' as const } }
       : options.pickedFromLobby
         ? { ...engine, map: { ...engine.map, changeRealm: picked, teleportToPlace: picked } }
         : engine
@@ -105,13 +105,15 @@ afterEach(() => {
 })
 
 describe('events: the sidebar', () => {
-  it('shows Events after Notifications with the live count badge and its key', async () => {
+  it('shows Events first in the Discover panel with the live count, which stays out of its name', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ ok: true, data: [{ id: 'a' }, { id: 'b' }] })))))
     const s = fakeSession()
     render(<Sidebar session={s} />)
-    const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels[labels.indexOf('Notifications') + 1]).toBe('Events')
+    expect(screen.queryByRole('button', { name: 'Events' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Discover' }))
+    const rows = within(screen.getByRole('dialog', { name: 'Discover' })).getAllByRole('button')
     const button = screen.getByRole('button', { name: 'Events' })
+    expect(rows[0]).toBe(button)
     await waitFor(() => expect(within(button).getByText('2')).toBeInTheDocument())
     await userEvent.click(button)
     expect(vi.mocked(s.events.toggle)).toHaveBeenCalledWith('sidebar')

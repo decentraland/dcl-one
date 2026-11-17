@@ -765,9 +765,11 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
-  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
-  // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
+  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Each is for the stage
+  // its page names (the Backpack's and the Shop's preview unless it says the lobby): a late one never turns or
+  // zooms another stage's avatar. The lobby's avatar turns only; its camera stays.
   ctx.on('previewRotate', (msg) => {
+    if ((msg.stage ?? 'backpack') !== stage) return
     if (stage === 'lobby') turnLobbyAvatar(msg.degrees)
     else turnAvatar(msg.degrees)
   })

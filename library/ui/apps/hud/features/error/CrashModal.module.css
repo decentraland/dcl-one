@@ -74,7 +74,7 @@
 /* The raw panic / crash message, monospaced + scrollable. */
 .detail {
   margin: 0;
-  max-height: 30vh;
+  max-height: calc(30vh / var(--ui-scale, 1));
   overflow: auto;
   padding: 12px;
   border-radius: var(--r-card);

@@ -4,9 +4,9 @@
   position: fixed;
   top: 0;
   left: 0;
-  width: calc(100% / var(--lobby-scale, var(--ui-scale)));
-  height: calc(100% / var(--lobby-scale, var(--ui-scale)));
-  transform: scale(var(--lobby-scale, var(--ui-scale)));
+  width: calc(100% / var(--ui-scale));
+  height: calc(100% / var(--ui-scale));
+  transform: scale(var(--ui-scale));
   transform-origin: top left;
   /* under the panels the lobby opens (profile, notifications, backpack) */
   z-index: var(--z-panel);

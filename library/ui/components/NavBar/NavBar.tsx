@@ -8,6 +8,7 @@ import {
   useState,
   type AnchorHTMLAttributes,
   type ComponentType,
+  type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -446,6 +447,9 @@ function AccountMenu({
 }
 
 function Drawer({
+  closingFrom,
+  panelRef,
+  onExited,
   scopeRef,
   headerRef,
   triggerRef,
@@ -453,6 +457,9 @@ function Drawer({
   onDesktop,
   children
 }: {
+  closingFrom: string | null
+  panelRef: RefObject<HTMLDivElement | null>
+  onExited: () => void
   scopeRef: RefObject<HTMLDivElement | null>
   headerRef: RefObject<HTMLElement | null>
   triggerRef: RefObject<HTMLButtonElement | null>
@@ -462,16 +469,39 @@ function Drawer({
 }) {
   const [top, setTop] = useState<number | null>(null)
   const [entryRevealed, setEntryRevealed] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(false)
   useLayoutEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
     const onChange = (event: MediaQueryListEvent) => {
+      setReducedMotion(event.matches)
       if (event.matches) setEntryRevealed(true)
     }
-    if (reducedMotion.matches) setEntryRevealed(true)
-    reducedMotion.addEventListener('change', onChange)
-    return () => reducedMotion.removeEventListener('change', onChange)
+    setReducedMotion(preference.matches)
+    if (preference.matches) setEntryRevealed(true)
+    preference.addEventListener('change', onChange)
+    return () => preference.removeEventListener('change', onChange)
   }, [])
+  useLayoutEffect(() => {
+    if (closingFrom === null) return
+    let active = true
+    const finish = () => {
+      if (!active) return
+      if (typeof window.matchMedia === 'function' && window.matchMedia(DESKTOP_QUERY).matches)
+        onDesktop()
+      else onExited()
+    }
+    if (reducedMotion) finish()
+    else {
+      setEntryRevealed(true)
+      const animations = panelRef.current?.getAnimations?.() ?? []
+      if (!animations.length) finish()
+      else void Promise.all(animations.map((animation) => animation.finished)).then(finish, finish)
+    }
+    return () => {
+      active = false
+    }
+  }, [closingFrom, onExited, onDesktop, panelRef, reducedMotion])
   useLayoutEffect(() => {
     let frame = 0
     const measure = () => {
@@ -559,7 +589,15 @@ function Drawer({
         onClick={onClose}
       />
       <div
+        ref={panelRef}
         className={styles.drawer}
+        inert={closingFrom !== null}
+        data-exiting={closingFrom !== null || undefined}
+        style={
+          closingFrom === null
+            ? undefined
+            : ({ '--drawer-exit-from': closingFrom } as CSSProperties)
+        }
         data-testid="navbar-panel"
         data-entry-revealed={entryRevealed || undefined}
         onFocusCapture={() => setEntryRevealed(true)}
@@ -600,20 +638,31 @@ export function NavBar({
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerClosingFrom, setDrawerClosingFrom] = useState<string | null>(null)
+  const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
   const scopeRef = useRef<HTMLDivElement>(null)
   const count = unreadCount(notifications?.count)
   const navRef = useRef<HTMLElement>(null)
-  const dismissDrawer = useCallback(() => setDrawerOpen(false), [])
-  const closeDrawer = useCallback(() => {
+  const dismissDrawer = useCallback(() => {
+    setDrawerClosingFrom(null)
     setDrawerOpen(false)
+  }, [])
+  const requestDrawerExit = useCallback(() => {
+    const panel = drawerPanelRef.current
+    const clip = panel ? getComputedStyle(panel).clipPath : 'none'
+    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
+  const closeDrawer = useCallback(() => {
+    dismissDrawer()
+    menuButtonRef.current?.focus({ preventScroll: true })
+  }, [dismissDrawer])
   const closeDrawerOnDesktop = useCallback(() => {
-    setDrawerOpen(false)
+    dismissDrawer()
     navRef.current?.querySelector<HTMLElement>('a[href]')?.focus()
-  }, [])
+  }, [dismissDrawer])
 
   const hasAccountOverride = accountControl !== null && accountControl !== undefined
   const secondaryNavigation = drawerOpen
@@ -731,7 +780,9 @@ export function NavBar({
             aria-haspopup={drawerOpen ? undefined : 'dialog'}
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
-              setDrawerOpen((open) => !open)
+              if (!drawerOpen) setDrawerOpen(true)
+              else if (drawerClosingFrom !== null) setDrawerClosingFrom(null)
+              else requestDrawerExit()
             }}
           >
             <svg
@@ -753,10 +804,13 @@ export function NavBar({
         </div>
         {drawerOpen ? (
           <Drawer
+            closingFrom={drawerClosingFrom}
+            panelRef={drawerPanelRef}
+            onExited={dismissDrawer}
             scopeRef={scopeRef}
             headerRef={navRef}
             triggerRef={menuButtonRef}
-            onClose={closeDrawer}
+            onClose={requestDrawerExit}
             onDesktop={closeDrawerOnDesktop}
           >
             <ul className={styles.drawerSections}>

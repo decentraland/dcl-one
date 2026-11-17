@@ -29,6 +29,7 @@ export const PREF = {
   minimapWorldOpen: 'dcl-minimap-open-world',
   loadingLastTip: 'loadingLastTip',
   sidebarAutoHide: 'hud.sidebarAutoHide',
+  sidebarMap: 'hud.sidebarMap',
   analyticsQueue: 'dcl-analytics-queue',
   voiceDisabled: 'nearbyVoiceDisabled',
   voiceVolume: 'nearbyVoiceVolume',
