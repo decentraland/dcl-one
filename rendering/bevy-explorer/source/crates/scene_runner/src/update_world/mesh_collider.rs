@@ -246,8 +246,8 @@ impl SceneColliderData {
     }
 
     /// Collider data of a scene that occupies `regions`. A collider placed with
-    /// [`Self::update_collider_transform`] is on only while it lies within them; triggers are
-    /// exempt. No regions: no limit.
+    /// [`Self::update_collider_transform`] is on only while it lies within the rectangle around
+    /// them and under their height limit; triggers are exempt. No regions: no limit.
     pub fn for_regions(regions: &[BoundRegion]) -> Self {
         Self {
             bounds: ColliderBounds::new(regions),

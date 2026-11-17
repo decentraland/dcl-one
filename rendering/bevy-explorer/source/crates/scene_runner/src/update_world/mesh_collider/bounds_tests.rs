@@ -187,43 +187,68 @@ fn a_collider_that_moves_back_inside_is_hit_again() {
 }
 
 #[test]
-fn a_collider_may_span_the_parcels_of_an_irregular_scene_but_not_its_notch() {
-    // an L: the notch is parcel (1, 1), x from 16 to 32 and z from -32 to -16
+fn a_collider_over_the_notch_of_an_irregular_scene_stays() {
+    // an L: the notch is parcel (1, 1), x from 16 to 32 and z from -32 to -16. the scene's
+    // rectangle spans x from 0 to 32 and z from -32 to 0
     let mut colliders = scene(&[(0, 0), (1, 0), (0, 1)]);
     let id = add_box(&mut colliders, 0);
 
-    // across (0, 0) and (1, 0)
+    // across the whole rectangle, the notch included
     place(
         &mut colliders,
         &id,
-        Vec3::new(16.0, 1.0, -8.0),
-        Vec3::new(8.0, 2.0, 2.0),
+        Vec3::new(16.0, 1.0, -16.0),
+        Vec3::new(31.0, 2.0, 31.0),
     );
-    assert!(hit_at(&mut colliders, 16.0, -8.0));
-    // across (0, 0) and (0, 1)
-    place(
-        &mut colliders,
-        &id,
-        Vec3::new(8.0, 1.0, -16.0),
-        Vec3::new(2.0, 2.0, 8.0),
-    );
-    assert!(hit_at(&mut colliders, 8.0, -16.0));
-    // in the notch
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+    // in the notch alone
     place(
         &mut colliders,
         &id,
         Vec3::new(24.0, 1.0, -24.0),
         Vec3::splat(2.0),
     );
-    assert!(!hit_at(&mut colliders, 24.0, -24.0));
-    // on the inner corner, a quarter of it in the notch
+    assert!(hit_at(&mut colliders, 24.0, -24.0));
+    // past the rectangle
     place(
         &mut colliders,
         &id,
-        Vec3::new(16.0, 1.0, -16.0),
-        Vec3::splat(4.0),
+        Vec3::new(34.0, 1.0, -24.0),
+        Vec3::splat(2.0),
     );
-    assert!(!hit_at(&mut colliders, 15.0, -15.0));
+    assert!(!hit_at(&mut colliders, 34.0, -24.0));
+}
+
+#[test]
+fn parcels_apart_share_one_height_limit_from_their_total() {
+    // two parcels apart: log2(3) * 20 = 31.7 m over each, where one parcel alone has 20 m
+    let mut colliders = scene(&[(0, 0), (5, 5)]);
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+
+    place(&mut colliders, &id, Vec3::new(8.0, 30.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+    place(&mut colliders, &id, Vec3::new(8.0, 31.0, -8.0), size);
+    assert!(!hit_at(&mut colliders, 8.0, -8.0));
+}
+
+#[test]
+fn a_height_limit_set_on_the_regions_replaces_the_parcel_count_limit() {
+    let regions = regions(&[(0, 0)])
+        .into_iter()
+        .map(|region| BoundRegion {
+            height: 330.0,
+            ..region
+        })
+        .collect::<Vec<_>>();
+    let mut colliders = SceneColliderData::for_regions(&regions);
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+
+    place(&mut colliders, &id, Vec3::new(8.0, 328.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+    place(&mut colliders, &id, Vec3::new(8.0, 330.0, -8.0), size);
+    assert!(!hit_at(&mut colliders, 8.0, -8.0));
 }
 
 #[test]

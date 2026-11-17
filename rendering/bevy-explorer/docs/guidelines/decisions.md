@@ -525,17 +525,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
-- **Colliders outside scene bounds follow the scene's exact shape.** A scene collider is off as
-  a whole while its box reaches outside the scene or above its height limit, in both clients,
-  with the same allowance at the edge. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the
-  scene's bounding rectangle and one height for the whole scene. Bevy tests the scene's own
-  parcels and the height limit of each connected region, the bounds its shaders clip to, so a
-  collider is off wherever its mesh is not drawn: in the notch of an irregular scene it is off
-  here and on in Unity. Triggers are not tested in either client. Preview, loopback and editor
-  runs draw out-of-bounds geometry and still turn its colliders off, as a public realm will.
 
 ## Deliberate choices that look like mistakes
 
+- **Colliders are bounded by the scene's rectangle, meshes by its parcels.** A scene collider is
+  off as a whole while its box reaches outside the rectangle around the scene's parcels or above
+  the scene's height limit; the shaders clip meshes to the parcels themselves. One large collider
+  often covers an irregular scene's whole footprint: Genesis Plaza's ground and building colliders
+  span the notches its road scenes sit in, and a test against the parcels would turn them off as
+  a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
+  same allowance at the edge. Triggers are not tested in either client. Preview, loopback and
+  editor runs draw out-of-bounds geometry and still turn its colliders off, as a public realm
+  will.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the
