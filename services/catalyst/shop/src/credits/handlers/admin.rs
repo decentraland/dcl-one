@@ -6,11 +6,11 @@
 //! lease (through the economy broker) and the reconciler. Every mutation
 //! audits into `ops.admin_audit` with the server-chosen actor.
 
+use crate::shared::routing::{delete, erase, get, post, put};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
@@ -30,10 +30,13 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/ledger", get(list_ledger))
@@ -54,10 +57,13 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/credits/ledger", get(list_ledger))
