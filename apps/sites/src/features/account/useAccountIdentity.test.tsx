@@ -11,7 +11,7 @@ vi.hoisted(() => {
 });
 const state = vi.hoisted(() => ({ auth: { identity: null as unknown, status: "anonymous" }, openSignIn: vi.fn() }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => state.auth }));
-vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: state.openSignIn }));
+vi.mock("../components/auth/signin-store", () => ({ openSignIn: state.openSignIn }));
 
 import { useAccountIdentity } from "./useAccountIdentity";
 

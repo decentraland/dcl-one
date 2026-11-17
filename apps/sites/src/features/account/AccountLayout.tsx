@@ -6,7 +6,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 import { Button, Spinner, TabsBar, type TabsBarLinkProps } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { openSignIn } from "@/features/components/auth/signin-store";
+import { openSignIn } from "../components/auth/signin-store";
 
 import styles from "./AccountLayout.module.css";
 import { ACCOUNT_COPY } from "./copy";

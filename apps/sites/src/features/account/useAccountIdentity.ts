@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import { useAuth } from "@/data/lib/auth/index";
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { openSignIn } from "@/features/components/auth/signin-store";
+import { openSignIn } from "../components/auth/signin-store";
 
 const noSubscription = () => () => {};
 
