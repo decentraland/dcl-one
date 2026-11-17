@@ -96,7 +96,7 @@ mod tests {
         let c = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         assert!(
             !c.ops.ops_writes_enabled,
-            "operator-plane writes are opt-in; a restore must be demonstrated first"
+            "operator-plane writes are opt-in"
         );
         assert!(
             c.rpc.catalyrst_rpc_admin_token.is_none()

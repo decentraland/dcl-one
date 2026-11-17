@@ -792,6 +792,103 @@ mod tests {
         );
         media_server.abort();
     }
+
+    /// Both ban listings take the authority the ban writes take: the world's
+    /// owner and an explicit scene admin read them, anyone else gets the
+    /// upstream 401 on both routes.
+    #[tokio::test]
+    async fn listing_scene_bans_requires_the_scene_owner_or_an_admin() {
+        use catalyst::shared::test_keys::random_key;
+        let Some(pool) = scratch().await else { return };
+        let state = state_with(pool.clone(), Settings::for_tests());
+        let place_id = format!("BanListScene{}", tag());
+        let world = format!("banlist{}.dcl.eth", tag());
+        seed_world_scene(&pool, &world, &place_id, &["10,20"]).await;
+        let (owner_key, admin_key, stranger_key) = (random_key(), random_key(), random_key());
+        let owner = Address::parse(&address_of(&owner_key)).unwrap();
+        let admin = Address::parse(&address_of(&admin_key)).unwrap();
+        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+            .bind(&world)
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state
+            .moderation
+            .add_admin(&place_id, &admin, &owner)
+            .await
+            .unwrap();
+        let banned = wallet();
+        state
+            .moderation
+            .scene_ban(&format!("{world}:10,20"), &banned, &owner, &[], "Scene")
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({ "signer": "decentraland-kernel-scene", "realmName": world, "sceneId": place_id, "parcel": "10,20" }).to_string();
+        let query = || {
+            Query(moderation::handlers::BanQuery {
+                place_id: None,
+                banned_address: None,
+                limit: None,
+                offset: None,
+            })
+        };
+        let list = |key: String| {
+            let (state, metadata) = (state.clone(), metadata.clone());
+            async move {
+                let headers = signed(&key, "get", "/scene-bans", &metadata).await;
+                moderation::handlers::list_bans(State(state), at("/scene-bans"), headers, query())
+                    .await
+                    .map(|Json(page)| page)
+            }
+        };
+        let list_addresses = |key: String| {
+            let (state, metadata) = (state.clone(), metadata.clone());
+            async move {
+                let headers = signed(&key, "get", "/scene-bans/addresses", &metadata).await;
+                moderation::handlers::list_ban_addresses(
+                    State(state),
+                    at("/scene-bans/addresses"),
+                    headers,
+                    query(),
+                )
+                .await
+                .map(|Json(page)| page)
+            }
+        };
+
+        for (who, key) in [("owner", &owner_key), ("admin", &admin_key)] {
+            let page = list(key.clone()).await.expect(who);
+            assert_eq!(
+                (page.total, page.results[0]["bannedAddress"].as_str()),
+                (1, Some(banned.as_str())),
+                "{who}"
+            );
+            let page = list_addresses(key.clone()).await.expect(who);
+            assert_eq!(page.results, vec![banned.as_str().to_string()], "{who}");
+        }
+
+        let refused = list(stranger_key.clone()).await.map(|_| ()).unwrap_err();
+        assert_eq!(
+            (refused.code, refused.message.as_str()),
+            (401, "User does not have permission to list scene bans")
+        );
+        let refused = list_addresses(stranger_key).await.map(|_| ()).unwrap_err();
+        assert_eq!(
+            (refused.code, refused.message.as_str()),
+            (401, "User does not have permission to list scene bans")
+        );
+        let body = axum::body::to_bytes(
+            axum::response::IntoResponse::into_response(refused).into_body(),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "error": "User does not have permission to list scene bans" })
+        );
+    }
 }
 
 /// From `gatekeeper/streaming.rs`: the stream key lifecycle over a place

@@ -4,7 +4,7 @@ import { relayStream } from './relay'
 // Small helpers for per-frame bridge systems (ctx.push / engine.addSystem): a dt-based throttle
 // and a single-flight guard for async work polled from a system.
 // The dt-accumulator throttle is otherwise re-implemented inline across most domains
-// (chat, world, friends, project, nametags, avatarPreview) — see backlog to migrate them.
+// (chat, world, friends, project, avatarPreview) — see backlog to migrate them.
 
 /** Wrap `fn` so it runs at most once per `interval` seconds. Feed it the frame `dt` each tick. */
 export function throttleByDt(interval: number, fn: () => void): (dt: number) => void {

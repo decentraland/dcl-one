@@ -492,6 +492,15 @@ impl Settings {
     }
 }
 
+/// This node's `/profile-images`, whose faces the profile responses warm;
+/// `serve` attaches social's renderer.
+pub trait ProfileFaces: Send + Sync {
+    /// Whether it serves a face the profile never uploaded: it has an origin or a renderer.
+    fn derives_faces(&self) -> bool;
+    /// Starts producing these profile entities' faces.
+    fn warm(&self, entities: Vec<String>);
+}
+
 pub struct MarketplaceState {
     pub pool: PgPool,
     pub http: crate::http::Outbound,
@@ -529,7 +538,7 @@ pub struct MarketplaceState {
     pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
-    pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    pub(crate) profile_images: std::sync::OnceLock<Arc<dyn ProfileFaces>>,
     /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
     pub(crate) dapps_flags: Arc<features::DappsFlags>,
     /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
@@ -543,6 +552,12 @@ pub struct MarketplaceState {
 pub type SharedState = Arc<MarketplaceState>;
 
 impl MarketplaceState {
+    /// The LAND and estate registries of `ETH_NETWORK`; `None` for a
+    /// network without them.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network(&self.settings.eth_network)
+    }
+
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
         Self {
@@ -602,10 +617,7 @@ impl MarketplaceState {
 
     /// Attaches this node's `/profile-images`, whose faces the profile
     /// responses warm; `false` when one is already attached.
-    pub fn attach_profile_images(
-        &self,
-        images: crate::social::profile_images::SharedState,
-    ) -> bool {
+    pub fn attach_profile_images(&self, images: Arc<dyn ProfileFaces>) -> bool {
         self.profile_images.set(images).is_ok()
     }
 
@@ -616,7 +628,7 @@ impl MarketplaceState {
             || self
                 .profile_images
                 .get()
-                .is_some_and(|images| images.origin.is_some() || images.render_queue.is_some())
+                .is_some_and(|images| images.derives_faces())
     }
 
     /// Warms the faces of these profile entities when they point at this
@@ -626,7 +638,7 @@ impl MarketplaceState {
             return;
         }
         if let Some(images) = self.profile_images.get() {
-            images.warm(entities);
+            images.warm(entities.into_iter().collect());
         }
     }
 

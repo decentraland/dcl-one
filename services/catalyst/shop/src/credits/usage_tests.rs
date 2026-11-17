@@ -827,16 +827,12 @@ async fn live_usage_index_over_the_production_manager() {
 }
 
 /// The job's pass (`UsageIndex::gated_pass`) folds into the ledger, so it writes only while
-/// OPS_WRITES_ENABLED is on and the restore stamps vouch for the node: with the switch off, or
-/// the installed stamps' files missing or stale, it indexes the log and neither folds nor
-/// publishes, and the authorize lane stays closed; fresh stamps fold the same usage and publish.
+/// OPS_WRITES_ENABLED is on: with the switch off it indexes the log and neither folds nor
+/// publishes, and the authorize lane stays closed; the switch on folds the same usage and
+/// publishes.
 #[tokio::test]
-async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restore_stamps_let_it() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
-    use crate::shared::writes::{PassGate, ops_refusal};
+async fn the_usage_pass_folds_and_publishes_only_while_the_switch_lets_it() {
+    use crate::shared::writes::PassGate;
     let Some(db) = OwnDatabase::create("usage_hold").await else {
         return;
     };
@@ -876,56 +872,32 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
         Outbound::for_tests(),
         usage_settings(&rpc, chain_id, &contract, 50),
     ));
-    let gate = Arc::new(PassGate::new(super::usage::JOB_NAME, ops_refusal));
+    let gate = Arc::new(PassGate::new(super::usage::JOB_NAME));
 
     let out = index.gated_pass(None, &gate, false).await.unwrap();
     assert!(
         !out.published && out.indexed_to == 1_990,
         "switch off: {out:?}"
     );
-    let missing = StampLab::new();
-    let stale = StampLab::fresh();
-    stale.advance(27 * HOUR);
-    for (why, lab) in [
-        ("stamp files missing", &missing),
-        ("a stale backup", &stale),
-    ] {
-        let out = scoped(lab.stamps.clone(), index.gated_pass(None, &gate, true))
-            .await
-            .unwrap();
-        assert!(!out.published && out.consumed == 0, "{why}: {out:?}");
-    }
+    assert_eq!(out.consumed, 0, "switch off: {out:?}");
     assert_eq!(
         auth_status(&pool, &pledge).await,
         "authorized",
-        "held: the used credit is indexed, not folded"
+        "off: the used credit is indexed, not folded"
     );
     assert!(index.ready_at(chrono::Utc::now()).await.is_none());
 
-    let fresh = StampLab::fresh();
-    let out = scoped(fresh.stamps.clone(), index.gated_pass(None, &gate, true))
-        .await
-        .unwrap();
-    assert!(out.published && out.consumed == 1, "fresh stamps: {out:?}");
+    let out = index.gated_pass(None, &gate, true).await.unwrap();
+    assert!(out.published && out.consumed == 1, "switch on: {out:?}");
     assert_eq!(auth_status(&pool, &pledge).await, "consumed");
     assert!(index.ready_at(chrono::Utc::now()).await.is_some());
 
-    // A held pass says why in the job's report: the switch, or the stamp that holds it.
+    // A skipped fold says why in the job's report.
     let jobs = crate::jobs::Jobs::new();
-    let stale_backup = StampLab::fresh();
-    stale_backup.advance(27 * HOUR);
-    for (name, writes_enabled, lab) in [
-        ("usage-switch-off", false, StampLab::fresh()),
-        ("usage-stale-backup", true, stale_backup),
-    ] {
+    {
         let (index, gate) = (index.clone(), gate.clone());
-        jobs.spawn(name, move |ctx| async move {
-            scoped(
-                lab.stamps.clone(),
-                index.gated_pass(Some(&ctx), &gate, writes_enabled),
-            )
-            .await
-            .map(|_| ())
+        jobs.spawn("usage-switch-off", move |ctx| async move {
+            index.gated_pass(Some(&ctx), &gate, false).await.map(|_| ())
         });
     }
     let done = |r: &crate::jobs::JobReport| {
@@ -946,7 +918,7 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
         reports
             .iter()
             .all(|r| matches!(r.state, crate::jobs::JobState::Finished)),
-        "both passes finish"
+        "the pass finishes"
     );
     let progress = |name: &str| {
         reports
@@ -960,16 +932,138 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
         off.contains("not folded, not published") && off.contains("OPS_WRITES_ENABLED=false"),
         "{off}"
     );
-    let held = progress("usage-stale-backup");
+    db.drop().await;
+}
+
+/// A usage index over a chain stub holding one CreditUsed log of `pledge`
+/// (10 MANA at block 1_500), for `wallet`.
+async fn one_used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+) -> super::usage::UsageIndex {
+    let chain_id: i64 = 137;
+    let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
+    let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
+        chain_id,
+        head: 2_000,
+        finalized: 1_990,
+        limit: 1_000,
+        t_base: chrono::Utc::now().timestamp() - 20_000,
+        logs: vec![credit_used_log(
+            &contract,
+            1_500,
+            0,
+            wallet,
+            pledge,
+            10u128.pow(19),
+            10u128.pow(19),
+        )],
+        get_logs: 0,
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let stub = axum::Router::new()
+        .route("/", axum::routing::post(chain_rpc))
+        .with_state(chain);
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    super::usage::UsageIndex::new(
+        Credits::new(pool.clone()).with_usage_index(chain_id),
+        Outbound::for_tests(),
+        usage_settings(&rpc, chain_id, &contract, 50),
+    )
+}
+
+async fn credit_used_spends(pool: &PgPool, pledge: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM credits.ledger WHERE kind = 'spend' AND tx_ref = $1")
+        .bind(format!("credit-used:{pledge}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A used credit's own pledge does not count against its debit: a 60-credit
+/// pledge on a 100-credit wallet settles in one pass and leaves 40, and a
+/// second pass moves nothing.
+#[tokio::test]
+async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
+    let Some(db) = OwnDatabase::create("usage_own_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
+
+    let out = index.run_pass(None, true).await.unwrap();
     assert!(
-        held.contains("held on this node") && held.contains("backup.json"),
-        "{held}"
+        out.published && out.consumed == 1 && out.failed == 0,
+        "{out:?}"
     );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(balance_is(&pool, &wallet.address, "40").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+
+    let again = index.run_pass(None, true).await.unwrap();
+    assert!(
+        again.published && again.consumed == 0 && again.failed == 0,
+        "{again:?}"
+    );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(
+        balance_is(&pool, &wallet.address, "40").await,
+        "the second pass debits nothing"
+    );
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+    db.drop().await;
+}
+
+/// Another live pledge still counts against the debit: with 50 credits held
+/// by a second `authorized` pledge, a 60-credit used credit on a 100-credit
+/// wallet is refused, and its authorization stays `authorized`.
+#[tokio::test]
+async fn a_used_credit_another_pledge_leaves_uncovered_keeps_its_authorization() {
+    let Some(db) = OwnDatabase::create("usage_other_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let (pledge, other) = (salt(), salt());
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    authorization(&pool, &other, &wallet.address, 500, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
+
+    let out = index.run_pass(None, true).await.unwrap();
+    assert!(
+        out.published && out.consumed == 0 && out.failed == 1,
+        "{out:?}"
+    );
+    assert_eq!(
+        auth_status(&pool, &pledge).await,
+        "authorized",
+        "the refused debit rolls the early flip back"
+    );
+    assert_eq!(auth_status(&pool, &other).await, "authorized");
+    assert!(balance_is(&pool, &wallet.address, "100").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 0);
+    let settlements: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.usage_settlements WHERE authorization_id = $1",
+    )
+    .bind(&pledge)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(settlements, 0);
     db.drop().await;
 }
 
 /// `serve` runs the CreditUsed index through `State::spawn_jobs`, beside the other credits
-/// writers and under its restore stamps; `catalyst index` builds no credits state.
+/// writers; `catalyst index` builds no credits state.
 #[tokio::test]
 async fn the_credits_jobs_carry_the_usage_index_when_it_is_configured() {
     let Some(db) = OwnDatabase::create("usage_jobs").await else {

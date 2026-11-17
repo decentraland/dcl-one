@@ -374,7 +374,9 @@ async fn node_without_db(settings: Settings) -> Node {
         http: crate::http::Outbound::for_tests(),
         content,
         denylist: Default::default(),
-        flags: feature_flags::Snapshot::default(),
+        flags: std::sync::Arc::new(feature_flags::Snapshot::from_document(
+            feature_flags::embedded_document(),
+        )),
         map: map::MapState::new(),
         ab_cdn: ab_cdn::Cache::new(tmp.0.join("ab-cdn"), u64::MAX).unwrap(),
         satellite: satellite::SatelliteState::new(1 << 20, 64),
@@ -1623,7 +1625,9 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     feature_flags::set_local_flag(&db.pool, "explorer", "explorer-local-only", true)
         .await
         .unwrap();
-    node.state.flags.reload(&db.pool, "explorer").await.unwrap();
+    feature_flags::reload(&node.state.flags, &db.pool, "explorer")
+        .await
+        .unwrap();
     let (_, doc) = call_json(&app, "GET", "/feature-flags/explorer.json", None).await;
     assert_eq!(doc["flags"]["explorer-feature-a"], true);
     assert_eq!(doc["flags"]["explorer-local-only"], true);
@@ -1802,7 +1806,9 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
         );
         assert_eq!(snapshot.document(), last_good);
         let restarted = feature_flags::Snapshot::empty();
-        restarted.reload(&db.pool, "dapps").await.unwrap();
+        feature_flags::reload(&restarted, &db.pool, "dapps")
+            .await
+            .unwrap();
         assert_eq!(restarted.document(), last_good);
     }
     task.abort();

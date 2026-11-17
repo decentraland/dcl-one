@@ -26,6 +26,11 @@ vi.mock('@explorer-core/features/auth/guest', () => ({
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
 }))
 
+vi.mock('@explorer-core/shell/emailLogin', () => ({
+  startEmailSignIn: vi.fn(async () => undefined),
+  completeEmailSignIn: vi.fn(async () => ({ identity: identity(ACCOUNT, 7), wallet: { token: 'tok', walletAddress: ACCOUNT } }))
+}))
+
 async function shell() {
   vi.resetModules()
   return import('../shell/login')
@@ -33,6 +38,26 @@ async function shell() {
 
 describe('shell login requests', () => {
   beforeEach(() => localStorage.clear())
+
+  it('emailLogin keeps the email account like the sign-in page does and hands the app the public identity', async () => {
+    const { request } = await shell()
+    expect(await request('emailStart', { email: 'player@example.com' })).toBeNull()
+    const login = (await request('emailLogin', { email: 'player@example.com', code: '123456' })) as { address: string; identity: AuthIdentity; guest?: boolean }
+    expect(login.address).toBe(ACCOUNT)
+    expect(login.guest).toBeUndefined()
+    expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(`single-sign-on-${ACCOUNT}`) ?? 'null').ephemeralIdentity.privateKey).toBe(KEY)
+    // the session state the sign-in page leaves for an email account, for the Shop
+    expect(JSON.parse(localStorage.getItem('dcl:auth:thirdweb:v1') ?? 'null')).toEqual({ token: 'tok', address: ACCOUNT })
+    expect(JSON.parse(localStorage.getItem('dcl:auth:signin-kind:v1') ?? 'null')).toEqual({ signer: ACCOUNT, kind: 'managed' })
+    // it is now the current login, and the shell signs with it
+    expect(await request('identity', undefined)).toEqual(login)
+    expect(await request('sign', { signer: EPHEMERAL, message: 'Some data' })).toBe(personalSign(KEY, 'Some data'))
+    // sign-out drops the in-app session with it
+    await request('logout', undefined)
+    expect(localStorage.getItem('dcl:auth:thirdweb:v1')).toBeNull()
+    expect(localStorage.getItem('dcl:auth:signin-kind:v1')).toBeNull()
+  })
 
   it('createGuest keeps the guest with its key and hands the app the public identity', async () => {
     const { request } = await shell()
@@ -60,7 +85,7 @@ describe('shell login requests', () => {
   })
 
   it('signing with an account replaces the guest', async () => {
-    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 1)))
+    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 2)))
     localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 30)))
     localStorage.setItem(`thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f`, 'session')
     const { request } = await shell()

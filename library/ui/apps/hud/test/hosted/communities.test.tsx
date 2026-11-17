@@ -49,7 +49,6 @@ describe('communities domain', () => {
       kind: 'communityDetail',
       id: 'c1',
       members: [{ address: '0x1', name: 'A', role: 'owner' }],
-      posts: [],
       places: [],
       events: [],
       photos: []
@@ -81,7 +80,7 @@ describe('communities domain', () => {
   it('keeps only the detail of the card asked for last', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    const detail = (id: string) => ({ kind: 'communityDetail' as const, id, members: [], posts: [], places: [], events: [], photos: [] })
+    const detail = (id: string) => ({ kind: 'communityDetail' as const, id, members: [], places: [], events: [], photos: [] })
     act(() => h.session().communities.loadDetail('cB'))
     act(() => h.driver.emit(detail('cA')))
     expect(h.session().communities.detail).toBeNull()
@@ -126,7 +125,6 @@ describe('communities domain', () => {
       h.driver.emit({
         kind: 'communityDetail',
         id: 'c1',
-        posts: [],
         places: [],
         events: [],
         photos: [],

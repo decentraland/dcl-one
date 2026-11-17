@@ -274,7 +274,10 @@ impl AssignmentAuthority {
 
     pub async fn renew(&self, owner: &V4Owner) -> Result<(), V4Error> {
         match self {
-            Self::Pg(pg) => pg.set_renewal(owner, "clock_timestamp()").await,
+            Self::Pg(pg) => {
+                pg.set_renewal(owner, "timezone('UTC',clock_timestamp())")
+                    .await
+            }
             Self::Unavailable { .. } => Err(V4Error::AuthorityUnavailable),
         }
     }
@@ -330,7 +333,7 @@ impl PgAssignmentAuthority {
                AND owner_session = $3
                AND owner_epoch = $4
                AND EXISTS (SELECT 1 FROM held WHERE held.lane_key = current.lane_key
-                 AND held.updated_at >= clock_timestamp() - interval '90 seconds')
+                 AND held.updated_at >= timezone('UTC',clock_timestamp()) - interval '90 seconds')
              RETURNING 1
              )
              SELECT EXISTS (SELECT 1 FROM changed), EXISTS (SELECT 1 FROM held)"
@@ -435,12 +438,12 @@ impl PgAssignmentAuthority {
                     THEN social.archipelago_v4_assignments.acknowledged_revision
                     ELSE 0
                 END,
-                updated_at = clock_timestamp()
+                updated_at = timezone('UTC',clock_timestamp())
              WHERE EXCLUDED.owner_epoch > social.archipelago_v4_assignments.owner_epoch
                 OR (
                     EXCLUDED.owner_epoch = social.archipelago_v4_assignments.owner_epoch
                     AND EXCLUDED.owner_session = social.archipelago_v4_assignments.owner_session
-                    AND social.archipelago_v4_assignments.updated_at >= clock_timestamp() - interval '90 seconds'
+                    AND social.archipelago_v4_assignments.updated_at >= timezone('UTC',clock_timestamp()) - interval '90 seconds'
                 )
              RETURNING lane_key, authority_incarnation, assignment_revision, owner_session,
                        owner_epoch, fencing_token, assignment_json",
@@ -507,13 +510,13 @@ impl PgAssignmentAuthority {
              UPDATE social.archipelago_v4_assignments
              SET assignment_revision = assignment_revision + 1,
                  assignment_json = $6,
-                 updated_at = clock_timestamp()
+                 updated_at = timezone('UTC',clock_timestamp())
              WHERE deployment_audience = $1
                AND owner_address = $2
                AND lane_key = $3
                AND owner_session = $4
                AND owner_epoch = $5
-               AND (SELECT updated_at FROM held) >= clock_timestamp() - interval '90 seconds'
+               AND (SELECT updated_at FROM held) >= timezone('UTC',clock_timestamp()) - interval '90 seconds'
              RETURNING lane_key, authority_incarnation, assignment_revision, owner_session,
                        owner_epoch, fencing_token, assignment_json",
         )
@@ -544,7 +547,7 @@ impl PgAssignmentAuthority {
         let row = sqlx::query(
             "SELECT lane_key, authority_incarnation, assignment_revision, owner_session,
                     owner_epoch, fencing_token, assignment_json,
-                    updated_at >= clock_timestamp() - interval '90 seconds' AS live
+                    updated_at >= timezone('UTC',clock_timestamp()) - interval '90 seconds' AS live
              FROM social.archipelago_v4_assignments
              WHERE deployment_audience = $1
                AND owner_address = $2
@@ -586,14 +589,14 @@ impl PgAssignmentAuthority {
              )
              UPDATE social.archipelago_v4_assignments
              SET acknowledged_revision = GREATEST(acknowledged_revision, $6),
-                 updated_at = clock_timestamp()
+                 updated_at = timezone('UTC',clock_timestamp())
              WHERE deployment_audience = $1
                AND owner_address = $2
                AND lane_key = $3
                AND owner_session = $4
                AND owner_epoch = $5
                AND assignment_revision >= $6
-               AND (SELECT updated_at FROM held) >= clock_timestamp() - interval '90 seconds'
+               AND (SELECT updated_at FROM held) >= timezone('UTC',clock_timestamp()) - interval '90 seconds'
              RETURNING lane_key, authority_incarnation, assignment_revision, owner_session,
                        owner_epoch, fencing_token, assignment_json",
         )
@@ -698,12 +701,13 @@ mod tests {
             return;
         }
         let pool = crate::db::scratch::pool(4).await.unwrap();
-        let authority = AssignmentAuthority::pg_with_namespace(
-            pool.clone(),
-            format!("publish-{}", Uuid::new_v4()),
-        )
-        .await
-        .unwrap();
+        let namespace = format!("publish-{}", Uuid::new_v4());
+        let source = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO social.pulse_authority_generation(deployment_audience,epoch,source_incarnation) VALUES($1,nextval('social.archipelago_v4_connection_epoch'),$2::uuid)")
+            .bind(&namespace).bind(&source).execute(&pool).await.unwrap();
+        let authority = AssignmentAuthority::pg_with_namespace(pool.clone(), namespace)
+            .await
+            .unwrap();
         let lane = LaneKey::parse("realm").unwrap();
         for change in [
             "unchanged",
@@ -731,7 +735,7 @@ mod tests {
                 session: owner.session.clone(),
                 cluster_id: "current".into(),
                 realm: "realm".into(),
-                source_incarnation: "publication-test".into(),
+                source_incarnation: source.clone(),
                 assignment_version: 1,
                 token_not_before: Some(0),
                 ..Default::default()

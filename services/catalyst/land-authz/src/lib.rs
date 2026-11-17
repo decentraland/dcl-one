@@ -47,7 +47,8 @@
 //! two topics the indexer adds ([`KIND_ADD_LAND`], [`KIND_REMOVE_LAND`]).
 //! The publish rule is the old one: a reader uses this index only after
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
-//! 25 blocks of the chain head) and `folded_at` is at most 30 minutes old;
+//! 25 blocks of the confirmed head, which trails the chain head by
+//! `LAND_AUTHZ_CONFIRMATIONS`) and `folded_at` is at most 30 minutes old;
 //! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
 //! `owns_land_at`) answers the owner leg for the write paths and the
 //! land-manager subgraph answers the read routes above. The job runs only
@@ -84,8 +85,9 @@ pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 pub const SCHEMA: &str = "land_authz";
 
 pub use crate::chain_index::registries::{
-    ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET, LAND_REGISTRY_SEPOLIA,
-    LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA, NETWORK_MAINNET, NETWORK_SEPOLIA,
+    ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_MAINNET, LAND_REGISTRY_MAINNET,
+    LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA, LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA,
+    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, land_network, land_network_of_registry,
 };
 
 pub const KIND_UPDATE_OPERATOR: &str = "update_operator";
@@ -165,7 +167,7 @@ pub(crate) fn is_address(addr: &str) -> bool {
 /// The indexer's configuration. `main.rs` fills it from `Config`:
 /// `ETH_NETWORK` picks the registries and the cursor row, `ETH_RPC_URL`
 /// (`Config::eth_rpc_url()`, https only) is the log source,
-/// `LAND_AUTHZ_INDEX_ENABLED` attaches the job, and the four knobs below
+/// `LAND_AUTHZ_INDEX_ENABLED` attaches the job, and the knobs below
 /// bound it.
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -182,7 +184,8 @@ pub struct Settings {
     /// `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120): pause between passes.
     pub interval: Duration,
     /// `LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` (50, effective minimum 2): log,
-    /// timestamp-header and repair calls per pass, excluding head probes.
+    /// timestamp-header and repair calls per pass, excluding head probes and
+    /// the block headers that check a range's fork.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
     /// (the start block for a full repair, which may also switch registries).
@@ -192,6 +195,9 @@ pub struct Settings {
     /// `LAND_AUTHZ_STOP_BLOCK`: index no further (a development bound); an
     /// index held short of the head is never published.
     pub stop_block: Option<u64>,
+    /// `LAND_AUTHZ_CONFIRMATIONS` (12): blocks the index stays behind the
+    /// head, so a reorg shallower than this never reaches the log.
+    pub confirmations: u64,
 }
 
 impl Settings {
@@ -210,12 +216,17 @@ impl Settings {
             requests_per_pass: 50,
             replay_from_block: None,
             stop_block: None,
+            confirmations: 12,
         })
     }
 
-    /// Mainnet, no RPC, job off: what the tests start from.
+    /// Mainnet, no RPC, job off, indexing to the head (no confirmation
+    /// depth): what the tests start from.
     pub fn for_tests() -> Self {
-        Self::for_network("mainnet", None).expect("mainnet is known")
+        Self {
+            confirmations: 0,
+            ..Self::for_network("mainnet", None).expect("mainnet is known")
+        }
     }
 
     pub fn is_configured(&self) -> bool {
@@ -609,6 +620,7 @@ mod unit_tests {
             (NETWORK_MAINNET, LAND_REGISTRY_MAINNET)
         );
         assert_eq!(mainnet.start_block, LAND_START_BLOCK_MAINNET);
+        assert_eq!(mainnet.confirmations, 12);
         assert!(
             !mainnet.is_configured(),
             "off until LAND_AUTHZ_INDEX_ENABLED"

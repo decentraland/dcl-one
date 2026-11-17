@@ -1,5 +1,5 @@
 // Communities: the browse grid (a page at a time, searched on the server), My Communities, joining,
-// per-community detail (members/posts/places), and the chat
+// per-community detail (members/places), the announcements (a page at a time), and the chat
 // channels: the communities the user is a member of, who is online in one, and presence.
 //   from: social-api communities service via BevyApi.kernelFetch (signed GETs / POST join)
 //       + the engine's profile cache (profile.ts) for the names and faces those reads no
@@ -61,7 +61,7 @@ type CommunityRaw = {
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
 type MemberRaw = { memberAddress?: string; role?: string }
-type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number }
+type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number; isLikedByUser?: boolean; isOfficial?: boolean }
 type PlaceRaw = {
   id: string
   title?: string
@@ -201,15 +201,22 @@ async function rawOne(id: string): Promise<CommunityRaw | undefined> {
   return raw?.id != null ? raw : undefined
 }
 
-// The names of the communities seen, for the chat bubbles' community line: a message names its
-// community by id only.
+// The names of the communities seen: the engine shows a community's name with its messages over
+// their authors' nametags, and a message names its community by id only.
 const names = new Map<string, string>()
-export function communityName(id: string): string | undefined {
-  return names.get(id.toLowerCase())
+// The communities the engine listens to, as the HUD last named them.
+let listened: string[] = []
+
+function listen(): void {
+  BevyApi.social.setCommunityChannels(listened.map((id) => ({ id, name: names.get(id.toLowerCase()) ?? null })))
 }
 
 function remember(c: { id: string; name: string }): void {
-  names.set(c.id.toLowerCase(), c.name)
+  const key = c.id.toLowerCase()
+  if (names.get(key) === c.name) return
+  names.set(key, c.name)
+  // a listened community was renamed, or its name is known only now: the engine hears of it
+  if (listened.some((id) => id.toLowerCase() === key)) listen()
 }
 
 async function channel(c: CommunityRaw): Promise<CommunityChannel> {
@@ -267,7 +274,7 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
   }
 }
 
-async function detail(id: string): Promise<{ members: CommunityMember[]; posts: CommunityPost[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
+async function detail(id: string): Promise<{ members: CommunityMember[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
   const eventsBase = `${await serviceBase('events')}/api/events`
@@ -275,35 +282,17 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
   // The id reaches us from the service (a uuid), but it lands in a URL — encode it so it
   // can only ever be one path segment / one query value.
   const cid = encodeURIComponent(id)
-  const [membersRes, postsRes, placesRes, eventsRes, photosRes] = await Promise.all([
+  const [membersRes, placesRes, eventsRes, photosRes] = await Promise.all([
     signed<{ results?: MemberRaw[] }>(`${b}/${cid}/members?limit=100`).catch(() => undefined),
-    signed<{ posts?: PostRaw[] }>(`${b}/${cid}/posts?limit=20`).catch(() => undefined),
     signed<{ results?: PlaceRaw[] }>(`${placesBase}/${cid}/places?limit=20`).catch(() => undefined),
     getJson<{ data?: { events?: EventRaw[] } }>(`${eventsBase}?community_id=${cid}&list=upcoming`).catch(() => undefined),
     signed<{ images?: PhotoRaw[] }>(`${reelBase}/${cid}/images?limit=30`).catch(() => undefined)
   ])
   const memberRows = membersRes?.results ?? []
-  const postRows = postsRes?.posts ?? []
-  // One batch for every address both tabs reference — the members list alone would otherwise
-  // be up to 100 separate profile fetches.
-  const identity = await fetchIdentities([
-    ...memberRows.map((m) => m.memberAddress ?? ''),
-    ...postRows.map((p) => p.authorAddress ?? '')
-  ])
+  // One batch for every member's name and face — the list alone would otherwise be up to 100
+  // separate profile fetches.
+  const identity = await fetchIdentities(memberRows.map((m) => m.memberAddress ?? ''))
   const members = memberRows.map((m) => mapMember(m, identity))
-  const posts: CommunityPost[] = postRows.map((p) => {
-    const address = p.authorAddress ?? ''
-    const { name, picture } = identity(address)
-    return {
-      id: p.id,
-      author: name,
-      authorAddress: address,
-      authorPicture: picture,
-      text: p.content ?? '',
-      timestamp: p.createdAt != null ? Date.parse(p.createdAt) : 0,
-      likes: p.likesCount ?? 0
-    }
-  })
   // As unity-explorer's card: the community's place ids, then each place from the places service
   // (title, picture, owner). The social service's own row is the fallback when that read fails.
   const placeRows = placesRes?.results ?? []
@@ -340,7 +329,37 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
     url: ph.url ?? '',
     thumbnail: ph.thumbnailUrl ?? ph.url
   }))
-  return { members, posts, places, events, photos }
+  return { members, places, events, photos }
+}
+
+// The announcements, POSTS_PAGE at a time, newest first, with their authors' names and faces. The
+// official mark is the service's own `isOfficial` (this node's social API names the official
+// wallets from the explorer flags; a service that sends no such field marks no one).
+export const POSTS_PAGE = 10
+async function postsPage(id: string, page: number): Promise<{ posts: CommunityPost[]; total: number }> {
+  const b = await base('v2')
+  const res = await signed<{ posts?: PostRaw[]; total?: number }>(
+    `${b}/${encodeURIComponent(id)}/posts?offset=${(page - 1) * POSTS_PAGE}&limit=${POSTS_PAGE}`
+  )
+  const rows = res?.posts ?? []
+  const identity = await fetchIdentities(rows.map((p) => p.authorAddress ?? ''))
+  const posts = rows.map((p): CommunityPost => {
+    const address = p.authorAddress ?? ''
+    const { name, picture, hasClaimedName } = identity(address)
+    return {
+      id: p.id,
+      author: name,
+      authorAddress: address,
+      authorPicture: picture,
+      hasClaimedName,
+      official: p.isOfficial === true,
+      text: p.content ?? '',
+      timestamp: p.createdAt != null ? Date.parse(p.createdAt) : 0,
+      likes: p.likesCount ?? 0,
+      likedByMe: p.isLikedByUser === true
+    }
+  })
+  return { posts, total: res?.total ?? posts.length }
 }
 
 // A community's pending join requests or invites, or its banned members, as member rows: one read
@@ -607,7 +626,8 @@ export function registerCommunities(ctx: Ctx): void {
     if (community != null) ctx.send({ kind: 'community', community })
   }
   ctx.on('setCommunityChannels', (msg) => {
-    BevyApi.social.setCommunityChannels(msg.ids)
+    listened = msg.ids
+    listen()
   })
   // The community whose members the page last asked for: the one shown, whose list its presence
   // updates keep current.
@@ -953,6 +973,57 @@ export function registerCommunities(ctx: Ctx): void {
       })
     await sendSection(msg.id, 'banned')
   })
+  // The Announcements tab. A failed read, delete or like is toasted; a post or delete reads the
+  // first page again, as the list starts over.
+  const sendPosts = async (id: string, page: number): Promise<void> => {
+    const read = await postsPage(id, page).catch((e: unknown) => {
+      console.error('[communities] posts read failed', e)
+      return undefined
+    })
+    if (read == null) ctx.send({ kind: 'communityActionFailed', id, action: 'fetchPosts', message: 'posts read failed' })
+    else ctx.send({ kind: 'communityPosts', id, page, ...read })
+  }
+  ctx.on('getCommunityPosts', async (msg) => {
+    await sendPosts(msg.id, msg.page)
+  })
+  ctx.on('createCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts`, 'POST', { content: msg.content }))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post failed', e)
+          return false
+        }
+      )
+    ctx.send({ kind: 'communityPostCreated', id: msg.id, ok })
+    if (ok) await sendPosts(msg.id, 1)
+  })
+  ctx.on('deleteCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts/${encodeURIComponent(msg.postId)}`, 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post delete failed', e)
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'deletePost', postId: msg.postId, message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+      )
+    if (ok) await sendPosts(msg.id, 1)
+  })
+  ctx.on('likeCommunityPost', async (msg) => {
+    const ok = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/posts/${encodeURIComponent(msg.postId)}/like`, msg.like ? 'POST' : 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] post like failed', e)
+          return false
+        }
+      )
+    ctx.send({ kind: 'communityPostLiked', id: msg.id, postId: msg.postId, liked: msg.like, ok })
+  })
   ctx.on('getCommunityPlaceOptions', async (msg) => {
     const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {
       // the places service could not even be located: nothing could be read
@@ -963,7 +1034,7 @@ export function registerCommunities(ctx: Ctx): void {
     ctx.send(options)
   })
   ctx.on('getCommunityDetail', async (msg) => {
-    const { members, posts, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], posts: [], places: [], events: [], photos: [] }))
-    ctx.send({ kind: 'communityDetail', id: msg.id, members, posts, places, events, photos })
+    const { members, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], places: [], events: [], photos: [] }))
+    ctx.send({ kind: 'communityDetail', id: msg.id, members, places, events, photos })
   })
 }

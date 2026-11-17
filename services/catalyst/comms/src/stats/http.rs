@@ -43,6 +43,8 @@ pub mod test_support {
 
 #[derive(Clone)]
 pub struct Settings {
+    /// Host-resolved commit identity; standalone callers can retain the environment reader.
+    pub commit_hash: Option<String>,
     pub metrics_path: String,
     pub metrics_bearer_token: Option<String>,
     /// Base of `/hot-scenes` thumbnails. `serve` sets it from `CONTENT_URL` or this
@@ -52,6 +54,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            commit_hash: None,
             metrics_path: "/metrics".into(),
             metrics_bearer_token: None,
             content_url: "https://peer.decentraland.org/content/".into(),
@@ -62,6 +65,7 @@ impl Settings {
     pub fn from_env() -> Self {
         let defaults = Self::default();
         Self {
+            commit_hash: defaults.commit_hash,
             metrics_path: std::env::var("WKC_METRICS_PUBLIC_PATH")
                 .ok()
                 .filter(|s| !s.is_empty())
@@ -644,6 +648,7 @@ async fn handle(
                 commit_hash: String,
             }
             let (version, commit_hash) = (state.environment)();
+            let commit_hash = state.settings.commit_hash.clone().unwrap_or(commit_hash);
             Reply::json(
                 200,
                 render::json(&Status {
