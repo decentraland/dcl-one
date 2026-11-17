@@ -57,8 +57,8 @@ describe('EventCard', () => {
   })
 
   describe('when it has a host', () => {
-    it('links the host to their profile beside the card link', () => {
-      setup({ creator: { name: 'Alice', profileHref: '/profile/alice' } })
+    it('links the host to their profile beside the card link in a day card', () => {
+      setup({ variant: 'day', creator: { name: 'Alice', profileHref: '/profile/alice' } })
       expect(screen.getByRole('link', { name: 'Alice' })).toHaveAttribute('href', '/profile/alice')
       expect(screen.getByText(/^by/)).toHaveTextContent('by Alice')
     })
@@ -166,19 +166,13 @@ describe('EventCard small', () => {
     expect(screen.getByRole('heading', { level: 3 })).toHaveClass('smallTitle')
   })
 
-  it('credits the host as muted text with no face, linking the name to the profile', () => {
+  it('credits the host as muted plain text with no face, even with a profile', () => {
     const { container } = setup({
       creator: { name: 'Alice', avatar: 'https://example.org/a.png', profileHref: '/profile/alice' }
     })
     expect(container.querySelector('.smallBy')).toHaveTextContent('by Alice')
-    expect(screen.getByRole('link', { name: 'Alice' })).toHaveAttribute('href', '/profile/alice')
-    expect(container.querySelector('img[src="https://example.org/a.png"]')).toBeNull()
-  })
-
-  it('credits a host with no profile as plain text', () => {
-    const { container } = setup({ creator: { name: 'Alice' } })
-    expect(container.querySelector('.smallBy')).toHaveTextContent('by Alice')
     expect(screen.queryByRole('link', { name: 'Alice' })).toBeNull()
+    expect(container.querySelector('img[src="https://example.org/a.png"]')).toBeNull()
   })
 
   it('leaves the host row out without a host', () => {
@@ -386,7 +380,7 @@ describe('EventCard motion', () => {
     expect(shown).toContain('opacity: 1')
     const folded = blockOf(
       hover,
-      '.hasActions:hover .hideOnHover:not(:focus-within),\n    .hasActions:focus-within .hideOnHover:not(:focus-within)'
+      '.hasActions:hover .hideOnHover,\n    .hasActions:focus-within .hideOnHover'
     )
     expect(folded).toContain('grid-template-rows: 0fr')
     expect(folded).toContain('opacity: 0')

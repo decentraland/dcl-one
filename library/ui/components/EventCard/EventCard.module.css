@@ -110,26 +110,9 @@
   }
 
   /* The rows under the title leave the pointer to the card link (a row that moves is painted over
-     it); only the host's name and the actions take it back. */
+     it); only the actions take it back. */
   .small .reveal {
     pointer-events: none;
-  }
-
-  .smallName {
-    position: relative;
-    z-index: 1;
-    color: inherit;
-    pointer-events: auto;
-    text-decoration: none;
-  }
-
-  .smallName:hover {
-    text-decoration: underline;
-  }
-
-  .smallName:focus-visible {
-    outline: 2px solid var(--dcl-neutrals-snow);
-    outline-offset: 2px;
   }
 
   .timeRow {
@@ -510,7 +493,7 @@
 
     /* A small card folds the host away (and a live one its time) and opens the 32px actions row under
        the time, each row's height and opacity changing together over 200ms; the actions also rise 8px.
-       A folded row clips its content; focus inside the host keeps it open. */
+       A folded row clips its content. */
     .small .action {
       width: 32px;
       height: 32px;
@@ -537,8 +520,8 @@
     }
 
     .showOnHover .revealInner,
-    .hasActions:hover .hideOnHover:not(:focus-within) .revealInner,
-    .hasActions:focus-within .hideOnHover:not(:focus-within) .revealInner {
+    .hasActions:hover .hideOnHover .revealInner,
+    .hasActions:focus-within .hideOnHover .revealInner {
       overflow: hidden;
     }
 
@@ -554,8 +537,8 @@
       overflow: visible;
     }
 
-    .hasActions:hover .hideOnHover:not(:focus-within),
-    .hasActions:focus-within .hideOnHover:not(:focus-within) {
+    .hasActions:hover .hideOnHover,
+    .hasActions:focus-within .hideOnHover {
       grid-template-rows: 0fr;
       opacity: 0;
     }

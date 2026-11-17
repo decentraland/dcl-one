@@ -169,6 +169,12 @@ describe('when Events cards reveal their controls', () => {
       `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {actions:getComputedStyle(card.querySelector('[class*="showOnHover"]')).opacity,host:getComputedStyle(card.querySelector('[class*="hideOnHover"]')).opacity,time:getComputedStyle(card.querySelector('[class*="smallTime"]').closest('[class*="reveal"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
     )
     expect(state).toEqual({ actions: '1', host: '0', time: '1', buttons: 3 })
+    // The host folds away under the pointer, so it holds no link a pointer could not reach.
+    expect(
+      await evaluate(
+        `document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="hideOnHover"] a')`
+      )
+    ).toBeNull()
     await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
     await evaluate(
       `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`

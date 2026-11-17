@@ -55,6 +55,12 @@ type UpcomingEventCardProps = EventCardData & {
   calendarHref?: string
 }
 
+/** The phone's day list: an Upcoming card that may be live, with its badges and JUMP IN. */
+type DayListCardProps = UpcomingEventCardProps & {
+  live?: boolean
+  jumpIn?: JumpIn
+}
+
 /**
  * All Events: one event in a day column; live ones show their badges instead of a time. The phone's
  * day list shows a live one's JUMP IN too.
@@ -73,6 +79,7 @@ export type {
   EventCardData,
   EventCardTime,
   ExperienceCardProps,
+  DayListCardProps,
   JumpIn,
   LiveEventCardProps,
   RemindControl,

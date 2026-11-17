@@ -17,12 +17,12 @@ import {
 } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
 import type {
+  DayListCardProps,
   EventCardCreator,
   ExperienceCardProps,
   JumpIn,
   LiveEventCardProps,
-  RemindControl,
-  UpcomingEventCardProps
+  RemindControl
 } from './types'
 
 /** The page's host as the public cards take it; Genesis Plaza's host shows the Decentraland logo. */
@@ -177,7 +177,7 @@ function UpcomingCard({
   users,
   usersLabel,
   jumpIn
-}: UpcomingEventCardProps & { live?: boolean; jumpIn?: JumpIn }) {
+}: DayListCardProps) {
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard

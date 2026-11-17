@@ -39,6 +39,10 @@ export type EventCardProps = {
   image?: string | null
   /** Loads the cover eagerly, for the first card of a page. */
   priority?: boolean
+  /**
+   * A small card credits the host as plain text: hover folds the row away, so a link there could not
+   * be reached with a pointer. The day card links `profileHref` and shows the face.
+   */
   creator?: EventCardCreator
   /** The word before the host's name. */
   byLabel?: string
@@ -137,14 +141,7 @@ export function EventCard({
             <div className={[styles.reveal, styles.hideOnHover].join(' ')}>
               <div className={styles.revealInner}>
                 <p className={styles.smallBy}>
-                  {byLabel}{' '}
-                  {creator.profileHref ? (
-                    <a className={styles.smallName} href={creator.profileHref}>
-                      {creator.name}
-                    </a>
-                  ) : (
-                    creator.name
-                  )}
+                  {byLabel} {creator.name}
                 </p>
               </div>
             </div>
