@@ -1,4 +1,5 @@
-// The gift's transfer, drawn over the app by the host that signs it (the Sites /play web shell): "Preparing Gift for"
+// The gift's transfer, drawn over the app by the host that signs it (the Sites /play web shell): first "Send Gift to"
+// the recipient with the item, for the player to confirm with SEND GIFT where the wallet is; then "Preparing Gift for"
 // the recipient with the item while the wallet signs (after ten seconds, a hint that it is taking longer, linking to
 // the activity page), then "Gift Sent to <name>!" with rays and OK, or "Something went wrong" with TRY AGAIN and
 // Contact Support. The host resolves the recipient and the item itself.
@@ -25,12 +26,15 @@ export interface GiftTransferItem {
 
 export type GiftTransferView =
   | { step: 'loading' }
+  | { step: 'confirm'; recipient: GiftTransferRecipient; item: GiftTransferItem }
   | { step: 'preparing'; recipient: GiftTransferRecipient; item: GiftTransferItem; status: string; slow: boolean }
   | { step: 'sent'; recipient: GiftTransferRecipient }
   | { step: 'failed' }
 
 export interface GiftTransferHandlers {
   onClose: () => void
+  /** The confirm step's SEND GIFT: only this press lets the host sign. */
+  onConfirm: () => void
   onRetry: () => void
   /** The slow hint's link: where the gift's delivery shows. */
   onActivity: () => void
@@ -38,7 +42,8 @@ export interface GiftTransferHandlers {
 }
 
 export const GIFT_STATUS_WEB3 = 'A browser window should open for you to confirm the transaction.'
-export const GIFT_STATUS_MANAGED = 'A window should open for you to confirm the transaction.'
+/** An email or social account's wallet signs with no window of its own. */
+export const GIFT_STATUS_MANAGED = 'Processing...'
 
 const shortAddress = (a: string): string => `${a.slice(0, 6)}…${a.slice(-4)}`
 const nameOf = (r: GiftTransferRecipient): string => r.name || shortAddress(r.address)
@@ -55,6 +60,30 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
           <div className={styles.centre}>
             <Spinner />
           </div>
+        </Modal>
+      )
+    case 'confirm':
+      return (
+        <Modal width={480} ariaLabel={`Send Gift to ${nameOf(view.recipient)}`}>
+          <ModalTitle title="Send Gift to" onClose={handlers.onClose} closeLabel="Close" />
+          <div className={styles.body}>
+            <div className={styles.recipient}>
+              <Recipient recipient={view.recipient} size={32} />
+              <span className={styles.name} style={view.recipient.nameColor ? { color: view.recipient.nameColor } : undefined}>
+                {nameOf(view.recipient)}
+              </span>
+            </div>
+            <span className={styles.address}>{view.recipient.address}</span>
+            <ItemTile rarity={view.item.rarity} image={view.item.image} category={view.item.category} />
+            <span className={styles.itemName}>{view.item.name}</span>
+            <p className={styles.hint}>Gifting an item cannot be undone.</p>
+          </div>
+          <ModalActions>
+            <Button variant="secondary" onClick={handlers.onClose}>
+              CANCEL
+            </Button>
+            <Button onClick={handlers.onConfirm}>SEND GIFT</Button>
+          </ModalActions>
         </Modal>
       )
     case 'preparing':

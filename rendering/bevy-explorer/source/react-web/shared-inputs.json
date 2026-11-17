@@ -5934,7 +5934,7 @@
     },
     {
       "path": "library/explorer-core/features/gifting/giftItem.ts",
-      "sha256": "82ce983c8099c4e4c59b73b381c9b06f0997789d26c0d88715134c7bcb567c80"
+      "sha256": "2a382c7c3b09a134e22887e4d627651170a6012ab669cd2682057146a8cfd7b6"
     },
     {
       "path": "library/explorer-core/features/gifting/picker.ts",
@@ -8018,7 +8018,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "acbbe28a515aeddb3644f84cfd1bf68a4dfaa4bdb96ece5c2f9b1200f2087c7e"
+      "sha256": "3eaa0e0eccf3115526a43f439ca5904db3b1dec18eb6354f42da63c706eb0b84"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -8030,7 +8030,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
-      "sha256": "e1a144f578a50cbfd859957b6280f63860de83ea3864b3a4b33117ef1668c6f5"
+      "sha256": "cae16f1ce1c61943c5ab8fa5f1db5fca2d926a65a5a736117f0cfd0b3de131ab"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
@@ -8526,7 +8526,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
-      "sha256": "c8045f59dba958413e09b3f0b6447b5be22bc652e05cc6b619318d1f0ba3b420"
+      "sha256": "38ef16c34ed31195e1ad683298be55a24fef9041a838e80f8cd565d0b34b8d22"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
@@ -8534,19 +8534,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
-      "sha256": "7c610d3189f643e68a86c436b99b32e967afc4c1e3e91841f5ec09370ba5deb7"
+      "sha256": "7e05c6703ff6a053e034c1bbe07438ba43abd27fb8e141290850c1a32e08964b"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
-      "sha256": "1761b83aea83a99a46199fae4eb08bc3a223a1bda57221eaab7579d5832c4cb5"
+      "sha256": "afc7d6ced4898b96b26939380db9f026065e10a8f5fb9f34db0c651d95bc8ea5"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
-      "sha256": "6888cd9c47b80c82a5721ef4a6449c79c06168d2616e6cd6261eeb19d118beb3"
+      "sha256": "ba1f16780cb53616b63e7d000ac39081a2fd1e3d4e4c9c5b9287e667d8198811"
     },
     {
       "path": "library/ui/apps/hud/features/gifting/useGifting.ts",
-      "sha256": "b5e3000e0dec41843952675ca5ef0362666c3a356964ab83bf7fba27d4317c1c"
+      "sha256": "5aa063c49b4d48dbbdd725359f092bd959e31e74bd7e74521f3f62dd3c799cf1"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.module.css",
@@ -8858,7 +8858,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
-      "sha256": "62b3f031e9e67411c968583993d460b1222cbce1f25f53e98c8e4e8e6838b589"
+      "sha256": "306b2db94b12b8d542ed010a9ece826c15ac0e8a58bf5bdc71654da8a6886f0b"
     },
     {
       "path": "library/ui/apps/hud/features/session/SceneLoadingOverlay.module.css",
@@ -8890,7 +8890,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "01a28ca0ae99a4eb71aa9b7570fe05a0a36888a7ecdb21917fe052b272841790"
+      "sha256": "c62c5ab7a7a84c5fb5e3277bb621b28efbff09ec51852a309ee28943f95a663a"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9350,7 +9350,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
-      "sha256": "afc5a3933ef0d48390fd241e7cc6d3ba1fc0a3f864902188c9d6a556f655e88c"
+      "sha256": "12d21cc75c4429c51ee8636f4a31eba4f2f8b839416ac2ecc5f52207c91b9fde"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",

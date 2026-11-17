@@ -3,7 +3,7 @@
 // popup shows. An emote is told from a wearable by its category.
 
 /** The categories an emote's metadata names; any other category is a wearable's. */
-export const EMOTE_CATEGORIES: ReadonlySet<string> = new Set(['dance', 'stunt', 'greetings', 'fun', 'poses', 'reactions', 'horror', 'miscellaneous'])
+const EMOTE_CATEGORIES: ReadonlySet<string> = new Set(['dance', 'stunt', 'greetings', 'fun', 'poses', 'reactions', 'horror', 'miscellaneous'])
 
 export type GiftableKind = 'wearable' | 'emote'
 

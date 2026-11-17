@@ -22,6 +22,12 @@
   font-weight: var(--fw-bold);
   overflow-wrap: anywhere;
 }
+.address {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
 .itemName {
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);

@@ -915,7 +915,7 @@ export const BRIDGE_CALL_TIMEOUT_MS = 30_000
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1457,8 +1457,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const catalogReqId = useRef(0)
-  const giftingReqId = useRef(0)
-  const giftingWaiting = useRef(new Map<number, (page: GiftingPageMessage) => void>())
   const [equippedWearables, setEquippedWearables] = useState<Wearable[]>([])
   const [bodyShape, setBodyShape] = useState<string | undefined>(undefined)
   const [forceRender, setForceRenderState] = useState<string[]>([])
@@ -2095,12 +2093,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             setCatalogLoading(false)
           }
           break
-        case 'giftingPage': {
-          const answer = giftingWaiting.current.get(msg.requestId)
-          giftingWaiting.current.delete(msg.requestId)
-          answer?.(msg)
-          break
-        }
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
@@ -2503,7 +2495,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'gallery':
         case 'galleryWrite':
-        case 'externalUrlOpened': {
+        case 'externalUrlOpened':
+        case 'giftingPage': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
@@ -3762,16 +3755,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCatalogLoading(true)
     driverRef.current?.send({ kind: 'catalogQuery', catalog: 'wearables', requestId: catalogReqId.current, ...q })
   }, [])
-  const queryGifting = useCallback((q: GiftingQuery): Promise<GiftingPageMessage> => {
-    giftingReqId.current += 1
-    const requestId = giftingReqId.current
-    const driver = driverRef.current
-    if (driver == null) return Promise.resolve({ kind: 'giftingPage', catalog: q.catalog, items: [], total: 0, equipped: [], failed: true, requestId })
-    return new Promise((resolve) => {
-      giftingWaiting.current.set(requestId, resolve)
-      driver.send({ kind: 'giftingQuery', requestId, ...q })
-    })
-  }, [])
+  // A page the bridge never answers (or no engine) reads as a failed one.
+  const queryGifting = useCallback(
+    async (q: GiftingQuery): Promise<GiftingPageMessage> =>
+      (await bridgeCall('giftingPage', (requestId) => ({ kind: 'giftingQuery', requestId, ...q }))) ?? {
+        kind: 'giftingPage',
+        catalog: q.catalog,
+        items: [],
+        total: 0,
+        equipped: [],
+        failed: true,
+        requestId: 0
+      },
+    [bridgeCall]
+  )
   const saveOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'saveOutfit', slot })
   }, [])

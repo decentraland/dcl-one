@@ -2,11 +2,11 @@
 // sender, so the guard is tested against exactly what Gift will send.
 import { describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi } from 'viem'
-import { collectionV2 } from '@shop/market/lib/contracts'
+import { collectionV2, ERC721_ABI } from '@shop/market/lib/contracts'
 import { metaTransactionTypedData } from '../../shop/market/lib/metaTx'
 import { signTypedData } from '../../shop/market/lib/tx'
 import type { Eip1193Provider } from '../../data/auth/wallet'
-import { guardedGiftProvider, TRANSFER_FROM_ABI, type GiftIntent } from '../shell/gift/guard'
+import { guardedGiftProvider, type GiftIntent } from '../shell/gift/guard'
 
 const FROM = '0x' + 'aa'.repeat(20)
 const TO = '0x' + 'bb'.repeat(20)
@@ -15,7 +15,7 @@ const CONTRACT = '0x' + 'dd'.repeat(20)
 const CHAIN = 137
 const COLLECTION = collectionV2(CHAIN, CONTRACT)
 const transferFrom = (from: string, to: string, id: bigint): `0x${string}` =>
-  encodeFunctionData({ abi: TRANSFER_FROM_ABI, functionName: 'transferFrom', args: [from as `0x${string}`, to as `0x${string}`, id] })
+  encodeFunctionData({ abi: ERC721_ABI, functionName: 'transferFrom', args: [from as `0x${string}`, to as `0x${string}`, id] })
 
 function fakeWallet(account = FROM) {
   const calls: string[] = []
@@ -69,6 +69,19 @@ describe('the gift wallet', () => {
     const w = fakeWallet()
     await expect(signTypedData(guardedGiftProvider(w.provider, intent({ nonce: 6n })), FROM, typedFor(transferFrom(FROM, TO, 105n)))).rejects.toThrow()
     expect(w.reached('eth_signTypedData_v4')).toBe(false)
+  })
+
+  it('drops a signature that comes back once the gift is no longer current', async () => {
+    let current = true
+    const w = fakeWallet()
+    const wallet: Eip1193Provider = {
+      request: async (a) => {
+        const r = await w.provider.request(a)
+        if (a.method === 'eth_signTypedData_v4') current = false
+        return r
+      }
+    }
+    await expect(signTypedData(guardedGiftProvider(wallet, intent({ current: () => current })), FROM, typedFor(transferFrom(FROM, TO, 105n)))).rejects.toThrow()
   })
 
   it('never lets the wallet send a transaction itself, or sign once the sign-in changed', async () => {

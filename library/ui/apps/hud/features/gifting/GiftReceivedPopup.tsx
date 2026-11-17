@@ -12,7 +12,7 @@ import { nativeProfileImage } from '@hud-host'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftReceivedPopup.module.css'
 
-export const GIFT_TYPE = 'transfer_received'
+const GIFT_TYPE = 'transfer_received'
 export const GIFT_ON_ITS_WAY = "It's on its way to your Backpack."
 
 const UNKNOWN_ITEM_NAME = 'Unknown Item'

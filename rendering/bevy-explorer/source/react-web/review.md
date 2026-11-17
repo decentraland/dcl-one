@@ -471,8 +471,8 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 
 Sending an owned wearable or emote to another player, where the host can sign the transfer (`@hud-host`'s
 `gifting`: the Sites `/play` web shell; null here outside `?mock=1`, whose fake host sends nothing). The shared HUD
-draws the picker and names a token and a recipient (`features/gifting`); the shell checks both, draws the transfer
-and signs (`apps/ui3/src/play/shell/gift`, [ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md)).
+draws the picker and names a token and a recipient (`features/gifting`); the shell checks both, asks the player to
+confirm them in its own overlay, draws the transfer and signs (`apps/ui3/src/play/shell/gift`, [ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md)).
 Expectations:
 
 - **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the

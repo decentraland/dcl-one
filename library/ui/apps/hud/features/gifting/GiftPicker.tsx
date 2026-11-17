@@ -11,12 +11,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gifting } from '@hud-host'
 import type { CatalogKind, GiftableItem, GiftingPageMessage } from '@explorer-core/engine/protocol'
 import { GIFT_PAGE_SIZE, NOT_TRANSFERABLE, DEFAULT_INFO, bestToken, giftRows, transferable } from '@explorer-core/features/gifting/picker'
-import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Spinner, Tabs, WearableCard, openPopup, showToast, type Rarity, type TabItem } from '../../design'
+import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Spinner, Tabs, WearableCard, openPopup, rarityOf, showToast, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { LoadMore } from '../communities/LoadMore'
-import { refreshPendingGifts, usePendingGifts } from './useGifting'
+import { usePendingGifts } from './useGifting'
 import styles from './GiftPicker.module.css'
 
 const SEARCH_DEBOUNCE_MS = 500
@@ -26,8 +26,6 @@ const TABS: TabItem<CatalogKind>[] = [
   { id: 'wearables', label: 'WEARABLES' },
   { id: 'emotes', label: 'EMOTES' }
 ]
-const RARITIES: readonly Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
-const rarityOf = (r: string): Rarity => RARITIES.find((x) => x === r.toLowerCase()) ?? 'base'
 
 export interface GiftRecipient {
   address: string
@@ -57,9 +55,6 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
   const name = profile?.name || recipient.name
   const color = knownUserColor(recipient.address, name)
 
-  useEffect(() => {
-    void refreshPendingGifts()
-  }, [])
 
   // The search applies half a second after the last keystroke.
   useEffect(() => {

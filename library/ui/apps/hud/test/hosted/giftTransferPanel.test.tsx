@@ -4,9 +4,21 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { GiftTransferPanel, type GiftTransferHandlers } from '../../features/gifting/GiftTransferPanel'
 
 const RECIPIENT = { address: '0x' + 'b'.repeat(40), name: 'Bob', nameColor: '#ff0000' }
-const handlers = (): GiftTransferHandlers => ({ onClose: vi.fn(), onRetry: vi.fn(), onActivity: vi.fn(), onSupport: vi.fn() })
+const handlers = (): GiftTransferHandlers => ({ onClose: vi.fn(), onConfirm: vi.fn(), onRetry: vi.fn(), onActivity: vi.fn(), onSupport: vi.fn() })
 
 describe('the gift transfer panel', () => {
+  it('asks the player to confirm the item and the recipient, with their address, before anything is signed', () => {
+    const h = handlers()
+    render(<GiftTransferPanel view={{ step: 'confirm', recipient: RECIPIENT, item: { name: 'Cool Hat', rarity: 'epic' } }} handlers={h} />)
+    expect(screen.getByText('Send Gift to')).toBeTruthy()
+    expect(screen.getByText(RECIPIENT.address)).toBeTruthy()
+    expect(screen.getByText('Gifting an item cannot be undone.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'SEND GIFT' }))
+    expect(h.onConfirm).toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
+    expect(h.onClose).toHaveBeenCalled()
+  })
+
   it('prepares the gift for the recipient with the item, and after a while links to the delivery status', () => {
     const h = handlers()
     const view = { step: 'preparing' as const, recipient: RECIPIENT, item: { name: 'Cool Hat', rarity: 'epic' }, status: 'A browser window should open for you to confirm the transaction.', slow: false }

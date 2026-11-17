@@ -11,6 +11,7 @@ import { isShellError } from '@explorer-core/lib/shellReply'
 import type { GiftTransferHandlers, GiftTransferView } from '@hud/features/gifting/GiftTransferPanel'
 import { GIFT_EVENT, GIFT_UNAVAILABLE } from '../lib/giftProtocol'
 import { createShellGift, tokenParts, type ShellGiftServices } from '../shell/gift/gifting'
+import { guardedGiftProvider } from '../shell/gift/guard'
 import type { ShellShopWallet } from '../shell/shop/purchase'
 
 const SENDER = '0x' + 'aa'.repeat(20)
@@ -52,7 +53,7 @@ const signThen = (after: () => Promise<string>) => async (p: Eip1193Provider, c:
   return after()
 }
 
-function setup(over: Partial<ShellGiftServices> = {}, opts: { login?: StoredLogin | null; kind?: 'web3' | 'managed' | null } = {}) {
+function setup(over: Partial<ShellGiftServices> = {}, opts: { login?: StoredLogin | null; kind?: 'web3' | 'managed' | null; confirm?: boolean } = {}) {
   const views: GiftTransferView[] = []
   let handlers: GiftTransferHandlers | null = null
   const posts: unknown[] = []
@@ -65,7 +66,7 @@ function setup(over: Partial<ShellGiftServices> = {}, opts: { login?: StoredLogi
   const services: Partial<ShellGiftServices> = {
     enabled: async () => true,
     chainId: () => 137,
-    token: async () => ({ owner: SENDER, name: 'Cool Hat', image: 'https://img.test/hat.png', rarity: 'Epic', category: 'wearable', chainId: 137 }),
+    token: async (contractAddress, tokenId) => ({ contractAddress, tokenId, owner: SENDER, name: 'Cool Hat', image: 'https://img.test/hat.png', rarity: 'Epic', category: 'wearable', chainId: 137 }),
     recipient: async (address) => ({ address, name: 'Bob', nameColor: '#ff0000', face: 'javascript:alert(1)' }),
     ownerOf: async () => owner,
     nonce: async () => 7n,
@@ -86,6 +87,8 @@ function setup(over: Partial<ShellGiftServices> = {}, opts: { login?: StoredLogi
       show: (v, h) => {
         views.push(v)
         handlers = h
+        // The player presses SEND GIFT on the confirm step, unless a test leaves it waiting.
+        if (v.step === 'confirm' && opts.confirm !== false) queueMicrotask(h.onConfirm)
       },
       hide: () => views.push({ step: 'hidden' } as unknown as GiftTransferView)
     },
@@ -212,6 +215,65 @@ describe('a gift', () => {
     t.handlers().onSupport()
     t.handlers().onActivity()
     expect(t.opened).toEqual(['https://site.test/help', 'https://site.test/shop/activity'])
+  })
+})
+
+describe('the confirm step', () => {
+  it('shows the item and recipient the shell resolved, and signs nothing until SEND GIFT', async () => {
+    const t = setup({}, { confirm: false })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(t.views.at(-1)).toMatchObject({ step: 'confirm', recipient: { address: RECIPIENT, name: 'Bob' }, item: { name: 'Cool Hat' } })
+    expect(t.signed()).toBe(false)
+    t.handlers().onConfirm()
+    await t.settled()
+    expect(t.signed()).toBe(true)
+    expect(t.views.at(-1)).toMatchObject({ step: 'sent' })
+  })
+
+  it('CANCEL on the confirm step sends nothing and closes', async () => {
+    const t = setup({}, { confirm: false })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    t.handlers().onClose()
+    await t.settled()
+    expect(t.signed()).toBe(false)
+    expect(t.posts).toEqual([])
+    expect(t.gift.dialogOpen()).toBe(false)
+  })
+
+  it('tells a managed wallet, which opens no window, that it is processing', async () => {
+    const t = setup({}, { kind: 'managed' })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(t.views.find((v) => v.step === 'preparing')).toMatchObject({ status: 'Processing...' })
+  })
+
+  it("refuses a token the index answers for with another contract's or another token's row", async () => {
+    const t = setup({ token: async () => ({ contractAddress: '0x' + 'ee'.repeat(20), tokenId: '105', owner: SENDER, name: 'Other', image: '', category: 'wearable', chainId: 137 }) })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(t.signed()).toBe(false)
+    expect(t.views.at(-1)).toEqual({ step: 'failed' })
+  })
+
+  it('drops a signature that comes back after the gift was closed, so nothing is relayed', async () => {
+    const relayed = vi.fn(async () => HASH)
+    let t: ReturnType<typeof setup>
+    const slowWallet = (p: Eip1193Provider): Eip1193Provider => ({
+      request: async (a) => {
+        if (a.method === 'eth_signTypedData_v4') t.handlers().onClose()
+        return p.request(a)
+      }
+    })
+    t = setup({
+      guard: (p, intent) => guardedGiftProvider(slowWallet(p), intent),
+      sendGasless: signThen(relayed)
+    })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(relayed).not.toHaveBeenCalled()
+    expect(t.posts).toEqual([])
   })
 })
 

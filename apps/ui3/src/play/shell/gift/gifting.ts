@@ -1,9 +1,10 @@
 // The web shell's side of Gift (lib/giftProtocol). The HUD's picker names a token and a recipient; this checks both
 // itself before anything is signed: the token is a Polygon collection item of the build's chain that the
 // marketplace index knows, the login's account owns it on chain right now, and the recipient is another account.
-// It resolves the item and the recipient's profile on its own and shows the transfer over the app (./overlay):
-// "Preparing Gift for" while the wallet signs, "Gift Sent" once the relay takes it, or the
-// error with TRY AGAIN. It signs with the wallet the host injected, bound to that one transfer (./guard), as a gasless
+// It resolves the item and the recipient's profile on its own and shows them over the app (./overlay) for the player
+// to confirm there, where the wallet is, with SEND GIFT: nothing is signed before that press, which the app frame
+// can't make. Then "Preparing Gift for" while the wallet signs, "Gift Sent" once the relay takes it, or the error with
+// TRY AGAIN. It signs with the wallet the host injected, bound to that one transfer (./guard), as a gasless
 // meta-transaction on the collection, and nothing else.
 //
 // A token can move only once, so a gift can never be sent twice. An outcome the shell can't tell (the relay's answer
@@ -19,9 +20,9 @@ import { fetchProfile, mapProfile, profileFaceUrl } from '../../../data/catalyst
 import { settlementChainId } from '../../../shop/checkout/chain/config'
 import { readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { fetchToken } from '../../../shop/market/lib/api'
-import { collectionV2, type ContractData } from '@shop/market/lib/contracts'
+import { collectionV2, ERC721_ABI, type ContractData } from '@shop/market/lib/contracts'
 import { MetaTransactionError, readNonce, sendMetaTransaction } from '../../../shop/market/lib/metaTx'
-import { rpc } from '../../../shop/market/lib/rpc'
+import { readContract } from '../../../shop/market/lib/rpc'
 import { declined } from '../../../shop/market/lib/tx'
 import type { ChainId } from '@shop/model/chain'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
@@ -41,7 +42,8 @@ import {
 } from '../../lib/giftProtocol'
 import type { ShellShopWallet } from '../shop/purchase'
 import { pageLocks, webLock } from '../webLock'
-import { guardedGiftProvider, TRANSFER_FROM_ABI, type GiftIntent } from './guard'
+import { guardedGiftProvider, type GiftIntent } from './guard'
+import { isSafeImageUrl, safeCreator } from '../safeDisplay'
 import { GIFT_STATUS_MANAGED, GIFT_STATUS_WEB3, type GiftTransferHandlers, type GiftTransferItem, type GiftTransferRecipient, type GiftTransferView } from '@hud/features/gifting/GiftTransferPanel'
 
 const GIFTING_FLAG = 'explorer-alfa-gifting'
@@ -55,7 +57,6 @@ const WATCH_EVERY_MS = 10_000
 const PENDING_FOR_MS = 7 * 24 * 60 * 60_000
 const PENDING_MAX = 200
 const ZERO = '0x0000000000000000000000000000000000000000'
-const OWNER_OF = '0x6352211e'
 const NETWORK: Record<number, string> = { 137: 'matic', 80002: 'amoy' }
 
 export interface ShellGiftUi {
@@ -65,6 +66,8 @@ export interface ShellGiftUi {
 
 /** The token as the marketplace index knows it. */
 export interface IndexedToken {
+  contractAddress: string
+  tokenId: string
   owner: string
   name: string
   image: string
@@ -113,7 +116,6 @@ export interface ShellGift {
 }
 
 const lower = (s: string): string => s.toLowerCase()
-const pad = (hex: string): string => hex.replace(/^0x/, '').padStart(64, '0')
 
 const LIVE: ShellGiftServices = {
   async enabled() {
@@ -122,17 +124,19 @@ const LIVE: ShellGiftServices = {
   chainId: () => settlementChainId(),
   async token(contract, tokenId) {
     const t = await fetchToken(contract, tokenId).catch(() => null)
-    return t ? { owner: t.owner, name: t.name, image: t.image, rarity: t.rarity, category: t.category, chainId: t.chainId } : null
+    return t ? { contractAddress: t.contractAddress, tokenId: t.tokenId, owner: t.owner, name: t.name, image: t.image, rarity: t.rarity, category: t.category, chainId: t.chainId } : null
   },
   async recipient(address) {
     const avatar = await fetchProfile(address).catch(() => null)
     if (!avatar) return { address }
     const p = mapProfile(avatar, address)
-    return safeRecipient({ address, name: p.name, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined }) ?? { address }
+    return safeRecipient({ address, name: p.name, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined })
   },
   async ownerOf(chainId, contract, tokenId) {
-    const raw = await rpc<string>(chainId, 'eth_call', [{ to: contract, data: `${OWNER_OF}${pad(tokenId.toString(16))}` }, 'latest'])
-    return `0x${raw.slice(-40)}`.toLowerCase()
+    // Decoded by the ABI: an empty or malformed answer throws instead of reading as some owner.
+    const owner = await readContract({ chainId, address: contract, abi: ERC721_ABI, functionName: 'ownerOf', args: [tokenId] })
+    if (typeof owner !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(owner)) throw new Error('ownerOf answered no address')
+    return owner.toLowerCase()
   },
   nonce: (collection, account) => readNonce(collection, account),
   guard: guardedGiftProvider,
@@ -152,15 +156,10 @@ const LIVE: ShellGiftServices = {
   supportUrl: () => siteUrl('/help')
 }
 
-/** The recipient as the panel may draw them: a name, a `#rgb`-style colour and an `https:` face only. */
-export function safeRecipient(r: Partial<GiftTransferRecipient> | null | undefined): GiftTransferRecipient | null {
-  if (!r || typeof r.address !== 'string' || !/^0x[0-9a-f]{40}$/.test(r.address)) return null
-  return {
-    address: r.address,
-    ...(typeof r.name === 'string' ? { name: r.name } : {}),
-    ...(typeof r.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(r.nameColor) ? { nameColor: r.nameColor } : {}),
-    ...(typeof r.face === 'string' && /^https:\/\/[^\s"'()\\]+$/.test(r.face) ? { face: r.face } : {})
-  }
+/** The recipient as the panel may draw them (../safeDisplay); just the address when the profile has nothing safe. */
+function safeRecipient(r: Partial<GiftTransferRecipient> & { address: string }): GiftTransferRecipient {
+  const c = safeCreator(r)
+  return c ? { address: c.address, ...(c.name ? { name: c.name } : {}), ...(c.nameColor ? { nameColor: c.nameColor } : {}), ...(c.face ? { face: c.face } : {}) } : { address: r.address }
 }
 
 /** The item as the panel may draw it: an `https:` picture only. */
@@ -169,7 +168,7 @@ function safeItem(t: IndexedToken): GiftTransferItem {
     name: t.name,
     rarity: (t.rarity ?? 'base').toLowerCase(),
     category: t.category || undefined,
-    ...(/^https:\/\/[^\s"'()\\]+$/.test(t.image) ? { image: t.image } : {})
+    ...(isSafeImageUrl(t.image) ? { image: t.image } : {})
   }
 }
 
@@ -187,11 +186,16 @@ interface StoredGift extends PendingGift {
 }
 
 type Outcome = 'sent' | 'failed'
+/** One opening of the gift's dialog: a late answer for an older one draws nothing; one run at a time. */
+interface Session {
+  id: number
+  running: boolean
+}
 
 export function createShellGift(deps: ShellGiftDeps): ShellGift {
   const svc: ShellGiftServices = { ...LIVE, ...deps.services }
   /** The open dialog, or null. Each opening is its own session: a late answer for an older one draws nothing. */
-  let session: { id: number } | null = null
+  let session: Session | null = null
   let sessions = 0
 
   const account = (): string | null => {
@@ -234,7 +238,7 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
     return { v: GIFT_PROTOCOL, available: true }
   }
 
-  const live = (s: { id: number }): boolean => session === s
+  const live = (s: Session): boolean => session === s
 
   function close(): void {
     session = null
@@ -252,14 +256,26 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
       svc.recipient(req.recipient).catch(() => ({ address: req.recipient })),
       svc.ownerOf(chain, parts.contract, BigInt(req.tokenId)).catch(() => null)
     ])
-    if (!token || token.chainId !== chain) return 'not a token the marketplace index knows'
+    if (!token || token.chainId !== chain || token.contractAddress.toLowerCase() !== parts.contract || token.tokenId !== req.tokenId) return 'not a token the marketplace index knows'
     if (owner !== who) return 'not owned by the sender'
-    return { recipient: safeRecipient(recipient) ?? { address: req.recipient }, item: safeItem(token), contract: parts.contract, chain }
+    return { recipient: safeRecipient(recipient), item: safeItem(token), contract: parts.contract, chain }
   }
 
-  async function run(req: GiftOpenRequest, who: string, s: { id: number }, pinned?: bigint): Promise<void> {
-    const handlers = (retry: () => void): GiftTransferHandlers => ({
+  async function run(req: GiftOpenRequest, who: string, s: Session, pinned?: bigint): Promise<void> {
+    // TRY AGAIN pressed twice starts one run, never two.
+    if (s.running) return
+    s.running = true
+    try {
+      await attempt(req, who, s, pinned)
+    } finally {
+      s.running = false
+    }
+  }
+
+  async function attempt(req: GiftOpenRequest, who: string, s: Session, pinned?: bigint): Promise<void> {
+    const handlers = (retry: () => void, confirm: () => void = () => undefined): GiftTransferHandlers => ({
       onClose: () => live(s) && close(),
+      onConfirm: confirm,
       onRetry: retry,
       onActivity: () => deps.openExternal(svc.activityUrl()),
       onSupport: () => deps.openExternal(svc.supportUrl())
@@ -275,13 +291,19 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
       fail()
       return
     }
+    const { recipient, item, contract, chain } = checked
+    // The player confirms here, in the shell, what the shell resolved: nothing is signed before SEND GIFT.
+    const confirmed = await new Promise<boolean>((resolve) => {
+      if (!live(s)) return resolve(false)
+      deps.ui.show({ step: 'confirm', recipient, item }, { ...handlers(() => undefined, () => resolve(true)), onClose: () => (resolve(false), live(s) && close()) })
+    })
+    if (!confirmed || !live(s)) return
     const release = await svc.claim(who).catch(() => null)
     if (release == null && svc.locksAvailable()) {
       console.warn('[gift] another tab is sending a gift for this account')
       fail()
       return
     }
-    const { recipient, item, contract, chain } = checked
     const status = deps.wallet?.kind(who) === 'managed' ? GIFT_STATUS_MANAGED : GIFT_STATUS_WEB3
     const preparing = (slow: boolean): void => {
       if (live(s)) deps.ui.show({ step: 'preparing', recipient, item, status, slow }, handlers(() => undefined))
@@ -313,7 +335,8 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
         to: req.recipient,
         tokenId,
         ...(pinned !== undefined ? { nonce: pinned } : {}),
-        // Closing the dialog before the signature cancels the gift: the guard refuses to sign once it is closed.
+        // Closing the dialog cancels the gift until the wallet has signed: the guard refuses to sign once it is
+        // closed, and drops a signature that comes back after it was closed.
         current: () => account() === who && live(s)
       }
       const checkedProvider = svc.guard(provider, intent)
@@ -325,9 +348,9 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
           return result
         }
       }
-      // The nonce the wallet signs, read the way the sender reads it, so a refusal can tell whether it was used.
+    // The nonce the wallet signs, read the way the sender reads it, so a refusal can tell whether it was used.
       signedNonce = pinned ?? (await svc.nonce(collection, who))
-      const data = encodeFunctionData({ abi: TRANSFER_FROM_ABI, functionName: 'transferFrom', args: [who as `0x${string}`, req.recipient as `0x${string}`, tokenId] })
+      const data = encodeFunctionData({ abi: ERC721_ABI, functionName: 'transferFrom', args: [who as `0x${string}`, req.recipient as `0x${string}`, tokenId] })
       await svc.sendGasless(guarded, collection, data, signedNonce)
       settle('sent')
     } catch (e) {
@@ -366,7 +389,7 @@ export function createShellGift(deps: ShellGiftDeps): ShellGift {
     const who = account()
     if (!caps.available || !who) throw new ShellError(GIFT_UNAVAILABLE, `Gift is unavailable (${caps.reason ?? 'unknown'})`)
     if (session != null || deps.otherDialogOpen()) throw new ShellError('gift.busy', 'a dialog is already open')
-    const s = { id: ++sessions }
+    const s: Session = { id: ++sessions, running: false }
     session = s
     void run(req, who, s)
     return { v: GIFT_PROTOCOL }

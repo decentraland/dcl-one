@@ -46,7 +46,7 @@ export { PopupHost, openPopup, closeTopPopup, hasOpenPopup, subscribePopups, top
 export * from './Glyphs'
 export { MaskIcon } from './MaskIcon'
 export { Skeleton } from './Skeleton'
-export { rarityPanel, rarityTile } from './rarityArt'
+export { rarityOf, rarityPanel, rarityTile } from './rarityArt'
 export { Chip } from './Chip'
 export { Pager, pageWindow } from './Pager'
 export { OptionMenu, type OptionSection } from './OptionMenu'

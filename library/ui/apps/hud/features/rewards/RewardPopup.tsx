@@ -5,14 +5,13 @@
 // the session; the popup renders through the shared popup layer.
 
 import type { AppNotification } from '@explorer-core/engine/protocol'
-import { Button, openPopup, rarityTile, type Rarity } from '../../design'
+import { Button, openPopup, rarityOf, rarityTile, type Rarity } from '../../design'
 import { nativeProfileImage } from '@hud-host'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import styles from './RewardPopup.module.css'
 
 export const REWARD_TYPE = 'reward_in_progress'
 
-const RARITIES: readonly Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 
 export interface Reward {
   name?: string
@@ -35,7 +34,7 @@ export function rewardOf(n: AppNotification): Reward | null {
   return {
     name: str(m, 'tokenName'),
     image: nativeProfileImage(str(m, 'tokenImage')),
-    rarity: RARITIES.find((r) => r === rarity) ?? 'base',
+    rarity: rarityOf(rarity),
     category: str(m, 'tokenCategory')?.toLowerCase()
   }
 }

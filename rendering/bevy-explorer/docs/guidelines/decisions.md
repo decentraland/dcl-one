@@ -445,10 +445,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   offers no Gift; it still shows the gift-received popup, which signs nothing. Both wallet kinds
   sign the gasless meta-transaction, so both may gift; a guest can't, as in the Shop. See
   [the ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md).
-- **Gift's picker is the confirmation; the shell checks the rest.** As in unity-explorer, SEND
-  GIFT starts the transfer and "Preparing Gift for" is a status, not a second confirmation. The
-  shell re-reads the token's owner on chain, checks the collection is the marketplace index's on
-  the build's chain and that the recipient is another account, and signs nothing else (the guard).
+- **The shell asks for a second confirmation.** unity-explorer's picker SEND GIFT starts the
+  transfer. Here it opens the shell's "Send Gift to" step (the item and the recipient's name and
+  address as the shell read them, SEND GIFT and CANCEL), and only that press signs: an email or
+  social account's wallet signs with no prompt, so the app frame alone must not be able to move
+  items. The shell also re-reads the token's owner on chain, checks the collection is the
+  marketplace index's on the build's chain and that the recipient is another account, and signs
+  nothing else (the guard). Closing it before the wallet signs cancels the gift.
 - **"Gift Sent" shows once the relay takes it.** As in unity-explorer. A token moves only once,
   so a gift can't be sent twice; an answer lost on the way is settled by the token's owner, and
   TRY AGAIN after a refusal signs the same nonce. There is no fallback to a transaction from the
