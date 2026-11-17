@@ -4,10 +4,10 @@
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { ShopClient } from "../api/shop";
-import { shopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import type { LandFilters } from "./api";
 import { fetchRentalListingPrices } from "./rentals";
+import { shopClient } from "../api/host";
 
 export const CHART_LOG_SCALE = 5;
 const CHART_BAR_QTY = 24;

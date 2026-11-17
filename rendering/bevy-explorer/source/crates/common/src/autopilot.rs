@@ -19,7 +19,8 @@ use bevy::prelude::*;
 
 use crate::structs::{AppConfig, PermissionType, PermissionValue};
 
-/// Real-time seconds the autopilot stands at spawn while measuring.
+/// Real-time seconds the autopilot measures: standing at spawn, or walking in with
+/// `--autopilot-walk-to` (`src/autopilot/walk.rs`).
 pub const MEASURE_SECONDS: f64 = 90.0;
 
 /// Real-time seconds from launch to arriving in world before the run fails.

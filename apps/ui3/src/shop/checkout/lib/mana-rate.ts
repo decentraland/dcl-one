@@ -6,14 +6,14 @@
 
 import { decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
 
-import { manaUsdRate } from "../../model/money";
-import { AGGREGATOR_ABI, MARKETPLACE_ABI } from "../chain/abi";
+import { manaUsdRate } from "@shop/model/money";
+import { AGGREGATOR_ABI, MARKETPLACE_ABI } from "@shop/checkout/chain/abi";
 import { settlementChainId } from "../chain/config";
 import { shopChainReader, type ChainReader } from "../chain/rpc";
-import type { ManaRate } from "./currency";
+import type { ManaRate } from "@shop/checkout/lib/currency";
 import { getLatestOffChainMarketplaceContract } from "./marketplace";
 
-export * from "./currency";
+export * from "@shop/checkout/lib/currency";
 
 const MAX_STALENESS_SECONDS = 90_000;
 

@@ -9,7 +9,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import type { ContractInfo } from "../chain/contracts";
 import { GaslessUnavailableError, readMetaTxNonce, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";

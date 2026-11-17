@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-pointer-targets",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pointer scene: hover, click, blocked and out-of-reach targets",
+  "scripts": {
+    "build": "dcl-scene-cli build --built-in"
+  }
+}

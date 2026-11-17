@@ -4,7 +4,7 @@
 # no Nix is needed: on Linux as links into /nix/store, on macOS by making /nix itself a link to
 # the staging directory, since the system volume is read-only. Otherwise Nix builds the package
 # from the lock and the closure is copied to the staging directory for the cache to save.
-# bevy-tools goes on PATH, and its protoc must share the major of the version install-protoc.py
+# bevy-tools and bevy-web-tools go on PATH; protoc must share the major install-protoc.py
 # pins for Windows and macOS; bevy-ffmpeg goes into PKG_CONFIG_PATH.
 set -euo pipefail
 shopt -s nullglob
@@ -45,8 +45,10 @@ else
 fi
 out=$(< "$staging/out")
 case $package in
-  bevy-tools)
-    for tool in protoc taplo wasm-pack; do "$out/bin/$tool" --version; done
+  bevy-tools | bevy-web-tools)
+    tools=(protoc)
+    [ "$package" = bevy-web-tools ] || tools+=(taplo wasm-pack)
+    for tool in "${tools[@]}"; do "$out/bin/$tool" --version; done
     major=$(sed -n "s/^VERSION = '\([0-9]*\)\..*'$/\1/p" "$GITHUB_WORKSPACE/apps/bevy-explorer/install-protoc.py")
     [ -n "$major" ] || { echo 'install-protoc.py no longer pins a VERSION to compare with' >&2; exit 1; }
     case "$("$out/bin/protoc" --version)" in
@@ -55,6 +57,14 @@ case $package in
         echo "The flake's $("$out/bin/protoc" --version) is not the $major.x that install-protoc.py pins" >&2
         exit 1 ;;
     esac
+    if [ "$package" = bevy-web-tools ]; then
+      case "$("$out/bin/clang" --version)" in
+        *"clang version 21."*) ;;
+        *) echo 'The web tool package must provide clang 21' >&2; exit 1 ;;
+      esac
+      PKG_CONFIG_PATH=$out/lib/pkgconfig "$out/bin/pkg-config" --modversion alsa libudev
+      echo "PKG_CONFIG_PATH=$out/lib/pkgconfig" >> "$GITHUB_ENV"
+    fi
     echo "$out/bin" >> "$GITHUB_PATH" ;;
   bevy-ffmpeg)
     PKG_CONFIG_PATH=$out/lib/pkgconfig pkg-config --modversion libavcodec libavformat libavutil libswscale libswresample

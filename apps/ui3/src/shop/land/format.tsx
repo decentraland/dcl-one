@@ -3,7 +3,7 @@
 // for LAND, an estate, a rental or a resale.
 
 import ManaMark from "../../atoms/ManaMark";
-import { formatMana, manaWei, type ManaWei } from "../model/money";
+import { formatMana, manaWei, type ManaWei } from "@shop/model/money";
 import "./land.css";
 
 export function manaText(wei: bigint | string): string {

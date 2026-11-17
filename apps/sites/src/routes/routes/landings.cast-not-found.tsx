@@ -32,14 +32,14 @@ function coerceReason(raw: string | null): CastReason {
     : "missing";
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const from = coerceFrom(url.searchParams.get("from"));
   const reason = coerceReason(url.searchParams.get("reason"));
 
   const { sid, assignment, wrap } = await pageLoader(
     request,
-    
+    context,
     DEFAULT_ASSIGNMENT,
   );
 

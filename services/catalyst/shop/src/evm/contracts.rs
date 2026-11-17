@@ -320,7 +320,7 @@ mod tests {
             assert!(keys.contains(&key), "{key}");
         }
         let matic = chain_addresses(&json, "MATIC");
-        assert_eq!(matic.len(), 34);
+        assert_eq!(matic.len(), 35);
         assert!(
             matic
                 .iter()
@@ -335,6 +335,42 @@ mod tests {
         assert_eq!(name, "accept");
         assert_ne!(name, "content-type");
         assert_eq!(value, "application/json");
+    }
+
+    /// A `CreditsManager_DCL_ONE` this map admits to the relay is, on that chain, a
+    /// CreditsManager the guard judges and a contract with an audited domain, so the
+    /// map never widens the relay to a manager the policy doesn't decode. On Polygon
+    /// it is `DCL_ONE_POLYGON_MANAGER`.
+    #[test]
+    fn dcl_ones_managers_in_the_map_are_guarded_and_audited_on_their_chain() {
+        use crate::policy_entry::{DCL_ONE_POLYGON_MANAGER, is_credits_manager};
+        use crate::types::ChainId;
+        let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
+        let mut found = 0;
+        for (key, chain) in [("matic", ChainId::POLYGON), ("amoy", ChainId::AMOY)] {
+            let Some(listed) = json[key]["CreditsManager_DCL_ONE"].as_str() else {
+                continue;
+            };
+            found += 1;
+            let manager: Address = listed.parse().unwrap();
+            assert!(is_credits_manager(chain, manager), "{key}: {listed}");
+            assert_eq!(
+                super::super::meta_tx::audited_domain_for(chain.0, manager).map(|d| d.label),
+                Some("CreditsManager_DCL_ONE"),
+                "{key}: {listed}"
+            );
+        }
+        assert!(found >= 1);
+        assert_eq!(
+            json["matic"]["CreditsManager_DCL_ONE"].as_str(),
+            Some(format!("{DCL_ONE_POLYGON_MANAGER:#x}").as_str())
+        );
+        for chain in ["mainnet", "sepolia", "arbitrum", "goerli", "mumbai"] {
+            assert!(
+                json[chain].get("CreditsManager_DCL_ONE").is_none(),
+                "{chain}"
+            );
+        }
     }
 
     #[test]

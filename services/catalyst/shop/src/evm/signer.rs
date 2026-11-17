@@ -28,6 +28,33 @@ fn within_gas_cap(estimate: u64, cap: u64) -> bool {
     cap == 0 || estimate <= cap
 }
 
+/// A signing key as every direct signer reads it (hex, with or without `0x`): a 32-byte
+/// secp256k1 scalar in range, so zero or the curve order are refused like malformed hex. The
+/// error carries no part of the key.
+pub(crate) fn parse_signing_key(key: &str) -> Result<PrivateKeySigner, ()> {
+    PrivateKeySigner::from_str(key.trim().trim_start_matches("0x")).map_err(|_| ())
+}
+
+/// The fee per gas a transaction is signed with: what it may pay per unit of gas at most,
+/// the EIP-1559 `max_fee_per_gas` (not its tip) or a legacy `gas_price`.
+fn signed_fee_per_gas(fees: &Fees) -> u128 {
+    match fees {
+        Fees::Eip1559 {
+            max_fee_per_gas, ..
+        } => *max_fee_per_gas,
+        Fees::Legacy { gas_price } => *gas_price,
+    }
+}
+
+/// `Err(fee)` when `fees` would be signed above `cap` (`RELAYER_MAX_FEE_PER_GAS_WEI`); no cap, any fee.
+fn within_fee_cap(fees: &Fees, cap: Option<u128>) -> Result<(), u128> {
+    let fee = signed_fee_per_gas(fees);
+    match cap {
+        Some(cap) if fee > cap => Err(fee),
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptOutcome {
     Confirmed,
@@ -53,6 +80,8 @@ pub struct ReceiptLog {
 #[derive(Deserialize)]
 struct WireReceipt {
     status: Option<String>,
+    #[serde(rename = "blockNumber", default)]
+    block_number: Option<String>,
     #[serde(default)]
     logs: Vec<WireLog>,
 }
@@ -88,6 +117,7 @@ pub struct DirectSigner {
     chain_id: u64,
     relayer_address: Address,
     max_gas_limit: u64,
+    max_fee_per_gas: Option<u128>,
     receipt_poll_interval: Duration,
     receipt_timeout: Duration,
     send_lock: tokio::sync::Mutex<()>,
@@ -113,7 +143,7 @@ impl DirectSigner {
         receipt_poll_interval: Duration,
         receipt_timeout: Duration,
     ) -> Result<Self, String> {
-        let signer = PrivateKeySigner::from_str(key.trim().trim_start_matches("0x"))
+        let signer = parse_signing_key(key)
             .map_err(|_| "invalid RELAYER_PRIVATE_KEY: not a 32-byte secp256k1 key".to_string())?;
         let relayer_address = signer.address();
         Ok(Self {
@@ -122,10 +152,25 @@ impl DirectSigner {
             chain_id,
             relayer_address,
             max_gas_limit,
+            max_fee_per_gas: None,
             receipt_poll_interval: receipt_poll_interval.max(Duration::from_millis(1)),
             receipt_timeout,
             send_lock: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Caps the fee per gas this signer signs (`RELAYER_MAX_FEE_PER_GAS_WEI`): a transaction
+    /// whose `max_fee_per_gas` (or legacy `gas_price`) would exceed it is refused before it is
+    /// signed or sent. `None` keeps it uncapped.
+    pub fn with_max_fee_per_gas(mut self, cap: Option<u128>) -> Self {
+        self.max_fee_per_gas = cap;
+        self
+    }
+
+    /// The fee-per-gas cap this signer signs under, if any.
+    #[cfg(test)]
+    pub(crate) fn max_fee_per_gas(&self) -> Option<u128> {
+        self.max_fee_per_gas
     }
 
     pub fn relayer_address(&self) -> Address {
@@ -162,7 +207,7 @@ impl DirectSigner {
         let mut delay = self.receipt_poll_interval;
         loop {
             match tokio::time::timeout_at(deadline, self.receipt(hash)).await {
-                Ok(Ok(Some((outcome, logs)))) => {
+                Ok(Ok(Some((outcome, logs, _)))) => {
                     tracing::info!(tx_hash = %tx_hash_hex, ?outcome, "broker tx receipt observed");
                     return Ok((outcome, logs));
                 }
@@ -190,20 +235,53 @@ impl DirectSigner {
         &self,
         tx_hash_hex: &str,
     ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>), ApiError> {
+        let (outcome, logs, _) = self.fetch_receipt_with_block(tx_hash_hex).await?;
+        Ok((outcome, logs))
+    }
+
+    /// [`Self::fetch_receipt_once`] plus the block the receipt was mined in.
+    pub async fn fetch_receipt_with_block(
+        &self,
+        tx_hash_hex: &str,
+    ) -> Result<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>), ApiError> {
         let hash = parse_tx_hash(tx_hash_hex)?;
         match self.receipt(hash).await {
             Ok(Some(found)) => Ok(found),
-            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new())),
+            Ok(None) => Ok((ReceiptOutcome::Pending, Vec::new(), None)),
             Err(e) => Err(ApiError::RelayerFailed(format!(
                 "receipt lookup failed for {tx_hash_hex}: {e}"
             ))),
         }
     }
 
+    /// The chain head and block `number`'s timestamp (unix seconds).
+    pub async fn head_and_block_time(&self, number: u64) -> Result<(u64, i64), ApiError> {
+        let rpc = self.chain.rpc();
+        let fail = |e: RpcError| ApiError::RelayerFailed(format!("block lookup failed: {e}"));
+        let head = rpc
+            .call_hex("eth_blockNumber", json!([]))
+            .await
+            .map_err(fail)
+            .and_then(|h| parse_quantity_u64(&h).map_err(fail))?;
+        let block = rpc
+            .call(
+                "eth_getBlockByNumber",
+                json!([format!("0x{number:x}"), false]),
+            )
+            .await
+            .map_err(fail)?;
+        let timestamp = block
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| ApiError::RelayerFailed(format!("block {number} has no timestamp")))
+            .and_then(|t| parse_quantity_u64(t).map_err(fail))?;
+        Ok((head, i64::try_from(timestamp).unwrap_or(i64::MAX)))
+    }
+
     async fn receipt(
         &self,
         hash: TxHash,
-    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>)>, RpcError> {
+    ) -> Result<Option<(ReceiptOutcome, Vec<ReceiptLog>, Option<u64>)>, RpcError> {
         let value = self
             .chain
             .rpc()
@@ -227,7 +305,11 @@ impl DirectSigner {
                 data: l.data,
             })
             .collect();
-        Ok(Some((classify_receipt(status), logs)))
+        let block_number = match receipt.block_number.as_deref() {
+            Some(n) => Some(parse_quantity_u64(n)?),
+            None => None,
+        };
+        Ok(Some((classify_receipt(status), logs, block_number)))
     }
 
     pub async fn send_meta_transaction(&self, tx: &TransactionData) -> Result<String, ApiError> {
@@ -283,6 +365,13 @@ impl DirectSigner {
             .fees()
             .await
             .map_err(|e| ApiError::RelayerFailed(format!("fee lookup failed: {e}")))?;
+        if let Err(fee) = within_fee_cap(&fees, self.max_fee_per_gas) {
+            // Retryable like the relay's gas-price ceiling (`check_gas_price`): 503 HIGH_CONGESTION.
+            return Err(ApiError::HighCongestion(format!(
+                "the fee per gas {fee} wei exceeds RELAYER_MAX_FEE_PER_GAS_WEI {}: not sent",
+                self.max_fee_per_gas.unwrap_or_default()
+            )));
+        }
 
         let raw = self.sign(nonce, estimate, fees, to, data)?;
         let hash = rpc
@@ -397,6 +486,24 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cap bounds the fee per gas a transaction may pay: an EIP-1559 `max_fee_per_gas`
+    /// (a tip under the cap is not enough) or a legacy `gas_price`, the cap itself included.
+    #[test]
+    fn the_fee_cap_bounds_the_fee_signed() {
+        let eip1559 = Fees::Eip1559 {
+            max_fee_per_gas: 3_500,
+            max_priority_fee_per_gas: 1_500,
+        };
+        assert_eq!(within_fee_cap(&eip1559, Some(3_500)), Ok(()));
+        assert_eq!(within_fee_cap(&eip1559, Some(3_499)), Err(3_500));
+        assert_eq!(within_fee_cap(&eip1559, Some(1_500)), Err(3_500));
+        let legacy = Fees::Legacy { gas_price: 2_000 };
+        assert_eq!(within_fee_cap(&legacy, Some(2_000)), Ok(()));
+        assert_eq!(within_fee_cap(&legacy, Some(1_999)), Err(2_000));
+        assert_eq!(within_fee_cap(&eip1559, None), Ok(()));
+        assert_eq!(within_fee_cap(&legacy, None), Ok(()));
+    }
 
     #[test]
     fn receipt_status_maps_to_outcome() {

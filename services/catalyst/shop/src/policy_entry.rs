@@ -72,13 +72,24 @@ pub fn passthrough_executors(chain_id: ChainId) -> &'static [Address] {
 /// credits are issued for it.
 pub const DCL_ONE_AMOY_MANAGER: Address = address!("0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c");
 
+/// dcl-one's own CreditsManagerPolygon on Polygon mainnet (`CreditsManager_DCL_ONE`
+/// under `matic` in `evm/addresses.json`), deployed in block 97077690 from the
+/// creation bytecode of [`DCL_ONE_AMOY_MANAGER`]. It runs the shared manager's code,
+/// so a relayed `useCredits` to it is decoded on the routes [`manager_routes`] names
+/// for Polygon and judged like one to the shared manager; which of those routes its
+/// own `marketplaces` allow is the contract's state, not this table's. It is not a
+/// shared upstream manager: v2 may issue credits for it once a deployment names it
+/// in CREDITS_MANAGER_CONTRACT and its issuance gate opens.
+pub const DCL_ONE_POLYGON_MANAGER: Address = address!("0xe21289022b9324f9b9145a91ee59297ceb040c06");
+
 /// The CreditsManagers a meta-transaction may target on a chain: the live and
-/// the deprecated upstream one, and on Amoy dcl-one's own; the relay's
-/// audited-domain table names the same set.
+/// the deprecated upstream one, and dcl-one's own; the relay's audited-domain
+/// table names the same set.
 pub fn credits_managers(chain_id: ChainId) -> &'static [Address] {
-    const POLYGON: [Address; 2] = [
+    const POLYGON: [Address; 3] = [
         address!("0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"),
         address!("0xe9f961e6ded4e1476bbee4faab886d63a2493eb9"),
+        DCL_ONE_POLYGON_MANAGER,
     ];
     const AMOY: [Address; 3] = [
         address!("0x8052a560e6e6ac86eeb7e711a4497f639b322fb3"),
@@ -203,9 +214,94 @@ const ITEM_FACTS_SQL: &str = "SELECT \
      (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1) AS collections_ready, \
      (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'items' AND network = $1) AS items_ready, \
      EXISTS (SELECT 1 FROM shop.collections WHERE network = $1 AND contract_address = $2) AS is_collection, \
-     i.item_type, i.creator \
+     i.item_type, i.creator, i.available::text AS available \
      FROM (SELECT 1) AS one \
      LEFT JOIN shop.items i ON i.network = $1 AND i.contract_address = $2 AND i.item_id = $3::numeric";
+
+/// What the collections and items mirrors of `network` say about
+/// `(collection, item_id)`, with the item's remaining supply when the record
+/// is found. Each answer is `Unknown` until its mirror's first complete pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirrorFacts {
+    pub contract: Lookup<ContractRole>,
+    pub item: Lookup<ItemRecord>,
+    pub available: Option<i64>,
+}
+
+/// The mirrors' answer alone, without the static registry. Both payment
+/// paths read contract roles and item records through this one statement,
+/// so the credits guards and the MANA resolver cannot judge the same item
+/// on different facts.
+pub async fn mirror_facts(
+    pool: &PgPool,
+    chain_id: ChainId,
+    network: &str,
+    collection: EvmAddress,
+    item_id: U256,
+) -> Result<MirrorFacts, sqlx::Error> {
+    let row = sqlx::query(ITEM_FACTS_SQL)
+        .bind(network)
+        .bind(collection.to_string())
+        .bind(item_id.to_string())
+        .fetch_one(pool)
+        .await?;
+    let collections_ready: Option<bool> = row.get("collections_ready");
+    let items_ready: Option<bool> = row.get("items_ready");
+    let is_collection: bool = row.get("is_collection");
+    let item_type: Option<String> = row.get("item_type");
+    let creator: Option<String> = row.get("creator");
+    let available: Option<String> = row.get("available");
+    let contract = match collections_ready {
+        Some(true) => {
+            if is_collection {
+                Lookup::Found(ContractRole::Collection)
+            } else {
+                Lookup::Absent
+            }
+        }
+        _ => Lookup::Unknown,
+    };
+    let (item, available) = match (items_ready, item_type) {
+        (Some(true), Some(item_type)) => {
+            match creator.as_deref().and_then(|c| EvmAddress::parse(c).ok()) {
+                Some(creator) => (
+                    Lookup::Found(ItemRecord {
+                        chain_id,
+                        collection,
+                        item_id,
+                        kind: item_kind(&item_type),
+                        creator,
+                    }),
+                    available.and_then(|a| a.parse::<i64>().ok()),
+                ),
+                None => (Lookup::Unknown, None),
+            }
+        }
+        (Some(true), None) => (Lookup::Absent, None),
+        _ => (Lookup::Unknown, None),
+    };
+    Ok(MirrorFacts {
+        contract,
+        item,
+        available,
+    })
+}
+
+/// The collections mirror's answer alone about `collection`'s role: the
+/// contract part of [`mirror_facts`]. The statement's item lookup is
+/// ignored, so any item id gives the same answer.
+pub async fn mirror_contract_role(
+    pool: &PgPool,
+    chain_id: ChainId,
+    network: &str,
+    collection: EvmAddress,
+) -> Result<Lookup<ContractRole>, sqlx::Error> {
+    Ok(
+        mirror_facts(pool, chain_id, network, collection, U256::ZERO)
+            .await?
+            .contract,
+    )
+}
 
 /// The contract's role and the item record of `(collection, item_id)` on
 /// `chain_id`, from the static registry and the two mirrors.
@@ -227,44 +323,11 @@ pub async fn item_facts(
             item: Lookup::Absent,
         });
     };
-    let row = sqlx::query(ITEM_FACTS_SQL)
-        .bind(network)
-        .bind(collection.to_string())
-        .bind(item_id.to_string())
-        .fetch_one(pool)
-        .await?;
-    let collections_ready: Option<bool> = row.get("collections_ready");
-    let items_ready: Option<bool> = row.get("items_ready");
-    let is_collection: bool = row.get("is_collection");
-    let item_type: Option<String> = row.get("item_type");
-    let creator: Option<String> = row.get("creator");
-    let contract = match collections_ready {
-        Some(true) => {
-            if is_collection {
-                Lookup::Found(ContractRole::Collection)
-            } else {
-                Lookup::Absent
-            }
-        }
-        _ => Lookup::Unknown,
-    };
-    let item = match (items_ready, item_type) {
-        (Some(true), Some(item_type)) => {
-            match creator.as_deref().and_then(|c| EvmAddress::parse(c).ok()) {
-                Some(creator) => Lookup::Found(ItemRecord {
-                    chain_id,
-                    collection,
-                    item_id,
-                    kind: item_kind(&item_type),
-                    creator,
-                }),
-                None => Lookup::Unknown,
-            }
-        }
-        (Some(true), None) => Lookup::Absent,
-        _ => Lookup::Unknown,
-    };
-    Ok(ItemFacts { contract, item })
+    let facts = mirror_facts(pool, chain_id, network, collection, item_id).await?;
+    Ok(ItemFacts {
+        contract: facts.contract,
+        item: facts.item,
+    })
 }
 
 /// The registry's answer alone (an existing token, a legacy order).
@@ -425,7 +488,7 @@ fn signed_trade_from_offchain(trade: &offchain::Trade, venue: ContractRef) -> Si
     }
 }
 
-const DISCOUNT_TYPE_RATE: u64 = 1;
+const DISCOUNT_TYPE_RATE: u64 = crate::coupons::signature::DISCOUNT_TYPE_RATE as u64;
 
 /// A CollectionDiscountCoupon's `data` (`abi.encode(discountType, discount,
 /// root)`): the rate discount in parts per million.
@@ -659,6 +722,37 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_static_and_mana_registries_are_the_land_authz_registries() {
+        use crate::land_authz::{
+            ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET,
+            LAND_REGISTRY_SEPOLIA,
+        };
+        let addr = |s: &str| s.parse::<Address>().unwrap();
+        for (chain_id, land, estate) in [
+            (
+                ChainId::ETHEREUM,
+                LAND_REGISTRY_MAINNET,
+                ESTATE_REGISTRY_MAINNET,
+            ),
+            (
+                ChainId::SEPOLIA,
+                LAND_REGISTRY_SEPOLIA,
+                ESTATE_REGISTRY_SEPOLIA,
+            ),
+        ] {
+            assert_eq!(static_role(chain_id, addr(land)), Some(ContractRole::Land));
+            assert_eq!(
+                static_role(chain_id, addr(estate)),
+                Some(ContractRole::Estate)
+            );
+        }
+        let book = crate::mana::venues::Book::production(|_| None);
+        let ethereum = book.chain(ChainId::ETHEREUM).unwrap();
+        assert_eq!(ethereum.land, Some(addr(LAND_REGISTRY_MAINNET)));
+        assert_eq!(ethereum.estate, Some(addr(ESTATE_REGISTRY_MAINNET)));
     }
 
     #[test]
@@ -998,5 +1092,61 @@ mod tests {
             ChainId::AMOY,
             SHARED_UPSTREAM_MANAGERS[3]
         ));
+    }
+
+    #[test]
+    fn dcl_ones_polygon_manager_is_a_credits_manager_on_polygon_only_and_never_a_shared_one() {
+        assert!(is_credits_manager(
+            ChainId::POLYGON,
+            DCL_ONE_POLYGON_MANAGER
+        ));
+        assert!(!is_credits_manager(ChainId::AMOY, DCL_ONE_POLYGON_MANAGER));
+        assert!(!is_credits_manager(
+            ChainId::ETHEREUM,
+            DCL_ONE_POLYGON_MANAGER
+        ));
+        assert!(
+            !SHARED_UPSTREAM_MANAGERS.contains(&DCL_ONE_POLYGON_MANAGER),
+            "credits are issued for it: it must never read as a shared upstream manager"
+        );
+        assert!(
+            !crate::credits::settlement::SHARED_MANAGERS
+                .contains(&format!("{DCL_ONE_POLYGON_MANAGER:#x}").as_str())
+        );
+        // The shared Polygon pair stays a manager beside it, and still a shared one.
+        for shared in &SHARED_UPSTREAM_MANAGERS[..2] {
+            assert!(is_credits_manager(ChainId::POLYGON, *shared));
+            assert!(
+                crate::credits::settlement::SHARED_MANAGERS
+                    .contains(&format!("{shared:#x}").as_str())
+            );
+        }
+    }
+
+    /// The routes the guard decodes a Polygon manager's `useCredits` on: the legacy
+    /// marketplace and the CollectionStore dcl-one's Polygon manager was constructed
+    /// with, and the three off-chain marketplaces the shared manager allows. This pins
+    /// the decoding table only; it does not read the deployed contract, whose own
+    /// `marketplaces(address)` decides which of them it executes.
+    #[test]
+    fn dcl_ones_polygon_manager_routes_are_the_polygon_routes() {
+        let routes = manager_routes(ChainId::POLYGON).expect("Polygon routes");
+        assert_eq!(
+            routes.legacy_marketplace,
+            address!("0x480a0f4e360e8964e68858dd231c2922f1df45ef")
+        );
+        assert_eq!(
+            routes.collection_store,
+            address!("0x214ffc0f0103735728dc66b61a22e4f163e275ae")
+        );
+        assert_eq!(
+            routes.marketplaces,
+            &[
+                address!("0x540fb08edb56aae562864b390542c97f562825ba"),
+                address!("0xa40b1d129b8906888720686f3a01921ddf37716f"),
+                address!("0xe38ef22abe871513555cba89adfe45ab4f548ada"),
+            ]
+        );
+        assert!(manager_routes(ChainId::ETHEREUM).is_none());
     }
 }

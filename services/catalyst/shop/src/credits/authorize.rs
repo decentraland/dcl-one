@@ -116,6 +116,16 @@ pub enum ReserveRefusal {
     TooManyLive {
         balance_cents: i64,
     },
+    /// The key is an operation's and its row holds other lines.
+    OperationReused,
+}
+
+/// The authorization a key already reserved, and the lines its operation
+/// asked for (`None` for a key that names no operation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorAuthorization {
+    pub id: String,
+    pub request_digest: Option<String>,
 }
 
 impl From<ReserveRefusal> for ApiError {
@@ -126,6 +136,9 @@ impl From<ReserveRefusal> for ApiError {
             }
             ReserveRefusal::TooManyLive { .. } => ApiError::conflict(
                 "Too many purchases in progress. Complete or cancel them before starting another one.",
+            ),
+            ReserveRefusal::OperationReused => ApiError::conflict(
+                "This purchase was already authorized for other items. Start a new purchase.",
             ),
         }
     }
@@ -203,6 +216,7 @@ impl Credits {
         self.reserve_group(
             &group,
             idempotency_key,
+            None,
             LegacyColumns {
                 trade_id: a.trade_id,
                 contract_address: a.contract_address,
@@ -223,11 +237,13 @@ impl Credits {
         &self,
         g: &NewGroup<'_>,
         idempotency_key: &str,
+        request_digest: Option<&str>,
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let first = g.lines.first();
         self.reserve_group(
             g,
             idempotency_key,
+            request_digest,
             LegacyColumns {
                 trade_id: first.and_then(|l| l.trade_id.as_deref()),
                 contract_address: first.and_then(|l| l.contract_address.as_deref()),
@@ -275,6 +291,7 @@ impl Credits {
         &self,
         g: &NewGroup<'_>,
         idempotency_key: &str,
+        request_digest: Option<&str>,
         legacy: LegacyColumns<'_>,
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let mut tx = self.pool.begin().await?;
@@ -299,7 +316,7 @@ impl Credits {
 
         let row = sqlx::query(
             "WITH prior AS ( \
-                 SELECT id, amount_wei::text AS amount_wei, usd_cents, expires_at \
+                 SELECT id, amount_wei::text AS amount_wei, usd_cents, expires_at, request_digest \
                  FROM credits.authorizations WHERE idempotency_key = $10::text \
              ), live AS ( \
                  SELECT COALESCE(SUM(usd_cents), 0)::bigint AS held, count(*)::bigint AS n \
@@ -308,15 +325,17 @@ impl Credits {
              ), ins AS ( \
                  INSERT INTO credits.authorizations \
                      (id, address, usd_cents, amount_wei, trade_id, contract_address, item_id, source, status, \
-                      expires_at, idempotency_key, chain_id, contract, credit_hash, quoted_cents, oracle_rate, oracle_decimals) \
+                      expires_at, idempotency_key, chain_id, contract, credit_hash, quoted_cents, oracle_rate, oracle_decimals, \
+                      request_digest) \
                  SELECT $1::text, $2::text, $3::bigint, $4::numeric, $5::text, $6::text, $7::text, $8::text, 'authorized', \
                         $9::timestamp, $10::text, NULLIF($12::bigint, 0), NULLIF($13::text, ''), NULLIF($14::text, ''), \
-                        $15::bigint, NULLIF($16::text, '')::numeric, NULLIF($17::smallint, 0) \
+                        $15::bigint, NULLIF($16::text, '')::numeric, NULLIF($17::smallint, 0), $19::text \
                  FROM live l \
                  WHERE NOT EXISTS (SELECT 1 FROM prior) AND $3::bigint <= $11::bigint - l.held AND l.n < $18::bigint \
                  RETURNING id \
              ) \
              SELECT p.id AS prior_id, p.amount_wei AS prior_wei, p.usd_cents AS prior_cents, p.expires_at AS prior_expires, \
+                    p.request_digest AS prior_digest, \
                     l.held, l.n, EXISTS (SELECT 1 FROM ins) AS inserted \
              FROM live l LEFT JOIN prior p ON TRUE",
         )
@@ -338,10 +357,18 @@ impl Credits {
         .bind(g.oracle_rate)
         .bind(g.oracle_decimals)
         .bind(MAX_LIVE_CREDITS_PER_WALLET)
+        .bind(request_digest)
         .fetch_one(&mut *tx)
         .await?;
 
         if let Some(prior_id) = row.get::<Option<String>, _>("prior_id") {
+            // An operation's retry replays its row only for the lines it asked for.
+            if request_digest.is_some()
+                && row.get::<Option<String>, _>("prior_digest").as_deref() != request_digest
+            {
+                tx.rollback().await?;
+                return Ok(Err(ReserveRefusal::OperationReused));
+            }
             tx.commit().await?;
             return Ok(Ok(ReserveOutcome {
                 id: prior_id,
@@ -519,14 +546,15 @@ impl Credits {
         &self,
         idempotency_key: &str,
         address: &str,
-    ) -> Result<Option<String>, ApiError> {
-        Ok(sqlx::query_scalar(
-            "SELECT id FROM credits.authorizations WHERE idempotency_key = $1 AND address = $2",
+    ) -> Result<Option<PriorAuthorization>, ApiError> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, request_digest FROM credits.authorizations WHERE idempotency_key = $1 AND address = $2",
         )
         .bind(idempotency_key)
         .bind(address)
         .fetch_optional(&self.pool)
-        .await?)
+        .await?;
+        Ok(row.map(|(id, request_digest)| PriorAuthorization { id, request_digest }))
     }
 
     pub async fn get_authorization(&self, id: &str) -> Result<Option<AuthorizationRow>, ApiError> {

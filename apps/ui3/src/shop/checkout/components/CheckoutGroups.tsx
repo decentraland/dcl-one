@@ -5,10 +5,10 @@
 // confirmed, failed with the reason). Different chains cannot promise an atomic basket, so a group is
 // never reported as done because another one was.
 
-import type { CartGroup } from "../../cart/partition";
-import { chainLabel } from "../../model/chain";
-import { creditsFloor, formatUsd } from "../../model/money";
-import type { CartLine, GroupProgress } from "../../model/purchase";
+import type { CartGroup } from "@shop/cart/partition";
+import { chainLabel } from "@shop/model/chain";
+import { creditsFloor, formatUsd } from "@shop/model/money";
+import type { CartLine, GroupProgress } from "@shop/model/purchase";
 import { CreditsAmount, ManaAmount } from "../../credits/components/Amount";
 import { explorerTxUrl } from "../chain/config";
 import { contractAt } from "../chain/contracts";

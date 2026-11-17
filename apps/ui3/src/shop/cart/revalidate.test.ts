@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { usdCents } from "../model/money";
-import type { CartLine, PurchaseOffer } from "../model/purchase";
-import { parcelResale, storeMint, web2, web3 } from "../payment/fixtures";
+import { usdCents } from "@shop/model/money";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import { parcelResale, storeMint, web2, web3 } from "@shop/payment/fixtures";
 import { diffLine, useCartRevalidation, type OfferFetcher } from "./revalidate";
 
 function lineFor(offer: PurchaseOffer, over: Partial<CartLine> = {}): CartLine {

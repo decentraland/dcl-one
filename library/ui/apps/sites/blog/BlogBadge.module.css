@@ -1,0 +1,26 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: var(--dcl-space-8) var(--dcl-space-16) 7px;
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.64px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ruby {
+  background: var(--dcl-brand-ruby);
+}
+
+.violet {
+  background: var(--dcl-brand-violet);
+}
+
+.orange {
+  background: var(--dcl-brand-orange);
+}

@@ -984,33 +984,52 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
     state.livekit.configured = true;
     state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-    let metadata = serde_json::json!({"signer":super::super::auth::SCENE_SIGNER,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB","parcel":"1,1"});
-    let response = super::super::streaming::scene_stream_access(
-        State(Arc::new(state)),
-        at("/scene-stream-access"),
-        axum::http::Method::POST,
-        signed(KEY, "post", "/scene-stream-access", &metadata.to_string()).await,
-    )
-    .await
-    .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        observed.lock().unwrap()[0]["roomName"],
-        "w1:d:mixed.dcl.ethSceneB"
-    );
-    let stored: String = sqlx::query_scalar(
-        "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
-    )
-    .bind(&place_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
-    sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
-        .bind(&place_id)
-        .execute(&pool)
+    let state = Arc::new(state);
+    let signer = super::super::auth::SCENE_SIGNER;
+    // With and without the parcel the world scene binds to its own deployment.
+    for metadata in [
+        serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB","parcel":"1,1"}),
+        serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneB"}),
+    ] {
+        let response = super::super::streaming::scene_stream_access(
+            State(state.clone()),
+            at("/scene-stream-access"),
+            axum::http::Method::POST,
+            signed(KEY, "post", "/scene-stream-access", &metadata.to_string()).await,
+        )
         .await
         .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{metadata}");
+        assert_eq!(
+            observed.lock().unwrap().last().unwrap()["roomName"],
+            "w1:d:mixed.dcl.ethSceneB"
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+        )
+        .bind(&place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
+            .bind(&place_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // A scene of the same world signed on a parcel it does not stand on.
+    let foreign = serde_json::json!({"signer":signer,"realmName":"MiXeD.DCL.ETH","sceneId":"SceneA","parcel":"1,1"});
+    let error = super::super::streaming::scene_stream_access(
+        State(state.clone()),
+        at("/scene-stream-access"),
+        axum::http::Method::POST,
+        signed(KEY, "post", "/scene-stream-access", &foreign.to_string()).await,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, 400);
+    assert_eq!(observed.lock().unwrap().len(), 2);
     sqlx::query("DELETE FROM explore.place WHERE id = $1")
         .bind(&place_id)
         .execute(&pool)
@@ -1211,9 +1230,15 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
+        // Each RemoveParticipant room, signalled as the SFU receives it: the
+        // test awaits the eviction itself instead of a wall-clock window.
+        let (removal, mut removals) = tokio::sync::mpsc::unbounded_channel::<String>();
         let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |Path(method):Path<String>,Json(body):Json<serde_json::Value>| {
-            let capture=capture.clone(); async move {
+            let (capture,removal)=(capture.clone(),removal.clone()); async move {
                 capture.lock().unwrap().push((method.clone(),body.clone()));
+                if method == "RemoveParticipant" {
+                    let _ = removal.send(body["room"].as_str().unwrap_or_default().to_owned());
+                }
                 match method.as_str() {
                     "ListRooms" => Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA","sid":"RM_deployed_a","metadata":"{}"},{"name":"w1:j:mixed.dcl.eth-otherSceneA","sid":"RM_other","metadata":"{}"}]})),
                     "ListParticipants" => Json(serde_json::json!({"participants":[{"identity":address_of(KEY),"sid":"PA_connected","metadata":"{}"}]})),
@@ -1282,21 +1307,23 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
                 address: Address::parse(&address_of(KEY)).unwrap(),
             }
         });
-        let observed = tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        // The revocation runs on a detached task; the bound only ends a hang.
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
-                if requests.lock().unwrap().iter().any(|(method, body)| {
-                    method == "RemoveParticipant" && body["room"] == "w1:d:mixed.dcl.ethSceneA"
-                }) {
+                if removals.recv().await.as_deref() == Some("w1:d:mixed.dcl.ethSceneA") {
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
             }
         })
-        .await;
-        assert!(
-            observed.is_ok(),
-            "redeployment must not hide an already connected room from revocation (access_changed={access_changed})"
-        );
+        .await
+        .expect("redeployment must not hide an already connected room from revocation");
+        // Rooms are revoked in name order and the other world's room sorts
+        // after the expected one: let any later removal arrive before the
+        // isolation check.
+        while let Ok(Some(_)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), removals.recv()).await
+        {
+        }
         assert!(
             !requests
                 .lock()
@@ -1411,6 +1438,13 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
         parcels: &crate::world_identity::ParcelSet,
     ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished> {
         self.inner.protected_addresses(world, parcels).await
+    }
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &crate::world_identity::ParcelSet,
+    ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished> {
+        self.inner.world_grantees(world, parcels).await
     }
 }
 

@@ -8,7 +8,7 @@
 
 import { settlementChainId } from '../../../shop/checkout/chain/config'
 import { chainContracts } from '../../../shop/checkout/chain/contracts'
-import type { ChainId } from '../../../shop/model/chain'
+import type { ChainId } from '@shop/model/chain'
 
 export interface TrustedManager {
   chainId: number

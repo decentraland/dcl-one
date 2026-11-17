@@ -1,0 +1,125 @@
+/*
+ * Hover colors come from the Figma "Hover=Yes" variants of Button-Contained-Text. Colors use the
+ * Figma semantic variables where one has that meaning (text/*, action/*, bg/hover); the translucent
+ * secondary/tertiary/quaternary fills and the focus ring have no semantic variable, so they stay on
+ * the primitives.
+ */
+.root {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  /* A label next to an icon (an OS logo, a store mark) keeps this distance. */
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: transparent;
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  line-height: 22px;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Small: compact bars such as the Sites header (Sign In, Jump In). */
+.sm {
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  font-size: var(--dcl-font-size-button-lg);
+}
+
+.root:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.root:disabled {
+  cursor: not-allowed;
+  opacity: 0.2;
+}
+
+.primary {
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--dcl-action-primary-hover);
+}
+
+.primary:active:not(:disabled) {
+  background: var(--dcl-action-primary-pressed);
+}
+
+.secondary {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--dcl-transparencies-white-20);
+}
+
+.tertiary {
+  box-shadow: inset 0 0 0 1.5px var(--dcl-transparencies-white-40);
+}
+
+.tertiary:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1.5px var(--dcl-neutrals-snow);
+}
+
+.quaternary {
+  background: var(--dcl-transparencies-black-40);
+}
+
+.quaternary:hover:not(:disabled) {
+  background: var(--dcl-bg-hover);
+}
+
+/* Inverse: a white fill for a secondary call to action on a dark or image background, as source
+   Sites' Epic Games button. The Figma Button set has no white variant yet. */
+.inverse {
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-charcoal);
+}
+
+.inverse:hover:not(:disabled) {
+  background: var(--dcl-neutrals-pearl);
+}
+
+.inverse:active:not(:disabled) {
+  background: var(--dcl-neutrals-gray);
+}
+
+/* Text: a pink text action inside a sentence (source Sites' "Already downloaded? JUMP IN"). It
+   takes the surrounding text's size and weight, keeps the caps and the underline, and keeps a 24px
+   minimum hit target. */
+.text {
+  display: inline-flex;
+  min-height: var(--dcl-space-24);
+  padding: 0;
+  color: var(--dcl-text-link);
+  font: inherit;
+  text-decoration: underline;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.text:hover:not(:disabled) {
+  color: var(--dcl-primary-primary-light-2);
+}
+
+/* Icon-only: no visible label (the aria-label names it) and a 48px minimum hit target. */
+.iconOnly {
+  min-width: var(--dcl-space-48);
+  min-height: var(--dcl-space-48);
+  padding: var(--dcl-space-8);
+}
+
+.iconOnly:hover:not(:disabled) {
+  background: var(--dcl-bg-hover);
+}

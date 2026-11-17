@@ -2,8 +2,8 @@
 // is filled from it — and this front-end's launch gate over those params (lib/launchGate.ts).
 
 import { describe, expect, it } from 'vitest'
-import { SERVICES, WEB_PARAMS } from '../engine/generated'
-import { launchOptionsFromUrl, webParam } from '../lib/webParams'
+import { SERVICES, WEB_PARAMS } from '@explorer-core/engine/generated'
+import { launchOptionsFromUrl, webParam } from '@explorer-core/lib/webParams'
 import { untrustedLaunchParams } from '../lib/launchGate'
 import { normaliseServiceUrl } from '../lib/baseDomain'
 
@@ -104,6 +104,29 @@ describe('untrustedLaunchParams', () => {
       const [p] = untrustedLaunchParams({ native: false })
       expect(p.name).toBe('contentServer')
       expect(p.warning).toMatch(/Fetches every scene/)
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
+  it('gates a Bevy variants service outside decentraland.org/.zone', () => {
+    window.history.replaceState(null, '', '/?bevyVariants=https://abgen.decentraland.zone')
+    try {
+      expect(untrustedLaunchParams({ native: false })).toEqual([])
+    } finally {
+      // `off` only turns the default service off: nothing to warn about
+      window.history.replaceState(null, '', '/?bevyVariants=off')
+    }
+    try {
+      expect(untrustedLaunchParams({ native: false })).toEqual([])
+    } finally {
+      window.history.replaceState(null, '', '/?bevyVariants=http://localhost:5147')
+    }
+    try {
+      const [p, ...rest] = untrustedLaunchParams({ native: false })
+      expect(rest).toEqual([])
+      expect(p.name).toBe('bevyVariants')
+      expect(p.warning).toMatch(/textures and models/)
     } finally {
       window.history.replaceState(null, '', '/')
     }

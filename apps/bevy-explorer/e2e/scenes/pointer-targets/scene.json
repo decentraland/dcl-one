@@ -1,0 +1,56 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "pointer-targets",
+    "description": "Pointer targets for /hover_entity and /click_entity: near, blocked, far, beyond and a glTF model"
+  },
+  "owner": "",
+  "contact": {
+    "name": "bevy-explorer-e2e",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "0,20",
+      "1,20",
+      "2,20",
+      "3,20",
+      "4,20",
+      "5,20",
+      "6,20",
+      "7,20",
+      "8,20",
+      "9,20"
+    ],
+    "base": "0,20"
+  },
+  "requiredPermissions": [],
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 12,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "snapshotDir": "synthetic-snapshot",
+  "snapshotLock": "synthetic-lock.json",
+  "outDir": "generated",
+  "pages": {
+    "1:1": { "id": "1:1", "name": "Colors", "kind": "tokens" },
+    "1:2": { "id": "1:2", "name": "Typography", "kind": "tokens" },
+    "1:3": { "id": "1:3", "name": "Icons", "kind": "icons", "category": "Icons" },
+    "10:1": { "id": "10:1", "name": "Demo Controls", "kind": "components", "category": "Inputs" },
+    "10:2": { "id": "10:2", "name": "Demo Toggles", "kind": "components", "category": "Inputs" },
+    "10:3": { "id": "10:3", "name": "Demo Cursors", "kind": "components", "category": "Inputs" },
+    "10:4": { "id": "10:4", "name": "Demo Feedback", "kind": "components", "category": "Components" },
+    "10:7": { "id": "10:7", "name": "Demo Nav", "kind": "components", "category": "Components" },
+    "legacy:Demo: Legacy Bars": {
+      "id": null,
+      "name": "Demo: Legacy Bars",
+      "kind": "components",
+      "category": "Components"
+    },
+    "10:8": { "id": "10:8", "name": "Demo Dialogs", "kind": "components", "category": "Components" },
+    "10:5": { "id": "10:5", "name": "Demo Field", "kind": "components", "category": "Inputs" },
+    "10:6": { "id": "10:6", "name": "Demo Search", "kind": "components", "category": "Inputs" }
+  },
+  "variantAliases": { "Terciary": "tertiary" },
+  "componentNames": {
+    "Synthetic Button": "Button",
+    "Txt / Sort": "SortByButton"
+  },
+  "textStyleAliases": { "Legacy Caption": "caption" },
+  "components": {
+    "FriendCTA": {
+      "stateWords": ["hover", "pressed", "loading"],
+      "optionAliases": {
+        "AddFriendHover": "AddHover",
+        "AddFriendLoading": "AddLoading",
+        "RejectHoverPress": "RejectPressed",
+        "BlockedPres": "BlockedPressed"
+      }
+    },
+    "Switch": { "propNames": { "Switch": "checked" } },
+    "SwitchTitle": { "propNames": { "Property 1": "checked" } },
+    "Split Button": { "skipOptions": ["HoverRight"], "optionAliases": { "HoverLeft": "Hover" } },
+    "Notify": { "propNames": { "Property 1": "active" } },
+    "DemoNav": {
+      "exposeTextSlots": false,
+      "semantics": {
+        "@root": { "role": "navigation", "label": "Main" },
+        "Logo": { "role": "action", "label": "Home", "href": "logoHref", "fallback": "none" },
+        "Tabs": { "role": "list" },
+        "MenuTab": { "role": "action", "href": "{slot}Href", "listItem": true },
+        "NotificationsButton": {
+          "role": "action",
+          "label": "Notifications",
+          "onActivate": "onNotifications"
+        },
+        "ProfileButton": { "role": "action", "label": "Profile", "onActivate": "onProfile" },
+        "SignIn": { "role": "action", "onActivate": "onSignIn" },
+        "MenuButton": { "role": "action", "label": "Menu", "onActivate": "onMenu" }
+      }
+    }
+  },
+  "iconAliases": {
+    "LegacyArrow": "sample/arrow-down",
+    "MenuGlyphs#Stat=Info": "sample/heart"
+  },
+  "contract": { "mappingRoot": "library/components" },
+  "selection": {
+    "readyOnly": true,
+    "exceptions": [
+      { "pageId": "10:8", "componentId": "30:1", "reason": "Synthetic Review-only exception" }
+    ]
+  },
+  "promotion": { "include": ["DemoNav"] }
+}

@@ -5,7 +5,7 @@
 
 import Icon from "../../../discovery/components/Icon";
 import type { IconName } from "../../../discovery/components/Icon";
-import { RARITIES, rarityColor, rarityLabel } from "../../../discovery/lib/rarity";
+import { RARITIES, rarityColor, rarityLabel } from "@shop/discovery/lib/rarity";
 import { WEARABLE_SECTIONS, isWearableSection, type AssetType, type Section } from "./api";
 import assetsIcon from "./icons/assets.svg?url";
 import sparklesIcon from "./icons/sparkles.svg?url";

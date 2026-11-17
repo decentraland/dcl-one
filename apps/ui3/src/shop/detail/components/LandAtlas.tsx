@@ -8,7 +8,7 @@ import { useNavigate } from "react-router";
 
 import { GRID_PARCELS } from "../../../explorer/components/MapSurface";
 import { serviceHref } from "../../../data/catalyst/client";
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { tileHref } from "../../land/LandMap";
 import { Mana } from "../../land/format";
 import { coordsId, isTileInSelection, selectionCenter, type Coord, type LandTile, type Tiles } from "../../land/tiles";

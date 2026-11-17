@@ -6,7 +6,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
-import { createShopClient } from "@ui/shop/api";
+import { createShopClient, hostApiOptions } from "@ui/shop/api";
 import { SHOP_PAGES } from "@ui/shop/routes";
 
 import { defaultShopSeo, type ShopPageData } from "@/data/lib/shop/pages";
@@ -99,7 +99,7 @@ describe("server-read answers reach the first paint", () => {
     const body = bodies[url.pathname];
     return body ? Response.json(body) : Response.json({ error: "not found" }, { status: 404 });
   }) as typeof fetch;
-  const client = createShopClient({ base: "http://node.test", signer: null, fetchImpl });
+  const client = createShopClient(hostApiOptions({ base: "http://node.test", signer: null, fetchImpl }));
 
   it("the item page's SSR HTML shows the primed name, description and collection", async () => {
     const pattern = "/shop/item/:contractAddress/:itemId";

@@ -1,6 +1,11 @@
 { lib, runCommand, python3 }:
 let
   root = ../..;
+  manifestPath = "rendering/bevy-explorer/source/react-web/shared-inputs.json";
+  manifest = builtins.fromJSON (builtins.readFile (root + "/${manifestPath}"));
+  # Validate the original flake source before filtering away unconsumed shared names.
+  checked = assert import ./hud-shared-inputs.nix { inherit root manifest; }; manifest;
+  sharedFiles = map (row: root + "/${row.path}") (checked.controls ++ checked.files);
   supplied = builtins.getEnv "PLAY_WEB_DIR";
   artifact = if supplied == "" then null else builtins.path {
     path = /. + supplied;
@@ -10,23 +15,28 @@ let
   # build output. Verify the first-party source directly without a snapshot pin.
   contract = lib.fileset.toSource {
     inherit root;
-    fileset = lib.fileset.unions (map (p: lib.fileset.maybeMissing (root + p)) [
-      /rendering/bevy-explorer/upstream.lock.json
+    fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/source
-      /rendering/bevy-explorer/bevy
+      /rendering/bevy-explorer/vendor
       /library/protocol/proto
+      /library/hashing
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
+      /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
-      /tooling/play-artifact.py
+      /tooling/play-artifact.py /tooling/hud_shared_inputs.py /tooling/check-local-hashing.mjs
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
-      /apps/ui3/src/play/engine/generated
-    ]);
+      /library/explorer-core/engine/generated
+    ]));
   };
 in runCommand "foundation-built-play-web" {
   src = artifact;
   nativeBuildInputs = [ python3 ];
+  # Static files only. A WASM compiled inside a Nix shell embeds its toolchain's store
+  # paths; imported from the store, those become references and Sites would ship the
+  # 4 GiB Rust closure. Refuse that here instead of in a production image.
+  allowedReferences = [ ];
 } ''
   if [ -z "''${src:-}" ]; then
     echo 'Sites requires our Bevy artifact. Run tooling/fetch-play.py, then build with PLAY_WEB_DIR and --impure; see infra/containers/README.md.' >&2

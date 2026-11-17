@@ -1,0 +1,144 @@
+/*
+ * Sizes come from the "Shop Modals" description in Figma: 560 to 720px wide on desktop, the screen
+ * minus layout/margin-x on each side on mobile, and never taller than the screen minus the same
+ * margins.
+ */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: var(--dcl-bg-backdrop);
+}
+
+.panel {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: var(--dcl-space-32);
+  width: min(720px, calc(100vw - 2 * var(--dcl-layout-margin-x)));
+  min-width: min(560px, calc(100vw - 2 * var(--dcl-layout-margin-x)));
+  max-height: calc(100vh - 2 * var(--dcl-layout-margin-x));
+  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-16);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-bg-surface-brand);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+
+.panel:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.topBar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  padding-bottom: var(--dcl-space-16);
+  border-bottom: 1px solid var(--dcl-transparencies-white-20);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-4);
+  min-height: 32px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.subtitle {
+  color: var(--dcl-text-secondary-on-brand);
+  font-size: var(--dcl-font-size-body-sm-strong);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: transparent;
+  color: var(--dcl-icon-default);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--dcl-transparencies-white-20);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.contentFrame {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  overflow-y: auto;
+  scrollbar-color: var(--dcl-transparencies-white-20) transparent;
+  scrollbar-width: thin;
+}
+
+.content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.content::-webkit-scrollbar-thumb {
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-20);
+}
+
+/* Fades the content into the panel while there is more to scroll; hidden once the end is reached. */
+.scrollMask {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 56px;
+  background: linear-gradient(transparent, var(--dcl-bg-surface-brand));
+  pointer-events: none;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--dcl-space-12);
+}
+
+/* Buttons slot: every action gets the same width. */
+.actions > * {
+  flex: 1 1 0;
+}
+
+@media (max-width: 767px) {
+  .title {
+    font-size: var(--dcl-font-size-heading-5);
+  }
+}

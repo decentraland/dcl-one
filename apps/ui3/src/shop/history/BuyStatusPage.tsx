@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate, useParams, useSearchParams } from "react-router";
 
 import Spinner from "../../atoms/Spinner";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { useShopWallet } from "../wallet/context";
 import { explorerTxUrl, settlementChainId } from "../checkout/chain/config";
 import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
@@ -13,7 +13,7 @@ import { fetchAssetDisplay } from "../checkout/lib/api";
 import { showsWalletConfirmations } from "../checkout/lib/wallet-kind";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { myItemsRouteFor } from "../discovery/lib/routes";
-import { fetchUserPurchases } from "../credits/credits";
+import { fetchUserPurchases } from "@shop/credits/credits";
 import { useSettlement } from "./useSettlement";
 import "./buystatus.css";
 

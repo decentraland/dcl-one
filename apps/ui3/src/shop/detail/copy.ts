@@ -2,7 +2,7 @@
 //       itemDetail.buyResale, notifyMe.*); marketplace@784c4af4:webapp/src/modules/translation/locales/en.json
 //       (favorites_modal.title, favorites_modal.empty as savedBy.*)
 
-import { hasMessage, t } from "../discovery/intl";
+import { hasMessage, t } from "@shop/discovery/intl";
 
 const LOCAL: Readonly<Record<string, string>> = {
   "assetCard.buyNow": "Buy now",

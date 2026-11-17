@@ -3,11 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "../../model/money";
-import type { PurchaseOffer } from "../../model/purchase";
-import type { Session } from "../../model/settlement";
-import { nameRegistration, parcelResale, SIGNED_OUT, storeMint, wearableResale, web2, web3, BOOK } from "../../payment/fixtures";
-import { ruleFor } from "../../payment/rule";
+import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
+import { nameRegistration, parcelResale, SIGNED_OUT, storeMint, wearableResale, web2, web3, BOOK } from "@shop/payment/fixtures";
+import { ruleFor } from "@shop/payment/rule";
 import { withCreditsOutage } from "../fixtures";
 import type { OffersStatus } from "../offers";
 import type { GuidanceRevalidation } from "../../wallet/ManaGuidance";

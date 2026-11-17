@@ -95,6 +95,24 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
     Ok(value as usize)
 }
 
+/// Upstream's presence badge defaults (the badges processor's environment),
+/// shared with `badges::presence::Settings::default()`.
+pub mod presence_badges {
+    pub const GRANT_NOTIFICATIONS: bool = true;
+    pub const EARLY_JOIN_LOOKAHEAD_SECONDS: u64 = 21_600;
+    pub const OPEN_VISIT_CHECK_AFTER_SECONDS: u64 = 900;
+    pub const OPEN_VISIT_MAX_AGE_SECONDS: u64 = 86_400;
+    pub const APPLIED_EVENTS_TTL_SECONDS: u64 = 604_800;
+    pub const ABSENT_EXPIRE_AFTER_SECONDS: u64 = 3_600;
+    pub const SWEEP_INTERVAL_SECONDS: u64 = 60;
+    pub const SWEEP_BATCH_SIZE: u32 = 100;
+    pub const PRUNE_BATCH_SIZE: u32 = 1_000;
+    pub const SWEEPER_ENABLED: bool = true;
+    /// The longest a presence duration setting may be (30 days).
+    pub const MAX_SECONDS: u64 = 2_592_000;
+    pub const MAX_BATCH_SIZE: i64 = 100_000;
+}
+
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile images.
 #[derive(Args, Clone)]
 pub struct SocialConfig {
@@ -479,6 +497,16 @@ pub struct SocialConfig {
     #[arg(long, env = "PLATFORM_USER_MODERATORS", default_value = "")]
     pub platform_user_moderators: String,
 
+    /// Report evidence the node accepts in 24 hours from all wallets and
+    /// addresses, in MiB of declared size: the files it holds and, for a
+    /// quarter hour each, the files a presign declared. At the cap a presign
+    /// is refused and 0 accepts none; one client address takes at most a
+    /// sixteenth of it. The default is a policy, not a measurement: it
+    /// is how much store space the operator gives to reports a day, and no
+    /// load test or disk size produced it.
+    #[arg(long, env = "REPORT_EVIDENCE_DAILY_MIB", default_value_t = 2048)]
+    pub report_evidence_daily_mib: u32,
+
     /// Service token in front of the voice routes, the DM privacy patch and
     /// the world ban status; unset answers 503 on them.
     #[arg(long, env = "COMMS_GATEKEEPER_AUTH_TOKEN", hide_env_values = true)]
@@ -536,12 +564,30 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_API_KEY", hide_env_values = true)]
     pub sendgrid_api_key: Option<String>,
 
+    /// SendGrid's API origin; `/v3/mail/send` is appended. Empty means no SendGrid.
+    #[arg(
+        long,
+        env = "SENDGRID_API_URL",
+        default_value = "https://api.sendgrid.com"
+    )]
+    pub sendgrid_api_url: String,
+
+    /// Read through [`SocialConfig::sendgrid_sender`], which falls back to `SENDGRID_EMAIL_FROM`.
     #[arg(long, env = "SENDGRID_FROM_EMAIL")]
     pub sendgrid_from_email: Option<String>,
 
-    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset records every delivery as skipped.
+    /// Upstream's name for SENDGRID_FROM_EMAIL, used when that is unset.
+    #[arg(long, env = "SENDGRID_EMAIL_FROM")]
+    pub sendgrid_email_from: Option<String>,
+
+    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset holds every delivery pending.
+    /// Read through [`SocialConfig::sendgrid_template_id`], which falls back to `SENDGRID_EMAIL_TEMPLATE_ID`.
     #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
     pub sendgrid_notification_template_id: Option<String>,
+
+    /// Upstream's name for SENDGRID_NOTIFICATION_TEMPLATE_ID, used when that is unset.
+    #[arg(long, env = "SENDGRID_EMAIL_TEMPLATE_ID")]
+    pub sendgrid_email_template_id: Option<String>,
 
     /// The account confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
@@ -593,11 +639,23 @@ pub struct SocialConfig {
     #[arg(long, env = "NOTIFICATIONS_REWARDS_TOKEN", hide_env_values = true)]
     pub notifications_rewards_token: Option<String>,
 
-    /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
+    /// Cloudflare Turnstile secret for confirm-email; the check runs while it is set and the
+    /// `dapps-turnstile-verification` flag is on.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
     pub turnstile_secret_key: Option<String>,
 
-    /// Comma-separated email domains refused by set-email.
+    /// The disposable email domain list set-email and confirm-email refuse, fetched hourly; empty
+    /// (the default outside the mirror posture) fetches none.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_URL", default_value = "")]
+    pub disposable_email_domains_url: String,
+
+    /// A disposable list download with fewer domains is treated as broken and the previous list
+    /// kept. The upstream list holds thousands; lower it for a shorter list of your own.
+    #[arg(long, env = "DISPOSABLE_EMAIL_DOMAINS_MIN", default_value_t = 1000)]
+    pub disposable_email_domains_min: usize,
+
+    /// Comma-separated email domains refused by set-email and confirm-email, on top of the
+    /// disposable-domain list and the `dapps-credits-blacklisted-domains` flag variant.
     #[arg(long, env = "EMAIL_DOMAIN_BLACKLIST", default_value = "")]
     pub email_domain_blacklist: String,
 
@@ -615,6 +673,14 @@ pub struct SocialConfig {
     #[arg(long, env = "FIRST_WEAR_IMAGE_BASE")]
     pub first_wear_image_base: Option<String>,
 
+    /// Base of the notification icons (upstream `CDN_URL`), e.g. `<base>/credits/notification-icon.png`.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_CDN_URL",
+        default_value = "https://assets-cdn.decentraland.org"
+    )]
+    pub notifications_cdn_url: String,
+
     /// Tick of the notification outbox worker.
     #[arg(
         long,
@@ -623,11 +689,11 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_interval_secs: u64,
 
-    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned; 0 keeps them forever.
     #[arg(
         long,
         env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
-        default_value_t = 90
+        default_value_t = 0
     )]
     pub notifications_broadcast_horizon_days: u64,
     /// Pending notification emails idle this long end skipped as expired (default 7 days;
@@ -639,21 +705,92 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_max_age_secs: u64,
 
-    // social/badges: the old catalyrst-badges settings (the art is embedded).
-    /// Bearer of the badge grant/revoke routes; unset refuses them.
+    // social/badges.
+    /// Bearer of the badge admin routes (read, grant, revoke); unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
+    /// The base every badge asset path resolves against: upstream's CDN, so
+    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
     #[arg(
         long,
         env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://badges.decentraland.org"
+        default_value = "https://assets-cdn.decentraland.org"
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Files here override the embedded badge art one by one.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`)
+    /// or uploaded by the admin `PUT`, served at /badges/assets; a shared
+    /// volume when several processes serve the badges routes.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
+
+    /// Run the badge processor (leased: the primary only, and only while
+    /// social writes are enabled): it reads social.client_events,
+    /// content.deployments, the Polygon shop logs and mirrors and the accepted
+    /// referrals, and grants upstream's evaluated badges with their
+    /// badge_granted notifications. Off by default: a node opts in once its
+    /// sources are current (the cursors start at the head when it does).
+    #[arg(long, env = "BADGES_PROCESSOR_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_processor_enabled: bool,
+
+    /// Rows (or recounted wallets) the badge processor writes per transaction.
+    #[arg(long, env = "BADGES_PROCESSOR_BATCH_SIZE", default_value_t = 200)]
+    pub badges_processor_batch_size: u32,
+
+    /// Upstream's EVENT_PROCESSING_MAX_AGE_IN_SECONDS: the badge processor
+    /// passes, without effect, an event (client event, deployment, sale)
+    /// older than this many seconds by its own time; 0 keeps every event.
+    #[arg(long, env = "BADGES_EVENT_MAX_AGE_SECS", default_value_t = 0)]
+    pub badges_event_max_age_secs: u64,
+
+    /// A deployment the node stored more than this many seconds after its
+    /// entity timestamp is history a syncing node caught up on: the badge
+    /// processor passes it without effect; 0 (the default, as upstream had
+    /// no such filter) keeps every deployment.
+    #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 0)]
+    pub badges_deployment_max_lag_secs: u64,
+    /// A presence grant writes its badge_granted notification; false
+    /// grants without one.
+    #[arg(long, env = "BADGES_PRESENCE_GRANT_NOTIFICATIONS", default_value_t = presence_badges::GRANT_NOTIFICATIONS, action = clap::ArgAction::Set)]
+    pub badges_presence_grant_notifications: bool,
+
+    /// A join this long before a badge's window opens is kept (0: none).
+    #[arg(long, env = "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", default_value_t = presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS, value_parser = clap::value_parser!(u64).range(0..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_early_join_lookahead_seconds: u64,
+
+    /// A visit open this long is checked against the LiveKit occupancy.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS", default_value_t = presence_badges::OPEN_VISIT_CHECK_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_check_after_seconds: u64,
+
+    /// A connection open longer, or a join-to-leave stretch longer, proves no time.
+    #[arg(long, env = "BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", default_value_t = presence_badges::OPEN_VISIT_MAX_AGE_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_open_visit_max_age_seconds: u64,
+
+    /// How long applied events, pending leaves and absences are kept.
+    #[arg(long, env = "BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS", default_value_t = presence_badges::APPLIED_EVENTS_TTL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_applied_events_ttl_seconds: u64,
+
+    /// How long a visit unconfirmed by the occupancy waits for a late leave.
+    #[arg(long, env = "BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS", default_value_t = presence_badges::ABSENT_EXPIRE_AFTER_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_absent_expire_after_seconds: u64,
+
+    /// Interval of the badges-presence-sweep job.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", default_value_t = presence_badges::SWEEP_INTERVAL_SECONDS, value_parser = clap::value_parser!(u64).range(1..=presence_badges::MAX_SECONDS))]
+    pub badges_presence_sweep_interval_seconds: u64,
+
+    /// Visits the sweeper checks per pass.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEP_BATCH_SIZE", default_value_t = presence_badges::SWEEP_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_sweep_batch_size: u32,
+
+    /// Rows pruned per table per batch.
+    #[arg(long, env = "BADGES_PRESENCE_PRUNE_BATCH_SIZE", default_value_t = presence_badges::PRUNE_BATCH_SIZE, value_parser = clap::value_parser!(u32).range(1..=presence_badges::MAX_BATCH_SIZE))]
+    pub badges_presence_prune_batch_size: u32,
+
+    /// false stops only the occupancy checks; the maximum age and the
+    /// pruning still run.
+    #[arg(long, env = "BADGES_PRESENCE_SWEEPER_ENABLED", default_value_t = presence_badges::SWEEPER_ENABLED, action = clap::ArgAction::Set)]
+    pub badges_presence_sweeper_enabled: bool,
 
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
@@ -892,6 +1029,28 @@ impl SocialConfig {
     }
 }
 
+impl SocialConfig {
+    /// SENDGRID_FROM_EMAIL, else upstream's SENDGRID_EMAIL_FROM; empty counts as unset.
+    pub fn sendgrid_sender(&self) -> Option<&str> {
+        first_set(&self.sendgrid_from_email, &self.sendgrid_email_from)
+    }
+
+    /// SENDGRID_NOTIFICATION_TEMPLATE_ID, else upstream's SENDGRID_EMAIL_TEMPLATE_ID; empty counts as unset.
+    pub fn sendgrid_template_id(&self) -> Option<&str> {
+        first_set(
+            &self.sendgrid_notification_template_id,
+            &self.sendgrid_email_template_id,
+        )
+    }
+}
+
+fn first_set<'a>(primary: &'a Option<String>, alias: &'a Option<String>) -> Option<&'a str> {
+    [primary, alias]
+        .into_iter()
+        .filter_map(|v| v.as_deref())
+        .find(|v| !v.is_empty())
+}
+
 impl std::fmt::Debug for SocialConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SocialConfig").finish_non_exhaustive()
@@ -940,6 +1099,64 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn presence_badge_settings_are_bounded() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(
+            defaults.badges_presence_early_join_lookahead_seconds,
+            super::presence_badges::EARLY_JOIN_LOOKAHEAD_SECONDS
+        );
+        assert_eq!(
+            social(&[("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "0")])
+                .unwrap()
+                .badges_presence_early_join_lookahead_seconds,
+            0
+        );
+        for (name, invalid) in [
+            ("BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS", "2592001"),
+            (
+                "BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS",
+                "18446744073709551615",
+            ),
+            ("BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS", "0"),
+            ("BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS", "2592001"),
+            ("BADGES_PRESENCE_PRUNE_BATCH_SIZE", "100001"),
+        ] {
+            assert!(social(&[(name, invalid)]).is_err(), "{name}={invalid}");
+        }
+    }
+
+    #[test]
+    fn sendgrid_accepts_upstreams_variable_names_as_fallbacks() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.sendgrid_sender(), None);
+        assert_eq!(defaults.sendgrid_template_id(), None);
+        assert_eq!(defaults.sendgrid_api_url, "https://api.sendgrid.com");
+        let upstream = social(&[
+            ("SENDGRID_EMAIL_FROM", "from@example.com"),
+            ("SENDGRID_EMAIL_TEMPLATE_ID", "d-upstream"),
+            ("SENDGRID_API_URL", "https://sendgrid.example"),
+        ])
+        .unwrap();
+        assert_eq!(upstream.sendgrid_sender(), Some("from@example.com"));
+        assert_eq!(upstream.sendgrid_template_id(), Some("d-upstream"));
+        assert_eq!(upstream.sendgrid_api_url, "https://sendgrid.example");
+        let both = social(&[
+            ("SENDGRID_FROM_EMAIL", "own@example.com"),
+            ("SENDGRID_EMAIL_FROM", "from@example.com"),
+            ("SENDGRID_NOTIFICATION_TEMPLATE_ID", ""),
+            ("SENDGRID_EMAIL_TEMPLATE_ID", "d-upstream"),
+        ])
+        .unwrap();
+        assert_eq!(both.sendgrid_sender(), Some("own@example.com"));
+        assert_eq!(both.sendgrid_template_id(), Some("d-upstream"));
+    }
+
+    #[test]
+    fn broadcasts_are_kept_forever_by_default() {
+        assert_eq!(social(&[]).unwrap().notifications_broadcast_horizon_days, 0);
     }
 
     #[test]

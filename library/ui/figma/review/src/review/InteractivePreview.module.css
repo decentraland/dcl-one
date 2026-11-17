@@ -1,0 +1,45 @@
+.playground {
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid #38383b;
+  border-radius: 12px;
+}
+
+.canvas {
+  padding: 24px;
+  padding-bottom: calc(24px + var(--playground-overflow, 0px));
+  overflow: auto;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+/* The browser's own clear button is not part of any design. */
+.input::-webkit-search-cancel-button,
+.input::-webkit-search-decoration {
+  appearance: none;
+}
+
+/* The SearchBar shows focus through its own history and predictive states. */
+.input[type='search']:focus-visible {
+  outline: none;
+}
+
+.input:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.playground output {
+  display: block;
+  margin: 16px 0;
+}

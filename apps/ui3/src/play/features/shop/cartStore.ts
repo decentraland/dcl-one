@@ -23,9 +23,9 @@
 // Without Web Locks, only this page's own changes go one at a time.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { cardPrice } from '../../../shop/discovery/cardPrice'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { SIGNED_OUT } from '../../../shop/model/settlement'
+import { cardPrice } from '@shop/discovery/cardPrice'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
+import { SIGNED_OUT } from '@shop/model/settlement'
 import { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine } from '../../lib/shopProtocol'
 
 export interface InWorldCartLine {

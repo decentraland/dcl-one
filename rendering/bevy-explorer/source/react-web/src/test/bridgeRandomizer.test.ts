@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { CatalogPageParams } from '../../bridge-scene/src/domains/wearables'
-import type { AvatarLook } from '../engine/avatarEquip'
-import type { PageToScene, SceneToPage, Wearable } from '../engine/protocol'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import type { PageToScene, SceneToPage, Wearable } from '@explorer-core/engine/protocol'
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const FEMALE = 'urn:decentraland:off-chain:base-avatars:BaseFemale'

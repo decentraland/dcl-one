@@ -8,7 +8,7 @@ import { Link } from "react-router";
 import { SHOP_BASE } from "../../routes";
 import Icon from "../components/Icon";
 import { useSeo } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import "./notfound.css";
 
 const SEO_TITLE = "Page Not Found";

@@ -1,11 +1,11 @@
-// A card or panel price, as the web Shop's card rule (shop/discovery/cardPrice) decided it: credits with
+// A card or panel price, as the Shop's card rule (library/shop discovery/cardPrice) decided it: credits with
 // their mark, MANA with its glyph, or the reason there is no price.
 
-import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
+import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import CreditMark from '../../../../shop/credits/components/CreditMark'
-import type { CardPrice } from '../../../../shop/discovery/cardPrice'
-import { formatMana } from '../../../../shop/model/money'
-import { ManaIcon } from '../../../design'
+import type { CardPrice } from '@shop/discovery/cardPrice'
+import { formatMana } from '@shop/model/money'
+import { ManaIcon } from '@hud/design'
 
 export function PriceTag({ price, size = 16 }: { price: CardPrice; size?: number }): React.JSX.Element {
   switch (price.kind) {

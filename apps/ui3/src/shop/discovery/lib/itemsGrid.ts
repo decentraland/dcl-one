@@ -1,11 +1,11 @@
 
-import { parseEvmAddress } from "../../model/address";
-import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "../api";
+import { parseEvmAddress } from "@shop/model/address";
+import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "@shop/discovery/api";
 import { DEALS_SORTS, RELEVANCE_SORT, SORTS, type FilterChip } from "../components/FilterBar";
 import { STATUSES, type FilterStatus } from "../components/Filters";
 import { shopFlags } from "../flags";
-import { t } from "../intl";
-import { CATEGORIES, SUBCAT_MAP } from "./categories";
+import { t } from "@shop/discovery/intl";
+import { CATEGORIES, SUBCAT_MAP } from "@shop/discovery/lib/categories";
 
 export const ITEMS_PAGE_SIZE = 48;
 

@@ -1,0 +1,79 @@
+/* The runtime's base styles sit in the lowest of the three layers the generated CSS uses, so the foundations
+   (text styles, tokens) and component styles win over them whatever order a bundle loads the files in. The order
+   statement is repeated in every generated stylesheet because the first file to name a layer fixes the order. */
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.reset {
+  :where(.node) {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-align: inherit;
+  }
+
+  button.node {
+    cursor: pointer;
+  }
+  button.node:disabled {
+    cursor: not-allowed;
+  }
+
+  .fieldControl {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+
+  .fieldControl > input {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .trigger {
+    display: flex;
+    align-items: center;
+    justify-content: inherit;
+    gap: inherit;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-align: inherit;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+  }
+
+  .disclosure:has(.trigger:focus-visible),
+  .action:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+  }
+
+  .action {
+    cursor: pointer;
+  }
+
+  /* Opt-in semantic elements keep the box their Figma node draws: the node class sets layout, and
+     these only clear the remaining user-agent defaults, at zero specificity. */
+  :where(.semanticList) {
+    list-style: none;
+  }
+
+  .semanticItem {
+    display: contents;
+  }
+
+  :where(.semanticAction) {
+    text-decoration: none;
+  }
+}

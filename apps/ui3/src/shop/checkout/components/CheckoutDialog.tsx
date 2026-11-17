@@ -27,8 +27,8 @@ import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../../credi
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
-import { rarityCardPalette } from "../../discovery/lib/rarity";
-import type { CartLineDisplay } from "../../model/purchase";
+import { rarityCardPalette } from "@shop/discovery/lib/rarity";
+import type { CartLineDisplay } from "@shop/model/purchase";
 import { SHOP_BASE } from "../../routes";
 import buyErrorArt from "../assets/buy-error.png?url";
 import packCoin from "../assets/pack-coin.webp?url";

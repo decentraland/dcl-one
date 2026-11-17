@@ -1,0 +1,342 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import { hasOpenPopup } from '../../design/popups'
+import { DebugPanelHost } from '../../features/debug/DebugPanel'
+import { Sidebar } from '../../features/sidebar/Sidebar'
+import { requestDebugPanel } from '../../features/debug/useDebugPanel'
+import { fakeSession } from '../harness'
+
+const site = vi.hoisted(() => ({ revision: null as string | null }))
+vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), siteRevision: () => site.revision }))
+
+afterEach(() => {
+  site.revision = null
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
+it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) =>
+    line === '/debug_panel --dev-build' ? String(development) : '[]')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await waitFor(() => expect(session.runDebugCommand).toHaveBeenCalledWith('/debug_panel --dev-build'))
+  const button = { name: 'Toggle debug panel' }
+  if (!development) {
+    expect(screen.queryByRole('button', button)).toBeNull()
+    return
+  }
+  const launcher = () => screen.getByRole('button', button)
+  expect(await screen.findByRole('button', button)).toHaveAttribute('aria-pressed', 'false')
+  await act(async () => { fireEvent.click(launcher()) })
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(launcher()).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(launcher())
+  expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+  await act(async () => requestDebugPanel('', vi.fn()))
+  expect(launcher()).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(launcher()).toHaveAttribute('aria-pressed', 'false')
+})
+
+it('discovers plugin sections, samples expanded sections and dispatches their actions', async () => {
+  vi.useFakeTimers()
+  const session = fakeSession()
+  const sections = [
+    { title: 'Transport', query: '/transport_test', fields: [['Connected', 'room.connected']], actions: [] },
+    { title: 'Clock', query: '/clock_test', fields: [['Seconds', 'seconds']], actions: [['Advance', '/advance_test']] }
+  ]
+  let seconds = 1
+  const command = vi.fn(async (line: string) => {
+    if (line === '/debug_panel --dev-build') return 'false'
+    if (line === '/debug_panel') return JSON.stringify(sections)
+    if (line === '/clock_test') return JSON.stringify({ seconds })
+    if (line === '/advance_test') { seconds += 10; return 'Clock advanced' }
+    throw new Error('Unexpected command ' + line)
+  })
+  session.runDebugCommand = command
+  try {
+    render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+    fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
+    expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
+    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
+    const clock = screen.getByRole('button', { name: 'Clock' })
+    const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
+    const originalOrder = sectionHeaders()
+    await act(async () => { fireEvent.click(clock) })
+    expect(sectionHeaders()).toEqual(originalOrder)
+    expect(screen.getByText('1')).toBeInTheDocument()
+    seconds = 2
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(screen.getByText('2')).toBeInTheDocument()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Advance' })) })
+    expect(command).toHaveBeenCalledWith('/advance_test')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(screen.getByText('12')).toBeInTheDocument()
+    fireEvent.click(clock)
+    expect(sectionHeaders()).toEqual(originalOrder)
+    command.mockClear()
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(command).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('opens a named section from chat and applies plugin-declared values', async () => {
+  const session = fakeSession()
+  const section = { title: 'Graphics', query: '/metrics', fields: [['GPU', 'gpu']], actions: [], inputs: [
+    { label: 'Scale', field: 'scale', command: '/scale {value}', kind: { type: 'number', options: { min: 0.01, max: 10, step: 0.01 } } },
+    { label: 'Fog', field: 'fog', command: '/fog {value}', kind: { type: 'toggle' } },
+    { label: 'Mode', field: 'mode', command: '/mode {value}', kind: { type: 'select', options: [['Low', 'low'], ['High', 'high']] } }
+  ] }
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel' ? JSON.stringify([section]) :
+    line === '/metrics' ? JSON.stringify({ scale: 0.800000011920929, fog: true, mode: 'low', gpu: { samples: [1, 3, 2], unit: 'ms' } }) : 'Updated')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('Graphics', vi.fn()))
+  expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
+  expect(screen.getByRole('spinbutton', { name: 'Scale' })).toHaveDisplayValue('0.8')
+  fireEvent.change(screen.getByRole('spinbutton', { name: 'Scale' }), { target: { value: '4' } })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Apply Scale' })) })
+  expect(session.runDebugCommand).toHaveBeenCalledWith('/scale 4')
+  await act(async () => { fireEvent.click(screen.getByRole('switch', { name: 'Fog' })) })
+  expect(session.runDebugCommand).toHaveBeenCalledWith('/fog false')
+  fireEvent.click(screen.getByRole('button', { name: 'Mode' }))
+  await act(async () => { fireEvent.click(screen.getByRole('option', { name: 'High' })) })
+  expect(session.runDebugCommand).toHaveBeenCalledWith('/mode high')
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+})
+
+it('shows only the next connection action and follows changes from the engine', async () => {
+  vi.useFakeTimers()
+  const session = fakeSession()
+  let enabled: boolean | null = true
+  let refuseDisconnect = true
+  const input = { label: 'Connection', field: 'enabled', command: '/connection {value}', kind: {
+    type: 'actionButton', options: { enable: ['Connect', 'connect'], disable: ['Disconnect', 'disconnect'] }
+  } }
+  session.runDebugCommand = vi.fn(async (line: string) => {
+    if (line === '/debug_panel --dev-build') return 'true'
+    if (line === '/debug_panel') return JSON.stringify([{ title: 'Pulse', query: '/state', fields: [], actions: [], inputs: [input] }])
+    if (line === '/state') return JSON.stringify({ enabled, unavailable: { enabled: 'No session' } })
+    if (line === '/connection disconnect') {
+      if (refuseDisconnect) throw new Error('Connection policy changed')
+      enabled = false
+    }
+    if (line === '/connection connect') enabled = true
+    return 'Applied'
+  })
+  try {
+    render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+    await act(async () => requestDebugPanel('Pulse', vi.fn()))
+    const action = (name: string) => screen.queryByRole('button', { name })
+    expect(action('Connect')).toBeNull()
+    const click = (name: string) => act(async () => { fireEvent.click(screen.getByRole('button', { name })) })
+    await click('Disconnect')
+    expect(screen.getByText(/Connection policy changed/)).toBeInTheDocument()
+    expect(action('Disconnect')).toBeEnabled()
+    expect(action('Connect')).toBeNull()
+    refuseDisconnect = false
+    await click('Disconnect')
+    expect(enabled).toBe(false)
+    expect(action('Disconnect')).toBeNull()
+    await click('Connect')
+    expect(enabled).toBe(true)
+    expect(action('Disconnect')).toBeEnabled()
+    enabled = null
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(action('Connect')).toBeDisabled()
+    expect(screen.getByText(/No session/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('keeps the caption with each number and separates unlabelled tuples too', async () => {
+  const session = fakeSession()
+  const fields = [['Scene definitions per batch (min / mean / max)', 'batch'], ['Samples', 'pair']]
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Entity Requests', query: '/counts', fields, actions: [] }])
+    : JSON.stringify({ batch: [9, 269.114, 430], pair: [0, -2.5] }))
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('Entity Requests', vi.fn()))
+  const group = within(screen.getByRole('list', { name: 'Scene definitions per batch' })).getAllByRole('listitem')
+  expect(group.map(cell => cell.textContent?.trim())).toEqual(['min 9', 'mean 269.11', 'max 430'])
+  expect(within(screen.getByRole('list', { name: 'Samples' })).getAllByRole('listitem')).toHaveLength(2)
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+})
+
+it('explains absent readings once per cause and replaces the explanation when data arrives', async () => {
+  const session = fakeSession()
+  const fields = [['Peer', 'room.peer'], ['Rate', 'room.rate'], ['Peak rate', 'room.peak'],
+    ['Other room', 'roommate'], ['Packets', 'count'], ['Muted', 'muted']]
+  let room: Record<string, unknown> | null = null
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Room', query: '/metrics', fields, actions: [] }])
+    : JSON.stringify({ room, count: 0, muted: false, unavailable: {
+      'room.peer': 'Select a peer', room: 'Waiting for a room', '': 'No sample yet'
+    } }))
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('Room', vi.fn()))
+  expect(screen.getAllByText('Waiting for a room')).toHaveLength(1)
+  expect(screen.getByText('Select a peer')).toBeInTheDocument()
+  expect(screen.getByText('No sample yet')).toBeInTheDocument()
+  expect(screen.getByText('0')).toBeInTheDocument()
+  expect(screen.getByText('No')).toBeInTheDocument()
+  room = { peer: 'Dawn', rate: 5, peak: 6 }
+  expect(await screen.findByText('Dawn', {}, { timeout: 2500 })).toBeInTheDocument()
+  expect(screen.queryByText('Waiting for a room')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+})
+
+it('opens as a non-modal card off the popup stack and leaves the sidebar usable', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async () => '[]')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  const dialog = screen.getByRole('dialog', { name: 'Debug panel' })
+  expect(dialog).toHaveAttribute('aria-modal', 'false')
+  expect(hasOpenPopup()).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
+  expect(screen.getByRole('button', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBe(dialog)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+  expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+})
+
+it('drops focus from a control clicked with the pointer and keeps it in the search field', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Clock', query: '/clock', fields: [], actions: [] }]) : '{}')
+  render(<DebugPanelHost session={session} />)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  const header = screen.getByRole('button', { name: 'Clock' })
+  act(() => header.focus())
+  fireEvent.click(header, { detail: 1 })
+  expect(document.activeElement).not.toBe(header)
+  act(() => header.focus())
+  fireEvent.click(header, { detail: 0 })
+  expect(document.activeElement).toBe(header)
+  const search = screen.getByRole('searchbox', { name: 'Find debug controls' })
+  act(() => search.focus())
+  fireEvent.click(search, { detail: 1 })
+  expect(document.activeElement).toBe(search)
+})
+
+it('asks the engine for the development build once for the sidebar and every open', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel --dev-build' ? 'true' : '[]')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('', vi.fn()))
+  await act(async () => requestDebugPanel('', vi.fn()))
+  await act(async () => requestDebugPanel('', vi.fn()))
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(vi.mocked(session.runDebugCommand).mock.calls.filter(([line]) => line === '/debug_panel --dev-build')).toHaveLength(1)
+})
+
+it('keeps the panel open when the world sidebar unmounts and closes it with its host', async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async () => '[]')
+  const tree = render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  fireEvent.click(screen.getByRole('button', { name: 'Sidebar settings' }))
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
+  expect(screen.getByRole('button', { name: 'Session' })).toBeInTheDocument()
+  tree.rerender(<>{null}<DebugPanelHost session={session} /></>)
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  tree.rerender(<></>)
+  expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+})
+
+const statusReply = (reply: () => Promise<unknown>) =>
+  vi.fn<typeof globalThis.fetch>(async (input) => String(input).endsWith('/content/status')
+    ? reply() as Promise<Response>
+    : ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response)
+
+const statusReads = (fetch: ReturnType<typeof statusReply>) =>
+  fetch.mock.calls.filter(([url]) => String(url).endsWith('/content/status')).length
+
+const openDeployment = async () => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel' ? '[]' : 'false')
+  render(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
+  await act(async () => requestDebugPanel('Deployment', vi.fn()))
+  return within(screen.getByRole('dialog', { name: 'Debug panel' }))
+}
+
+const committed = () =>
+  statusReply(async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'c0ffee' }) }))
+
+it('shows the Catalyst commit and no Sites row where no Sites serves the HUD', async () => {
+  vi.stubGlobal('fetch', committed())
+  const panel = await openDeployment()
+  expect(panel.getByText(/^Catalyst \(.+\)$/)).toBeInTheDocument()
+  expect(panel.getByText('c0ffee')).toBeInTheDocument()
+  expect(panel.queryByText('Sites')).toBeNull()
+})
+
+it.each([
+  ['abc123', 'abc123'],
+  ['', 'not reported by Sites'],
+  ['unversioned', 'unversioned build']
+])('shows the Sites build serving the page (%j)', async (revision, shown) => {
+  site.revision = revision
+  vi.stubGlobal('fetch', committed())
+  const panel = await openDeployment()
+  expect(panel.getByText('Sites')).toBeInTheDocument()
+  expect(panel.getByText(shown)).toBeInTheDocument()
+})
+
+it('reads the Catalyst once while expanded, not every second', async () => {
+  vi.useFakeTimers()
+  const fetch = committed()
+  vi.stubGlobal('fetch', fetch)
+  await openDeployment()
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+  expect(statusReads(fetch)).toBe(1)
+})
+
+it('reads the Catalyst again when the section is expanded again', async () => {
+  const fetch = committed()
+  vi.stubGlobal('fetch', fetch)
+  const panel = await openDeployment()
+  const header = panel.getByRole('button', { name: 'Deployment' })
+  fireEvent.click(header)
+  await act(async () => { fireEvent.click(header) })
+  expect(statusReads(fetch)).toBe(2)
+})
+
+it.each([
+  ['a refused request', 'no answer from the node', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ['a failed status', 'status 502', async () => ({ ok: false, status: 502, json: async () => ({}) })],
+  ['an HTML page', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('HTML') } })],
+  ['a JSON null', 'answered without a status', async () => ({ ok: true, status: 200, json: async () => null })],
+  ['no commitHash', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({}) })],
+  ['an Unknown commit', 'not reported by the node', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'Unknown' }) })],
+  ['an unversioned build', 'unversioned build', async () => ({ ok: true, status: 200, json: async () => ({ commitHash: 'unversioned' }) })],
+  ['a reset mid-body', 'no answer from the node', async () => ({ ok: true, status: 200, json: async () => { throw new TypeError('terminated') } })]
+])('explains a Catalyst commit it cannot read: %s', async (_case, reason, reply) => {
+  vi.stubGlobal('fetch', statusReply(reply))
+  const panel = await openDeployment()
+  expect(panel.getByText(reason)).toBeInTheDocument()
+})
+
+it('releases the body of a failed status', async () => {
+  const cancel = vi.fn(async () => { throw new TypeError('locked') })
+  vi.stubGlobal('fetch', statusReply(async () => ({ ok: false, status: 502, body: { cancel }, json: async () => ({}) })))
+  const panel = await openDeployment()
+  expect(panel.getByText('status 502')).toBeInTheDocument()
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('reports a status read that times out as no answer', async () => {
+  vi.stubGlobal('fetch', statusReply(async () => ({
+    ok: true, status: 200, json: async () => { throw new DOMException('The operation timed out.', 'TimeoutError') }
+  })))
+  const panel = await openDeployment()
+  expect(panel.getByText('no answer from the node')).toBeInTheDocument()
+})

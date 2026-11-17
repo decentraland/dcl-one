@@ -10,8 +10,8 @@ import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
 import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
-import { CHAIN } from "../../model/chain";
-import { BOOK, storeMint } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK, storeMint } from "@shop/payment/fixtures";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
 import { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
 

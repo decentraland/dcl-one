@@ -17,6 +17,11 @@ pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"
 /// steps `catalyst schema migrate` applies to a database stamped before them
 /// (`schema_migrate`); `catalyst schema print --migrations` writes the same text.
 pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"));
+/// The reviewed release that takes a database stamped `SCHEMA_VERSION - 1` to
+/// `SCHEMA_VERSION` (`schemas/releases/v3-private-voice-pending.sql`, rendered
+/// by build.rs without its psql commands, transaction lines and includes).
+/// `catalyst schema migrate --release` runs it in its own transaction.
+pub const RELEASE_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/release.sql"));
 
 /// Every connection runs with this path and clock; application SQL is
 /// schema-qualified anyway, and no request ever changes either.
@@ -262,7 +267,30 @@ pub async fn bootstrap(pool: &PgPool) -> Result<(), BootstrapError> {
 }
 
 #[derive(Debug, Error)]
+pub enum EncodingError {
+    #[error(
+        "unsupported PostgreSQL server_encoding {0}: catalyst requires UTF8; no schema changes were applied"
+    )]
+    Unsupported(String),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
+/// Check before DDL: Unicode JSON escapes in expression indexes require UTF8.
+async fn require_utf8(pool: &PgPool) -> Result<(), EncodingError> {
+    let encoding: String = sqlx::query_scalar("SHOW server_encoding")
+        .fetch_one(pool)
+        .await?;
+    if encoding != "UTF8" {
+        return Err(EncodingError::Unsupported(encoding));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Error)]
 pub enum ApplySchemaError {
+    #[error(transparent)]
+    Encoding(#[from] EncodingError),
     #[error("refusing to apply schema.sql: meta.schema already exists in this database")]
     AlreadyApplied,
 
@@ -278,6 +306,7 @@ pub enum ApplySchemaError {
 /// of `schemas/migrations/` still active in this version are recorded as carried
 /// from birth. Retired steps gain no receipt; `schema migrate` never runs them.
 pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
+    require_utf8(pool).await?;
     // One apply at a time per process: the DDL holds a lock per object it
     // creates until commit, and parallel applies (the test suites create a
     // database per module) exhaust the cluster's shared lock table
@@ -307,11 +336,13 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
 
 /// `pool` shares one throwaway database per test process for uuid-scoped
 /// fixtures; `isolated_pool` creates a fresh database per call for tests
-/// that read or rewrite whole tables. Both use `catalyst_test_lib_<pid>_<rand>`
+/// that read or rewrite whole tables; [`OwnedDatabase`] is a fresh database
+/// a test drops itself, blank or seeded. All use `catalyst_test_lib_<pid>_*`
 /// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, seeded with
-/// schema.sql. The database in that URL is never touched, so a live node's
-/// rows are out of reach. There is no in-process teardown: the next test
-/// process drops every `catalyst_test_lib_<pid>_*` whose pid is gone.
+/// schema.sql unless blank. The database in that URL is never touched, so a
+/// live node's rows are out of reach. A test that panics before its teardown
+/// leaves its database behind: the next test process drops every
+/// `catalyst_test_lib_<pid>_*` whose pid is gone.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
@@ -358,31 +389,85 @@ pub mod scratch {
         )
     }
 
+    /// What an [`OwnedDatabase`] starts with.
+    #[cfg(any(test, feature = "test-support"))]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Schema {
+        /// schema.sql, as a fresh node bootstraps it.
+        Full,
+        /// Nothing: the test applies its own (an older schema, a fault fixture).
+        Blank,
+    }
+
+    /// A database of one test's own, `catalyst_test_lib_<pid>_<tag>_<rand>`,
+    /// for tests that rewrite whole tables, install their own schema or need
+    /// fixtures no other test may see. [`OwnedDatabase::drop`] removes it; a
+    /// test that panics first leaves it to the next process's sweep.
+    #[cfg(any(test, feature = "test-support"))]
+    pub struct OwnedDatabase {
+        /// Connected with the process's session options ([`connect_pool`]).
+        pub pool: PgPool,
+        /// The database's URL, for tests that connect as another role.
+        pub url: String,
+        admin: PgPool,
+        name: String,
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    impl OwnedDatabase {
+        /// `None` (skip) without `CATALYST_TEST_DATABASE_URL`. `tag` is part
+        /// of the database name, so it holds only letters, digits, `_` and `-`.
+        pub async fn new(tag: &str, schema: Schema, max_connections: u32) -> Option<Self> {
+            assert!(
+                tag.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+                "test database tag {tag:?} holds only letters, digits, _ and -"
+            );
+            let (admin, name, url) = create_database(Some(tag)).await?;
+            let pool = connect_pool(
+                &url,
+                &PoolSettings {
+                    max_connections,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
+            if schema == Schema::Full {
+                apply_schema(&pool)
+                    .await
+                    .unwrap_or_else(|e| panic!("applying schema.sql to {name}: {e}"));
+            }
+            Some(Self {
+                pool,
+                url,
+                admin,
+                name,
+            })
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+
+        /// Closes the pool and drops the database, even with clients still
+        /// connected elsewhere.
+        pub async fn drop(self) {
+            self.pool.close().await;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE \"{}\" WITH (FORCE)",
+                self.name
+            )))
+            .execute(&self.admin)
+            .await
+            .unwrap_or_else(|e| panic!("DROP DATABASE {}: {e}", self.name));
+            self.admin.close().await;
+        }
+    }
+
     async fn create() -> Option<String> {
-        let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
-        let opts: PgConnectOptions = base
-            .parse()
-            .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .unwrap_or_else(|e| {
-                panic!("connecting to the postgres database of the test cluster: {e}")
-            });
-        sweep_dead(&admin).await;
-        let name = format!(
-            "catalyst_test_lib_{}_{}",
-            std::process::id(),
-            &uuid::Uuid::new_v4().simple().to_string()[..8]
-        );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));
-        let mut url = url::Url::parse(&base).expect("CATALYST_TEST_DATABASE_URL must be a URL");
-        url.set_path(&format!("/{name}"));
-        let url = url.to_string();
+        let (admin, name, url) = create_database(None).await?;
+        admin.close().await;
         let pool = connect_pool(
             &url,
             &PoolSettings {
@@ -398,6 +483,40 @@ pub mod scratch {
         pool.close().await;
         eprintln!("lib tests: scratch database {name}");
         Some(url)
+    }
+
+    /// Creates an empty `catalyst_test_lib_<pid>[_<tag>]_<rand>` database
+    /// after sweeping dead processes' ones; returns the admin pool (on the
+    /// cluster's `postgres` database), its name and its URL.
+    async fn create_database(tag: Option<&str>) -> Option<(PgPool, String, String)> {
+        let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
+        let opts: PgConnectOptions = base
+            .parse()
+            .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.clone().database("postgres"))
+            .await
+            .unwrap_or_else(|e| {
+                panic!("connecting to the postgres database of the test cluster: {e}")
+            });
+        sweep_dead(&admin).await;
+        let tag = tag.map(|t| format!("{t}_")).unwrap_or_default();
+        let name = format!(
+            "catalyst_test_lib_{}_{tag}{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        // PostgreSQL truncates longer identifiers, and the URL would then name
+        // a database that does not exist.
+        assert!(name.len() <= 63, "test database name {name} is too long");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));
+        let mut url = url::Url::parse(&base).expect("CATALYST_TEST_DATABASE_URL must be a URL");
+        url.set_path(&format!("/{name}"));
+        Some((admin, name, url.to_string()))
     }
 
     /// `/proc` is absent on macOS. Signal zero probes existence without sending
@@ -427,6 +546,12 @@ pub mod scratch {
     }
 
     /// Drops the scratch databases of test processes that no longer exist.
+    ///
+    /// Liveness is the pid embedded in the database name, probed locally. This
+    /// is only safe when every test process using the cluster shares this
+    /// process's pid namespace (as with `tooling/dev-test.sh`); a test run in
+    /// another container or host against the same cluster could have its
+    /// database dropped while it is still running.
     async fn sweep_dead(admin: &PgPool) {
         let names: Vec<String> = sqlx::query_scalar(
             "SELECT datname FROM pg_database WHERE datname LIKE 'catalyst_test_lib_%'",
@@ -480,6 +605,83 @@ mod tests {
         assert_eq!(value, None);
         first.close().await;
         second.close().await;
+    }
+
+    #[tokio::test]
+    async fn owned_databases_are_swept_by_name_and_dropped_by_their_test() {
+        let Some(blank) = scratch::OwnedDatabase::new("probe", scratch::Schema::Blank, 1).await
+        else {
+            return;
+        };
+        let full = scratch::OwnedDatabase::new("probe", scratch::Schema::Full, 1)
+            .await
+            .unwrap();
+        let prefix = format!("catalyst_test_lib_{}_probe_", std::process::id());
+        assert!(blank.name().starts_with(&prefix), "{}", blank.name());
+        let schema = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'meta')",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert!(
+            !schema(blank.pool.clone()).await,
+            "a blank database is empty"
+        );
+        assert!(schema(full.pool.clone()).await, "a full one has schema.sql");
+        let observer = scratch::pool(1).await.unwrap();
+        let name = blank.name().to_string();
+        blank.drop().await;
+        full.drop().await;
+        let left: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")
+                .bind(&name)
+                .fetch_one(&observer)
+                .await
+                .unwrap();
+        assert!(!left, "drop removes the database");
+        observer.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_apply_and_migrate_refuse_non_utf8_before_ddl() {
+        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let opts: PgConnectOptions = base.parse().unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.clone().database("postgres"))
+            .await
+            .unwrap();
+        let name = format!("dcl_encoding_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'LATIN1' LOCALE_PROVIDER libc LC_COLLATE 'C' LC_CTYPE 'C'"
+        ))).execute(&admin).await.unwrap();
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.database(&name))
+            .await
+            .unwrap();
+        assert!(matches!(apply_schema(&pool).await,
+            Err(ApplySchemaError::Encoding(EncodingError::Unsupported(ref e))) if e == "LATIN1"));
+        assert!(
+            matches!(schema_migrate::migrate(&pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+            Err(schema_migrate::MigrateError::Encoding(EncodingError::Unsupported(ref e))) if e == "LATIN1")
+        );
+        let exists: bool = sqlx::query_scalar("SELECT to_regnamespace('meta') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(!exists, "refusal must precede schema creation");
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
     }
 
     #[cfg(unix)]
@@ -581,6 +783,31 @@ mod tests {
         assert!(
             SCHEMA_SQL.contains(&stamp),
             "schema.sql must insert {stamp}"
+        );
+    }
+
+    /// `schema migrate --release` runs RELEASE_SQL on a database one version
+    /// behind; a version bump without its own release must fail here.
+    #[test]
+    fn release_sql_takes_the_previous_version_to_this_one() {
+        let accepts = format!("IS DISTINCT FROM {} THEN", SCHEMA_VERSION - 1);
+        assert_eq!(
+            RELEASE_SQL.matches(&accepts).count(),
+            1,
+            "the release requires the previous version"
+        );
+        let stamps = format!("UPDATE meta.schema SET version = {SCHEMA_VERSION},");
+        assert_eq!(
+            RELEASE_SQL.matches(&stamps).count(),
+            1,
+            "the release stamps this version"
+        );
+        assert!(!RELEASE_SQL.contains("BEGIN;") && !RELEASE_SQL.contains("COMMIT;"));
+        assert!(
+            RELEASE_SQL
+                .lines()
+                .all(|line| !line.trim_start().starts_with('\\')),
+            "no psql meta-command reaches the migrator"
         );
     }
 

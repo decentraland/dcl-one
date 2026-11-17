@@ -7,7 +7,7 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router";
 import Spinner from "../../atoms/Spinner";
 import { useShopWallet } from "../wallet/context";
 import { explorerTxUrl } from "../checkout/chain/config";
-import { formatCredits } from "../checkout/lib/currency";
+import { formatCredits } from "@shop/checkout/lib/currency";
 import { CreatorBadge } from "../discovery/components/Hero";
 import { myItemsRouteFor } from "../discovery/lib/routes";
 import { showsWalletConfirmations } from "../checkout/lib/wallet-kind";

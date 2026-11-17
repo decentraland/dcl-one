@@ -1,7 +1,7 @@
 import { act, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_REALM } from '../lib/baseDomain'
-import { enterAsGuest, renderSession } from './harness'
+import { enterAsGuest, renderSession } from '@hud/test/harness'
 
 describe('lobby session regressions', () => {
   it('waits for playerReady before opening and fetching Backpack', async () => {

@@ -3,7 +3,7 @@
 
 import { useEffect, type ReactNode } from "react";
 
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import Icon from "./Icon";
 import "./browselayout.css";
 

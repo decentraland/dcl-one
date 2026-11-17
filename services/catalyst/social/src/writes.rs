@@ -32,7 +32,6 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 
 use crate::comms::writes::Switch;
-use crate::shared::writes::{Refusal, refusal};
 
 /// The paths (as the router sees them, after any nest prefix is stripped)
 /// whose non-GET methods stay open while writes are disabled.
@@ -50,7 +49,8 @@ const OPEN_WHILE_DISABLED: &[&str] = &[
 /// Route-local prefixes whose reads write too: the notification emails' one-click unsubscribe links.
 const WRITING_READS: &[&str] = &["/unsubscribe/"];
 
-pub const DISABLED_MESSAGE: &str = "social writes are disabled on this node (SOCIAL_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const DISABLED_MESSAGE: &str =
+    "social writes are disabled on this node (SOCIAL_WRITES_ENABLED=false)";
 
 /// Whether `method` on `path` is a write this gate refuses while disabled.
 pub fn is_gated(method: &Method, path: &str) -> bool {
@@ -66,15 +66,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
 /// The 503 the gate answers: the social error envelope with a `Retry-After`
 /// so a client does not hammer a node that will not change its mind soon.
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("social", DISABLED_MESSAGE);
-    let body =
-        serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": message });
+    let body = serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": DISABLED_MESSAGE });
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -90,10 +82,8 @@ pub fn refused_response(refusal: &Refusal) -> Response {
 }
 
 async fn gate(State(enabled): State<bool>, mut req: Request, next: Next) -> Response {
-    if is_gated(req.method(), req.uri().path())
-        && let Some(refusal) = refusal(enabled)
-    {
-        return refused_response(&refusal);
+    if !enabled && is_gated(req.method(), req.uri().path()) {
+        return disabled_response();
     }
     req.extensions_mut().insert(Switch(enabled));
     next.run(req).await
@@ -304,33 +294,5 @@ mod tests {
             res.headers().get(header::CONTENT_TYPE).unwrap(),
             "application/json"
         );
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/social-api/v1/communities").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.advance(26 * HOUR);
-            let (status, body) = call(&app, "POST", "/social-api/v1/communities").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["error"], "Service Unavailable");
-            assert_eq!(
-                v["message"],
-                "social writes are held on this node: the last complete backup (backup.json) is 27 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            let (status, _) = call(&app, "GET", "/v1/communities").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

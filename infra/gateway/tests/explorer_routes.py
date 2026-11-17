@@ -21,22 +21,26 @@ def check(rows, root):
         import { resolve } from 'node:path';
         const root = process.argv[1];
         const play = resolve(root, 'apps/ui3/src/play');
+        const generated = resolve(root, 'library/explorer-core/engine/generated');
         registerHooks({ resolve(specifier, context, next) {
-            if (specifier === '../engine/generated') {
-                return { url: pathToFileURL(resolve(play, 'engine/generated/serviceTable.ts')).href, shortCircuit: true };
+            if (specifier === '@explorer-core/engine/generated') {
+                return { url: pathToFileURL(resolve(generated, 'serviceTable.ts')).href, shortCircuit: true };
             }
             return next(specifier, context);
         }});
         globalThis.window = { location: new URL('https://example.test/play'), __DCL_PUBLIC__: {} };
         const hud = await import(pathToFileURL(resolve(play, 'lib/baseDomain.ts')));
-        const { SERVICES } = await import(pathToFileURL(resolve(play, 'engine/generated/serviceTable.ts')));
+        const { SERVICES } = await import(pathToFileURL(resolve(generated, 'serviceTable.ts')));
         console.log(JSON.stringify({ services: SERVICES, options: hud.engineServiceOptions() }));
     """, str(root)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     hud = json.loads(result.stdout)
     web = {row["name"]: row for row in hud["services"]}
     assert set(web) == {row["name"] for row in rows if row["web"]}, "HUD service table is stale"
-    excluded = {"authPage", "reels", "storage", "ethereumRpc", "socialRpc", "pulseServer"}
+    # Not served by the gateway yet, so the engine and the web page both reach the public host
+    # (decentraland/dcl-one#631): abgen's CDN, whose Bevy variants `/ab-cdn` refuses.
+    ungated = {"abgenCdn"}
+    excluded = {"authPage", "reels", "storage", "ethereumRpc", "socialRpc", "pulseServer"} | ungated
     assert excluded <= {row["name"] for row in rows}, "removed service needs contract review"
 
     for row in rows:
@@ -53,6 +57,9 @@ def check(rows, root):
             hud_base = hud["options"][name]
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base
+            elif name in ungated:
+                # composed from Decentraland's domain, never from the page's own host
+                assert hud_base == f'https://{row["sub"]}.decentraland.org{row["path"]}', hud_base
             else:
                 expected_scheme = "wss" if row["value"] == "websocket" else "https"
                 assert urlsplit(hud_base).scheme == expected_scheme, hud_base

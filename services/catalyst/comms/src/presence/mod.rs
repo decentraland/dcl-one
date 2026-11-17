@@ -49,23 +49,23 @@ impl Scope {
         }
     }
 
-    /// Whether a room this node refused could hold participants this scope
-    /// counts: the exact room, or a world room or upstream-format room name
-    /// that names the scope's world. Any other refused room cannot hold them,
+    /// Whether a room name could hold participants this scope counts: the
+    /// exact room, or a world room or upstream-format room name that names the
+    /// scope's world. Any other room, refused or canonical, cannot hold them,
     /// since every room this node admits to a world is canonical.
-    fn may_hold(&self, refused: &str) -> bool {
+    fn may_hold(&self, room: &str) -> bool {
         let world = match self {
-            Self::Room(name) => return refused == name,
+            Self::Room(name) => return room == name,
             Self::Lobby(world) | Self::Scenes(world) => world.as_str(),
         };
-        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(refused) {
+        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(room) {
             return owner.key() == world;
         }
-        let refused = refused.to_lowercase();
+        let room = room.to_lowercase();
         ["world-scene-room-", "world-", "scene-"]
             .iter()
             .any(|prefix| {
-                refused.strip_prefix(prefix).is_some_and(|rest| {
+                room.strip_prefix(prefix).is_some_and(|rest| {
                     rest.strip_prefix(world)
                         .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
                 })
@@ -164,12 +164,16 @@ impl Presence {
 
     /// Bounded invalidation: unseen rooms bump one epoch rather than allocating
     /// attacker-controlled event keys. Known rooms retain independent generations.
+    /// A name that can never classify as relevant (island, voice chat) is never
+    /// counted, so its events leave every occupancy read valid.
     pub fn invalidate_room(&self, room: &str) {
         let mut state = self.state.lock();
         if let Some(generation) = state.generations.get_mut(room) {
             *generation = generation.wrapping_add(1);
-        } else {
+        } else if crate::rooms::may_classify_relevant(room) {
             state.unknown_generation = state.unknown_generation.wrapping_add(1);
+        } else {
+            return;
         }
         drop(state);
         self.dirty.notify_one();
@@ -271,6 +275,49 @@ impl Presence {
             .into_iter()
             .find(|(w, _)| w == &world.to_lowercase())
             .map_or(0, |(_, n)| n)
+    }
+    /// The lowercased player identities of the last complete observation in
+    /// a world's rooms (`scene` `None`: any of its rooms) or in one Genesis
+    /// scene's rooms, with the earliest instant one of those rooms was read:
+    /// a wallet that joined a room after that instant may be missing.
+    /// `None` when that observation is stale or a room this node refused
+    /// could hold them: no answer, never an empty one.
+    pub fn room_occupants(
+        &self,
+        realm: &str,
+        scene: Option<&str>,
+    ) -> Option<(chrono::DateTime<chrono::Utc>, HashSet<String>)> {
+        let view = self.visible();
+        view.observed.as_ref()?;
+        let realm = realm.to_lowercase();
+        if scene.is_none()
+            && view
+                .refused
+                .iter()
+                .any(|r| Scope::Lobby(realm.clone()).may_hold(r))
+        {
+            return None;
+        }
+        let rooms: Vec<_> = view
+            .rooms
+            .iter()
+            .filter(|r| match scene {
+                None => r.is_world && r.realm == realm,
+                Some(scene) => !r.is_world && r.realm == realm && r.scene.as_deref() == Some(scene),
+            })
+            .collect();
+        let read_at = rooms
+            .iter()
+            .map(|r| r.observed.utc)
+            .min()
+            .or(view.observed.as_ref().map(|o| o.utc))?;
+        let wallets = rooms
+            .iter()
+            .flat_map(|r| &r.participants)
+            .filter(|p| counts_as_player(&p.identity))
+            .map(|p| p.identity.to_lowercase())
+            .collect();
+        Some((read_at, wallets))
     }
     fn admission_count(&self, scope: &Scope) -> Option<i64> {
         let state = self.state.lock();
@@ -451,4 +498,65 @@ pub async fn live_data(State(presence): State<Arc<Presence>>) -> Json<LiveDataRe
         },
         last_updated,
     })
+}
+
+#[cfg(test)]
+mod occupants_tests {
+    use super::Presence;
+
+    #[test]
+    fn room_occupants_answer_a_world_from_the_complete_observation_only() {
+        let presence = Presence::new();
+        assert_eq!(
+            presence.room_occupants("party.dcl.eth", None),
+            None,
+            "nothing observed yet"
+        );
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", "world-party.dcl.eth", false);
+        presence.peer_joined(
+            "0xCD",
+            "party.dcl.eth",
+            "world-scene-room-party.dcl.eth-x",
+            true,
+        );
+        presence.peer_joined(
+            "authoritative-server",
+            "party.dcl.eth",
+            "world-party.dcl.eth",
+            false,
+        );
+        presence.peer_joined("0xEF", "other.dcl.eth", "world-other.dcl.eth", false);
+        let (_, wallets) = presence.room_occupants("Party.dcl.eth", None).unwrap();
+        let mut wallets: Vec<_> = wallets.into_iter().collect();
+        wallets.sort();
+        assert_eq!(wallets, ["0xab", "0xcd"]);
+        let (_, none) = presence
+            .room_occupants("party.dcl.eth", Some("bafyscene"))
+            .unwrap();
+        assert!(none.is_empty(), "no Genesis scene room of that realm");
+    }
+
+    #[test]
+    fn room_occupants_are_observed_at_the_earliest_room_read() {
+        let presence = Presence::new();
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", "world-party.dcl.eth", false);
+        presence.peer_joined(
+            "0xCD",
+            "party.dcl.eth",
+            "world-scene-room-party.dcl.eth-x",
+            true,
+        );
+        let early = chrono::DateTime::from_timestamp_millis(1_800_000_000_000).unwrap();
+        let late = early + chrono::Duration::seconds(30);
+        {
+            let mut state = presence.state.lock();
+            let view = std::sync::Arc::make_mut(&mut state.complete);
+            view.rooms[0].observed.utc = late;
+            view.rooms[1].observed.utc = early;
+        }
+        let (at, _) = presence.room_occupants("party.dcl.eth", None).unwrap();
+        assert_eq!(at, early);
+    }
 }

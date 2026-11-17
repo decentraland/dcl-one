@@ -105,6 +105,30 @@ describe("buildDeployFormData (multipart field encoding)", () => {
     const sceneHash = prepared.content.find((c) => c.file === "scene.json")!.hash;
     expect(form.get(sceneHash)).toBeInstanceOf(Blob);
   });
+
+  it("sends byte-identical files as one part while the entity lists both paths", async () => {
+    const same = utf8("same texture");
+    const prepared = await buildSceneEntity({
+      pointers: ["0,0"],
+      files: [
+        { file: "scene.json", content: utf8(JSON.stringify(META)) },
+        { file: "textures/a.png", content: same },
+        { file: "textures/copy.png", content: same },
+      ],
+      metadata: META,
+    });
+    const hash = await hashV1Raw(same);
+    expect(prepared.content.filter((c) => c.hash === hash).map((c) => c.file)).toEqual([
+      "textures/a.png",
+      "textures/copy.png",
+    ]);
+
+    const chain = await buildSimpleDeployAuthChain(generatePrivateKey(), prepared.entityId);
+    const form = buildDeployFormData(prepared, chain);
+    expect(form.getAll(hash)).toHaveLength(1);
+    const names = [...form.keys()];
+    expect(new Set(names).size).toBe(names.length);
+  });
 });
 
 describe("deployScene (HTTP contract, mocked transport)", () => {

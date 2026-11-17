@@ -2,8 +2,8 @@
 // Browse links for the detail page's attribute chips: only attributes the grid can filter by get one,
 // spelled the way the grid writes its own URL. Gender has no filter, so it has no link.
 
-import type { CatalogItem } from "./catalogItem";
-import { SUBCAT_MAP } from "./categories";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { SUBCAT_MAP } from "@shop/discovery/lib/categories";
 import { SHOP_BASE } from "../../routes";
 
 const SLOT_TO_SUBCATEGORY = new Map<string, string>(

@@ -11,10 +11,10 @@ import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { equippedSlots, resolveEquippedEmotes } from './emotes'
 import { profileSaveSettled } from './avatarDraft'
-import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '../../../src/engine/protocol'
-import type { SetAvatarData } from '../../../src/engine/generated'
+import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
+import type { SetAvatarData } from '@explorer-core/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
-import type { JsonValue } from '../../../src/engine/generated/serde_json/JsonValue'
+import type { JsonValue } from '@explorer-core/engine/generated/serde_json/JsonValue'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
@@ -302,17 +302,6 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
   }
 }
 
-// --- camera-reel photos --------------------------------------------------------
-type ReelResponse = { images?: Array<{ url?: string; thumbnailUrl?: string }> }
-async function fetchPhotos(address: string): Promise<string[] | undefined> {
-  const r = await serviceBase('cameraReel')
-    .then(async (reel) => await getJson<ReelResponse>(`${reel}/api/users/${address}/images?limit=12&offset=0&compact=true`))
-    .catch(() => undefined)
-  const imgs = r?.images
-  if (imgs == null) return undefined
-  return imgs.map((i) => i.thumbnailUrl ?? i.url).filter((u): u is string => typeof u === 'string')
-}
-
 // --- claimed names -------------------------------------------------------------
 // The NFT names this wallet owns. Only one of them can be worn without the `#1234` suffix, so the
 // picker offers exactly these; anything else is an unclaimed name.
@@ -454,7 +443,7 @@ export function registerProfile(ctx: Ctx): void {
   })
 
   // A user's profile by address: the engine's copy alone for a name and a face (chat lines, the
-  // profile card), plus badges + photos + equipped items when the passport asks (`extras`).
+  // profile card), plus badges + equipped items when the passport asks (`extras`).
   ctx.on('getUserProfile', async (msg) => {
     if (msg.extras !== true) {
       const av = await fetchProfile(msg.address)
@@ -467,12 +456,11 @@ export function registerProfile(ctx: Ctx): void {
     }
     const me = getPlayer()
     const isSelf = me != null && me.userId.toLowerCase() === msg.address.toLowerCase()
-    const [av, badges, photos] = await Promise.all([
+    const [av, badges] = await Promise.all([
       fetchProfile(msg.address),
-      fetchBadges(msg.address, isSelf).catch(() => undefined),
-      fetchPhotos(msg.address).catch(() => undefined)
+      fetchBadges(msg.address, isSelf).catch(() => undefined)
     ])
-    if (av == null && badges == null && photos == null) {
+    if (av == null && badges == null) {
       ctx.send({ kind: 'userProfile', address: msg.address, profile: null })
       return
     }
@@ -495,7 +483,6 @@ export function registerProfile(ctx: Ctx): void {
     const profile: Profile = {
       ...toProfile(av, msg.address, false, av?.name ?? msg.address),
       badges: badges?.badges,
-      photos,
       equippedWearables,
       equippedEmotes
     }

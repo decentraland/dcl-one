@@ -10,8 +10,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerE
 
 import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
 import { landTokenId } from "../../data/catalyst/landListing";
-import { shortAddress } from "../model/address";
-import { landNetwork } from "./contracts";
+import { shortAddress } from "@shop/model/address";
+import { landChainId } from "./chain";
+import { landNetwork } from "@shop/land/contracts";
 import { Mana } from "./format";
 import { coordsId, isTileInSelection, type Coord, type LandTile, type Tiles } from "./tiles";
 import "./land.css";
@@ -49,7 +50,7 @@ export type LandMapProps = {
 
 /** The Shop token page a parcel is sold as: its estate when it belongs to one, else the LAND itself. */
 export function tileHref(tile: LandTile, chainId?: number): string {
-  const net = landNetwork(chainId);
+  const net = landNetwork(chainId ?? landChainId());
   return tile.estateId ? `/shop/token/${net.estate}/${tile.estateId}` : `/shop/token/${net.land}/${landTokenId(tile.x, tile.y)}`;
 }
 

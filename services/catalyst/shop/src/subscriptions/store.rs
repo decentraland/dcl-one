@@ -117,6 +117,66 @@ impl Subscriptions {
         Ok(())
     }
 
+    /// [`Self::upsert`] unless `address` already holds `max_wallet` pending
+    /// rows, or the mailbox (case and `+tag` folded) `max_email`, other than
+    /// this row; the wallet and mailbox locks make count and insert one step.
+    /// `false` when a cap refused it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_capped(
+        &self,
+        address: &str,
+        email: &str,
+        contract: &str,
+        item_id: &str,
+        chain_id: i32,
+        max_wallet: i64,
+        max_email: i64,
+    ) -> sqlx::Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtext('notify-wallet:' || $1)), \
+                    pg_advisory_xact_lock(hashtext('notify-email:' || regexp_replace(lower($2), '\\+[^@]*@', '@')))",
+        )
+        .bind(address)
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
+        let (by_wallet, by_email): (i64, i64) = sqlx::query_as(
+            "SELECT \
+               (SELECT count(*) FROM shop.item_notify_requests \
+                 WHERE address = $1 AND status = 'pending' \
+                   AND NOT (contract_address = $3 AND item_id = $4)), \
+               (SELECT count(*) FROM shop.item_notify_requests \
+                 WHERE regexp_replace(lower(email), '\\+[^@]*@', '@') = regexp_replace(lower($2), '\\+[^@]*@', '@') AND status = 'pending' \
+                   AND NOT (address = $1 AND contract_address = $3 AND item_id = $4))",
+        )
+        .bind(address)
+        .bind(email)
+        .bind(contract)
+        .bind(item_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if by_wallet >= max_wallet || by_email >= max_email {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO shop.item_notify_requests (address, email, contract_address, item_id, chain_id, status) \
+             VALUES ($1, $2, $3, $4, $5, 'pending') \
+             ON CONFLICT (address, contract_address, item_id) DO UPDATE \
+             SET email = EXCLUDED.email, chain_id = EXCLUDED.chain_id, status = 'pending', notified_at = NULL, \
+                 updated_at = timezone('UTC', now())",
+        )
+        .bind(address)
+        .bind(email)
+        .bind(contract)
+        .bind(item_id)
+        .bind(chain_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn get(
         &self,
         address: &str,

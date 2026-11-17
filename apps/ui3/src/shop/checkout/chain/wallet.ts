@@ -8,7 +8,7 @@
 import { numberToHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { CHAIN, type ChainId } from "../../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 import { requireChain } from "../../wallet/chain";
 import { waitForReceipt, type ChainReader, type TxReceipt, type WaitOptions } from "./rpc";
 

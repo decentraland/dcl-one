@@ -39,6 +39,10 @@ pub mod queries;
 pub mod sync_types;
 pub mod validation;
 pub mod validator;
+
+/// JSON preserving decoded property insertion order, with JavaScript index-key enumeration.
+/// Literal user objects are never interpreted as serializer number markers.
+pub type OrderedJson = validator::jsjson::JsValue<false>;
 pub mod wire_types;
 
 // The write path peer sync drives: remote entity fetch + hash proof, auth-chain
@@ -54,6 +58,7 @@ pub mod write_deployer;
 // the upstream forwarding of local deploys (CONTENT_FORWARD_UPSTREAM_URL).
 pub mod create_entity;
 pub mod denylist;
+pub mod failed_deployments_store;
 pub mod forward;
 pub mod land_publish;
 pub mod partial_deployments;
@@ -74,7 +79,7 @@ pub mod time_range;
 // (READ_THROUGH_ENABLED).
 pub mod read_through;
 
-// A sync-only node's history prune: the superseded deployments, their
+// The history prune: superseded deployments (local scenes excepted), their
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
 
@@ -87,6 +92,7 @@ pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
+mod file_type;
 mod fixed_windows;
 pub mod get_content;
 mod pointer_changes;
@@ -569,12 +575,18 @@ pub struct ContentState {
     /// The `/challenge` text: one bare UUID per process, as upstream's
     /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
     challenge: RwLock<String>,
+    /// The worlds mount's sniffed Content-Type per (content key, ranged window): a sniff can read
+    /// up to 10 MiB of a file, and content does not change under its key.
+    pub(crate) worlds_sniffed: parking_lot::Mutex<hashlink::LruCache<(String, bool), &'static str>>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
 pub type GridReady = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub type SharedState = Arc<ContentState>;
+
+/// The worlds mount's sniffed Content-Types kept ([`ContentState::worlds_sniffed`]).
+const WORLDS_SNIFFED_ENTRIES: usize = 16_384;
 
 impl ContentState {
     pub fn new(pool: PgPool, settings: Settings, storage: Arc<Storage>) -> Self {
@@ -628,6 +640,9 @@ impl ContentState {
             source_uploads,
             challenge: RwLock::new(challenge_text()),
             content_get_limit,
+            worlds_sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(
+                WORLDS_SNIFFED_ENTRIES,
+            )),
         }
     }
 

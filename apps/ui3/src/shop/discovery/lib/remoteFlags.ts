@@ -1,8 +1,7 @@
 // from: shop@3a322cf9:app/src/lib/featureFlags.ts (getIsFeatureEnabled), app/src/hooks/useSuggestedForYouEnabled.ts
-// The rollout switches upstream reads from Decentraland's feature-flags service, read from the same file
-// under the same keys (`${app}-${feature}` in `dapps.json`), so turning one on turns it on in both Shops.
-// A host points at another service with `window.__SHOP_FEATURE_FLAGS__`. A flag is off while the file
-// loads, when it cannot be read, and when it is absent, as upstream's are.
+// The browser host's hold on the rollout switches (rolloutFlags.ts reads and evaluates the file): which service it
+// asks (`window.__SHOP_FEATURE_FLAGS__`, else Decentraland's), how long an answer lasts, and the hooks. A flag is
+// off while the file loads, when it cannot be read, and when it is absent, as upstream's are.
 //
 // As upstream, the file lives in a module snapshot for 60s rather than in the query cache, so a page
 // invalidating its queries (after a purchase) does not switch a flag off while it refetches. A read gets
@@ -11,36 +10,21 @@
 // payload (an address list, for one).
 
 import { useEffect, useSyncExternalStore } from "react";
+import {
+  FLAGS_SERVICE,
+  readFlagsFile,
+  remoteFlagOn,
+  remoteFlagVariantIn,
+  type FlagsTransport,
+  type RemoteFlag,
+  type RemoteFlagsAnswer,
+} from "@shop/discovery/lib/rolloutFlags";
 
-const DEFAULT_SERVICE = "https://feature-flags.decentraland.org";
-const APP = "dapps";
+export { parseRemoteFlags, REMOTE_FLAG, type RemoteFlag, type RemoteFlagsAnswer } from "@shop/discovery/lib/rolloutFlags";
+
 const TTL_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 const BACKOFF_MS = 10_000;
-
-export const REMOTE_FLAG = {
-  /** Whether the Shop asks for personalised suggestions at all; the row still hides itself without a signal. */
-  suggestedForYou: "shop-suggested-for-you",
-  /** Creators' running sales: discounted prices, the Best Deals rail and the deals filter (shop@94584a5c useCreatorSalesEnabled). */
-  creatorSales: "shop-creator-sales",
-  /**
-   * The Marketplace inside the Shop: resales, bids, LAND, NAME resale, listing and selling, an item's owners and
-   * sales, favorites lists. Shown only with this on AND a web3 wallet session (market/access.tsx). That only decides
-   * what is drawn: the lock is the node's shop service reading the same key and refusing those calls while it is
-   * off, so the flag is turned on only where the node does.
-   */
-  marketplaceFeatures: "shop-marketplace-features",
-  /**
-   * The creator's store dashboard, My Store (shop@3a322cf9 useMyStoreAccess). Its variant may name accounts, and
-   * then only they get in (seller/lib/featureFlags.ts).
-   */
-  myStore: "shop-my-store",
-} as const;
-
-export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
-
-/** The flags file as kept: each flag on only where it says `true`, and each enabled variant's string payload. */
-export type RemoteFlagsAnswer = { flags: Record<string, boolean>; variants: Record<string, string> };
 
 type FlagsWindow = Window & typeof globalThis & { __SHOP_FEATURE_FLAGS__?: string };
 type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>>; variants: Readonly<Record<string, string>> };
@@ -61,7 +45,7 @@ const getSnapshot = () => snapshot;
 
 function service(): string {
   const declared = typeof window !== "undefined" ? (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ : undefined;
-  return (declared || DEFAULT_SERVICE).replace(/\/$/, "");
+  return (declared || FLAGS_SERVICE).replace(/\/$/, "");
 }
 
 /** Bumped whenever the answer changes or a read gives up, so a gate waiting for an answer re-renders either way. */
@@ -77,29 +61,20 @@ function publish(next: Snapshot | null): void {
   notify();
 }
 
-/**
- * The service's answer as upstream keeps it (shop@3a322cf9 fetchSnapshot): a flag on only where it says `true`, and a
- * variant's payload only when the variant is enabled and its value a string; the rest of the envelope is dropped.
- */
-export function parseRemoteFlags(body: unknown): RemoteFlagsAnswer {
-  const file = (body && typeof body === "object" ? body : {}) as {
-    flags?: Record<string, unknown> | null;
-    variants?: Record<string, { enabled?: unknown; payload?: { value?: unknown } | null } | null> | null;
-  };
-  const flags: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(file.flags ?? {})) flags[key] = value === true;
-  const variants: Record<string, string> = {};
-  for (const [key, variant] of Object.entries(file.variants ?? {})) {
-    const value = variant?.payload?.value;
-    if (variant?.enabled === true && typeof value === "string") variants[key] = value;
+const fetchFlags: FlagsTransport = async (url, { signal }) => {
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    // An error's body is never read: it is let go without waiting on it (it may fail, or never end), so the status
+    // refuses the answer at once.
+    void res.body?.cancel().catch(() => undefined);
+    return { status: res.status, body: "" };
   }
-  return { flags, variants };
-}
+  return { status: res.status, body: await res.text() };
+};
 
-export async function readRemoteFlags(signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
-  const res = await fetch(`${service()}/${APP}.json`, { signal });
-  if (!res.ok) throw new Error(`feature flags: HTTP ${res.status}`);
-  return parseRemoteFlags(await res.json());
+/** Reads the flags file of `app` (the Shop's own unless named) from this page's flags service. */
+export async function readRemoteFlags(signal?: AbortSignal, app?: string): Promise<RemoteFlagsAnswer> {
+  return readFlagsFile(service(), fetchFlags, signal, app);
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
@@ -162,7 +137,7 @@ export function primeRemoteFlags(flags: Record<string, boolean> | null, variants
 
 /** A rollout flag's variant payload as last answered (upstream's getAddressListVariant reads it), or null without one. */
 export function remoteFlagVariant(flag: RemoteFlag): string | null {
-  return snapshot?.variants[`${APP}-${flag}`] ?? null;
+  return remoteFlagVariantIn(snapshot, flag);
 }
 
 /**
@@ -170,7 +145,7 @@ export function remoteFlagVariant(flag: RemoteFlag): string | null {
  * its answer primed before its first render (sites primes the loader's flags on both sides), so the two agree.
  */
 export function remoteFlag(flag: RemoteFlag): boolean {
-  return snapshot?.flags[`${APP}-${flag}`] === true;
+  return remoteFlagOn(snapshot, flag);
 }
 
 function useRefreshOnMount(): void {
@@ -186,7 +161,7 @@ function useRefreshOnMount(): void {
 export function useRemoteFlag(flag: RemoteFlag): boolean {
   const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   useRefreshOnMount();
-  return current?.flags[`${APP}-${flag}`] === true;
+  return remoteFlagOn(current, flag);
 }
 
 /**
@@ -194,7 +169,7 @@ export function useRemoteFlag(flag: RemoteFlag): boolean {
  * wait for the answer instead. A read that gave up answers false, as a flag that cannot be read is off.
  */
 export function remoteFlagState(flag: RemoteFlag): boolean | null {
-  if (snapshot) return snapshot.flags[`${APP}-${flag}`] === true;
+  if (snapshot) return remoteFlagOn(snapshot, flag);
   return failedAt !== null ? false : null;
 }
 

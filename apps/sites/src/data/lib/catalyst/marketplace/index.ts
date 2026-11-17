@@ -2,12 +2,12 @@ import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { parseCatalogItem, parseCatalogItems, parseCollection, parseMarketEnvelope, parseNftResult, parseOwnedAsset, parseOwnedAssets, type CatalogItem, type Collection, type EnsResult, type MarketEnvelope, type NftResult, type OwnedAsset } from "./schema";
 
-import { parseEvmAddress } from "@ui/shop/model/address";
-import { itemAsset } from "@ui/shop/model/asset";
-import type { ChainId } from "@ui/shop/model/chain";
-import { formatMana as formatExactMana, parseManaWei } from "@ui/shop/model/money";
-import { SIGNED_OUT } from "@ui/shop/model/settlement";
-import { ruleFor } from "@ui/shop/payment/rule";
+import { parseEvmAddress } from "@shop/model/address";
+import { itemAsset } from "@shop/model/asset";
+import type { ChainId } from "@shop/model/chain";
+import { formatMana as formatExactMana, parseManaWei } from "@shop/model/money";
+import { SIGNED_OUT } from "@shop/model/settlement";
+import { ruleFor } from "@shop/payment/rule";
 
 import { formatMana } from "./money";
 
@@ -203,7 +203,7 @@ function safeRarity(r: string | null | undefined): string {
 }
 
 /**
- * What a card may show, under the Shop's payment rule (ui3 shop/payment/rule, read for a signed-out
+ * What a card may show, under the Shop's payment rule (library/shop payment/rule, read for a signed-out
  * visitor): an eligible primary wearable or emote shows its credit price, or says the credit price is
  * unavailable when the quote failed (never a MANA fallback); anything MANA only (a resale, an item that
  * mints on Ethereum, a non-wearable) shows its MANA in exact units.

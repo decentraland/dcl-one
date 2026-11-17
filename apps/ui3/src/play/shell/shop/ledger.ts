@@ -13,7 +13,7 @@
 // other's checkpoint. A buyer's operations are found by their keys' prefix.
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
-import type { GroupProgress, GroupStatus } from '../../../shop/model/purchase'
+import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
 import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '../../lib/shopProtocol'
 
 /** What a purchase's dialog shows of one item it buys (one per unit: two of an item are two). */

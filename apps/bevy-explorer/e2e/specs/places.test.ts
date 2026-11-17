@@ -13,7 +13,7 @@
 // | TestFilterPlacesByCategory    | the Art entry of the category dropdown, not chip 3; the trigger's name shows the choice; the card list differs, not the first card | Partial |
 // | TestOpenPlacesFilterDropdown  | the sort dropdown (Most active, Most liked, Newest, Name), not Trending, Most Active and Compatible Only | Partial |
 import assert from 'node:assert/strict'
-import { settled, spec, until, type Explorer } from '../driver/index.ts'
+import { spec, until, type Explorer } from '../driver/index.ts'
 import { PAGES, closePage, openWithKey } from './pages.ts'
 
 const scenario = spec(import.meta.url)
@@ -23,7 +23,9 @@ const TEXT_TIMEOUT_MS = 10_000
 const GRID_TIMEOUT_MS = 40_000
 
 const SEARCH = { name: 'Search places', role: 'textbox' } as const
-const LOADING = { name: 'Loading', role: 'status' } as const
+/** The results panel, loading (`aria-busy`) from the moment the query changes (a tab, the
+ *  category, the search box's debounce) until its answer is shown. */
+const RESULTS = { name: 'Places results', role: 'region' } as const
 /** The two sections the page shows only on Explore all with no search and no category. */
 const HIGHLIGHTS = [
   { name: 'Live Now', role: 'heading' },
@@ -57,15 +59,17 @@ function sameList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((name, index) => name === b[index])
 }
 
-/** The first read with a card in it: the page has loaded places. */
-function waitForCards(explorer: Explorer, what: string): Promise<string[]> {
-  return until(() => placeCards(explorer), (cards) => cards.length > 0, { timeoutMs: GRID_TIMEOUT_MS, what })
+/** The cards that answer the page's current query, once the results panel has them. */
+async function loadedCards(explorer: Explorer): Promise<string[]> {
+  await explorer.hud.waitReady(RESULTS, GRID_TIMEOUT_MS)
+  return placeCards(explorer)
 }
 
-/** The cards after a reload: the spinner gone, then two reads agreeing. */
-async function loadedCards(explorer: Explorer): Promise<string[]> {
-  await until(() => explorer.hud.isVisible(LOADING), (loading) => !loading, { timeoutMs: GRID_TIMEOUT_MS, what: 'the places list to finish loading' })
-  return settled(() => placeCards(explorer), { timeoutMs: TEXT_TIMEOUT_MS, intervalMs: 500, what: 'the place cards to stop changing' })
+/** The current query's cards, which must be some. */
+async function waitForCards(explorer: Explorer, what: string): Promise<string[]> {
+  const cards = await loadedCards(explorer)
+  if (cards.length === 0) throw new Error(`no place cards once ${what}`)
+  return cards
 }
 
 async function highlightsShown(explorer: Explorer): Promise<boolean> {
@@ -87,12 +91,6 @@ function waitHighlightsBack(explorer: Explorer): Promise<boolean> {
 function searchWordOf(title: string): string {
   const words = title.split(/\s+/).filter((word) => /^[\p{L}\p{N}]{3,}$/u.test(word))
   return words.sort((a, b) => b.length - a.length)[0] ?? title
-}
-
-/** Escape leaves a focused field first; the next one closes the page. */
-async function leavePlaces(explorer: Explorer): Promise<void> {
-  await explorer.escape()
-  await closePage(explorer, 'places')
 }
 
 scenario('the Explore all, Favourites and My places tabs switch the results', async ({ explorer }) => {
@@ -122,7 +120,8 @@ scenario('searching places filters the cards and emptying the field restores the
 
   const typed = await explorer.hud.fill(SEARCH, query)
   assert.equal(typed.value, query, 'the search field should hold the typed query')
-  const found = await until(() => placeCards(explorer), (cards) => cards.length > 0 && !sameList(cards, before), { timeoutMs: GRID_TIMEOUT_MS, what: `the places matching "${query}"` })
+  const found = await loadedCards(explorer)
+  assert.ok(found.length > 0 && !sameList(found, before), `Search for "${query}" should list other places than Explore all`)
   assert.ok(
     found.some((name) => name.toLowerCase().includes(query.toLowerCase())),
     `Search should return a place named "${query}", got: ${found.slice(0, 3).join(' | ')}`
@@ -130,11 +129,11 @@ scenario('searching places filters the cards and emptying the field restores the
   if (highlights) await waitHighlightsHidden(explorer)
 
   await explorer.hud.fill(SEARCH, '')
-  const restored = await until(() => placeCards(explorer), (cards) => cards.length > 0 && !sameList(cards, found), { timeoutMs: GRID_TIMEOUT_MS, what: 'the places after the search was emptied' })
-  assert.ok(restored.length > 0, 'Emptying the search should bring the places back')
+  const restored = await loadedCards(explorer)
+  assert.ok(restored.length > 0 && !sameList(restored, found), 'Emptying the search should bring the places back')
   if (highlights) await waitHighlightsBack(explorer)
   assert.equal(await explorer.hud.value(SEARCH), '', 'the search field should be empty')
-  await leavePlaces(explorer)
+  await closePage(explorer, 'places')
 })
 
 scenario('a place detail opens from a card', async () => {}, {

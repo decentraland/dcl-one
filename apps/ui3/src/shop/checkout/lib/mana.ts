@@ -5,8 +5,8 @@
 
 import { decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
 
-import { CHAIN } from "../../model/chain";
-import { AGGREGATOR_ABI, ERC20_ABI, MARKETPLACE_ABI } from "../chain/abi";
+import { CHAIN } from "@shop/model/chain";
+import { AGGREGATOR_ABI, ERC20_ABI, MARKETPLACE_ABI } from "@shop/checkout/chain/abi";
 import { ethereumChainId, settlementChainId } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
 import { shopChainReader, type ChainReader } from "../chain/rpc";

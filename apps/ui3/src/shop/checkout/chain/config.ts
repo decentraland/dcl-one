@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/config/index.ts (chainId, rpcUrl, ethereumChainId, ethereumRpcUrl, relayerUrl),
 //       app/src/config/env/{prod,dev}.json, app/src/lib/gasless-config.ts
 import { catalystBase } from "../../../data/catalyst/client";
-import { CHAIN, type ChainId } from "../../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 export type ShopChainOverrides = {
   settlementChainId?: number;

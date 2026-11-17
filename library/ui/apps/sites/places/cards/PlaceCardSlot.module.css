@@ -1,0 +1,158 @@
+/* TODO(shared-card): provisional card, source PlaceCard (Figma 435.25×346 on a 1920 frame). Sizes
+   are cqw of the cell, `N / 435.25 * 100` for an N px design measurement. */
+.cell {
+  container-type: inline-size;
+  list-style: none;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 5.514cqw;
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-text-primary);
+  transition: box-shadow 0.25s ease;
+}
+
+.card:hover {
+  box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
+}
+
+.card:has(.titleLink:focus-visible) {
+  outline: 2px solid var(--dcl-brand-ruby);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .card {
+    border-radius: var(--dcl-radius-xl);
+  }
+}
+
+.media {
+  position: relative;
+  aspect-ratio: 435.25 / 222;
+  padding: 2.757cqw 2.757cqw 0;
+  overflow: hidden;
+  background: var(--dcl-neutrals-onix-dark-1);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2.757cqw;
+  padding: 3.676cqw 5.514cqw 5.514cqw;
+}
+
+.title {
+  composes: text68656164696e672f34 from '../../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  margin: 0;
+  font-size: 4.595cqw;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.titleLink {
+  min-width: 0;
+}
+
+/* Holds Jump In's height so the card does not grow on hover; the meta row and Jump In share it. */
+.swap {
+  position: relative;
+  min-height: 10.953cqw;
+}
+
+.meta {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2.298cqw;
+  transition: opacity 0.375s ease;
+}
+
+.location {
+  composes: text626f64792f736d from '../../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.89cqw;
+  padding: 0.89cqw 1.781cqw 0.89cqw 0.89cqw;
+  border-radius: 1.336cqw;
+  background: color-mix(in srgb, var(--dcl-neutrals-white) 5%, transparent);
+  color: var(--dcl-neutrals-pearl);
+  font-size: 3.217cqw;
+}
+
+.location svg {
+  width: 3.446cqw;
+  height: 3.446cqw;
+}
+
+/* Parked below the card's clipped edge and raised on hover or focus, as source. */
+.jumpIn {
+  position: absolute;
+  inset: auto 0 0;
+  height: 10.953cqw;
+  font-size: 3.809cqw;
+  opacity: 0;
+  transform: translateY(calc(100% + 5.514cqw));
+  transition:
+    opacity 0.375s ease,
+    transform 0.375s ease,
+    background-color 0.15s ease;
+}
+
+.card:hover .jumpIn,
+.jumpIn:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.card:hover .meta,
+.card:has(.jumpIn:focus-visible) .meta {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Touch has no hover: the card keeps its by-line, and Jump In stays reachable from the place page. */
+@media (hover: none) {
+  .card:hover .jumpIn {
+    opacity: 0;
+    transform: translateY(calc(100% + 5.514cqw));
+  }
+
+  .card:hover .meta {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jumpIn {
+    transform: none;
+    transition: opacity 0.1s linear;
+  }
+
+  .card:hover .jumpIn {
+    transform: none;
+  }
+}
+
+.skeleton .media,
+.skeletonLine {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.skeletonLine {
+  display: block;
+  height: 4cqw;
+  border-radius: var(--dcl-radius-sm);
+}
+
+.skeletonLine + .skeletonLine {
+  width: 60%;
+}

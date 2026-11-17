@@ -3,8 +3,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { manaWei, usdCents, ZERO_MANA } from "../../model/money";
-import type { CartLineDisplay } from "../../model/purchase";
+import { manaWei, usdCents, ZERO_MANA } from "@shop/model/money";
+import type { CartLineDisplay } from "@shop/model/purchase";
 import PaymentMethodStep, { type StepRail, type StepRails } from "./PaymentMethodStep";
 
 const display = { name: "Rainbow Hat", rarity: "epic", category: "wearable" } as CartLineDisplay;

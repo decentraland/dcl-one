@@ -137,7 +137,12 @@ export function buildDeployFormData(
     form.append(`authChain[${i}][signature]`, link.signature ?? "");
   });
   form.append(prepared.entityId, new Blob([toArrayBuffer(prepared.entityFile)]), prepared.entityId);
+  // Byte-identical files share a hash; the server refuses a repeated part
+  // name, so each hash travels once while the entity keeps every path.
+  const sent = new Set([prepared.entityId]);
   for (const f of prepared.files) {
+    if (sent.has(f.hash)) continue;
+    sent.add(f.hash);
     form.append(f.hash, new Blob([toArrayBuffer(f.content)]), f.hash);
   }
   return form;

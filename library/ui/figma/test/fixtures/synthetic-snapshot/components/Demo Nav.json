@@ -1,0 +1,2809 @@
+{
+ "page": {"id":"10:7","name":"Demo Nav"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "50:1",
+   "name": "DemoNav",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {
+    "viewport": {"type":"VARIANT","default":"large-desktop","options":["large-desktop","desktop","mobile"]},
+    "signed-in": {"type":"VARIANT","default":"false","options":["false","true"]},
+    "balances": {"type":"VARIANT","default":"none","options":["none","credits","credits-mana"]},
+    "theme": {"type":"VARIANT","default":"dark","options":["dark","light"]}
+   },
+   "base": {
+    "id": "50:2",
+    "name": "viewport=large-desktop, signed-in=false, balances=none, theme=dark",
+    "props": {"viewport":"large-desktop","signed-in":"false","balances":"none","theme":"dark"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "viewport=large-desktop, signed-in=false, balances=none, theme=dark",
+     "w": 1536,
+     "h": 64,
+     "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+     "sizing": ["FIXED","FIXED"],
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "children": [
+      {
+       "type": "FRAME",
+       "name": "Left",
+       "w": 400,
+       "h": 40,
+       "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+       "sizing": ["HUG","HUG"],
+       "children": [
+        {
+         "type": "FRAME",
+         "name": "Logo",
+         "w": 32,
+         "h": 32,
+         "sizing": ["FIXED","FIXED"],
+         "radius": 8,
+         "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+        },
+        {
+         "type": "FRAME",
+         "name": "Tabs",
+         "w": 344,
+         "h": 37,
+         "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+         "children": [
+          {
+           "type": "FRAME",
+           "name": "MenuTab",
+           "w": 80,
+           "h": 37,
+           "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+           "children": [
+            {
+             "type": "TEXT",
+             "name": "Label",
+             "w": 56,
+             "h": 21,
+             "sizing": ["HUG","HUG"],
+             "text": "Discover",
+             "textStyle": "body/sm",
+             "font": "Inter Regular",
+             "fontSize": 14,
+             "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+            }
+           ]
+          },
+          {
+           "type": "FRAME",
+           "name": "MenuTab",
+           "w": 80,
+           "h": 37,
+           "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+           "children": [
+            {
+             "type": "TEXT",
+             "name": "Label",
+             "w": 56,
+             "h": 21,
+             "sizing": ["HUG","HUG"],
+             "text": "Shop",
+             "textStyle": "body/sm",
+             "font": "Inter Regular",
+             "fontSize": 14,
+             "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+            }
+           ]
+          },
+          {
+           "type": "FRAME",
+           "name": "MenuTab",
+           "w": 80,
+           "h": 37,
+           "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+           "children": [
+            {
+             "type": "TEXT",
+             "name": "Label",
+             "w": 56,
+             "h": 21,
+             "sizing": ["HUG","HUG"],
+             "text": "Create",
+             "textStyle": "body/sm",
+             "font": "Inter Regular",
+             "fontSize": 14,
+             "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+            }
+           ]
+          },
+          {
+           "type": "FRAME",
+           "name": "MenuTab",
+           "w": 80,
+           "h": 37,
+           "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+           "children": [
+            {
+             "type": "TEXT",
+             "name": "Label",
+             "w": 56,
+             "h": 21,
+             "sizing": ["HUG","HUG"],
+             "text": "Learn",
+             "textStyle": "body/sm",
+             "font": "Inter Regular",
+             "fontSize": 14,
+             "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "FRAME",
+       "name": "Right",
+       "w": 240,
+       "h": 40,
+       "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+       "sizing": ["HUG","HUG"],
+       "children": [
+        {
+         "type": "FRAME",
+         "name": "SignIn",
+         "w": 96,
+         "h": 37,
+         "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+         "radius": 8,
+         "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+         "children": [
+          {
+           "type": "TEXT",
+           "name": "Label",
+           "w": 56,
+           "h": 21,
+           "sizing": ["HUG","HUG"],
+           "text": "Sign in",
+           "textStyle": "body/sm",
+           "font": "Inter Regular",
+           "fontSize": 14,
+           "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "50:3",
+     "name": "viewport=large-desktop, signed-in=false, balances=none, theme=light",
+     "props": {"viewport":"large-desktop","signed-in":"false","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=large-desktop, signed-in=false, balances=none, theme=light",
+        "w": 1536,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "SignIn",
+            "w": 96,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Label",
+              "w": 56,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "Sign in",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:4",
+     "name": "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+     "props": {"viewport":"large-desktop","signed-in":"true","balances":"none","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "w": 1536,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:5",
+     "name": "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+     "props": {"viewport":"large-desktop","signed-in":"true","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "w": 1536,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:6",
+     "name": "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+     "props": {"viewport":"large-desktop","signed-in":"true","balances":"credits","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "w": 1536,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:7",
+     "name": "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+     "props": {"viewport":"large-desktop","signed-in":"true","balances":"credits-mana","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "w": 1536,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Mana",
+              "w": 16,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "45",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Polygon",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "7",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:8",
+     "name": "viewport=desktop, signed-in=false, balances=none, theme=dark",
+     "props": {"viewport":"desktop","signed-in":"false","balances":"none","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=false, balances=none, theme=dark",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "SignIn",
+            "w": 96,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Label",
+              "w": 56,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "Sign in",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:9",
+     "name": "viewport=desktop, signed-in=false, balances=none, theme=light",
+     "props": {"viewport":"desktop","signed-in":"false","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=false, balances=none, theme=light",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "SignIn",
+            "w": 96,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Label",
+              "w": 56,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "Sign in",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:10",
+     "name": "viewport=desktop, signed-in=true, balances=none, theme=dark",
+     "props": {"viewport":"desktop","signed-in":"true","balances":"none","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:11",
+     "name": "viewport=desktop, signed-in=true, balances=none, theme=light",
+     "props": {"viewport":"desktop","signed-in":"true","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:12",
+     "name": "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+     "props": {"viewport":"desktop","signed-in":"true","balances":"credits","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:13",
+     "name": "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+     "props": {"viewport":"desktop","signed-in":"true","balances":"credits-mana","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "w": 1024,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 400,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Tabs",
+            "w": 344,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Discover",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Shop",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Create",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             },
+             {
+              "type": "FRAME",
+              "name": "MenuTab",
+              "w": 80,
+              "h": 37,
+              "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":0,"main":"CENTER","cross":"CENTER"},
+              "children": [
+               {
+                "type": "TEXT",
+                "name": "Label",
+                "w": 56,
+                "h": 21,
+                "sizing": ["HUG","HUG"],
+                "text": "Learn",
+                "textStyle": "body/sm",
+                "font": "Inter Regular",
+                "fontSize": 14,
+                "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Mana",
+              "w": 16,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "45",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Polygon",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "7",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:14",
+     "name": "viewport=mobile, signed-in=false, balances=none, theme=dark",
+     "props": {"viewport":"mobile","signed-in":"false","balances":"none","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=false, balances=none, theme=dark",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "SignIn",
+            "w": 96,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Label",
+              "w": 56,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "Sign in",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:15",
+     "name": "viewport=mobile, signed-in=false, balances=none, theme=light",
+     "props": {"viewport":"mobile","signed-in":"false","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=false, balances=none, theme=light",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "SignIn",
+            "w": 96,
+            "h": 37,
+            "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Label",
+              "w": 56,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "Sign in",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:16",
+     "name": "viewport=mobile, signed-in=true, balances=none, theme=dark",
+     "props": {"viewport":"mobile","signed-in":"true","balances":"none","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=true, balances=none, theme=dark",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:17",
+     "name": "viewport=mobile, signed-in=true, balances=none, theme=light",
+     "props": {"viewport":"mobile","signed-in":"true","balances":"none","theme":"light"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=true, balances=none, theme=light",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:18",
+     "name": "viewport=mobile, signed-in=true, balances=credits, theme=dark",
+     "props": {"viewport":"mobile","signed-in":"true","balances":"credits","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=true, balances=credits, theme=dark",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "50:19",
+     "name": "viewport=mobile, signed-in=true, balances=credits-mana, theme=dark",
+     "props": {"viewport":"mobile","signed-in":"true","balances":"credits-mana","theme":"dark"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "viewport=mobile, signed-in=true, balances=credits-mana, theme=dark",
+        "w": 375,
+        "h": 64,
+        "layout": {"mode":"HORIZONTAL","pad":[12,24,12,24],"gap":0,"main":"SPACE_BETWEEN","cross":"CENTER"},
+        "sizing": ["FIXED","FIXED"],
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "FRAME",
+          "name": "Left",
+          "w": 80,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":24,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "Logo",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 8,
+            "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "MenuButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}]
+           }
+          ]
+         },
+         {
+          "type": "FRAME",
+          "name": "Right",
+          "w": 240,
+          "h": 40,
+          "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+          "sizing": ["HUG","HUG"],
+          "children": [
+           {
+            "type": "FRAME",
+            "name": "NotificationsButton",
+            "w": 32,
+            "h": 32,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":0,"main":"CENTER","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Count",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "3",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           },
+           {
+            "type": "FRAME",
+            "name": "ProfileButton",
+            "w": 32,
+            "h": 32,
+            "sizing": ["FIXED","FIXED"],
+            "radius": 16,
+            "fills": [{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]
+           },
+           {
+            "type": "FRAME",
+            "name": "Balances",
+            "w": 160,
+            "h": 21,
+            "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+            "children": [
+             {
+              "type": "TEXT",
+              "name": "Credits",
+              "w": 24,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "120",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Mana",
+              "w": 16,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "45",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             },
+             {
+              "type": "TEXT",
+              "name": "Polygon",
+              "w": 8,
+              "h": 21,
+              "sizing": ["HUG","HUG"],
+              "text": "7",
+              "textStyle": "body/sm",
+              "font": "Inter Regular",
+              "fontSize": 14,
+              "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "component",
+   "id": "50:30",
+   "name": "Nav Badge",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "50:30",
+    "name": "Nav Badge",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Nav Badge",
+     "w": 16,
+     "h": 16,
+     "children": [
+      {
+       "type": "RECTANGLE",
+       "name": "Mark",
+       "w": 4,
+       "h": 4,
+       "x": 6,
+       "y": 6,
+       "png": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAJGlDQ1BTeW50aGV0aWMAAHicK67MK8lILclMVigoyk/LzEkFAD+aBu0EsIurAAAAIklEQVR4nGNgYWBwaGhgAAOHhgNgCspDYjMgsx3gbAswFwDOIAS9v1oe2wAAAABJRU5ErkJggg==",
+       "sum": "1jdbil1"
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}

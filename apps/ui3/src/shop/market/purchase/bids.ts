@@ -8,9 +8,9 @@
 // option exists anywhere in this module.
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
-import { parseManaWei } from "../../model/money";
-import { LEGACY_ACCEPT_BID_ABI, LEGACY_BID, LEGACY_BID_ABI, latestOffChainMarketplace } from "../lib/contracts";
+import type { ChainId } from "@shop/model/chain";
+import { parseManaWei } from "@shop/model/money";
+import { LEGACY_ACCEPT_BID_ABI, LEGACY_BID, LEGACY_BID_ABI, latestOffChainMarketplace } from "@shop/market/lib/contracts";
 import type { Bid } from "../lib/api";
 import { ensureManaAllowance } from "../lib/mana";
 import { acceptTrade, cancelTrade, createBidTrade, ensureApproval, fetchTrade, postTrade, type Trade } from "../lib/trades";

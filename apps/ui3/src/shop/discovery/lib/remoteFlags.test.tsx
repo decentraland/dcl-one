@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import { catalogClient, ShopHarness } from "../fixtures";
 import { invalidateShopQueries } from "../query";
-import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlagVariant, useRemoteFlag } from "./remoteFlags";
+import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlagVariant, useRemoteFlag } from "./remoteFlags";
 
 type FlagsWindow = Window & { __SHOP_FEATURE_FLAGS__?: string };
 
@@ -52,6 +52,24 @@ describe("fetchRemoteFlags", () => {
     (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ = "https://flags.example/";
     await fetchRemoteFlags();
     expect(requested).toEqual(["https://flags.example/dapps.json"]);
+  });
+});
+
+describe("an HTTP error from the flags service", () => {
+  it("refuses with its status, not with a body that fails", async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("broken error body"));
+      },
+    });
+    answers.push(() => new Response(broken, { status: 503 }));
+    await expect(readRemoteFlags()).rejects.toThrow("feature flags: HTTP 503");
+  });
+
+  it("refuses at once, without waiting on a body that never ends", async () => {
+    answers.push(() => new Response(new ReadableStream({ start() {} }), { status: 503 }));
+    const waiting = new Promise((_, reject) => setTimeout(() => reject(new Error("still waiting on the body")), 200));
+    await expect(Promise.race([readRemoteFlags(), waiting])).rejects.toThrow("feature flags: HTTP 503");
   });
 });
 

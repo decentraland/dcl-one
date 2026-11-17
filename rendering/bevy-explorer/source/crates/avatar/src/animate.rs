@@ -37,7 +37,8 @@ use comms::{
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
 use scene_runner::{
-    asset_preload::plugin::PreloadedGltf, permissions::Permission, update_world::animation::Clips,
+    asset_preload::plugin::PreloadedGltf, permissions::Permission,
+    scene_partition::PartitionedEmoteDownloads, update_world::animation::Clips,
 };
 
 use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
@@ -71,8 +72,8 @@ pub struct AvatarAnimState {
 /// with this group masked so those bones stay with locomotion.
 pub const LOWER_BODY_MASK_GROUP: u32 = 0;
 const LOWER_BODY_MASK: AnimationMask = 1 << LOWER_BODY_MASK_GROUP;
-/// Lowercased bone names in the lower-body group — the complement of unity's
-/// `UpperBodyAvatarMask` (the `Avatar_Spine` subtree), so hips translation stays with locomotion.
+/// Lowercased hips and leg bones; the `Avatar_Spine` subtree stays available to
+/// upper-body emotes while hips translation stays with locomotion.
 pub const LOWER_BODY_BONES: [&str; 9] = [
     "avatar_hips",
     "avatar_leftupleg",
@@ -100,7 +101,7 @@ fn masked_weight(share: f32) -> f32 {
 
 /// An upper-body emote (`EmoteCommand` with `EmoteMask::UpperBody`): a request that overlays
 /// locomotion, kept while a full-body emote (or the glide pose) plays and resumed afterwards if it
-/// loops — unity's masked-emote semantics. `animate` owns the request; `play_masked_emote` plays
+/// loops. `animate` owns the request; `play_masked_emote` plays
 /// it. Foreign avatars hold no suspended request: the wire has one emote slot and re-announces a
 /// resume.
 #[derive(Component, Default)]
@@ -157,7 +158,14 @@ impl Plugin for AvatarAnimationPlugin {
             Update,
             (
                 (handle_trigger_emotes, broadcast_emote).before(animate),
-                (animate, play_current_emote, play_masked_emote)
+                // `file_emote_downloads` sits between choosing this frame's emotes and starting
+                // their loads, so an emote's hash has its owner when its first request is queued
+                (
+                    animate,
+                    file_emote_downloads,
+                    play_current_emote,
+                    play_masked_emote,
+                )
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
@@ -166,6 +174,67 @@ impl Plugin for AvatarAnimationPlugin {
         );
         app.add_console_command::<EmoteConsoleCommand, _>(emote_console_command);
     }
+}
+
+/// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
+/// of the emotes it plays (the full-body one and the upper-body request) go on the avatar as
+/// `PartitionedEmoteDownloads`, so the request slots rank an emote's definition, model and
+/// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
+/// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
+/// download, so neither is listed. Written only when the list changes.
+#[allow(clippy::type_complexity)]
+pub(crate) fn file_emote_downloads(
+    mut commands: Commands,
+    avatars: Query<
+        (
+            Entity,
+            &ActiveEmote,
+            Option<&MaskedEmote>,
+            Option<&PartitionedEmoteDownloads>,
+        ),
+        With<AvatarAnimPlayer>,
+    >,
+    mut emote_loader: CollectibleManager<Emote>,
+) {
+    for (entity, active, masked, filed) in &avatars {
+        let masked = masked
+            .and_then(|masked| masked.request.as_ref())
+            .map(|request| &request.urn);
+        let hashes = emote_download_hashes(std::iter::once(&active.urn).chain(masked), |urn| {
+            emote_loader.get_hash(urn).ok()
+        });
+        match (filed, hashes.is_empty()) {
+            (None, true) => {}
+            (Some(filed), false) if filed.0 == hashes => {}
+            (_, true) => {
+                commands
+                    .entity(entity)
+                    .try_remove::<PartitionedEmoteDownloads>();
+            }
+            (_, false) => {
+                commands
+                    .entity(entity)
+                    .try_insert(PartitionedEmoteDownloads(hashes));
+            }
+        }
+    }
+}
+
+/// The entity hashes behind the emotes an avatar plays, each once, sorted: `resolve` gives a
+/// collectible emote's hash once its pointer is known. Scene emotes are left out without asking,
+/// since they are no collectible and their content downloads under the scene's hash.
+pub(crate) fn emote_download_hashes<'a>(
+    urns: impl IntoIterator<Item = &'a EmoteUrn>,
+    resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
+) -> Vec<String> {
+    let mut hashes: Vec<String> = urns
+        .into_iter()
+        .filter(|urn| urn.scene_emote().is_none())
+        .filter_map(resolve)
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    hashes
 }
 
 #[derive(Component, Default)]
@@ -454,7 +523,7 @@ impl ActiveEmote {
 /// The one emote the avatar is playing as far as the wire and scenes are concerned: a triggered
 /// full-body emote (velocity-selected locomotion and scene movement anims aren't user emotes),
 /// else the upper-body request while it's rendered. A full-body emote over an upper-body one takes
-/// its place, and the resume afterwards is a fresh start (as unity does).
+/// its place, and the resume afterwards is a fresh start.
 fn playing<'a>(active: &'a ActiveEmote, masked: &'a MaskedEmote) -> Option<&'a EmotePlayback> {
     if active.source == ActiveEmoteSource::TriggeredEmote {
         return Some(&active.playback);
@@ -634,7 +703,7 @@ fn animate(
             let scene_cancels = scene_anim.is_some_and(|req| !req.idle);
             // Scene-driven animations handle their own motion semantics; don't cancel on move. Only
             // the local player's emotes cancel on motion — foreign emotes persist under movement
-            // until an explicit stop arrives over the wire (matching Unity), so we never infer their
+            // until an explicit stop arrives over the wire, so we never infer their
             // cancellation from interpolated velocity.
             let velocity_cancels = maybe_foreign.is_none()
                 && scene_anim.is_none()
@@ -853,7 +922,7 @@ fn animate(
 
         // The upper-body request overlays locomotion but not a full-body emote, nor the glide
         // pose (which owns the arms). A looping one waits that out and resumes from the top; a
-        // one-shot is dropped, as in unity.
+        // one-shot is dropped.
         if let Some(request) = masked.request.as_mut() {
             let suspended = active_emote.source == ActiveEmoteSource::TriggeredEmote
                 || active_emote.urn == *URN_GLIDE;
@@ -1174,8 +1243,7 @@ fn ensure_prop(
                 upload_cpu_mesh(&mut params.meshes, mesh);
             }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
-                // hide stuff like unity
-                // what a mess
+                // Reference, base and mask geometry is not part of the visible prop.
                 if let Some(name) = maybe_name.map(Name::as_str).map(str::to_ascii_lowercase) {
                     if name.contains("_reference")
                         || name.ends_with("_basemesh")
@@ -1952,7 +2020,7 @@ fn play_current_emote(
 /// the `Slot::UpperBody` overlay: faded in on start and out when the request ends or is suspended.
 ///
 /// The emote's prop and audio come along like a full-body emote's, and go the moment the request
-/// ends or is suspended (unity drops them too; a resume brings them back from the top).
+/// ends or is suspended; a resume brings them back from the top.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn play_masked_emote(
     mut commands: Commands,

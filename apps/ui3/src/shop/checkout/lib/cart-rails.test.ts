@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { evmAddress } from "../../model/address";
-import { itemAsset, tokenAsset } from "../../model/asset";
-import { CHAIN } from "../../model/chain";
-import type { ManaWei, UsdCents } from "../../model/money";
-import type { CartLine } from "../../model/purchase";
-import type { OptionState, PaymentOptionView, PaymentPresentation } from "../../payment/present";
+import { evmAddress } from "@shop/model/address";
+import { itemAsset, tokenAsset } from "@shop/model/asset";
+import { CHAIN } from "@shop/model/chain";
+import type { ManaWei, UsdCents } from "@shop/model/money";
+import type { CartLine } from "@shop/model/purchase";
+import type { OptionState, PaymentOptionView, PaymentPresentation } from "@shop/payment/present";
 import { cartRails } from "./cart-rails";
 
 const collection = evmAddress("0x000000000000000000000000000000000000c011");

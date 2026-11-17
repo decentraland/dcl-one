@@ -7,24 +7,29 @@
 //! player no other player's.
 //!
 //! Quotas: a write takes `pg_advisory_xact_lock` on the scope's key (a
-//! world's quota spans all its scenes, a shared realm's is per scene), reads
+//! world's quota spans its scenes except retired ones, whose rows are kept
+//! but not counted; a shared realm's is per scene), reads
 //! the size picture and inserts only when the limits hold, in one statement
 //! (`quota_upsert_sql`); the aggregate is the `*_size_idx` index-only range.
 //! The current time is a bind.
 //!
-//! Cache: a per-process memo of single values (source: the row; freshness:
-//! `STORAGE_CACHE_TTL_SECONDS`; invalidation: every write and delete path in
-//! this process, per key or per scope prefix; rebuild: none, a miss re-reads).
-//! Another process's write invalidates nothing here, so the memo is off by
-//! default on every node. Opt in with `STORAGE_CACHE_ENABLED=true` only for a
-//! single storage-serving process. The TTL bounds stale reads if another
-//! writer exists; primary and replica roles do not make caching safe.
+//! Cache: upstream's per-process LRU of single values (source: the row;
+//! freshness: `STORAGE_CACHE_TTL_SECONDS` from the write into the cache;
+//! bound: `STORAGE_CACHE_MAX` entries, least recently used evicted first;
+//! invalidation: every write and delete path in this process, per key or per
+//! scope prefix; a generation check rejects fills racing an invalidation;
+//! rebuild: none, a miss re-reads; misses are never cached). On
+//! by default, as upstream (`STORAGE_CACHE_ENABLED=false` turns it off).
+//! Another process's write invalidates nothing here: with several
+//! storage-serving processes a read may be stale for up to the TTL after
+//! another process's write, as on upstream's replicas.
 
 use crate::shared::now_utc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use hashlink::LruCache;
+use parking_lot::Mutex;
 use sqlx::{PgExecutor, PgPool, Row};
 
 use crate::comms::world_identity::SceneNamespace;
@@ -190,14 +195,25 @@ fn player_scope_prefix(ns: &SceneNamespace, player: Option<&str>) -> String {
 
 pub struct StorageCache {
     cfg: StorageCacheConfig,
-    map: DashMap<String, (Instant, Arc<str>)>,
+    state: Mutex<CacheState>,
+}
+
+struct CacheState {
+    values: LruCache<String, (Instant, Arc<str>)>,
+    // A cache-wide generation avoids an unbounded map of invalidated keys.
+    // An unrelated write can discard a pending fill, but never an existing hit.
+    generation: u64,
 }
 
 impl StorageCache {
     pub fn new(cfg: StorageCacheConfig) -> Self {
+        let capacity = usize::try_from(cfg.max_entries).unwrap_or(usize::MAX);
         Self {
             cfg,
-            map: DashMap::new(),
+            state: Mutex::new(CacheState {
+                values: LruCache::new(capacity),
+                generation: 0,
+            }),
         }
     }
 
@@ -205,45 +221,61 @@ impl StorageCache {
         Duration::from_secs(self.cfg.ttl_seconds)
     }
 
+    /// A fresh hit becomes the most recently used; an expired entry is dropped.
     pub fn get(&self, key: &str) -> Option<Arc<str>> {
         if !self.cfg.enabled {
             return None;
         }
-        let entry = self.map.get(key)?;
-        (entry.0.elapsed() < self.ttl()).then(|| entry.1.clone())
+        let mut state = self.state.lock();
+        let map = &mut state.values;
+        let (at, value) = map.get(key)?;
+        if at.elapsed() < self.ttl() {
+            return Some(value.clone());
+        }
+        map.remove(key);
+        None
     }
 
-    /// Bounded: at capacity the expired entries go first, then the whole
-    /// memo (a miss costs one PK read; a stale hit would cost correctness).
-    pub fn insert(&self, key: String, value: Arc<str>) {
+    /// Capture before starting the SQL read.
+    fn generation(&self) -> u64 {
+        self.state.lock().generation
+    }
+
+    /// A raced invalidation discards the fill; otherwise evict the LRU at capacity.
+    fn insert_if_current(&self, key: String, value: Arc<str>, generation: u64) {
         if !self.cfg.enabled || value.len() > self.cfg.max_value_bytes {
             return;
         }
-        if self.map.len() as u64 >= self.cfg.max_entries {
-            let ttl = self.ttl();
-            self.map.retain(|_, (at, _)| at.elapsed() < ttl);
-            if self.map.len() as u64 >= self.cfg.max_entries {
-                self.map.clear();
-            }
+        let mut state = self.state.lock();
+        if state.generation == generation {
+            state.values.insert(key, (Instant::now(), value));
         }
-        self.map.insert(key, (Instant::now(), value));
     }
 
     pub fn invalidate(&self, key: &str) {
         if self.cfg.enabled {
-            self.map.remove(key);
+            let mut state = self.state.lock();
+            state.generation = state.generation.wrapping_add(1);
+            state.values.remove(key);
         }
     }
 
     pub fn invalidate_prefix(&self, prefix: &str) {
         if self.cfg.enabled {
-            self.map.retain(|k, _| !k.starts_with(prefix));
+            let mut state = self.state.lock();
+            state.generation = state.generation.wrapping_add(1);
+            state.values.retain(|k, _| !k.starts_with(prefix));
         }
     }
 
     #[cfg(test)]
+    fn insert(&self, key: String, value: Arc<str>) {
+        self.insert_if_current(key, value, self.generation());
+    }
+
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.map.len()
+        self.state.lock().values.len()
     }
 }
 
@@ -269,6 +301,7 @@ impl Store {
         if let Some(hit) = self.cache.get(&cache_key) {
             return Ok(Some(hit));
         }
+        let generation = self.cache.generation();
         let row = sqlx::query("SELECT value::text AS value FROM worlds.world_storage WHERE realm = $1 AND scene_namespace = $2 AND key = $3")
             .bind(ns.realm())
             .bind(ns.scene_namespace())
@@ -277,7 +310,8 @@ impl Store {
             .await?;
         let Some(row) = row else { return Ok(None) };
         let value: Arc<str> = Arc::from(row.get::<String, _>("value"));
-        self.cache.insert(cache_key, value.clone());
+        self.cache
+            .insert_if_current(cache_key, value.clone(), generation);
         Ok(Some(value))
     }
 
@@ -409,6 +443,7 @@ impl Store {
         if let Some(hit) = self.cache.get(&cache_key) {
             return Ok(Some(hit));
         }
+        let generation = self.cache.generation();
         let row = sqlx::query(
             "SELECT value::text AS value FROM worlds.player_storage
              WHERE realm = $1 AND scene_namespace = $2 AND player_address = $3 AND key = $4",
@@ -421,7 +456,8 @@ impl Store {
         .await?;
         let Some(row) = row else { return Ok(None) };
         let value: Arc<str> = Arc::from(row.get::<String, _>("value"));
-        self.cache.insert(cache_key, value.clone());
+        self.cache
+            .insert_if_current(cache_key, value.clone(), generation);
         Ok(Some(value))
     }
 
@@ -819,6 +855,27 @@ mod tests {
     }
 
     #[test]
+    fn a_fill_started_before_invalidation_cannot_restore_stale_data() {
+        for prefix in [false, true] {
+            let cache = StorageCache::new(cache_cfg(true));
+            let key = "w:realm:scene:key".to_string();
+            let read_generation = cache.generation();
+            // The SQL read has captured the old value; a write or delete
+            // completes before that read gets around to filling the cache.
+            if prefix {
+                cache.invalidate_prefix("w:realm:scene:");
+            } else {
+                cache.invalidate(&key);
+            }
+            cache.insert_if_current(key.clone(), Arc::from("old"), read_generation);
+            assert_eq!(cache.get(&key), None, "a delete must stay invalidated");
+            cache.insert(key.clone(), Arc::from("new"));
+            cache.insert_if_current(key.clone(), Arc::from("old"), read_generation);
+            assert_eq!(cache.get(&key).as_deref(), Some("new"));
+        }
+    }
+
+    #[test]
     fn cache_hits_after_insert_and_misses_after_invalidate() {
         let cache = StorageCache::new(cache_cfg(true));
         let key = world_value_cache_key(&ns("w.dcl.eth", "0,0"), "k");
@@ -868,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_is_bounded() {
+    fn the_cache_evicts_the_least_recently_used_entry() {
         let cache = StorageCache::new(StorageCacheConfig {
             enabled: true,
             ttl_seconds: 60,
@@ -879,13 +936,27 @@ mod tests {
             cache.insert(format!("k{i}"), Arc::from("1"));
         }
         assert_eq!(cache.len(), 3);
+        // A read makes k0 the most recently used, so k1 goes first.
+        assert!(cache.get("k0").is_some());
         cache.insert("k3".to_string(), Arc::from("1"));
-        assert_eq!(
-            cache.len(),
-            1,
-            "at capacity with nothing expired the memo is dropped, not grown"
-        );
-        assert_eq!(cache.get("k3").as_deref(), Some("1"));
+        assert_eq!(cache.len(), 3);
+        assert!(cache.get("k1").is_none());
+        for kept in ["k0", "k2", "k3"] {
+            assert_eq!(cache.get(kept).as_deref(), Some("1"), "{kept}");
+        }
+    }
+
+    #[test]
+    fn expired_entries_miss_and_leave_the_cache() {
+        let cache = StorageCache::new(StorageCacheConfig {
+            enabled: true,
+            ttl_seconds: 0,
+            max_entries: 3,
+            max_value_bytes: 64,
+        });
+        cache.insert("k".to_string(), Arc::from("1"));
+        assert_eq!(cache.get("k"), None);
+        assert_eq!(cache.len(), 0);
     }
 
     #[test]

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "review": [
+    {
+      "pageId": "10:4"
+    },
+    {
+      "pageId": "10:7"
+    },
+    {
+      "pageId": "10:8",
+      "componentIds": [
+        "30:1"
+      ]
+    },
+    {
+      "pageId": "10:5"
+    },
+    {
+      "pageId": "10:6"
+    }
+  ],
+  "promotion": [
+    {
+      "pageId": "10:4"
+    },
+    {
+      "pageId": "10:7"
+    },
+    {
+      "pageId": "10:5"
+    },
+    {
+      "pageId": "10:6"
+    }
+  ]
+}

@@ -1,9 +1,9 @@
 // from: shop@3a322cf9:app/src/components/CategoryFlap/CategoryFlap.tsx
 import type { CSSProperties } from "react";
 
-import type { CatalogItem } from "../lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { categoryIcon } from "../lib/itemIcons";
-import { rarityCardPalette } from "../lib/rarity";
+import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import Icon from "./Icon";
 import styles from "./CategoryFlap.module.css";
 

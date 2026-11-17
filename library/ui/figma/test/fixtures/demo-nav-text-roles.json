@@ -1,0 +1,551 @@
+{
+ "note": "Synthetic DemoNav text-role binding: the synthetic capture records no descendant text ids, so these ids are fixture values the tests write onto the built views at each view key and path.",
+ "targets": [
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark",
+   "path": "0.1.0.0",
+   "nodeId": "90001:1",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark",
+   "path": "0.1.1.0",
+   "nodeId": "90001:2",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark",
+   "path": "0.1.2.0",
+   "nodeId": "90001:3",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark",
+   "path": "0.1.3.0",
+   "nodeId": "90001:4",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark",
+   "path": "1.0.0",
+   "nodeId": "90001:5",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=dark","Right","SignIn","Label"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:6",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:7",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:8",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:9",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:10",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light",
+   "path": "0.1.0.0",
+   "nodeId": "90001:11",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light",
+   "path": "0.1.1.0",
+   "nodeId": "90001:12",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light",
+   "path": "0.1.2.0",
+   "nodeId": "90001:13",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light",
+   "path": "0.1.3.0",
+   "nodeId": "90001:14",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light",
+   "path": "1.0.0",
+   "nodeId": "90001:15",
+   "namePath": ["viewport=large-desktop, signed-in=false, balances=none, theme=light","Right","SignIn","Label"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:16",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:17",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:18",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:19",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:20",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=none, theme=light","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:21",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:22",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:23",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:24",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:25",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:26",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:27",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:28",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:29",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:30",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:31",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:32",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "manaBalance",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.1",
+   "nodeId": "90001:33",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Mana"]
+  },
+  {
+   "role": "polygonManaBalance",
+   "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.2",
+   "nodeId": "90001:34",
+   "namePath": ["viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Polygon"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:none|theme:dark",
+   "path": "0.1.0.0",
+   "nodeId": "90001:35",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:none|theme:dark",
+   "path": "0.1.1.0",
+   "nodeId": "90001:36",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:none|theme:dark",
+   "path": "0.1.2.0",
+   "nodeId": "90001:37",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:none|theme:dark",
+   "path": "0.1.3.0",
+   "nodeId": "90001:38",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:desktop|balances:none|theme:dark",
+   "path": "1.0.0",
+   "nodeId": "90001:39",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=dark","Right","SignIn","Label"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:none|theme:light",
+   "path": "0.1.0.0",
+   "nodeId": "90001:40",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:none|theme:light",
+   "path": "0.1.1.0",
+   "nodeId": "90001:41",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:none|theme:light",
+   "path": "0.1.2.0",
+   "nodeId": "90001:42",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:none|theme:light",
+   "path": "0.1.3.0",
+   "nodeId": "90001:43",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:desktop|balances:none|theme:light",
+   "path": "1.0.0",
+   "nodeId": "90001:44",
+   "namePath": ["viewport=desktop, signed-in=false, balances=none, theme=light","Right","SignIn","Label"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:45",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:46",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:47",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:48",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:49",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:none|theme:light|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:50",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:none|theme:light|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:51",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:none|theme:light|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:52",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:none|theme:light|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:53",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=light","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:desktop|balances:none|theme:light|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:54",
+   "namePath": ["viewport=desktop, signed-in=true, balances=none, theme=light","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:55",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:56",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:57",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:58",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:59",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:60",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "discoverLabel",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.0.0",
+   "nodeId": "90001:61",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "shopLabel",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.1.0",
+   "nodeId": "90001:62",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "createLabel",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.2.0",
+   "nodeId": "90001:63",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "learnLabel",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "0.1.3.0",
+   "nodeId": "90001:64",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Left","Tabs","MenuTab","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:65",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:66",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "manaBalance",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.1",
+   "nodeId": "90001:67",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Mana"]
+  },
+  {
+   "role": "polygonManaBalance",
+   "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.2",
+   "nodeId": "90001:68",
+   "namePath": ["viewport=desktop, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Polygon"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:mobile|balances:none|theme:dark",
+   "path": "1.0.0",
+   "nodeId": "90001:69",
+   "namePath": ["viewport=mobile, signed-in=false, balances=none, theme=dark","Right","SignIn","Label"]
+  },
+  {
+   "role": "signInLabel",
+   "view": "viewport:mobile|balances:none|theme:light",
+   "path": "1.0.0",
+   "nodeId": "90001:70",
+   "namePath": ["viewport=mobile, signed-in=false, balances=none, theme=light","Right","SignIn","Label"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:mobile|balances:none|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:71",
+   "namePath": ["viewport=mobile, signed-in=true, balances=none, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:mobile|balances:none|theme:light|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:72",
+   "namePath": ["viewport=mobile, signed-in=true, balances=none, theme=light","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:mobile|balances:credits|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:73",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:mobile|balances:credits|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:74",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "notificationCount",
+   "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.0.0",
+   "nodeId": "90001:75",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits-mana, theme=dark","Right","NotificationsButton","Count"]
+  },
+  {
+   "role": "creditsBalance",
+   "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.0",
+   "nodeId": "90001:76",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Credits"]
+  },
+  {
+   "role": "manaBalance",
+   "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.1",
+   "nodeId": "90001:77",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Mana"]
+  },
+  {
+   "role": "polygonManaBalance",
+   "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+   "path": "1.2.2",
+   "nodeId": "90001:78",
+   "namePath": ["viewport=mobile, signed-in=true, balances=credits-mana, theme=dark","Right","Balances","Polygon"]
+  }
+ ]
+}

@@ -10,18 +10,19 @@ import { createElement, useState, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import type { AuthIdentity } from "../../data/auth/identity";
-import { createShopClient, setShopClient, type ShopClient } from "../api/shop";
+import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCart, type CartStore } from "../cart/store";
-import type { EvmAddress } from "../model/address";
+import type { EvmAddress } from "@shop/model/address";
 import { ShopOfferProvider, missingOfferRoute, type OfferSource } from "../detail/offers";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
-import type { ShopTransport, TransportRequest } from "../api/signer";
-import { BOOK, ITEM, TOKEN } from "../payment/fixtures";
-import type { UnifiedListingRaw } from "./api";
+import type { ShopTransport, TransportRequest } from "@shop/api/signer";
+import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
+import type { UnifiedListingRaw } from "@shop/discovery/api";
 import { resetShopQueries } from "./query";
 import { primeRemoteFlags } from "./lib/remoteFlags";
-import type { RawCollectionItem } from "./lib/catalogItem";
+import type { RawCollectionItem } from "@shop/discovery/lib/catalogItem";
+import { setShopClient } from "../api/host";
 
 export type CatalogScenario = "ok" | "empty" | "error" | "outage" | "loading";
 

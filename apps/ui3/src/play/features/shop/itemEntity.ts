@@ -2,7 +2,7 @@
 // wearable, the categories it hides or replaces when worn. The marketplace rows carry neither.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { serviceUrl } from '../../lib/baseDomain'
+import { serviceUrl } from '@hud-host'
 
 export interface ItemEntity {
   description: string

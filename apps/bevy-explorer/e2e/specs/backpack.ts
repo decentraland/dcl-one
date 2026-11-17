@@ -1,22 +1,28 @@
 // Shared by the Backpack specs (wearables, emotes, outfits, visibility): open the Backpack on a
 // view, find the item cards and the emote and outfit slots by their accessible names, equip, and
-// take the look to the engine. Names are the HUD's (react-web/src/features/backpack/BackpackPage.tsx,
+// take the look to the engine. Names are the HUD's (library/ui/apps/hud/features/backpack/BackpackPage.tsx,
 // design/WearableCard.tsx, design/Pager.tsx).
 //
 // Two facts about the HUD shape every equip check:
 // - A card's EQUIP and UNEQUIP buttons are nested in the card and exist (non-empty box) only while
-//   the pointer is on it. `hud.hover` puts the pointer there with a real click, which also selects
-//   the card; the button is then picked by where it sits (over the card), never by its name alone.
+//   the pointer is on it. `pointAtCard` puts the pointer there with a real click near the card's top,
+//   which also selects the card; the button is then picked by where it sits (over the card), never
+//   by its name alone.
 // - Equipping edits the Backpack's draft look: the preview avatar wears it, and the player's
 //   profile does not change. The look is deployed when the Backpack closes (useEngineSession's
 //   commitAvatar, bridge-scene avatarDraft.ts), and only if the net look differs from the deployed
 //   one. So the engine's profile version and `/avatar_state` grow after the close, not after the
 //   press: `commitBackpack` closes the page and waits for the version.
-import { TimeoutError, settled, until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
+import { until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
 import { closePage, openWithKey } from './pages.ts'
 
 /** One grid page: the catalogue's shared budget (the catalogue can still be arriving). */
 export const GRID_TIMEOUT_MS = 90_000
+/** The wearables grid, which says it is loading (`aria-busy`) while its newest query is in flight
+ *  or the search box waits out its debounce: its cards are the current page once it is ready. */
+export const CATALOG: Selector = { name: 'Catalog', role: 'region' }
+/** The Saved Outfits slots, loading until the saved outfits arrive: before, every slot reads empty. */
+export const SAVED_OUTFITS: Selector = { name: 'Saved outfits', role: 'region' }
 /** An equip taking effect in the HUD. */
 export const EQUIP_TIMEOUT_MS = 8_000
 /** What the engine renders after a look change (the catalogue's thumbnail budget). */
@@ -181,16 +187,17 @@ export async function selectEmoteSlot(explorer: Explorer, slot: number): Promise
   return target
 }
 
-/** Wait for the grid to show cards, then for two reads to agree: the catalogue keeps arriving and
- *  re-sorting, and a filter change leaves the old page up until the new one loads. */
+/** The grid's cards once they are the current page: the wearables grid (`CATALOG`) once it is no
+ *  longer loading; the emote list arrives whole, in one message, so its cards are final once there
+ *  are any. */
 export async function waitForCards(explorer: Explorer, find: CardFinder, timeoutMs = GRID_TIMEOUT_MS): Promise<Card[]> {
-  await until(() => find(explorer), (cards) => cards.length > 0, { timeoutMs, what: 'the Backpack grid to show items' })
-  return settled(() => find(explorer), {
-    timeoutMs: 15_000,
-    intervalMs: 500,
-    what: 'the Backpack grid to stop changing',
-    same: (a, b) => a.map((card) => card.name).join('\n') === b.map((card) => card.name).join('\n')
-  })
+  await catalogReady(explorer, timeoutMs)
+  return until(() => find(explorer), (cards) => cards.length > 0, { timeoutMs, what: 'the Backpack grid to show items' })
+}
+
+/** The wearables grid's newest page shown, when the grid is on screen (the Emotes tab has none). */
+async function catalogReady(explorer: Explorer, timeoutMs = GRID_TIMEOUT_MS): Promise<void> {
+  if (await explorer.hud.isVisible(CATALOG)) await explorer.hud.waitReady(CATALOG, timeoutMs)
 }
 
 export function sameCards(a: Card[], b: Card[]): boolean {
@@ -231,21 +238,48 @@ export interface Hovered {
   action: CardAction | undefined
 }
 
-/** Put the pointer on a card (a real click: it selects the card) and read the button it reveals. */
-export async function hoverCard(explorer: Explorer, card: Card, labels: readonly string[] = ['EQUIP', 'UNEQUIP']): Promise<Hovered> {
-  await explorer.hud.wait(card.selector, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
-  const control = await explorer.hud.hover(card.selector)
-  try {
-    const action = await until(() => actionOver(explorer, control, labels), (found) => found !== undefined, {
-      timeoutMs: HOVER_TIMEOUT_MS,
-      intervalMs: 200,
-      what: `a ${labels.join(' or ')} button over "${card.name}"`
-    })
-    return { control, action }
-  } catch (error) {
-    if (error instanceof TimeoutError) return { control, action: undefined }
-    throw error
-  }
+/** Where on a card the pointer goes, as a share of its height from the top. The EQUIP / UNEQUIP
+ *  button grows in as the pointer arrives from a point in the card's middle (WearableCard's
+ *  `.action`, scaled from 80 px above itself), so a click at the centre can land on it while it
+ *  grows, and press it: an equipped emote was unequipped that way. */
+const CARD_POINTER_FROM_TOP = 0.15
+
+/** Put the pointer on a card with a real click near its top, which selects the card and presses
+ *  nothing else; the card as read before the pointer arrived. */
+export async function pointAtCard(explorer: Explorer, selector: Selector): Promise<Control> {
+  const control = await explorer.hud.waitActionable(selector, CONTROL_TIMEOUT_MS)
+  await explorer.clickAt(control.x + control.width / 2, control.y + control.height * CARD_POINTER_FROM_TOP)
+  return control
+}
+
+/** The button a wearable or emote card offers, as its own text says: the button is inside the
+ *  card, scaled to nothing until the pointer is on it. None for an incompatible item or an
+ *  equipped one of a required category. */
+function offered(card: Control): CardAction['label'] | undefined {
+  if (/\bUNEQUIP\b/.test(card.text)) return 'UNEQUIP'
+  if (/\bEQUIP\b/.test(card.text)) return 'EQUIP'
+  return undefined
+}
+
+/** Put the pointer on a card (a real click: it selects the card) and read the button it reveals,
+ *  once it has grown in: the HUD counts a button as actionable only when it no longer moves, so
+ *  the previous card's, shrinking away, never answers for this one. `expected` names the button of
+ *  a card that keeps it outside itself (a saved outfit); otherwise the card's text says which. */
+export async function hoverCard(
+  explorer: Explorer,
+  card: Card,
+  labels: readonly string[] = ['EQUIP', 'UNEQUIP'],
+  expected?: CardAction['label']
+): Promise<Hovered> {
+  const control = await pointAtCard(explorer, card.selector)
+  const label = expected ?? offered(control)
+  if (label === undefined || !labels.includes(label)) return { control, action: undefined }
+  const action = await until(() => actionOver(explorer, control, [label]), (found) => found !== undefined, {
+    timeoutMs: HOVER_TIMEOUT_MS,
+    intervalMs: 100,
+    what: `the ${label} button over "${card.name}"`
+  })
+  return { control, action }
 }
 
 /** Wait for the `label` button over a card whose pointer is still on it (an equip flips EQUIP to UNEQUIP). */
@@ -305,11 +339,13 @@ export function renderedUrn(avatar: AvatarReport, category: string): string | un
 
 export type BackpackView = 'wearables' | 'emotes' | 'outfits'
 
-/** Make the search field empty (it persists across closes) and check the typing left it so. */
+/** Type a search (it persists across closes), check the typing left it so, and wait for the grid to
+ *  answer it: the wearables grid queries the catalyst once the box's debounce runs out, the emotes
+ *  filter at once. */
 export async function searchFor(explorer: Explorer, text: string): Promise<void> {
-  await explorer.hud.wait(SEARCH, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
   const field = await explorer.hud.fill(SEARCH, text)
   if (field.value !== text) throw new Error(`the search field holds "${field.value ?? ''}" after typing "${text}"`)
+  await catalogReady(explorer)
 }
 
 export async function pagerVisible(explorer: Explorer): Promise<boolean> {
@@ -319,6 +355,7 @@ export async function pagerVisible(explorer: Explorer): Promise<boolean> {
 /** Back to the first page when the pager is up (the page persists across closes). */
 async function firstPage(explorer: Explorer): Promise<void> {
   if (await pagerVisible(explorer)) await explorer.hud.click({ name: '1', role: 'button' })
+  await catalogReady(explorer)
 }
 
 const OUTFIT_EMPTY = /^Save outfit in slot (\d+)$/
@@ -336,10 +373,10 @@ export async function outfitSlots(explorer: Explorer): Promise<[number, boolean]
   return slots.sort(([a], [b]) => a - b)
 }
 
-/** The slots once they have loaded (they show empty until the saved outfits arrive) and stopped changing. */
+/** The slots once the saved outfits have arrived: until then every slot reads empty. */
 export async function waitForOutfitSlots(explorer: Explorer, timeoutMs = 20_000): Promise<[number, boolean][]> {
-  await until(() => outfitSlots(explorer), (slots) => slots.length >= 5, { timeoutMs, what: 'the Saved Outfits slots' })
-  return settled(() => outfitSlots(explorer), { timeoutMs: 10_000, intervalMs: 1_500, what: 'the Saved Outfits slots to stop changing' })
+  await explorer.hud.waitReady(SAVED_OUTFITS, timeoutMs)
+  return until(() => outfitSlots(explorer), (slots) => slots.length >= 5, { timeoutMs, what: 'the Saved Outfits slots' })
 }
 
 /** The Wearables categories with no category filter, no search and the first page, loaded. The
@@ -382,50 +419,28 @@ export async function openBackpack(explorer: Explorer, view: BackpackView): Prom
 export async function showCategory(explorer: Explorer, category: Category): Promise<Card[]> {
   const tile: Selector = { name: category, role: 'button', index: 0 }
   const control = await explorer.hud.get(tile)
-  if (control.checked !== true) {
-    const before = await wearableCards(explorer)
-    await explorer.hud.click(tile)
-    await until(() => wearableCards(explorer), (cards) => cards.length > 0 && !sameCards(cards, before), {
-      timeoutMs: GRID_TIMEOUT_MS,
-      what: `the grid to show ${category} items`
-    })
-  }
+  if (control.checked !== true) await explorer.hud.click(tile)
   await explorer.hud.wait({ name: `Clear ${category}`, role: 'button' }, { timeoutMs: CONTROL_TIMEOUT_MS })
   return waitForCards(explorer, wearableCards)
 }
 
 // --- paging -----------------------------------------------------------------------------------
 
-/** The name of the grid's first card once two reads a second apart agree. */
-export async function stableFirstCard(explorer: Explorer, find: CardFinder, timeoutMs = 40_000): Promise<string> {
-  let previous: string | undefined
-  const agreed = await until(
-    async () => {
-      const first = (await find(explorer))[0]?.name
-      const same = first !== undefined && first === previous ? first : undefined
-      previous = first
-      return same
-    },
-    (name) => name !== undefined,
-    { timeoutMs, intervalMs: 1_000, what: "the grid's first card to stop changing" }
-  )
-  if (agreed === undefined) throw new Error('the first card never settled')
-  return agreed
+/** The name of the grid's first card, once the grid shows its current page. */
+export async function firstCard(explorer: Explorer, find: CardFinder): Promise<string> {
+  return (await waitForCards(explorer, find))[0]!.name
 }
 
-/** Press a pager arrow, give the first card up to 12 s to leave `from`, and return where it settles. */
-export async function flipPage(explorer: Explorer, arrow: 'Next page' | 'Previous page', find: CardFinder, from: string): Promise<string> {
+/** The grid's next page, loaded: the pager's arrow, then the cards once the grid shows that page. */
+export async function nextPage(explorer: Explorer, find: CardFinder): Promise<Card[]> {
+  await explorer.hud.click({ name: 'Next page', role: 'button' })
+  return waitForCards(explorer, find)
+}
+
+/** Press a pager arrow and return the first card of the page it shows once loaded. */
+export async function flipPage(explorer: Explorer, arrow: 'Next page' | 'Previous page', find: CardFinder): Promise<string> {
   await explorer.hud.click({ name: arrow, role: 'button' })
-  try {
-    await until(async () => (await find(explorer))[0]?.name, (first) => first !== undefined && first !== from, {
-      timeoutMs: 12_000,
-      intervalMs: 500,
-      what: `the first card to change from "${from}"`
-    })
-  } catch (error) {
-    if (!(error instanceof TimeoutError)) throw error
-  }
-  return stableFirstCard(explorer, find)
+  return firstCard(explorer, find)
 }
 
 // --- equipping --------------------------------------------------------------------------------
@@ -457,32 +472,58 @@ export async function equipFirstUnequippedHair(explorer: Explorer): Promise<{ na
 // as the card that offers UNEQUIP before anything is pressed.
 
 export interface HairPick {
-  /** The first card of the Hair page that offers EQUIP. */
+  /** The first card that offers EQUIP on the worn hair's page. */
   card: Card
   /** The card that offers UNEQUIP: the hair the avatar wears, when it wears one. */
   equipped: Card | undefined
   start: LookStart
 }
 
-/** Filter to Hair and pick, among the first page, the first card to equip and the one the avatar
- *  wears. Nothing is pressed. A worn hair that is not on the first page is an error here, before
- *  any change: the scenario could not put it back. */
+/** Scan the grid's pages from the one shown, until `scan` finds what it looks for: that and its
+ *  page (1 first), or undefined once every page was scanned. The pager wraps from the last page to
+ *  the first and never disables its arrow (`Pager.tsx`), so a page whose cards were seen before
+ *  ends the search; so does a grid with no other page, whose `next` gives the same cards back. */
+export async function searchPages<T>(
+  first: Card[],
+  next: () => Promise<Card[]>,
+  scan: (cards: Card[], page: number) => Promise<T | undefined>
+): Promise<{ found: T; page: number } | undefined> {
+  const seen = new Set<string>()
+  let cards = first
+  for (let page = 1; ; page++) {
+    const key = cards.map((card) => card.name).join('\n')
+    if (seen.has(key)) return undefined
+    seen.add(key)
+    const found = await scan(cards, page)
+    if (found !== undefined) return { found, page }
+    cards = await next()
+  }
+}
+
+/** Filter to Hair and find the page with the hair the avatar wears (a card that offers UNEQUIP),
+ *  and on it the first card to equip; nothing is pressed. The catalogue sorts the hairs, so the
+ *  worn one can be on any page. One the grid does not list is an error here, before any change:
+ *  the scenario could not put it back. */
 export async function pickHair(explorer: Explorer): Promise<HairPick> {
   const cards = await showCategory(explorer, 'Hair')
   const start = await startLook(explorer)
-  let card: Card | undefined
-  let equipped: Card | undefined
-  for (const candidate of cards.slice(0, PAGE_SIZE)) {
-    if (card && equipped) break
-    const { action } = await hoverCard(explorer, candidate)
-    if (action?.label === 'EQUIP' && !card) card = candidate
-    if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
-  }
-  if (!card) throw new Error(`Every loaded card is equipped or cannot be equipped: ${cards.map((c) => c.name).join(', ')}`)
-  if (!equipped && renderedUrn(start.before, 'hair') !== undefined) {
-    throw new Error(`the hair the avatar wears (${renderedUrn(start.before, 'hair')}) is not on the first page of Hair, so the scenario could not put it back`)
-  }
-  return { card, equipped, start }
+  const worn = renderedUrn(start.before, 'hair')
+  const next = async (): Promise<Card[]> => ((await pagerVisible(explorer)) ? nextPage(explorer, wearableCards) : wearableCards(explorer))
+  const result = await searchPages(cards, next, async (page, number) => {
+    let card: Card | undefined
+    let equipped: Card | undefined
+    for (const candidate of page.slice(0, PAGE_SIZE)) {
+      if (card && (equipped || worn === undefined)) break
+      const { action } = await hoverCard(explorer, candidate)
+      if (action?.label === 'EQUIP' && !card) card = candidate
+      if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
+    }
+    if (!equipped && worn !== undefined) return undefined
+    if (!card) throw new Error(`Every card of Hair page ${number} is equipped or cannot be equipped: ${page.map((c) => c.name).join(', ')}`)
+    return { card, equipped }
+  })
+  if (!result) throw new Error(`the hair the avatar wears (${worn}) is on none of the Hair pages, so the scenario could not put it back`)
+  return { ...result.found, start }
 }
 
 /** Press EQUIP on a card and wait for it to flip to UNEQUIP. The Backpack stays open: the look is
@@ -496,32 +537,40 @@ export async function equipCard(explorer: Explorer, card: Card): Promise<Control
 }
 
 /** Put the hair back as `pickHair` found it: the picked card off, the worn one on, the look
- *  committed. A look that already is the original (the equip never committed) changes nothing. */
+ *  committed. A look that already is the original (the equip never committed) changes nothing.
+ *  Each card is looked for by name over the Hair pages: the sort can differ once the Backpack
+ *  reopens. */
 export async function restoreHair(explorer: Explorer, pick: HairPick): Promise<void> {
   await closePage(explorer, 'backpack')
-  const version = await explorer.profileVersion()
   await openBackpack(explorer, 'wearables')
-  const cards = await showCategory(explorer, 'Hair')
-  const byName = (name: string): Card => {
-    const found = cards.find((candidate) => normalize(candidate.name) === normalize(name))
-    if (!found) throw new Error(`the Hair page no longer lists "${name}", so the hair cannot be put back`)
-    return found
+  let cards = await showCategory(explorer, 'Hair')
+  const next = async (): Promise<Card[]> => {
+    cards = (await pagerVisible(explorer)) ? await nextPage(explorer, wearableCards) : await wearableCards(explorer)
+    return cards
+  }
+  const find = async (name: string): Promise<Card> => {
+    const result = await searchPages(cards, next, async (page) => page.find((candidate) => normalize(candidate.name) === normalize(name)))
+    if (!result) throw new Error(`the Hair pages no longer list "${name}", so the hair cannot be put back`)
+    return result.found
   }
   let changed = false
-  const picked = await hoverCard(explorer, byName(pick.card.name))
+  const picked = await hoverCard(explorer, await find(pick.card.name))
   if (picked.action?.label === 'UNEQUIP') {
     await explorer.hud.click(picked.action.selector)
     await waitForAction(explorer, picked.control, 'EQUIP', EQUIP_TIMEOUT_MS)
     changed = true
   }
   if (pick.equipped) {
-    const worn = await hoverCard(explorer, byName(pick.equipped.name))
+    const worn = await hoverCard(explorer, await find(pick.equipped.name))
     if (worn.action?.label === 'EQUIP') {
       await explorer.hud.click(worn.action.selector)
       await waitForAction(explorer, worn.control, 'UNEQUIP', EQUIP_TIMEOUT_MS)
       changed = true
     }
   }
+  // read now, long after the first close's own deployment (the draft a failure left), so the
+  // version that grows below is this restore's
+  const version = await explorer.profileVersion()
   await closePage(explorer, 'backpack')
   if (changed) {
     await until(() => explorer.profileVersion(), (current) => current > version, {

@@ -188,7 +188,7 @@ function SubmitHangoutInner({
   return (
     <div className="submit-hangout" data-step={step} data-state={value}>
       <header className="submit-hangout__header">
-        <Link to="/whats-on">Back to What&apos;s On</Link>
+        <Link to="/events">Back to Events</Link>
         <h1>{mode === "edit" ? "Edit Hangout" : "Submit a Hangout"}</h1>
       </header>
 
@@ -221,7 +221,7 @@ function SubmitHangoutInner({
             {uploadError && <p role="alert">{uploadError}</p>}
             {uploading && <p role="status">Uploading image…</p>}
             <div className="submit-hangout__nav">
-              {value === "cover" ? <Link className="submit-hangout__btn" to="/whats-on">Back</Link> : <button
+              {value === "cover" ? <Link className="submit-hangout__btn" to="/events">Back</Link> : <button
                 type="button"
                 className="submit-hangout__btn"
                 onClick={() => send({ type: "BACK" })}

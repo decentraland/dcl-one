@@ -1,0 +1,33 @@
+{
+  // The core's own compile profile: ES only, no DOM and no Node types, so a module that reaches for a
+  // host global (window, document, fetch, storage, WebSocket, process...) does not compile. Its tests
+  // run in node and are type-checked by apps/ui3's tsconfig.json, which includes this folder.
+  "compilerOptions": {
+    "paths": {
+      "@catalyst-api/*": ["../catalyst-api/*"],
+      // No node_modules here: the types come from the host that runs the core's suite.
+      "viem": ["../../apps/ui3/node_modules/viem"]
+    },
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": [],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false
+  },
+  "include": ["."],
+  "exclude": ["**/*.test.ts"]
+}

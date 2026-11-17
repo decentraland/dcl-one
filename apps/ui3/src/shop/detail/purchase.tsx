@@ -8,8 +8,8 @@ import { createContext, useContext, type ReactNode } from "react";
 
 import { shopCartDrawer, type CartDrawerStore } from "../cart/drawer";
 import { cartLineId, shopCart, type CartAddInput, type CartStore } from "../cart/store";
-import type { PurchaseOffer } from "../model/purchase";
-import type { PaymentMethod } from "../model/settlement";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import type { PaymentMethod } from "@shop/model/settlement";
 import { SHOP_BASE } from "../routes";
 
 export type PurchaseRequest = {

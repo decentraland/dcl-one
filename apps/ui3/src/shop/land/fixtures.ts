@@ -4,8 +4,8 @@
 import { landTokenId } from "../../data/catalyst/landListing";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { RentalListing } from "@catalyst-api/market/RentalListing";
-import { CHAIN } from "../model/chain";
-import { LAND_NETWORKS } from "./contracts";
+import { CHAIN } from "@shop/model/chain";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { coordsId, type LandTile, type Tiles } from "./tiles";
 
 export const NET = LAND_NETWORKS[CHAIN.ETHEREUM]!;

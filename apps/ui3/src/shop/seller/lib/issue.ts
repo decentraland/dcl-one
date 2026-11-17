@@ -8,8 +8,8 @@
 import { encodeFunctionData } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
-import { COLLECTION_V2_ABI, collectionV2 } from "../../market/lib/contracts";
+import type { ChainId } from "@shop/model/chain";
+import { COLLECTION_V2_ABI, collectionV2 } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "../../market/lib/metaTx";
 import { declined, isTxPending, sendCall, waitForReceipt, type WaitOptions } from "../../market/lib/tx";
 

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDemo, DemoShell, type DemoScenario } from "../checkout/demo";
 import type { FakeHandlers } from "../checkout/fakes";
-import { BOOK } from "../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import type { ShopWalletHost } from "../wallet/session";
 import CreditsPage from "./CreditsPage";
 import { ORDER_NOT_FOUND } from "./payments-stripe";

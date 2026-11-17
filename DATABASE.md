@@ -99,6 +99,22 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+Partial batches for one entity hold a session advisory lock from their first
+pending-upload/replay read through the staging or committed-publication decision.
+The guard owns one connection from the shared pool, and every guarded query and
+short transaction uses it; this supports a pool with one connection. A permit
+budget shared by CoreState bounds partial-session owners to
+`min(upload_limit, max(1, pool_max / 4))`. Permit waits use the existing request
+timeout; failed lock attempts return both checkout and permit before retrying.
+Staging commits remain independent of blob persistence. Cancellation or
+uncertain unlock closes the session. Connection ownership precedes the name
+deny-list refresh mutex, and ordinary readers return their checkout before
+waiting for an active refresh. Publication releases the session before its
+existing synchronous postcommit access revocation and other effects, which still
+finish before the response. Cleanup retains its independent store lock and
+expiry rules. See the
+[session ownership decision](docs/adr/2026-11-16-worlds-partial-upload-session.md).
+
 Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
 `worlds.pending_scene_files`, with no world row until the completing batch's
 publish transaction consumes the upload and writes its
@@ -107,7 +123,13 @@ admitted under advisory locks (deployer, world, node budget); the per-world
 count and byte sums read `pending_scenes (world_name, created_at)`. The blob
 collector keeps every file a pending row names, and a leased job reclaims
 expired uploads under the exclusive store lock, unlinking only files a
-batch of that upload wrote (`pending_scene_files.written`).
+batch of that upload wrote (`pending_scene_files.written`). Local content
+deploys (`POST /entities` and partial publication) and world scene deploys
+take that lock's shared side in their write transaction and re-check every
+file they name, so an unlink batch never removes a file such a deployment
+references; a content deploy waits at most 5 s for it and answers 503 past
+that. Synced content writes do not take it and rely on the collector's age
+floor.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
@@ -121,15 +143,49 @@ operations probe the resolved deployment by primary/unique key on every
 request; redeployment without the wallet revokes that grant. Collaborator
 access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
-It derives membership at read time through `worlds.logs_permissions`, with no
-stored projection. The partial GIN `world_scenes_logs_permissions_idx` covers
-local world scenes; `deployments_scene_logs_permissions_idx` covers live
+It derives membership at read time through `worlds.logs_permissions_decoded`, with no
+stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
+local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
 Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
-The function reads raw JSON text so even a stored JSON `\u0000` cannot fail an
-insert through an index. Expected traffic is low; measured dataset sizes,
-query timings and index write costs must be recorded in the task report.
+The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
+carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
+can fail an insert through an index. It reads the escapes as Unicode, so the database
+must use the `UTF8` server encoding (the one `catalyst` supports): under another
+encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
+and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
+superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
+status` does not report, until their release drops them. Run it once, with the
+administrative role, after `catalyst schema migrate` created the decoded function
+and every replica runs a binary that queries it (an older `serve` calls the old
+function from its storage grant and `GET /collaborator`, which fail after the
+drop); it refuses a database without the decoded function and both its indexes
+built and valid, and drops the old indexes concurrently, outside a transaction
+(rerun it if interrupted):
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
+```
+
+The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+`content.deployments` in the migrate transaction, not concurrently, so writes to
+that table wait for the build (unmeasured on production). To build it outside
+that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
+(the function first, then the index, which the object pass then skips):
+
+```sql
+CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
+CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+    ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
+```
+
+A failed concurrent build leaves an invalid index of that name: drop it before
+retrying.
+Expected traffic is low; measured dataset sizes, query timings and index write
+costs must be recorded in the task report.
 
 Genesis collaborator grants also require the configured LAND index to be
 complete and fresh. One shared SQL predicate checks the entire scene footprint
@@ -219,27 +275,25 @@ introduced.
 
 Preserve the reviewed method, path, scope and query authorization contract for scene-host storage requests. Handle security acceptance through the private review workflow.
 
-Storage value reads use PostgreSQL by default on every process. The optional
-`STORAGE_CACHE_ENABLED=true` memo is only suitable for one storage-serving
-process: invalidation is local, and even a primary can return stale values or
-environment secrets after a replica writes. `FLEET_JOBS_ENABLED` does not make
-that cache coherent. Explicit caching accepts a freshness window of
-`STORAGE_CACHE_TTL_SECONDS` and is unsuitable for immediate cross-process revocation.
-`STORAGE_CACHE_ENABLED` accepts only `true` or `false`; numeric values such as
-`1` and `0` are rejected at startup.
+Single world and player storage values (never env values or listings) are
+read through a per-process LRU, as upstream: on unless `STORAGE_CACHE_ENABLED`
+is exactly `false`, at most `STORAGE_CACHE_MAX` entries (8000, least recently
+used evicted first), each fresh for `STORAGE_CACHE_TTL_SECONDS` (60) after it
+was cached, values over `STORAGE_CACHE_MAX_VALUE_BYTES` (32768) never cached,
+misses never cached. Invalidation is local to the process that wrote: with
+several storage-serving processes, a read may return a value up to the TTL
+old after another process's write or delete, as on upstream's replicas.
+`FLEET_JOBS_ENABLED` does not make that cache coherent. A deployment needing
+immediate cross-process freshness sets `STORAGE_CACHE_ENABLED=false`.
 
 Permission-source outages deliberately return 503 instead of upstream's 401,
-without granting access. Transient permission/RPC outages and export database
-setup failures (connection acquisition, snapshot preparation or their deadlines)
-carry `Retry-After: 1`. Export setup failures occur before acceptance, so they do
-not consume the scene cooldown. The header is a minimum retry delay, not a promise
+without granting access. Transient permission/RPC outages carry
+`Retry-After: 1`. The header is a minimum retry delay, not a promise
 that capacity has recovered; clients should use backoff for repeated failures.
-Export concurrency caps continue to bound pending attempts. Invalid export
-timeout configuration is rejected at startup; a defensive out-of-range deadline
-failure carries no retry hint. Likewise,
-missing credentials (including `ENCRYPTION_KEY`) and unsupported EIP-1654
-validation require configuration and carry no timed retry instruction. This is
-an intentional wire divergence, not a claim of identical error responses.
+Unsupported EIP-1654 validation requires configuration and carries no timed
+retry instruction. `ENCRYPTION_KEY` is required: `serve` refuses to start
+without it. This is an intentional wire divergence, not a claim of identical
+error responses.
 
 A storage export (`POST /world-storage/exports`) holds one pooled connection
 while reading and serializing world rows and then player rows, never env. The
@@ -252,19 +306,19 @@ caps are per process, as upstream's are per pod.
 `export::produce` is rare and user-initiated. Its two row streams use the
 namespace primary-key prefix in key order: `world_storage`, then
 `player_storage` by `player_address, key`, in one read-only repeatable-read
-transaction. A connection is acquired before response headers (unavailable
-capacity returns 503), and the producer owns both it and its concurrency slot.
-One deadline bounds acquisition, SQL and channel backpressure; dropping the
-body cancels the producer. Completion uses a separate channel, so a failure or
-panic cannot masquerade as successful HTTP EOF. Transaction-local statement
-and idle-in-transaction timeouts match the export budget and reset before pool
-reuse. The configured timeout is 1–3600 seconds, defaulting to 120 seconds;
-deadline construction also rejects an unrepresentable duration. Scene cooldown
-begins only after database setup succeeds, with an atomic admission recheck:
-a pre-response 503 releases its reservation without consuming the cooldown.
-When cooldown is enabled, only one pending admission per scene can prepare a
-database transaction, even if the configured per-scene concurrency cap is higher.
-Disabling cooldown preserves concurrent admission up to the configured caps.
+transaction. As upstream, admission answers 200 and starts both the scene
+cooldown and the `EXPORT_TIMEOUT_SECONDS` timer before any database work; the
+producer then acquires the connection, owning it and its concurrency slot. A
+connection, snapshot or query failure after the headers cuts the stream (an
+HTTP body error, never a valid gzip trailer) and still consumes the cooldown.
+The timer bounds acquisition, SQL and channel backpressure; dropping the body
+cancels the producer. Completion uses a separate channel, so a failure or
+panic cannot masquerade as successful HTTP EOF. Transaction-local
+`statement_timeout` and `idle_in_transaction_session_timeout` are
+`PG_COMPONENT_STREAM_QUERY_TIMEOUT` (120000 ms; 0 disables them) and reset
+before pool reuse. The export settings take any value, as upstream's: a zero
+concurrency cap answers every export 429, a zero timeout or size cap aborts
+every stream, and a timeout too large to represent sets no deadline.
 Optional selections are
 `key = ANY` / `player_address = ANY` filters on that prefix. Not measured:
 a scene at its quota (10 MB world plus 1 MB per player).
@@ -285,6 +339,69 @@ hosts. Permission revocation must also take effect in the running room, not
 merely change a row. Preserve host identity and publish/subscribe grant
 distinctions. Test shared-room joins, denied joins, revocation and reconnect
 against the real transport.
+
+Selected room ownership uses the existing `social.archipelago_v4_assignments`
+realm primary key and global connection-epoch sequence on the shared pool. Signaling
+registration writes no owner row. Expected work is one candidate allocation per
+changed eligible legacy transport, indexed single-wallet ownership reads, and
+conditional claim, renewal and assignment publication for the positively selected
+Pulse identity. Steady owned renewal is due after 30 seconds; the lease lapses after
+90 seconds. Native selection requires no signaling socket. Maintenance retries unknown,
+borrowed, conflicting or unfinished targets after five seconds; healthy exact owned
+targets become due 30 seconds after a confirmed local renewal. Each attempt can perform
+Pulse positive and retirement requests plus wallet-before-realm SQL settlement, even
+when an old source no longer responds. Due targets rotate in bounded batches refilled
+on capacity notifications, independently of the one-second fallback wake. Maintenance
+has at most 128 queued/running items, 128 lifetime mutation credits and 16 running
+items within the shared 1,024-credit, 32-running queue. Cold hint-only work may hold
+at most 112 maintenance items and lifetime credits and run eight tasks; known-owned
+or unfinished targets use the remaining maintenance reserve and run before cold
+ready lanes. Each class has its own rotating due cursor. Event and durable takeover
+lanes run first without overtaking earlier work in the same wallet. Uncertain SQL
+keeps its credit after its waiter ends. These are workload and memory bounds, not
+measured throughput or a guarantee of renewal capacity under slow dependencies.
+
+The wallet safety lock precedes the realm row lock; no broker, policy or media await
+runs inside that SQL transaction. A fresh foreign row cannot be replaced from an
+epoch comparison alone. Known exact predecessors and lapsed rows can transition;
+fresh external same-session bindings are read-only. Uncertain mutations retain their
+before/after row identities, assignment digest and admission work credit until a
+locked conditional read settles them. No reset, predecessor restoration, broad
+wallet release, assignment index or per-service pool is required.
+An explicit Pulse no-selected-owner proof can retire a local retry slot only after
+the same wallet-before-realm read has settled any uncertain mutation and its work
+credit. The exact desired generation, selected identity and outstanding operations
+must still match. Retirement performs no realm mutation or release; known settled
+ownership ceases renewal under the existing lease, and foreign rows remain intact.
+
+`social.pulse_authority_generation` holds one deployment-audience primary-key row:
+positive sequence epoch, UUID source incarnation and naive UTC update timestamp.
+The root Pulse process alone writes it on fresh acquisition of the existing session
+lease; assignments and takeovers remain in Pulse memory. Gatekeeper reads the row
+through its existing pool and takes `FOR SHARE` before wallet/realm mutations and
+credential authorization. A successor commit is the authority cutover. The row does
+not expire or need renewal updates, avoiding contention with selected transactions.
+Separate exact-stamp, single-use mint and final-delivery permissions have an original
+two-second deadline including pool acquisition; neither can be renewed from a stale
+source after cutover. Already issued credentials retain their existing validity.
+
+One bounded immutable source-specific view discovers unchanged native targets after
+restart or dropped hints. At most 49,146 targets use a canonical JSON array below
+8 MiB, with 256 entries per reply below 64 KiB; these are encoding limits, not measured
+heap or throughput. Two readers share the same live view. A complete current view is
+required before retirement of known older epochs, followed by operation-grant expiry,
+exact uncertain-SQL settlement and outstanding-handle checks. Unregistered historical
+sources cannot be forgotten from UUID inequality. Retirement does not write foreign
+assignment rows or discard independently retained cleanup/takeover obligations.
+Wallets present in the sorted complete current view retain their exact previous slots
+until reseeding; absent old wallets can still retire to free bounded capacity.
+
+This metadata is local authority, not mirrored catalogue state. Restore with writers
+stopped and admissions closed, then acquire a fresh UUID/epoch before reopening.
+Restoring the row is not permission to reuse a pre-restore capability. The dev trades
+snapshot contains only its explicit shop tables, and content snapshots contain only
+content projections. The audience primary key serves all control reads/writes; no
+secondary index or assignment checkpoint is added.
 
 World allow-lists admit explicit access wallets and members of listed active,
 unsuspended communities who are not banned. Admission probes
@@ -463,6 +580,19 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
+The anonymous Registry `GET /denylist` feed reads `content.denylist` through the
+existing content pool: `id`, `added_by` and `added_at`, ordered newest first.
+Expected lists contain hundreds of rows; the read checks overflow at 100,001 rows
+and refuses lists above 100,000. The shared Explore API state retains local
+rows for five seconds and coalesces concurrent refreshes. Database failures are
+retained for the same interval and return 500; a failed refresh never serves an
+expired successful list. Operator edits become visible on the next read after
+expiry, and process restart rebuilds on demand. Source moderation responses are
+validated on every request and never cached here. Merge and serialization remain
+per-request work; the cache bounds table-read frequency, not total endpoint CPU
+or response bytes. No table, index or pool is added. The public feed intentionally
+publishes every local id kind and `added_by` as the operator's `created_by` wallet.
+
 The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
 recurrence selector and exact date window; catalogue page offsets and accounts
@@ -514,15 +644,37 @@ preparation.
 
 The Social voice release accepts shipped main version 2 without historical step
 `0020_social_voice_notifications` or its retired objects, and genuinely prepared
-version 2 with that step's matching real receipt and complete legacy layout:
+version 2 with that step's matching real receipt and complete legacy layout.
+`catalyst schema status` exits 5 on such a database. After verifying a backup
+restore and with every writer stopped, the version-3 binary applies the release
+and the additive steps in one transaction, with no statement timeout:
+
+```sh
+catalyst schema migrate --release
+catalyst schema status
+```
+
+`--release` refuses while any other client session is connected to the database,
+including sessions of roles whose activity the migrator cannot read, and reports
+their count and application names; it changes nothing then. Server processes
+without a role, such as autovacuum workers, are not sessions and do not block it.
+Background workers that run as another role, such as parallel workers,
+logical-replication workers and logical WAL senders, still count and block it.
+It is a best-effort guard: the release locks its own tables, not every table.
+A connection pooler or monitoring agent that holds sessions open also blocks it.
+Exit 5 reflects the stamp only; the release's own checks (mixed layout,
+receipts, destination, pending wallets) can still refuse it inside the
+transaction. A database already at version 3 takes the plain migrate.
+The binary embeds `schemas/releases/v3-private-voice-pending.sql` with its includes
+(`db::RELEASE_SQL`). The same file still runs through psql, followed by
+`catalyst schema migrate`:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
 catalyst schema migrate
-catalyst schema status
 ```
 
-Keep every writer stopped through that sequence. The release refuses mixed
+Keep every writer stopped through either sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
 The explore parity layout (step `0029_explore_parity`) moves event moderation notices
@@ -672,8 +824,21 @@ fails its bootstrap on the missing relations and stays down.
 The drop is not reversible without the matching backup. Do not reset a
 database.
 
-Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+Peer sync is not a backup of local state: a node taking local writes holds the only copy of that data. Before turning a write switch on, the operator backs up the database, the blob store (`STORAGE_ROOT_FOLDER`) and the credentials (`ENCRYPTION_KEY` among them) and tests a restore; the application does not enforce this. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
+
+## Notification writer
+
+`shared::notifications` (`services/catalyst/shared/src/notifications.rs`) is the
+one writer of `social.notifications` and its `social.notification_deliveries`
+email row, for every producer: Social's own and Shop's sale, royalty, transfer,
+rental, tip, favorite-discount, credits and goal notices. Each batch is one statement on the
+producer's executor, so the notice commits with the producer's transaction: an
+upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
+rows only, a `pending` delivery row, or `skipped` with the reason when the type has
+no template or the recipient cannot receive it. Social owns both tables, reads
+them and delivers the email; `with_emailable_kinds!` is the one list of templated
+types the writer and Social's templates share.
 
 ## Social realtime notification workload
 
@@ -759,6 +924,38 @@ Both have a leading community-id index. The raw notification key and the ranking
 receipt's `(kind,event_key,community_id)` key serve different access patterns.
 Synthetic warm measurements and insertion costs are recorded in `METRICS.md`;
 they are not production capacity measurements.
+
+Camera uploads retain their multipart basename in `camera_reel.images.original_filename`.
+Gallery URLs concatenate the configured API base, row UUID and basename literally;
+thumbnail names add `thumbnail-`. Reserved filename characters remain raw in JSON
+and redirect Location values, as in the pinned source. To request a complete
+filename containing `?`, `#` or `%`, clients must percent-encode its path segment.
+Alias downloads extract the UUID and use the existing primary key to resolve the
+shared image or thumbnail hash. The nullable column adds no index or backfill:
+existing rows retain their hash URLs. Migration `0045_camera_reel_original_filename`
+adds the column without replacing rows or blob bytes. Local `/api/files` downloads
+apply the camera row's review state and the shared blob denylist. Image redirects
+preserve the requested filename without querying the database. After storing both
+blobs, a new upload releases previous deletion withholding for those hashes only
+when a live non-rejected photo references them and no rejected photo does. It
+retains moderation rejections and operator or remote denials. Configure
+`CAMERA_REEL_BUCKET_URL` as the public API base plus `/api/files` to use this virtual
+origin, or route the existing image origin to that handler. A hash-only origin
+needs an ingress/configuration adjustment before cutover; it cannot serve the
+filename aliases directly. An external public origin is responsible for restricting
+its own copies. The local byte route serves complete GET responses, without Range
+or ETag support; HEAD returns 404. It does not implement the S3 object API.
+
+Camera upload MIME is retained per photo in nullable
+`camera_reel.images.image_content_type`, constrained to the source's accepted
+`image/png` and `image/jpeg` values. Both object aliases return that claimed MIME,
+including when their detected encoding differs. An upload adds this short string
+to its existing row insert; alias downloads select it with the existing UUID
+primary-key lookup. The column adds no index, table, pool or extra read query.
+Migration `0044_camera_reel_image_content_type` preserves existing rows without
+inventing an object MIME backfill. Legacy NULL values and raw hash URLs retain byte-format sniffing. An import
+can populate the per-photo value from object metadata; a raw hash alone does not
+identify which photo's claimed MIME to use.
 
 New camera uploads start with `ranking_published=false`. After both blobs are
 written, one transaction marks the row and applies local photo contributions.
@@ -1151,7 +1348,8 @@ handlers at the destination's delivery rate: the explorer reports a
 `move_to_parcel` per parcel crossing and the distance and height events on
 thresholds, so the expected order is one row per active player per minute; no
 production rate is measured. Readers are consumers scanning forward in
-insertion order from a cursor of their own (none in this change) and the purge;
+insertion order (`seq`) from a cursor of their own (the badge processor, below)
+and the purge;
 the trigger `client_events_notify_trigger` announces each stored row's identity
 columns (never the metadata) on the `social.client_events` channel for
 listeners outside the request path.
@@ -1170,7 +1368,9 @@ agent, page and locale). The auth chain is verified at the ingress and not
 stored: no consumer reads it.
 
 Invariants: `key` is Segment's `messageId`, so an at-least-once redelivery
-inserts nothing (`INSERT ... ON CONFLICT (key) DO NOTHING`); `address` is the
+inserts nothing (`INSERT ... SELECT ... WHERE NOT EXISTS` on the key, then
+`ON CONFLICT (key) DO NOTHING` for a concurrent duplicate; the check comes
+first so a redelivery draws no `seq`); `address` is the
 owner of the auth chain the event carried (client: the chain proves that the
 wallet once delegated to a key, not that it sent this event, so a consumer
 reads the row as a claim about the wallet, not by it, and never flags a
@@ -1182,13 +1382,37 @@ Deletion is the `client-events-purge` job only: hourly, leased, it deletes rows
 whose `created_at` is older than `CLIENT_EVENTS_RETENTION_DAYS` (default 30)
 in batches of 5,000 keys through `client_events_created_idx (created_at,
 key)`, at most 200 batches a pass (a million rows an hour, some 280 inserts a
-second sustained). A consumer that adds a cursor records that
-its cursor stays above the purge horizon; without a consumer the horizon is
-free.
+second sustained). The badge processor's cursor stays above the purge horizon
+while it runs: it passes rows seconds after their insert, so the purge only
+reaches rows a stopped processor never read (their badges are then not
+counted, which is the accepted cost of the retention).
 
-The bootstrap (`schemas/40_social.sql`) defines the table, the index and the
-trigger; an existing database gains them from the object pass, so no step
-exists.
+The bootstrap (`schemas/40_social.sql`) defines the table, the indexes and the
+trigger; an existing database gains them from the object pass. Step
+`0038_social_badge_processor` adds `seq` to a table that predates it as a
+nullable column, then its default (`nextval` of `social.client_events_seq`,
+named as text so the step precedes the object pass that creates the
+sequence): both change the catalog only, no row is rewritten, and the kept
+rows keep a NULL `seq` (they precede every cursor, which starts at the head).
+Both take ACCESS EXCLUSIVE on the table, and `migrate` runs the steps and the
+object pass in one transaction, so the lock is held until it commits: reads,
+the webhook inserts and the purge all wait for the rest of the migration.
+The object pass then builds `client_events_seq_idx` (`seq`) and
+`client_events_session_moves_idx` (`address, session_id, seq` over
+`move-to-parcel` rows), both partial on `seq IS NOT NULL`, in that
+transaction, one heap scan each with nothing to sort. On 2M
+synthetic rows (822 MB, about two months at the expected rate) the step took
+22 ms and the two builds 0.24 s and 0.35 s with a warm cache; the identity
+column it replaces rewrote the same table in 27.7 s under ACCESS EXCLUSIVE.
+To take even that off the migrate window, add the column by hand first
+(`ALTER TABLE social.client_events ADD COLUMN IF NOT EXISTS seq bigint`, the
+step's first statement, without the default: the sequence does not exist
+yet), then build both indexes with the definitions of `schemas/40_social.sql`
+and `CREATE INDEX CONCURRENTLY`; `migrate` then sets the default, creates the
+sequence and skips the indexes (a failed concurrent build leaves an invalid
+index: drop it before retrying).
+`client_events_seq_idx` serves the cursor scan and
+`client_events_session_moves_idx` traveler's read-back of one session.
 
 ## Credits wallet flags workload
 
@@ -1231,3 +1455,596 @@ primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
+
+## Camera reel photo events workload
+
+`camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
+of the photo events camera-reel-service published to SNS: `photo-taken`, one
+row per finalised upload, written in the transaction that sets
+`camera_reel.images.ranking_published` (public and private photos alike), and
+`photo-privacy-changed`, one row per visibility change, written in the
+statement that changes it. `payload` is the upstream body `{type: "camera",
+subType, key, timestamp, metadata}`. Writes follow the upload rate.
+
+The Credits photo-goal worker reads committed `photo-taken` rows lacking a
+receipt in `credits.photo_goal_receipts`. Receipt and effects commit together;
+the outbox holds no consumer state. This anti-join also sees transactions
+that commit after a higher event ID has already been processed. A sequence
+ID alone is not a safe consumer watermark. The community photo counts are
+applied directly in the upload's finalising transaction and do not read the
+outbox.
+
+Invariants: rows are never updated; the leased
+`camera-photo-events-retention` job deletes rows older than 30 days, 1000 per
+statement by `created_at` (its index), at most 100 statements an hourly pass,
+so the table holds about 30 days of events and a consumer further behind
+misses events. `user_address` is the photo's owner, lowercase. The bootstrap
+defines the table; an existing database gains it from the object pass, so no
+step exists.
+
+## Seasonal photo rewards workload
+
+`shop::credits::goals` reads Camera photo facts and Social subscription facts
+using the existing database pool. `credits.seasons` and `credits.season_goals`
+hold season windows, MANA limits and the `take-photo` assignment. These tables
+have no active monetary seed. `credits.program_opt_outs` records enrollment
+withdrawal separately from the paid wallet's identity.
+
+The worker writes one durable `credits.photo_goal_receipts` row per processed
+photo, including terminal ineligibility decisions. Eligible photos update
+`credits.goal_progress`, keyed by wallet, season, week and goal. Completion
+creates one `credits.goal_grants` row with immutable signature terms and one
+keyed Social notification with its delivery records. All four effects share
+one transaction. A failed signature or notification rolls back progress and
+the receipt so the event can be retried. No network call runs inside this
+transaction. Per-wallet advisory locks serialize progress and enrollment;
+claim serialization enforces the weekly and season limits.
+
+MANA amounts use integer wei in `numeric(78,0)` and exact integer arithmetic.
+The signed grant binds wallet, chain, manager, amount, expiry and salt.
+`credits.usages` supplies consumption by the same chain, manager and credit
+hash. Goal grants never credit or settle the paid USD ledger. Wallet-scoped
+reads use the progress and grant primary-key prefixes. The partial receipt
+index on `(address, season_id, week_id, ordinal)` for counted photos serves
+the ordered `photosTaken` lookup; the pending-photo query uses the unique
+receipt identity. `METRICS.md` records the synthetic access-path measurement.
+Production volume and latency remain unmeasured.
+
+The `credits-reminders` job reads progress rows of the current week and grants
+for its weekly reminders by the progress and grant primary keys. Its usage
+reminders read claimed grants expiring within seven days or one day through
+the partial index on `credits.goal_grants (expires_at) WHERE claimed_at IS NOT
+NULL`, which the object pass creates on existing databases. Notifications are
+keyed per wallet, season and week, so a rerun inserts nothing.
+
+The worker runs through the existing leased job registry under the Ops write
+gate. Receipts survive photo deletion and event retention; changing visibility
+does not undo a reward. The Camera event retention window still bounds crash
+recovery: a worker more than 30 days behind cannot recover deleted facts.
+These new relations are created by the schema object pass on existing
+databases, without resetting wallet, photo or notification data.
+
+Credits keeps its own in-memory feature-flag snapshots, fetched with the
+configured Credits audience outside SQL transactions. Social's persisted
+`dapps` answer and Explorer's site answer cannot authorize these rewards.
+Local flag overrides remain in `explore_api.feature_flags_local`; missing
+remote policy is retryable rather than a completed photo decision.
+
+`credits.captcha_attempts` holds a wallet's failure count and most recent
+failure time. Three failures block claims for 24 hours from the last failure;
+a successful solve clears the row. The existing `credits.captcha_challenges`
+table records `generated_at` for the minimum solve-time check and keeps a
+two-hour challenge lifetime. Both challenge and failure updates take the
+same wallet lock. The additive `0043_credits_captcha_generated_at` step
+preserves existing challenges and establishes their solve-time baseline.
+
+## Camera reel import workload
+
+`catalyst camera-reel import` (`camera_reel::import`) copies
+camera-reel-service's `images` table into `camera_reel.images`. Inputs: the
+source table read in pages of `--batch` rows (default 500) by its
+`(created_at, id)` keyset, and two bucket objects per new photo, fetched at
+most `--concurrency` (default 8) at once. The source has no index on that
+order, so each page sorts the table's matching rows; this is a cost on the old
+database during the copy window, unmeasured. Per page, one primary-key read
+of the local rows (`id = ANY`) decides what is new; a photo already here is
+not fetched again. Writes: per new photo, its blobs in the store, then one
+transaction inserting the `images` row and its `camera_reel.imported_images`
+row; per changed imported photo, one `UPDATE` of `is_public` and `metadata`
+guarded by `review_status = 'ok'` and the provenance row. No
+`photo_events` row is written and `ranking_published` is true, so the
+community photo counts and the ranking repair never see an imported photo.
+
+`camera_reel.imported_images` is the import's provenance: which local photos
+the source may change or `--prune` may delete. The `tooling/migration`
+camera-reel step writes it too, for each row it tracks in
+`dcl_migration.camera_reel_image_loaded`, in the batch that loads the row. It is a separate relation and
+not a column of `images`: it is a fact about the copy, read only by the
+import by primary key, and the gallery rows stay as they are. Its foreign key
+cascades from `images` (same schema, same lifecycle), so a delete of the
+photo removes it. `--prune` collects the ids of one complete pass in memory
+(16 bytes each) and deletes each imported row the pass did not read through
+the owner-delete statement, which records the blobs in `withheld_blobs`. A
+running `serve` loads that relation at boot, so a pruned photo's bytes are
+withheld on `/contents/{hash}` after its next start; its reel route answers
+404 within the servable memo's minute. The bootstrap defines the table; an
+existing database gains it from the object pass, so no step exists.
+
+## Badges catalog and progress workload
+
+The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
+`schemas/40_social.sql`) is reference data: upstream's 34 badges and 84 tiers,
+seeded by the bootstrap, a few dozen rows that change through the admin catalog
+routes (below) or the TS database import. Every read route reads the published
+rows in `created_at, id` order per request, as upstream does: one statement of
+about 0.3 ms and 30 KB, so an import or a catalog edit shows at once
+(`social/src/badges/store.rs`). Per
+wallet, `user_badge_progress` holds one row per badge touched (its
+`steps_done` plus upstream's `progress` document verbatim: the evaluators'
+dedup and resume state, a few KB at most) and `user_achieved_tiers` one row per
+earned tier; reads load both for one address in one statement.
+
+Writers of progress go through `badges::progress::apply_progress` in their own
+transaction: the badge row `FOR SHARE` only when published and not archived
+(upstream's awardable rule, `published_at IS NOT NULL AND archived_at IS
+NULL`), a transaction advisory lock per (address, badge) that also serializes
+the console revoke, then the document, the counter, the newly reached tiers,
+completion and, unless suppressed, one idempotent `badge_granted` notification
+per new tier. The console grant raises the steps to the requested tier's
+target through it. The backfill (`POST /badges/badges/{id}/backfill`,
+`social/src/badges/backfill.rs`) runs one such transaction per wallet (a
+statement error fails that wallet; a lost connection fails it and reports
+every later wallet as not attempted, at once): it
+takes the same badge lock and advisory lock first, merges upstream's way over
+the progress it reads under them, writes through `apply_progress` without
+notifications, then sets the merger's instants on the earned tiers and the
+completion.
+
+Invariants: `steps_done` equals the document's `steps`; earned tiers and
+completion are never taken back by a write (only the console revoke deletes
+them); a tiered badge completes at its last tier, a single badge at
+`criteria_steps`; an archived badge stays listed and kept by its earners and is
+never awarded; an unpublished one is invisible. A database stamped before step
+`0037_social_badges_catalog_parity` keeps its four placeholder rows: the step
+gives `open_for_business` and `emotionista` upstream's content and leaves
+`decentraland_citizen` and `walkabout` unpublished. It also fits the old
+progress rows to the new targets: a tiered row keeps completion only when the
+wallet holds the last tier and its steps stop at its highest held tier's
+target (no unearned tier on the next write), and a completed single badge
+reads its target as reached. The rest of upstream's
+catalog reaches it through the TS database import.
+
+### Badge processor
+
+The writers of evaluated progress are four leased jobs
+(`social/src/badges/jobs/`, on where `BADGES_PROCESSOR_ENABLED`, off by
+default, and social writes are), each a reader of tables other areas own, with one row of
+`social.badge_cursors` per source:
+
+- `social.client_events` by `seq` (citizen, traveler, walkabout, moves
+  master, social butterfly, vertical voyager), traveler resolving a parcel's
+  scene title through `content.active_pointers` and `content.deployments`.
+  The values are the client's claim, as upstream took them, within bounds:
+  a `walked-distance` event counts at most 10,000 steps (the explorer
+  reports on thresholds far below it), a `vertical-height-reached` height
+  above 5,000 m is passed (no scene is that tall; one without a height, as
+  the Unity explorer sends it, counts as reached) and a `passport-opened`
+  receiver must be a wallet address. Times are Segment's `received_at`, as
+  upstream stamped arrival, so a client cannot backdate or space its events.
+  Segment stamps a whole batch with one `received_at`, so emotes or scene
+  stays a client delivers late in one batch (after a retry or offline)
+  collapse into one minute or one moment: a deliberate trade against
+  client-set times;
+- `content.deployments` by `id` (rarity badges, profile pro, land architect,
+  the store half of open for business), a wearable's rarity from its active
+  entity or `shop.items`;
+- `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
+  and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
+  each up to the block its index published in `shop.chain_cursor`
+  (emotionista, fashionista; one step per transaction hash, a legacy order
+  indexed before `nft_event.tx_hash` was recorded counted by its chain
+  position until a re-index fills the hash). An off-chain good counts for
+  its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
+  or cross-chain relay or a CreditsManager counts for the recipient of the
+  relay's own first `transfer` of the token after the order in the same
+  block (transfer rows keep no transaction hash), and for nobody while a
+  relay holds it (one
+  `nft_event_token_idx` probe per such order). Step
+  `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
+  a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
+  `shop.nft_event`, held until `migrate` commits, so the nft index's writes
+  and the reads of the table wait for the rest of the migration. A sale of
+  an item `shop.items` lacks holds its log's cursor until the item is
+  mirrored or the items mirror completes a pass an hour after the sale (a
+  pass walks every item, minutes at the defaults); then it is passed without
+  effect. Without
+  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
+  not started (logged at startup);
+- recounts of `shop.items` and `shop.collections` on Polygon (once
+  `shop.mirror_state` records a complete pass) and of accepted
+  `social.referral_progress` rows (creators, the collection half of open for
+  business, referral), for the wallets whose stored steps are behind. A
+  creator's steps are the size of their item set, never below the stored
+  count, so an imported item id in another format is not counted twice. A pass
+  walks those wallets in address order and records the last one recounted
+  (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
+  imported document whose flag is truthy but not `true`) never starves the
+  ones after it; `position` counts completed passes. A batch reads its
+  creators' items in one statement through `items_creator_lower_idx`
+  (`lower(creator)`: the mirror lowercases, no constraint says so): 20 ms
+  for 200 creators on 1M synthetic items (781 MB), where the unindexed
+  per-creator read scanned the table once per creator. The candidate scan
+  itself reads the table once per batch (150 ms on the same rows). The
+  object pass builds the index non-concurrently in the migrate transaction,
+  SHARE on `shop.items` until it commits (the mirror's upserts wait): 1.7 s
+  on those rows; it can be
+  built beforehand with `CREATE INDEX CONCURRENTLY` and the definition of
+  `schemas/30_shop.sql`.
+
+One transaction holds a batch (`BADGES_PROCESSOR_BATCH_SIZE`, default 200):
+the cursor row `FOR UPDATE`, the batch's progress writes through
+`apply_progress` and the cursor advance, so a database error rolls the batch
+back and the next tick reads the same rows; a row an evaluator cannot read is
+logged and passed. Invariants: a cursor never moves past a row it did not
+pass; its first pass records the source's head and replays no history; a
+recount's first pass writes no notification.
+
+The id cursors (`client_events` by `seq`, `deployments` by `id`) never skip a
+committed row. A sequence value is drawn before its transaction commits, so
+ids become visible out of order: the sync flushes insert concurrent batches,
+and a younger transaction can hold a lower id than rows an older one already
+committed. A batch therefore passes every visible row past the cursor and
+records each run of ids it passed without seeing in
+`social.badge_cursor_gaps` (`lo..=hi`, the `horizon` and `seen_at` of the scan
+that found it). The invariant: every id at or below a cursor's position is
+processed or inside a gap of that source. Each batch first re-reads the gaps
+and processes the rows that appeared (out of id order, as upstream's queue
+delivered them), then drops a gap only when both hold:
+
+- its `horizon` is at or below the `xmin` of a snapshot taken before the
+  re-read that still misses it. The horizon is the transaction id of the
+  batch that found the gap, which reads the cursor without a lock, scans,
+  and only then locks the cursor row, which assigns that id: every
+  transaction that had an id at the scan, so every one that could hold an id
+  of the gap, has a lower one. (A snapshot's `xmax` is one past the highest
+  completed id; a transaction still running can be above it.) Once `xmin`
+  reaches the horizon all of them have ended, and a committed row would have
+  been visible to the re-read. A batch that finds the cursor row changed when
+  it locks it (a second runner after a lease expiry) writes nothing;
+- it is older than the grace (600 s) and was then re-stamped. A writer draws
+  the value inside its INSERT before it takes its transaction id (the row's
+  default is evaluated before the heap insert assigns the id), so a writer
+  between the two at the scan is not under the horizon. Usually that window
+  is one row's projection, but an `ON CONFLICT` pre-check can wait in it on
+  another open transaction inserting the same key. So the first batch past
+  the grace replaces the gap's `horizon` with its own transaction id
+  (`restamped`), and the gap is dropped only once `xmin` reaches that one
+  too: every transaction such a writer could be waiting on has then ended.
+
+Values that never commit (a rolled-back flush, a value an `ON CONFLICT DO
+NOTHING` burned, as a concurrent duplicate Segment delivery does) are what
+expire. A long
+write transaction anywhere on the cluster delays expiry, never a row: rows
+are processed as soon as they are visible. A source holds at most 5,000 gap
+ranges; at the cap its cursor passes no row that would open another until
+gaps resolve (it holds, it does not skip): alert on
+`badges_processor_cursor_gaps` well before 5,000. The first pass starts at the
+head, so a row still uncommitted below the head when a cursor is created is
+history and not read. Each tick publishes, per source,
+`badges_processor_cursor_lag` (ids behind the head; blocks behind the
+published block for the sales logs), and for the id cursors
+`badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
+a cursor that stops advancing shows as a growing lag, and a horizon held by a
+transaction left open on the cluster as gaps that keep ageing. A deployment stored
+more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default off, as upstream had no
+such filter) after its entity timestamp is history a syncing node caught up
+on and is passed without effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
+`EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
+adds `seq`; the object pass creates `social.badge_cursors`,
+`social.badge_cursor_gaps` and both indexes.
+
+The `friend_first_wear` notification producer
+(`social/src/notifications/first_wear.rs`, leased `friend-first-wear`) reads
+`content.deployments` by `id` through the same id cursor and gap records,
+under source `friend_first_wear`: the signer's `entity_timestamp` is not
+storage order (a local deploy may be signed up to 15 minutes ahead, a synced
+one long before), and a cursor on it would skip every profile stored after
+one signed later and every tie past a page edge. Its first pass starts at the
+head. A batch seeds baselines and claims first wears (`social.worn_history`)
+in the transaction that advances the cursor, and notifies after it commits,
+so a restart never re-notifies a claim. Its batch is
+`BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
+(600 s), and it publishes the same lag and gap gauges under its source. A profile the
+node stored more than 24 hours after its entity timestamp is history a
+syncing node caught up on and is passed without effect; the lag is measured
+at storage, so a stalled producer still works through its backlog.
+`social.first_wear_cursor` is no longer read.
+
+### Presence badges flow
+
+Input is every verified LiveKit join and leave (the gatekeeper's
+`RoomEventStore`), including one the gatekeeper's own session ordering
+supersedes, such as a reconnect's old leave that follows the new join: wallet
+identities only, scene and world rooms only, with LiveKit's participant sid as
+the session. The webhook inserts each into `social.presence_events` before it
+answers, keyed by LiveKit's event id, so a redelivered webhook is one row; a
+failed insert answers 503 and LiveKit delivers the event again. Only events in
+a place a badge could count now are kept: a 5 s snapshot of the published badges' worlds, parcels and the
+scene entities deployed on them (one GIN-indexed `entity_pointers &&` read),
+with the engine's lookahead and lookback. A scene entity the snapshot does not
+know (a redeploy since) is looked up by `entity_id` in the webhook that carries
+it, under the webhook's lock stripes, and dropped
+only when it is deployed off every badge parcel; one the node has not synced
+is kept for the engine, which leaves it queued (and the wallet's later events
+behind it) until the scene syncs, trying it again after 5 s, doubling up to
+5 minutes, and matching no parcel after an hour or at once while 1,000
+events already wait (so made-up scene ids bound the retry work). Waiting
+events are counted once (`scene_not_synced`), gauged as
+`badges_presence_waiting_events` and left out of the oldest-age gauge.
+Every event is kept when the snapshot cannot be read.
+A badge published or moved earlier is seen within 5 s; joins before that are
+not counted, and the player's next join is. Expected volume is every
+join and leave of the scene and world rooms of active presence badges
+(unmeasured); rows other than waiting ones live only
+until the next pass of the leased `badges-presence` job (5 s), which applies
+up to 500 in `seq` order, one transaction per event that deletes it, so the
+queue is its own cursor and a row committed behind a later `seq` is still
+there on the next pass. The clock (bookkeeping times and the 5-minute future
+guard) is read per event, so a long drain stays current. Only a deterministic
+failure counts toward dropping an event (after 3 passes, logged and counted);
+a connection, pool, timeout, conflict or failover error is retried on the next
+pass without counting until the event has been queued for an hour, then counts
+too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
+reports the age of the oldest queued event of a wallet not waiting for a
+scene, each pass (one `presence_events_seq_idx` scan that stops at the first
+such row).
+
+Every presence transaction first takes one advisory lock: the engine and the
+`badges-presence-sweep` job are a single writer fleet-wide, so the runtime
+tables need no per-session locks. The runtime state is upstream's
+(`presence_visits` keyed by badge, wallet and room, cascading from
+`presence_badges`; `presence_applied_events`, `presence_pending_leaves` and
+`presence_absence_facts` keyed by their facts), in epoch milliseconds where a
+value meets a LiveKit event time or the `intervals` document. Indexes follow
+the statements: `(wallet, realm_name)` for a leave's open visits,
+`opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
+and each fact table's retention column for the bounded prune (batches of
+`BADGES_PRESENCE_PRUNE_BATCH_SIZE` rows, 1,000 by default, per table until one
+comes back short, at most 20 per sweep, after the redelivery window,
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS`, 7 days by default). Completed badges are left out in one statement per event,
+so a wallet with nothing left to earn in a place records no visit or pending
+leave there. A scene badge resolves
+the event's entity to its parcels through `content.deployments` (`entity_id`
+is unique); a world badge compares names. Progress is written through
+`apply_progress` with the progress document `{ steps, intervals }` kept as
+upstream writes it, so an imported document resumes. As upstream's catalog
+requires, a badge is counted only when its row is single (not tiered), its
+`criteria_steps` is its rule's (`required_seconds` for a stay, 1 for a visit)
+and no evaluator or import of its own (other than a one-time import) writes
+it; another row is skipped and counted as `badge_invalid` (logged once per
+badge and reason), so the
+flow never overwrites another writer's progress. Invariants: a session
+counts only from its own join to its own leave, never past the first
+occupancy observation that missed the wallet; an ended session never reopens
+for that badge; overlapping connections count once; a stay completes at the
+instant the union reaches `required_seconds`. A grant writes its
+`badge_granted` notification unless `BADGES_PRESENCE_GRANT_NOTIFICATIONS` is
+false. The sweeper reads this process's LiveKit occupancy observation
+(`comms::presence`) and only closes visits; no observation, or an empty one,
+changes nothing. `BADGES_PRESENCE_SWEEPER_ENABLED=false` stops only these
+occupancy checks; the maximum age and the prune still run.
+
+Upstream's tuning is environment settings, in seconds and with upstream's
+defaults (shared with `presence::Settings::default()`; each duration at most
+30 days, each batch at most 100,000):
+`BADGES_PRESENCE_EARLY_JOIN_LOOKAHEAD_SECONDS` (21,600; 0 keeps no early join),
+`BADGES_PRESENCE_OPEN_VISIT_CHECK_AFTER_SECONDS` (900),
+`BADGES_PRESENCE_OPEN_VISIT_MAX_AGE_SECONDS` (86,400),
+`BADGES_PRESENCE_APPLIED_EVENTS_TTL_SECONDS` (604,800),
+`BADGES_PRESENCE_ABSENT_EXPIRE_AFTER_SECONDS` (3,600),
+`BADGES_PRESENCE_SWEEP_INTERVAL_SECONDS` (60), `BADGES_PRESENCE_SWEEP_BATCH_SIZE`
+(100), `BADGES_PRESENCE_PRUNE_BATCH_SIZE` (1,000),
+`BADGES_PRESENCE_GRANT_NOTIFICATIONS` and `BADGES_PRESENCE_SWEEPER_ENABLED`
+(both true). Upstream names them without the `BADGES_` prefix and gives the
+sweep interval in milliseconds.
+### Adding a badge
+
+A running node takes a new badge through the bearer-gated catalog routes
+(`social/src/badges/catalog.rs`, bearer `CATALYRST_BADGES_ADMIN_TOKEN`, writes
+refused while `SOCIAL_WRITES_ENABLED` is off). A schema step cannot insert
+catalog rows, and the bootstrap seed reaches only new databases.
+
+1. `PUT /badges/badges/{id}` with the definition in the shape `GET
+   /badges/{id}` reads: `name`, `description`, `category` (upstream's enum),
+   and either `criteria: {steps}` (a single badge) or `tiers: [{tierId,
+   tierName, description, criteria: {steps}}]` in tier order (a tiered one,
+   steps strictly increasing). `assets` (`{"2d": {...}, "3d": {...}}`, paths
+   relative to `BADGES_PUBLIC_ASSET_BASE_URL`) defaults to upstream's CDN
+   layout: `<id>/{2d,3d}/...` for a single badge, `<id>/<slot>/{2d,3d}/...`
+   for a tier whose id is `<id with _ as ->-<slot>`; any other tier id names
+   its assets. Every problem is one 400. A new badge is created unpublished
+   and invisible (201); a repeated `PUT` replaces the content in place (200),
+   keeping publication, archive and `created_at`. A `PUT` that would remove a
+   tier a wallet holds, or switch a badge with player rows between single and
+   tiered, is a 409 and changes nothing; a removed tier nobody holds is
+   deleted from `badge_tiers`. Player rows are never written: a lowered
+   target awards on the wallet's next progress write (for a processor badge
+   other than traveler, the next one that gains steps, one tier per step or
+   event), not retroactively, and a tier added above a completed badge
+   leaves it complete until such a write.
+   A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
+   the badges routes refuse bodies over 1 MiB (413), the backfill's over
+   64 MiB and an art upload's over 16 MiB.
+2. Make the art reachable: upload it to the CDN that
+   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or, when the
+   base is `<node>/badges/assets`, put each file into `BADGES_ASSETS_DIR`
+   under the same relative path: mirror it there, or `PUT
+   /badges/assets/{path}` with the admin bearer and the PNG as the body (204;
+   only a path the badge or one of its tiers names, else 404). The upload is
+   written on the process that receives it, so every process serving the
+   badges routes must mount the same directory (a shared volume).
+3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
+   awardable. An active badge with no evaluator, backfill import or presence
+   configuration (`social.presence_badges`) is named in a warning at startup,
+   since only console grants award it.
+4. Grant it per wallet with the console grant (`POST
+   /badges/users/{address}/badges/{id}`), which awards it through
+   `apply_progress`.
+
+Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
+its earners, and `apply_progress` answers `NotAwardable`. `{"archived":
+false}` reopens it. `{"published": false}` hides a badge and is a 409 once
+any wallet has a row of it. Each upsert (with the definition it wrote) and
+each publication or archive transition appends a row to
+`social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
+revokes, whose `address` a catalog write does not have.
+
+## Place removal feed
+
+`explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox
+of catalogue removals. Explore's trigger on `explore.place` and
+`explore.place_world_local` inserts one row per transition to removed (opt-out
+is not a removal), snapshotting the place context, and keeps one lifecycle
+bit per place in `explore.place_removal_state`; it is the only writer of new
+rows. The comms gatekeeper (`services/catalyst/comms/src/gatekeeper/removed_places.rs`)
+consumes it by shared SQL: at most 100 due rows a pass on
+`place_removal_due_idx`, `owner_address` filled once when it was empty,
+`cleaned_at` set in the same transaction as its destructive cleanup so a retry
+cannot replay it, `attempts` and `retry_at` advanced with capped backoff, and
+a cleaned row deleted, and the place's `place_removal_state` row with it once
+neither catalogue holds the place and no pending row for it remains. Its context lookups read
+`explore.place_indexed`, joined to `content.active_pointers` and
+`content.deployments` for shared-scene rooms, by primary key or world name.
+Neither table has an FK: queue rows outlive catalogue deletion.
+
+## Player report intake workload
+
+The player report intake (the node area `/report-user`,
+`services/catalyst/comms/src/gatekeeper/reports.rs`) serves a human writing a
+handful of rows into `social.player_reports` and
+`social.player_report_evidence` (`schemas/40_social.sql`). The Sites report
+form (`/report`, `apps/sites/src/data/lib/catalyst/landings/report.ts`) posts
+to `/comms/reports/players`, which the node does not serve, so the intake has
+no caller in this tree; pointing the form at
+`/report-user/api/reports/players` is the next work. The order is
+slots first, report last, so the tables share no FK: a presign inserts one
+to five evidence slots under a fresh report id (`report_id`, `evidence_key`
+`<position>-<sanitized filename>`, `reporter_address`, the declared type and
+size, the client address bucket `source_key`) in one transaction; each
+evidence `PUT` (at most 5 MiB, the node's cap and half the form's 10 MB;
+exactly the declared size, the declared type in the header and a first bytes
+that match that type) claims the slot under its row lock (`content_hash` and
+`uploaded_at`, set only while they are empty) and then stores the bytes in
+the shared hash-addressed blob store; the filing locks the slots
+(`FOR UPDATE`), checks every planned key is claimed with its bytes in the
+store and inserts the `player_reports` row (`status`
+`open`, `evidence_keys` the slot keys in order). Volume is a few reports a
+day; every statement of these three steps is a primary-key read or write,
+beside the limit counts below. The moderator read
+(`GET /api/reports`, the moderator token or a listed moderator wallet) lists
+filed reports newest first (`player_reports_created_idx`), optionally for one
+reported wallet (`player_reports_reported_idx`), and loads their evidence
+rows with one `= ANY` by report id, in `evidence_keys` order (50 reports a
+page, at most 200, so one answer holds at most 1,000 evidence rows); the
+evidence bytes come from the store by `content_hash`, as a download the
+browser neither sniffs nor runs (`nosniff`, `Content-Disposition:
+attachment`, `Content-Security-Policy: sandbox`).
+
+Limits, each checked under a per-reporter transaction advisory lock so two
+concurrent requests cannot both pass: a wallet files at most 5 reports per
+rolling hour (`REPORTS_PER_HOUR`, counted on `player_reports_reporter_idx`;
+the presign refuses early and the filing refuses again, both `429`; a person
+writes each report by hand, and five an hour is above the node's volume of a
+day), and holds at most 25 unfiled slots minted in the last 24 hours, the
+evidence of one hour's reports
+(`PENDING_SLOTS_PER_REPORTER`, counted on
+`player_report_evidence_reporter_idx` against `NOT EXISTS` of the report
+row; `429` at presign). Slots older than that window no longer count, so an
+abandoned form never locks a wallet out for good.
+
+A fresh key is a new wallet, so the wallet limits alone bound nothing. Each
+client address (the one `serve` pins to the socket peer or takes from a
+trusted proxy, IPv6 by its /64) therefore has two budgets that no key
+escapes, both buckets that refill over a day, held in the memory of each
+`serve` process: 100 presigned slots (`SOURCE_SLOTS_PER_DAY`, four wallets'
+pending quotas, for the people one address stands for) and 500 MiB sent to
+the store (`SOURCE_KIB_PER_DAY`, those slots filled once at the file cap;
+every `PUT` of the declared size and type spends its size, also one the slot
+then refuses). Both refuse with `429`.
+
+A sender with many addresses has as many budgets, and a process that
+restarts forgets them, so one bound holds for the whole node, and each
+client address bucket has a share of it. Workload: one more read per
+presign, after the wallet quotas and the address budget pass: the sum of
+`greatest(declared_size, 262144)` over the slots that count, for the node
+and, as a `FILTER` of the same statement, for the presign's `source_key`. A
+slot counts while it holds a file and is younger than 24 hours (a range read
+on the partial index `player_report_evidence_uploaded_idx`), or while it
+holds none and is younger than 15 minutes (`RESERVATION_MINUTES`; a range
+read on `player_report_evidence_created_idx`); a normal day has a few rows
+in both. The first `PUT` of a slot adds one lock and no read. The 15 minutes
+are a policy, not a measurement: the form sends its files right after the
+presign, and five files at the cap in that time need less than 230 kbit/s.
+Invariants: the presign takes one transaction advisory lock
+(`player-report-evidence:node`) before the sum and holds it over its
+inserts, and the first `PUT` of a slot takes the same lock before its claim,
+so every `serve` process counts the same rows and no two requests pass
+together; the claim is refused (`410`) when the slot is older than the 15
+minutes on the statement clock read under that lock, so a slot that left the
+sum never takes a file; a slot takes one body of its declared size (below),
+so the stored bytes of the slots created in any 24 hours never pass the sum;
+the sum plus the new slots never passes `REPORT_EVIDENCE_DAILY_MIB` (default
+2,048 MiB; the value is the operator's policy for the store space reports
+may take in a day, not a measurement; 0 accepts no evidence); the slots of
+one address bucket plus the new ones never pass that address's share, a
+sixteenth of the bound (`NODE_SHARE_DIVISOR`; 128 MiB at the default, the
+evidence of one wallet's hour) and at least one report's files at the cap
+(`NODE_SHARE_FLOOR_BYTES`, 25 MiB), so fewer than sixteen addresses never
+close the intake to another one (a policy, not a measurement); the sweep
+deletes no slot younger than the 24 hours; each slot counts for at least
+256 KiB (`NODE_SLOT_FLOOR_BYTES`), so each of the two ranges holds at most
+the bound divided by that floor (8,192 rows at the default), which is the
+most the sum reads. The node lock is the last lock a request takes: after
+the reporter lock in a presign, after the slot's row lock in a `PUT`. At the
+bound or at the share a presign answers `429` and keeps the address's
+spend. Filed reports keep their evidence without a time limit: no code moves
+a report out of `open`, so no retention rule exists yet.
+
+`source_key` is the bucket key of the presign's client address and nothing
+more of the request: an IPv4 address as it is, an IPv6 address cut to its
+/64, empty when `serve` has no address. Only the sum above reads it; no
+route returns it. Each presign clears it on up to 100 slots that hold a file
+and are older than the 24 hours (oldest first on the partial index
+`player_report_evidence_source_idx`, `FOR UPDATE SKIP LOCKED`), and a slot
+without a file loses it when the sweep below deletes the slot. So a key
+stays for 24 hours and then until the next presigns; a node that receives no
+presign clears nothing. The step `0046_player_report_evidence_source_key`
+adds the column; the slots from before it keep `NULL` and count for the node
+and for no address.
+
+Each presign then deletes up to 100 unfiled slots older than the 24 hours
+(`SWEEP_BATCH`, twenty presigns' worth), oldest first on
+`player_report_evidence_created_idx`, so the store's collector frees their
+bytes. It locks the slots it takes with `FOR UPDATE SKIP LOCKED` and deletes
+them in a second statement that checks `NOT EXISTS` of the report row again:
+a filing holds its slots' locks until its report row is committed, so the
+sweep never deletes the evidence of a filed report. The scan passes the
+slots of filed reports older than the window (one primary-key probe each),
+which at a few reports a day stays a small range. A report not filed within
+the 24 hours is gone: its `PUT` and its filing answer `404`.
+
+Invariants: a slot's `reporter_address` is the wallet that signed the
+presign and never changes; an evidence `PUT` and the filing are refused for
+any other signer (`403`), and once the report row exists (`409`); a filing
+names exactly the presigned keys, all uploaded, so a filed report has
+complete evidence; the reason is one of the form's five values and the texts
+keep the form's 500-character limits; a slot takes one body: the claim sets
+`content_hash` only while it is empty and only the claiming `PUT` writes to
+the store, the same bytes again answer `200` (`409` until the first write
+ends), other bytes answer `409`, and a store that fails clears the claim, so
+the slot takes a `PUT` again in its 15 minutes. Slots whose client never files are deleted by the sweep
+above; the queue reads filed reports only. The
+bytes are content-addressed and rooted by `content_hash`
+(`services/catalyst/storage/src/gc.rs`), so two reports attaching the same
+file share one blob and a report's deletion never removes bytes another one
+references.

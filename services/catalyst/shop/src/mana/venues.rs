@@ -1,4 +1,4 @@
-// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as ui3/src/shop/market/lib/contracts.ts and ui3/src/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
+// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as library/shop/market/lib/contracts.ts and library/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
 //! The settlement venues of a chain: where a MANA purchase, listing, bid,
 //! rental or NAME registration executes and what it pays with. One book
 //! per process ([`Book::production`]); a controlled deployment (the anvil
@@ -74,6 +74,12 @@ impl Chain {
 
     pub fn is_estate_registry(&self, address: Address) -> bool {
         self.estate == Some(address)
+    }
+
+    /// The network of this chain's LAND registry, whose land-authz index
+    /// confirms its parcels and estates; `None` without LAND.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network_of_registry(&format!("{:#x}", self.land?))
     }
 }
 
@@ -246,6 +252,11 @@ mod tests {
             crate::land_authz::LAND_REGISTRY_MAINNET
         );
         assert_eq!(
+            ethereum.land_network(),
+            Some(crate::land_authz::LAND_MAINNET)
+        );
+        assert_eq!(polygon.land_network(), None);
+        assert_eq!(
             format!("{:#x}", ethereum.legacy_marketplace.unwrap()),
             crate::market::nft_index::legacy_marketplaces(ChainNet::Ethereum)[0].0
         );
@@ -270,6 +281,7 @@ mod tests {
         let amoy = book.chain(ChainId::AMOY).unwrap();
         assert_eq!(amoy.rpc_url.as_deref(), Some("rpc-80002"));
         assert_eq!(amoy.net, Some(ChainNet::Matic));
+        assert_eq!(amoy.land_network(), None);
         let pinned: serde_json::Value =
             serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
         assert_eq!(

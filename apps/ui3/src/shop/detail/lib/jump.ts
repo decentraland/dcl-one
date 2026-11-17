@@ -2,7 +2,7 @@
 // The in-world entry points offered after a purchase. The iOS app's web view cannot run the launcher
 // page, so it gets the backpack deep link instead, opened on the first item that has a URN.
 
-import { CHAIN } from "../../model/chain";
+import { CHAIN } from "@shop/model/chain";
 
 export function jumpUrl(chainId: number = CHAIN.POLYGON): string {
   return chainId === CHAIN.AMOY ? "https://decentraland.zone/jump" : "https://decentraland.org/jump";

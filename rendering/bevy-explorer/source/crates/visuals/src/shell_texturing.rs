@@ -26,7 +26,7 @@ use scene_runner::{
 
 use crate::terrain::{
     ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
-    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface,
+    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface, GROUND_RINGS,
     TERRAIN_TEXTURE,
 };
 
@@ -46,8 +46,6 @@ const GROUND_MATERIAL_FLAT_COLOR: Handle<TerrainFlatMaterial> =
     weak_handle!("3e91f222-a374-4f7f-ba1a-4a239c9734ae");
 const GROUND_LAYERS: u32 = 5;
 const GROUND_DISPLACEMENT: f32 = 0.01;
-// rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane
-const GROUND_RINGS: u32 = 6;
 // terrain rises at most 8 steps of 1.8 m plus ~4.4 m of noise
 const GROUND_MIN_Y: f32 = -5.0;
 const GROUND_MAX_Y: f32 = 25.0;
@@ -184,12 +182,16 @@ impl Material for ShellTexture {
     }
 }
 
+pub(crate) fn embed_shaders(app: &mut App) {
+    embedded_asset!(app, "shell_texturing.wgsl");
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ShellTexturingPlugin;
 
 impl Plugin for ShellTexturingPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "shell_texturing.wgsl");
+        embed_shaders(app);
 
         app.init_state::<ParcelGrassState>();
 
@@ -418,28 +420,32 @@ fn update_parcel_grass_material(
     );
     materials.insert(
         PARCEL_GRASS_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: parcel_grass_config.layers,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        shell_material(
+            &parcel_grass_config,
+            parcel_grass_config.layers,
+            surface.params(),
+        ),
     );
     materials.insert(
         GROUND_MATERIAL.id(),
-        ShellTexture {
-            subdivisions: parcel_grass_config.subdivisions,
-            layers: GROUND_LAYERS,
-            snap_anchor: Vec2::ZERO,
-            root_color: parcel_grass_config.root_color.into(),
-            tip_color: parcel_grass_config.tip_color.into(),
-            terrain_steps: TERRAIN_TEXTURE,
-            terrain: surface.params(),
-        },
+        shell_material(&parcel_grass_config, GROUND_LAYERS, surface.params()),
     );
+}
+
+pub(crate) fn shell_material(
+    config: &ParcelGrassConfig,
+    layers: u32,
+    terrain: TerrainParams,
+) -> ShellTexture {
+    ShellTexture {
+        subdivisions: config.subdivisions,
+        layers,
+        snap_anchor: Vec2::ZERO,
+        root_color: config.root_color.into(),
+        tip_color: config.tip_color.into(),
+        terrain_steps: TERRAIN_TEXTURE,
+        terrain,
+    }
 }
 
 fn shells_need_updating(
@@ -550,13 +556,12 @@ fn refresh_parcel_grass_meshes(
 
 fn parcel_grass_lod_replaced(trigger: Trigger<OnReplace, ParcelGrassLod>, mut commands: Commands) {
     let entity = trigger.target();
-    commands.entity(entity).queue_handled(
-        |mut entity: EntityWorldMut| {
+    // Fails when the entity is being despawned; nothing to do then.
+    commands
+        .entity(entity)
+        .queue_silenced(|mut entity: EntityWorldMut| {
             entity.despawn_related::<Children>();
-        },
-        // This might happen on despawn, and if it is the case, just leave it be
-        bevy::ecs::error::ignore,
-    );
+        });
 }
 
 fn parcel_grass_without_lod(
@@ -708,5 +713,202 @@ impl<B: Bundle + Clone> SpawnableList<ChildOf> for ParcelGrassShellSpawnList<B> 
 
     fn size_hint(&self) -> usize {
         (0..self.shells).step_by(self.lod).len()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
+    /// window: a grass shell (`shell_texturing.wgsl`), a rock (`soft_shadows.wgsl`), the flat
+    /// ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
+    /// (`coast_water.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
+    /// Needs a GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p visuals soft_shadow_pipelines_compile -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn soft_shadow_pipelines_compile() {
+        use std::path::Path;
+
+        use bevy::{
+            asset::{io::embedded::EmbeddedAssetRegistry, RenderAssetUsages},
+            core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+            render::{
+                camera::RenderTarget,
+                render_resource::{Extent3d, TextureDimension, TextureFormat},
+            },
+        };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
+
+        use crate::{
+            coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
+            terrain::NO_COAST,
+            trees::{SoftShadowMaterial, SoftShadows},
+        };
+
+        let mut app = headless_app();
+        // the shaders as `ShellTexturingPlugin`, `TreesPlugin`, `TerrainPlugin` and `CoastPlugin`
+        // embed them; those plugins need the scene runner and the terrain
+        let registry = app.world().resource::<EmbeddedAssetRegistry>();
+        for (name, source) in [
+            ("shell_texturing.wgsl", include_str!("shell_texturing.wgsl")),
+            ("soft_shadows.wgsl", include_str!("soft_shadows.wgsl")),
+            ("terrain_vertex.wgsl", include_str!("terrain_vertex.wgsl")),
+            ("terrain_params.wgsl", include_str!("terrain_params.wgsl")),
+            ("terrain_flat.wgsl", include_str!("terrain_flat.wgsl")),
+            ("coast_profile.wgsl", include_str!("coast_profile.wgsl")),
+            ("coast_surf.wgsl", include_str!("coast_surf.wgsl")),
+            ("coast_cliff.wgsl", include_str!("coast_cliff.wgsl")),
+            ("coast_water.wgsl", include_str!("coast_water.wgsl")),
+        ] {
+            let path = Path::new("visuals").join(name);
+            registry.insert_asset(path.clone(), &path, source.as_bytes());
+        }
+        app.add_plugins((
+            MaterialPlugin::<ShellTexture>::default(),
+            MaterialPlugin::<SoftShadowMaterial>::default(),
+            MaterialPlugin::<TerrainFlatMaterial>::default(),
+            MaterialPlugin::<CliffMaterial>::default(),
+            MaterialPlugin::<WaterMaterial>::default(),
+        ));
+        app.finish();
+        app.cleanup();
+        app.update();
+
+        let target = render_target(&mut app);
+        let world = app.world_mut();
+        let mut images = world.resource_mut::<Assets<Image>>();
+        // flat terrain, as `TerrainSurface` uploads it before any bounds are known
+        images.insert(
+            TERRAIN_TEXTURE.id(),
+            Image::new(
+                Extent3d::default(),
+                TextureDimension::D2,
+                0f32.to_le_bytes().to_vec(),
+                TextureFormat::R32Float,
+                RenderAssetUsages::RENDER_WORLD,
+            ),
+        );
+        let ripples = images.add(Image::default());
+        let mut meshes = world.resource_mut::<Assets<Mesh>>();
+        let grass_mesh = meshes.add(parcel_mesh(grid_segments(HIGH_LOD)));
+        let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+        let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
+        let grass = world
+            .resource_mut::<Assets<ShellTexture>>()
+            .add(ShellTexture {
+                subdivisions: 4,
+                layers: 4,
+                snap_anchor: Vec2::ZERO,
+                root_color: LinearRgba::GREEN,
+                tip_color: LinearRgba::GREEN,
+                terrain_steps: TERRAIN_TEXTURE,
+                terrain: TerrainParams::default(),
+            });
+        let rock = world
+            .resource_mut::<Assets<SoftShadowMaterial>>()
+            .add(SoftShadowMaterial {
+                base: StandardMaterial::default(),
+                extension: SoftShadows {},
+            });
+        let ground = world
+            .resource_mut::<Assets<TerrainFlatMaterial>>()
+            .add(TerrainFlatMaterial {
+                base: StandardMaterial::default(),
+                extension: TerrainExtension::default(),
+            });
+        let cliff = world
+            .resource_mut::<Assets<CliffMaterial>>()
+            .add(CliffMaterial {
+                base: StandardMaterial {
+                    cull_mode: None,
+                    double_sided: true,
+                    ..default()
+                },
+                extension: CliffExtension { bounds: NO_COAST },
+            });
+        let water = world
+            .resource_mut::<Assets<WaterMaterial>>()
+            .add(WaterMaterial {
+                base: StandardMaterial {
+                    fog_enabled: false,
+                    ..default()
+                },
+                extension: WaterExtension {
+                    bounds: NO_COAST,
+                    ripples,
+                },
+            });
+
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.into()),
+                hdr: true,
+                ..default()
+            },
+            DepthPrepass,
+            NormalPrepass,
+            Transform::from_xyz(0.0, 2.0, 6.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        world.spawn((
+            DirectionalLight {
+                shadows_enabled: true,
+                ..default()
+            },
+            Transform::from_xyz(1.0, 3.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        // a shell as `ParcelGrassShellSpawnList` spawns one
+        world.spawn((
+            Mesh3d(grass_mesh),
+            MeshMaterial3d(grass),
+            MeshTag(1 + ((HIGH_LOD as u32) << 16)),
+            NotShadowCaster,
+            Transform::default(),
+        ));
+        world.spawn((
+            Mesh3d(rock_mesh.clone()),
+            MeshMaterial3d(rock),
+            Transform::from_xyz(1.0, 0.5, 0.0),
+        ));
+        world.spawn((
+            Mesh3d(plane_mesh.clone()),
+            MeshMaterial3d(ground),
+            Transform::from_xyz(-1.0, 0.0, 0.0),
+        ));
+        world.spawn((
+            Mesh3d(rock_mesh),
+            MeshMaterial3d(cliff),
+            Transform::from_xyz(-1.0, 0.5, 1.0),
+        ));
+        world.spawn((
+            Mesh3d(plane_mesh),
+            MeshMaterial3d(water),
+            NotShadowCaster,
+            Transform::from_xyz(0.0, -0.1, 1.0),
+        ));
+
+        compile_pipelines(&mut app);
+
+        // the compiled pipelines whose fragment stage is each shader
+        for (name, at_least) in [
+            // the main pass and the prepass
+            ("shell_texturing.wgsl", 2),
+            // the main pass
+            ("soft_shadows.wgsl", 1),
+            // the main pass and the prepass
+            ("terrain_flat.wgsl", 2),
+            // the main pass
+            ("coast_cliff.wgsl", 1),
+            ("coast_water.wgsl", 1),
+        ] {
+            let compiled = fragment_pipelines(&app, &format!("embedded://visuals/{name}"));
+            println!("{compiled} {name} pipelines compiled");
+            assert!(compiled >= at_least, "only {compiled} {name} pipelines");
+        }
     }
 }

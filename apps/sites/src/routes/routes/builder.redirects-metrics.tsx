@@ -16,10 +16,10 @@ const FALLBACK: PageDefaults = {
   variant: "redirect",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = await pageLoader(
     request,
-    
+    context,
     FALLBACK,
   );
 

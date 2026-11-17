@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { landTokenId } from "../../data/catalyst/landListing";
-import { LAND_NETWORKS } from "./contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { landIdentity, landRedirectTarget } from "./redirects";
 
 const NET = LAND_NETWORKS[1]!;

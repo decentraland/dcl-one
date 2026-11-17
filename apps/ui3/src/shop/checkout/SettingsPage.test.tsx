@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { marketplaceOn } from "../market/testing-flags";
-import { BOOK } from "../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
 import SettingsPage from "./SettingsPage";
 

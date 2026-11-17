@@ -18,7 +18,11 @@
 //!
 //! The idempotency key of an authorization is derived from the signer, the
 //! lines and the signed-fetch timestamp, so a retried request replays the
-//! same credit (and the same signature) instead of pledging twice.
+//! same credit (and the same signature) instead of pledging twice. A request
+//! that names its purchase (`operationId`, a UUID the client keeps with it) is
+//! keyed by the signer and that id instead, so a retry signed again (a new
+//! timestamp, after a restart) still replays the same credit; the same id with
+//! other lines is refused (409) without a pledge.
 
 use axum::Json;
 use axum::extract::{OriginalUri, State};
@@ -44,13 +48,44 @@ pub use crate::credits::digest::TreasuryWallet;
 
 const MAX_SALTS_PER_REQUEST: usize = 100;
 
-pub(crate) fn derive_idempotency_key(
-    signer: &str,
-    lines: &[ValidatedLine],
-    auth_ts: &str,
-) -> String {
+/// The body field that names the purchase an authorization belongs to.
+const OPERATION_ID_FIELD: &str = "operationId";
+
+/// The purchase a request names, lowercased: absent (or null) for none, a
+/// UUID (8-4-4-4-12 hex) for one; anything else is refused.
+fn operation_id(body: &Value) -> Result<Option<String>, String> {
+    let Some(raw) = body.get(OPERATION_ID_FIELD).filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let refused = || format!("\"{OPERATION_ID_FIELD}\" must be a UUID");
+    let id = raw.as_str().ok_or_else(refused)?.to_ascii_lowercase();
+    let groups: Vec<&str> = id.split('-').collect();
+    let shaped = groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
+        && groups
+            .iter()
+            .all(|g| g.bytes().all(|b| b.is_ascii_hexdigit()));
+    if shaped { Ok(Some(id)) } else { Err(refused()) }
+}
+
+/// The key of a request that names its purchase: the signer and the id, so
+/// every retry of that purchase, signed at any time, reaches the same row.
+pub(crate) fn derive_operation_key(signer: &str, operation_id: &str) -> String {
     let mut h = Sha256::new();
     h.update(signer.to_ascii_lowercase().as_bytes());
+    h.update([0x1f]);
+    h.update(operation_id.as_bytes());
+    format!("authz-op:{}", hex::encode(h.finalize()))
+}
+
+/// What a purchase asked for, as the idempotency key hashes it: kept with an
+/// operation's row so the same id with other lines is told apart.
+pub(crate) fn derive_request_digest(lines: &[ValidatedLine]) -> String {
+    let mut h = Sha256::new();
+    hash_lines(&mut h, lines);
+    hex::encode(h.finalize())
+}
+
+fn hash_lines(h: &mut Sha256, lines: &[ValidatedLine]) {
     for line in lines {
         h.update([0x1f]);
         for field in [
@@ -64,6 +99,16 @@ pub(crate) fn derive_idempotency_key(
             h.update([0x1e]);
         }
     }
+}
+
+pub(crate) fn derive_idempotency_key(
+    signer: &str,
+    lines: &[ValidatedLine],
+    auth_ts: &str,
+) -> String {
+    let mut h = Sha256::new();
+    h.update(signer.to_ascii_lowercase().as_bytes());
+    hash_lines(&mut h, lines);
     h.update([0x1f]);
     h.update(auth_ts.as_bytes());
     format!("authz:{}", hex::encode(h.finalize()))
@@ -136,12 +181,34 @@ async fn run(
             Err(message) => return refuse(AuthorizeError::Line { index, message }, single),
         }
     }
-    let auth_ts = headers
-        .get(AUTH_TIMESTAMP_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let key = derive_idempotency_key(signer, &lines, auth_ts);
-    match batch::authorize_group(state, signer, &lines, source, &key, single).await {
+    let operation = match operation_id(&body) {
+        Ok(operation) => operation,
+        Err(message) => return refuse(AuthorizeError::Line { index: 0, message }, true),
+    };
+    let (key, request_digest) = match &operation {
+        Some(id) => (
+            derive_operation_key(signer, id),
+            Some(derive_request_digest(&lines)),
+        ),
+        None => {
+            let auth_ts = headers
+                .get(AUTH_TIMESTAMP_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            (derive_idempotency_key(signer, &lines, auth_ts), None)
+        }
+    };
+    match batch::authorize_group(
+        state,
+        signer,
+        &lines,
+        source,
+        &key,
+        request_digest.as_deref(),
+        single,
+    )
+    .await
+    {
         Ok(out) => Json(out).into_response(),
         Err(e) => refuse(e, single),
     }
@@ -488,5 +555,105 @@ mod tests {
             base,
             derive_idempotency_key("0xABC", &[line(500, Some("t1"))], "1690000000001")
         );
+    }
+
+    #[test]
+    fn the_timestamp_key_is_unchanged_by_the_shared_line_hash() {
+        // The key as it was derived before the line hash was shared: replays of
+        // requests already in flight keep reaching their rows.
+        let lines = [line(500, Some("t1")), line(95, None)];
+        let mut h = Sha256::new();
+        h.update(b"0xabc");
+        for l in &lines {
+            h.update([0x1f]);
+            for field in [
+                Some(l.quoted_cents.to_string()),
+                l.trade_id.clone(),
+                None,
+                None,
+                None,
+            ] {
+                h.update(field.unwrap_or_default().as_bytes());
+                h.update([0x1e]);
+            }
+        }
+        h.update([0x1f]);
+        h.update(b"1690000000000");
+        assert_eq!(
+            derive_idempotency_key("0xABC", &lines, "1690000000000"),
+            format!("authz:{}", hex::encode(h.finalize()))
+        );
+    }
+
+    #[test]
+    fn an_operation_id_is_a_uuid_lowercased_or_absent() {
+        let id = "0B9E5C3A-7F1D-4C2B-9A8E-1D2C3B4A5F60";
+        assert_eq!(operation_id(&json!({})), Ok(None));
+        assert_eq!(operation_id(&json!({ "operationId": null })), Ok(None));
+        assert_eq!(
+            operation_id(&json!({ "operationId": id })),
+            Ok(Some(id.to_ascii_lowercase()))
+        );
+        for bad in [
+            json!(42),
+            json!(""),
+            json!("op-1"),
+            json!("0b9e5c3a7f1d4c2b9a8e1d2c3b4a5f60"),
+            json!("0b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f6g"),
+        ] {
+            assert_eq!(
+                operation_id(&json!({ "operationId": bad })),
+                Err("\"operationId\" must be a UUID".to_string()),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_operation_key_names_the_signer_and_the_operation_only() {
+        let op = "0b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+        let key = derive_operation_key("0xABC", op);
+        assert!(key.starts_with("authz-op:"));
+        assert_eq!(
+            key,
+            derive_operation_key("0xabc", op),
+            "the signer's case does not matter"
+        );
+        assert_ne!(
+            key,
+            derive_operation_key("0xabd", op),
+            "another signer is another key"
+        );
+        assert_ne!(
+            key,
+            derive_operation_key("0xabc", "1b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60")
+        );
+        assert_ne!(
+            key,
+            derive_idempotency_key("0xabc", &[line(500, Some("t1"))], ""),
+            "an operation's key never meets a timestamp key"
+        );
+    }
+
+    #[test]
+    fn a_request_digest_follows_the_lines_alone() {
+        let lines = [line(500, Some("t1"))];
+        assert_eq!(
+            derive_request_digest(&lines),
+            derive_request_digest(&[line(500, Some("t1"))])
+        );
+        assert_ne!(
+            derive_request_digest(&lines),
+            derive_request_digest(&[line(501, Some("t1"))])
+        );
+        assert_ne!(
+            derive_request_digest(&lines),
+            derive_request_digest(&[line(500, Some("t2"))])
+        );
+        assert_ne!(
+            derive_request_digest(&lines),
+            derive_request_digest(&[line(500, Some("t1")), line(1, None)])
+        );
+        assert_eq!(derive_request_digest(&lines).len(), 64);
     }
 }

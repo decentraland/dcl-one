@@ -7,7 +7,7 @@ import { Link } from "react-router";
 import ThumbnailImage from "../../../../components/ThumbnailImage";
 import Icon from "../../../discovery/components/Icon";
 import { categoryIcon, genderIcon } from "../../../discovery/lib/itemIcons";
-import { rarityMedia } from "../../../discovery/lib/rarity";
+import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { shopPath } from "../../../routes";
 import { listingLabel } from "../../components/AssetTile";
 import type { AccountNft } from "./api";

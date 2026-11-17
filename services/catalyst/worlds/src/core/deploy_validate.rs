@@ -6,19 +6,21 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use crate::auth::{
-    MAX_AUTH_CHAIN_LINKS, canonicalize_pointer, is_canonical_pointer, parse_pointer,
-};
+use crate::auth::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
+use crate::content::create_entity::auth_chain_field_max_index;
+use crate::content::entity::{is_ipfs_v1, is_ipfs_v2};
+use crate::content::validator::navmap_thumbnail_error;
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
-/// Content file parts one deploy may upload, beside the entity part.
+/// File parts one deploy may upload, the entity file included (busboy's `files`).
 pub const MAX_DEPLOY_FILES: usize = 10_000;
 /// No per-file cap below the request's payload cap, as the old service.
 pub const MAX_DEPLOY_FILE_BYTES: usize = super::deploy::MAX_UPLOAD_SIZE_BYTES;
 
-const MIN_PARCEL_COORDINATE: i64 = -150;
-const MAX_PARCEL_COORDINATE: i64 = 150;
+/// The world parcel bounds, for scene pointers and the settings spawn coordinates.
+pub(super) const MIN_PARCEL_COORDINATE: i64 = -150;
+pub(super) const MAX_PARCEL_COORDINATE: i64 = 150;
 /// Every in-bounds parcel once; a longer pointer list can never be valid.
 pub(super) const MAX_SCENE_POINTERS: usize = ((MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1)
     * (MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1))
@@ -78,60 +80,26 @@ pub(super) fn validate_parcel_in_bounds(parcel: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn too_long_message() -> String {
-    format!("Auth chain is too long; the maximum allowed is {MAX_AUTH_CHAIN_LINKS} elements")
-}
+/// Upstream's `requireString` refusal of an absent field.
+pub(super) const STRING_EXPECTED: &str = "A string was expected";
 
-fn indexed_field<'a>(
-    fields: &'a BTreeMap<String, String>,
-    i: i64,
-    part: &str,
-) -> Result<&'a String, String> {
-    fields
-        .get(&format!("authChain[{i}][{part}]"))
-        .ok_or_else(|| format!("Missing auth chain element at index {i}"))
-}
-
-/// The `authChain` JSON field, or the `authChain[i][type|payload|signature]`
-/// indexed fields the older CLIs send.
+/// Upstream's `extractAuthChain`: the `authChain[i][type|payload|signature]` fields up to the
+/// largest index any field name carries, each one required. The field cap bounds the walk.
 pub(super) fn extract_auth_chain_from_fields(
     fields: &BTreeMap<String, String>,
 ) -> Result<Value, String> {
-    if let Some(chain_str) = fields.get("authChain") {
-        let chain: Value =
-            serde_json::from_str(chain_str).map_err(|_| "Invalid auth chain".to_string())?;
-        let arr = chain
-            .as_array()
-            .ok_or_else(|| "Invalid auth chain".to_string())?;
-        if arr.len() > MAX_AUTH_CHAIN_LINKS {
-            return Err(too_long_message());
-        }
-        return Ok(chain);
-    }
-
-    let mut biggest_index: i64 = -1;
-    for key in fields.keys() {
-        if let Some(rest) = key.strip_prefix("authChain[")
-            && let Some(idx_str) = rest.split(']').next()
-            && let Ok(idx) = idx_str.parse::<i64>()
-            && idx > biggest_index
-        {
-            biggest_index = idx;
-        }
-    }
-
-    if biggest_index == -1 {
-        return Err("No auth chain can be derived".to_string());
-    }
-    if biggest_index >= MAX_AUTH_CHAIN_LINKS as i64 {
-        return Err(too_long_message());
-    }
+    let biggest_index = auth_chain_field_max_index(fields.keys())
+        .ok_or_else(|| "Missing auth chain".to_string())?;
 
     let mut chain = Vec::new();
     for i in 0..=biggest_index {
-        let payload = indexed_field(fields, i, "payload")?;
-        let signature = indexed_field(fields, i, "signature")?;
-        let link_type = indexed_field(fields, i, "type")?;
+        let field = |part: &str| {
+            fields
+                .get(&format!("authChain[{i}][{part}]"))
+                .ok_or_else(|| STRING_EXPECTED.to_string())
+        };
+        let (payload, signature, link_type) =
+            (field("payload")?, field("signature")?, field("type")?);
         chain.push(json!({ "type": link_type, "payload": payload, "signature": signature }));
     }
     Ok(Value::Array(chain))
@@ -145,11 +113,7 @@ pub(super) fn entity_file_too_large_error() -> String {
 
 /// `@dcl/schemas` `IPFSv1` / `IPFSv2`.
 fn is_ipfs_hash(s: &str) -> bool {
-    let tail_ok = |tail: &str, len: usize| {
-        tail.len() == len && tail.bytes().all(|b| b.is_ascii_alphanumeric())
-    };
-    s.strip_prefix("Qm").is_some_and(|t| tail_ok(t, 44))
-        || s.strip_prefix("ba").is_some_and(|t| tail_ok(t, 57))
+    is_ipfs_v1(s) || is_ipfs_v2(s)
 }
 
 /// `uniqueItems` over string items, scanned from the end as ajv does.
@@ -253,66 +217,19 @@ pub(super) fn missing_skybox_textures(entity: &Value) -> Vec<String> {
         .collect()
 }
 
-fn has_uri_scheme(path: &str) -> bool {
-    let mut chars = path.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    for c in chars {
-        match c {
-            ':' => return true,
-            c if c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-') => {}
-            _ => return false,
-        }
-    }
-    false
-}
-
-fn is_relative_thumbnail_path(path: &str) -> bool {
-    if has_uri_scheme(path) || path.starts_with('/') {
-        return false;
-    }
-    let js_ws = |c: char| c.is_whitespace() || c == '\u{FEFF}';
-    if path.starts_with(js_ws) || path.ends_with(js_ws) {
-        return false;
-    }
-    if path.chars().any(|c| c.is_control()) {
-        return false;
-    }
-    !path.contains(['<', '>', '"'])
-}
-
 pub(super) fn validate_navmap_thumbnail(entity: &Value, errors: &mut Vec<String>) {
-    let thumb = match entity
-        .get("metadata")
-        .and_then(|m| m.get("display"))
-        .and_then(|d| d.get("navmapThumbnail"))
-    {
-        None | Some(Value::Null) => return,
-        Some(Value::String(s)) if s.is_empty() => return,
-        Some(Value::Bool(false)) => return,
-        Some(Value::Number(n)) if n.as_f64() == Some(0.0) => return,
-        Some(Value::String(s)) => s.as_str(),
-        Some(other) => {
-            errors.push(format!("Scene thumbnail '{other}' must be a relative path to a file included in the deployment."));
-            return;
-        }
-    };
-    if !is_relative_thumbnail_path(thumb) {
-        errors.push(format!("Scene thumbnail '{thumb}' must be a relative path to a file included in the deployment."));
+    let Some(metadata) = entity.get("metadata") else {
         return;
-    }
-    if !content_has_file(entity, thumb) {
-        errors.push(format!(
-            "Scene thumbnail '{thumb}' must be a file included in the deployment."
-        ));
+    };
+    if let Some(message) = navmap_thumbnail_error(metadata, |file| content_has_file(entity, file)) {
+        errors.push(message);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::validator::is_relative_thumbnail_path;
 
     #[test]
     fn canon_pointer_set_normalizes_and_sorts() {
@@ -383,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_auth_chain_indexed_and_json() {
+    fn extract_auth_chain_reads_the_indexed_fields() {
         let mut f = BTreeMap::new();
         f.insert("authChain[0][type]".into(), "SIGNER".into());
         f.insert("authChain[0][payload]".into(), "0xabc".into());
@@ -391,64 +308,49 @@ mod tests {
         let v = extract_auth_chain_from_fields(&f).unwrap();
         assert_eq!(v.as_array().unwrap().len(), 1);
         assert_eq!(v[0]["type"], "SIGNER");
-
-        let mut g = BTreeMap::new();
-        g.insert(
-            "authChain".into(),
-            r#"[{"type":"SIGNER","payload":"0x1"}]"#.into(),
-        );
-        let v = extract_auth_chain_from_fields(&g).unwrap();
-        assert_eq!(v[0]["payload"], "0x1");
     }
 
+    /// Upstream `extract-auth-chain.ts`; tests `source-upload-limits.spec.ts` ("Missing auth chain").
     #[test]
-    fn extract_auth_chain_requires_something() {
-        assert!(extract_auth_chain_from_fields(&BTreeMap::new()).is_err());
-        let mut f = BTreeMap::new();
-        f.insert("authChain".to_string(), "not-json".to_string());
-        assert_eq!(
-            extract_auth_chain_from_fields(&f),
-            Err("Invalid auth chain".to_string())
-        );
-        f.insert("authChain".to_string(), r#"{"a":1}"#.to_string());
-        assert_eq!(
-            extract_auth_chain_from_fields(&f),
-            Err("Invalid auth chain".to_string())
-        );
-    }
-
-    #[test]
-    fn rejects_over_length_chains_and_missing_indexed_elements() {
-        let mut f = BTreeMap::new();
-        for i in 0..=MAX_AUTH_CHAIN_LINKS {
-            f.insert(format!("authChain[{i}][type]"), "SIGNER".to_string());
-            f.insert(format!("authChain[{i}][payload]"), format!("0xp{i}"));
-            f.insert(format!("authChain[{i}][signature]"), format!("0xs{i}"));
-        }
-        assert!(
-            extract_auth_chain_from_fields(&f)
-                .unwrap_err()
-                .starts_with("Auth chain is too long")
-        );
-        let mut g = BTreeMap::new();
-        let long: Vec<Value> = (0..=MAX_AUTH_CHAIN_LINKS)
-            .map(|_| json!({"type":"SIGNER","payload":"p","signature":"s"}))
-            .collect();
-        g.insert(
+    fn extract_auth_chain_refuses_in_upstreams_words() {
+        let mut json_only = BTreeMap::new();
+        json_only.insert(
             "authChain".to_string(),
-            serde_json::to_string(&long).unwrap(),
+            r#"[{"type":"SIGNER","payload":"0x1"}]"#.to_string(),
         );
-        assert!(
-            extract_auth_chain_from_fields(&g)
-                .unwrap_err()
-                .starts_with("Auth chain is too long")
-        );
-        let mut h = BTreeMap::new();
-        h.insert("authChain[0][type]".to_string(), "SIGNER".to_string());
-        h.insert("authChain[0][payload]".to_string(), "0xp".to_string());
         assert_eq!(
-            extract_auth_chain_from_fields(&h),
-            Err("Missing auth chain element at index 0".to_string())
+            extract_auth_chain_from_fields(&json_only),
+            Err("Missing auth chain".to_string())
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&BTreeMap::new()),
+            Err("Missing auth chain".to_string())
+        );
+        let mut gap = BTreeMap::new();
+        gap.insert("authChain[0][type]".to_string(), "SIGNER".to_string());
+        gap.insert("authChain[0][payload]".to_string(), "0xp".to_string());
+        assert_eq!(
+            extract_auth_chain_from_fields(&gap),
+            Err(STRING_EXPECTED.to_string())
+        );
+        let mut far = BTreeMap::new();
+        far.insert(
+            format!("authChain[{}][type]", u64::MAX),
+            "SIGNER".to_string(),
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&far),
+            Err(STRING_EXPECTED.to_string())
+        );
+        // The regex finds an index after an earlier `authChain[` that has none.
+        let mut later = BTreeMap::new();
+        later.insert(
+            "authChain[x]authChain[0][type]".to_string(),
+            "SIGNER".to_string(),
+        );
+        assert_eq!(
+            extract_auth_chain_from_fields(&later),
+            Err(STRING_EXPECTED.to_string())
         );
     }
 

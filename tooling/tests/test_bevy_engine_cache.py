@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, MANIFEST
 
 REPO = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('bevy_build', REPO / 'apps/bevy-explorer/build-web.py')
@@ -18,6 +19,21 @@ SHA = 'a' * 40
 
 
 class EngineCacheTests(unittest.TestCase):
+    def test_hashing_changes_invalidate_web_artifacts_but_reuse_the_engine(self):
+        path = 'library/hashing/src/index.ts'
+        self.write(path, 'first hashing implementation')
+        subprocess.run(['git', 'add', path], cwd=self.root, check=True)
+        web_before = artifact.inputs(self.root)
+        engine_before = artifact.engine_inputs(self.root)
+        self.write(path, 'second hashing implementation')
+        web_after = artifact.inputs(self.root)
+        self.assertNotEqual(web_after, web_before)
+        self.assertEqual(artifact.engine_inputs(self.root), engine_before)
+        # bevy-ci.py selects no lane for markdown, so markdown is not part of the fingerprint.
+        self.write('library/hashing/README.md', 'prose')
+        subprocess.run(['git', 'add', 'library/hashing/README.md'], cwd=self.root, check=True)
+        self.assertEqual(artifact.inputs(self.root), web_after)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -36,6 +52,7 @@ class EngineCacheTests(unittest.TestCase):
                      artifact.HUD + 'main.tsx', artifact.SOURCE + 'react-web/bridge-scene/package.json'):
             self.write(name, 'input')
         subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        seal(self.root)
         subprocess.run(['git', 'add', '.'], cwd=self.root, check=True)
         self.outputs()
 
@@ -43,6 +60,8 @@ class EngineCacheTests(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value if isinstance(value, bytes) else value.encode())
+        if (self.root / MANIFEST).exists():
+            seal(self.root)
         return path
 
     def outputs(self):
@@ -53,6 +72,26 @@ class EngineCacheTests(unittest.TestCase):
 
     def pack(self, optimized=True):
         return artifact.pack_engine(self.cache, self.root, optimized=optimized, revision=SHA)
+
+    def test_missing_manifest_refuses_assembled_identity_without_invalidating_engine_cache(self):
+        self.pack()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / MANIFEST).unlink()
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Missing'):
+            artifact.inputs(self.root)
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        self.assertEqual(artifact.verify_engine(self.cache, self.root, False)['revision'], SHA)
+
+    def test_stale_manifest_refuses_assembled_identity_until_the_fixture_is_resealed(self):
+        before = (self.root / MANIFEST).read_bytes()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / artifact.HUD / 'main.tsx').write_text('changed HUD without regeneration')
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Stale HUD input'):
+            artifact.inputs(self.root)
+        self.assertEqual(before, (self.root / MANIFEST).read_bytes())
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        seal(self.root)
+        self.assertTrue(artifact.inputs(self.root))
 
     def test_hud_and_bridge_edits_reuse_engine_but_compiler_inputs_invalidate_it(self):
         engine_key = artifact.engine_inputs(self.root)
@@ -160,14 +199,13 @@ class EngineCacheTests(unittest.TestCase):
                      'bridge-scene/static/BevyExplorerUI/about', 'service_worker.js', 'preview_realm.js'):
             self.write(artifact.SOURCE + 'deploy/web/' + name, 'fixture')
         self.write(artifact.SOURCE + 'LICENSE', 'fixture')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;')
-        self.write(artifact.LOCK, json.dumps({'hud_source_sha256': artifact.hud_inputs(self.root)}))
+        self.write(artifact.BINDINGS + '/Example.ts', 'export type Example = string;')
 
         def command(*args, **kwargs):
             calls.append(args)
             if args[0] == 'wasm-pack' or args[:2] == ('bash', './scripts/gen-ts-bindings.sh'):
                 self.outputs()
-            elif args[0] == 'npx':
+            elif args[0] == 'node':
                 self.write(artifact.SOURCE + 'target/sandbox-worker.meta.json',
                            json.dumps({'outputs': {'worker': {'entryPoint': 'worker.js', 'exports': []}}}))
                 self.write(artifact.SOURCE + 'deploy/web/engine/pkg/sandbox_worker.bundle.js', 'worker')
@@ -185,10 +223,18 @@ class EngineCacheTests(unittest.TestCase):
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
-        self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
-        self.assertTrue(any(c[0] == 'npx' for c in calls))
+        self.assertNotIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
+        self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
+        self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
+                       str(self.source / 'react-web/bridge-scene')), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
+        self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)

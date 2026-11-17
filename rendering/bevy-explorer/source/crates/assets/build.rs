@@ -46,7 +46,7 @@ fn main() -> std::io::Result<()> {
     writeln!(&mut writer, "}}")?;
 
     // generate hash of shaders for the gpu cache
-    let mut hasher = bevy::platform::hash::FixedHasher.build_hasher();
+    let mut hasher = bevy_platform::hash::FixedHasher.build_hasher();
 
     let mut shader_paths = fs::read_dir("src/assets/shaders")?
         .map(|entry| entry.unwrap().path())

@@ -38,7 +38,7 @@ const FALLBACK: PageDefaults = {
   variant: "builder",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("mode") === "edit" ? "edit" : "create";
 
@@ -46,7 +46,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const [{ sid, assignment, wrap }, { schedules, source }, liveEvents, activeEvents] =
     await Promise.all([
-      pageLoader(request,  FALLBACK),
+      pageLoader(request, context,  FALLBACK),
       fetchSchedules({ signal: request.signal })
         .then(({ data: live }) => ({
           schedules: live,

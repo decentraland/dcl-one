@@ -12,11 +12,13 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
@@ -28,9 +30,13 @@ import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
+import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
+import { registerPlaces } from './domains/places'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
+import { registerVoiceChat } from './domains/voiceChat'
 import { registerPointer } from './domains/pointer'
 import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
@@ -38,9 +44,9 @@ import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
 import { registerPermissions } from './domains/permissions'
+import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerEditor } from './domains/editor'
-import { initNametags } from './domains/nametags'
 
 export function main(): void {
   const _log = console.log
@@ -48,6 +54,7 @@ export function main(): void {
 
   startBridge((ctx) => {
     registerSession(ctx)
+    registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
@@ -55,6 +62,8 @@ export function main(): void {
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
+    registerNearbyMutes(ctx)
+    registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
@@ -67,7 +76,10 @@ export function main(): void {
     registerNotifications(ctx)
     registerSettings(ctx)
     registerCommunities(ctx)
+    registerEvents(ctx)
     registerGallery(ctx)
+    registerPlaces(ctx)
+    registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
@@ -76,6 +88,7 @@ export function main(): void {
     registerBindings(ctx)
     registerAvatarPointer(ctx)
     registerPermissions(ctx)
+    registerPortables(ctx)
     registerWorldAccess(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
@@ -93,7 +106,4 @@ export function main(): void {
   // 0.6..1.3, so they only ever agreed near 1920x1080). `screenInset: 'none'` likewise keeps
   // 0,0 at the screen's top-left, which is the origin those rects are measured from.
   ReactEcsRenderer.setUiRenderer(renderSceneUi, { virtualWidth: 0, virtualHeight: 0, screenInset: 'none' })
-
-  // World-space UI the DOM can't track smoothly: the billboarded nametag above each avatar's head.
-  initNametags()
 }

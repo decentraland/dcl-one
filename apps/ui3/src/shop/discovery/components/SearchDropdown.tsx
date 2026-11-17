@@ -11,8 +11,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { SHOP_BASE } from "../../routes";
-import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "../api";
-import { t } from "../intl";
+import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "@shop/discovery/api";
+import { t } from "@shop/discovery/intl";
 import { highlightMatches } from "../lib/highlight";
 import { popularSearchesFor } from "../lib/popularSearches";
 import { clearRecentSearches, getRecentSearches, recordSearch, removeRecentSearch } from "../lib/recent-searches";
@@ -21,12 +21,13 @@ import { clearedSearchUrl } from "../lib/searchClear";
 import { facetId, facetsFor, facetUrl, type Facet } from "../lib/searchFacets";
 import { searchHistoryMode } from "../lib/searchHistory";
 import { NO_ACTIVE_ROW, searchKeyAction, suggestionRowId, type SuggestionRow } from "../lib/suggestionNavigation";
-import { shortAddress } from "../../model/address";
-import { rarityColor, rarityLabel } from "../lib/rarity";
+import { shortAddress } from "@shop/model/address";
+import { rarityColor, rarityLabel } from "@shop/discovery/lib/rarity";
 import { CollectionThumb } from "./CollectionCard";
 import { subCategoryLabel } from "./Filters";
 import Icon from "./Icon";
 import "./search.css";
+import { shopReads } from "../reads";
 
 const DEBOUNCE_MS = 200;
 
@@ -94,7 +95,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
     const controller = new AbortController();
     setState((s) => ({ ...s, loading: true, error: false }));
     const timer = setTimeout(() => {
-      fetchSuggestions(query, {}, { signal: controller.signal }).then(
+      fetchSuggestions(query, {}, shopReads(controller.signal)).then(
         (data) => !controller.signal.aborted && setState({ query, data, loading: false, error: false }),
         (e) => !controller.signal.aborted && (e as { name?: string })?.name !== "AbortError" && setState({ query, data: EMPTY_SUGGESTIONS, loading: false, error: true }),
       );

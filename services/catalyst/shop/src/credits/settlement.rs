@@ -20,7 +20,7 @@
 //!   whatever it was (`retired`, `released`, `expired`: a cancel or an expiry
 //!   is not proof a signed credit went unused), and its hash is queued for
 //!   revocation. A debit the balance cannot cover rolls back and is retried
-//!   by the next pass and the reconciler.
+//!   by the reconciler's full pass.
 //! - **Revocation** ([`Revoker`], the `credits-settlement` job): the outbox
 //!   `credits.revocations` is drained with `revokeCredits(bytes32[])` from
 //!   the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is
@@ -43,8 +43,9 @@ use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
 use crate::evm::signer::{DirectSigner, ReceiptOutcome};
 use crate::jobs::{JobContext, Jobs, PeriodicCfg};
+use crate::policy_entry::EXECUTOR_EXECUTE_SELECTOR;
 use crate::shared::cache::TtlMap;
-use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE, ops_refusal};
+use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE};
 use crate::types::{ManaUsdRate, ManaWei, UsdCents};
 
 pub const GATE_SOURCE: &str = "credits-manager-gate";
@@ -67,15 +68,15 @@ pub const SHARED_MANAGERS: [&str; 4] = [
     "0x037566bc90f85e76587e1b07f9184585f09c1420",
 ];
 
-/// The pass-through NAME executors (CORAL/Squid and Across) and their
-/// `execute` selector: a manager that allowlists one lets a custom call
+/// The pass-through NAME executors (CORAL/Squid and Across), whose
+/// `execute` selector is [`EXECUTOR_EXECUTE_SELECTOR`]: a manager that
+/// allowlists one lets a custom call
 /// reach a resale (CONTRACTS.md, "Can a custom call reach a resale?").
 pub const PASS_THROUGH_EXECUTORS: [&str; 3] = [
     "0x84c682b1b862859730446bca5b853a5693aefc84",
     "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7",
     "0x5e359ebd4cc379f46020fac720261dc9c1d80404",
 ];
-pub const EXECUTOR_EXECUTE_SELECTOR: [u8; 4] = [0xfd, 0x16, 0x5a, 0x73];
 
 sol! {
     interface ICreditsManager {
@@ -352,8 +353,9 @@ pub fn remainder_credits(
 impl Credits {
     /// One log's settlement in one transaction: the authorization row is
     /// locked, the kind decided from the settlements already recorded, the
-    /// debit made under an idempotency key, the settlement row inserted, the
-    /// status flipped to `consumed` and the revocation queued. A concurrent
+    /// status flipped to `consumed` (so its own pledge no longer counts as
+    /// held against the debit), the debit made under an idempotency key, the
+    /// settlement row inserted and the revocation queued. A concurrent
     /// pass loses on the settlement PK and moves nothing.
     async fn settle_usage(
         &self,
@@ -396,6 +398,15 @@ impl Credits {
         } else {
             format!("credit-used:{}:{}:{}", c.salt, c.block_number, c.log_index)
         };
+        // Out of the held set before the debit: the wallet's held sum counts
+        // `authorized` and `retired` pledges, and this credit's own pledge is
+        // the one being paid, not a hold against it. A refused debit rolls
+        // the status back with the transaction.
+        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
+            .bind(&c.salt)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
         let spent = match self
             .settle_in_tx(&mut tx, &address, &amount, &key, Some(&key))
             .await
@@ -404,7 +415,7 @@ impl Credits {
             Err(ApiError::Database(e)) => return Err(ApiError::Database(e)),
             Err(e) => {
                 tx.rollback().await?;
-                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the next pass and the reconciler");
+                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,
@@ -431,11 +442,6 @@ impl Credits {
         .bind(&key)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
-            .bind(&c.salt)
-            .bind(now())
-            .execute(&mut *tx)
-            .await?;
         if let Some(hash) = credit_hash {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
@@ -664,10 +670,62 @@ impl Revoker {
     }
 }
 
+/// How often the settlement job reports the processing orders past
+/// [`super::orders::REPORT_PROCESSING_AFTER`]: daily, not on every pass.
+pub(super) const REPORT_STALE_PROCESSING_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// The settlement job's report of processing orders that outlived their
+/// payment's delay: an error log, at most once per `every`, so the order
+/// nothing else will move reaches a person without a line every pass. The
+/// limit is held in memory, per process: a restart, or another replica
+/// taking over the job's lease, reports again at its first pass.
+#[derive(Default)]
+pub(super) struct StaleProcessingReport {
+    last: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl StaleProcessingReport {
+    /// What it counted when the report was due and the count succeeded;
+    /// `None` when it was not due yet, or the count failed (retried next pass).
+    pub(super) async fn run(
+        &self,
+        credits: &Credits,
+        every: Duration,
+    ) -> Option<super::orders::StaleProcessing> {
+        let due = {
+            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            last.is_none_or(|at| at.elapsed() >= every)
+        };
+        if !due {
+            return None;
+        }
+        let stale = match credits
+            .stale_processing_orders(super::orders::REPORT_PROCESSING_AFTER)
+            .await
+        {
+            Ok(stale) => stale,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count the pack orders still processing");
+                return None;
+            }
+        };
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        if stale.count > 0 {
+            tracing::error!(
+                count = stale.count,
+                oldest_order = stale.oldest_order.as_deref().unwrap_or(""),
+                "pack orders still processing long after their session completed: their payment's outcome event was likely lost; check each payment at Stripe"
+            );
+        }
+        Some(stale)
+    }
+}
+
 /// The `credits-settlement` job: every `interval`, the pack-order abandon
 /// sweep and, with a revoker, the revocation pass; both write local
-/// authority, so neither runs while `OPS_WRITES_ENABLED` is off, and a pass
-/// is skipped while the restore stamps hold the operator plane.
+/// authority, so neither runs while `OPS_WRITES_ENABLED` is off. Each pass
+/// also reports, daily, the processing orders nothing moved
+/// ([`settlement_job_pass`]).
 pub fn spawn_settlement_job(
     jobs: &Jobs,
     credits: Credits,
@@ -686,7 +744,8 @@ pub fn spawn_settlement_job(
             "CREDITS_REVOKER_KEY_FILE unset: credit revocations queue in credits.revocations and are not sent"
         );
     }
-    let gate = Arc::new(PassGate::new(JOB_NAME, ops_refusal));
+    let gate = Arc::new(PassGate::new(JOB_NAME));
+    let report = Arc::new(StaleProcessingReport::default());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -696,13 +755,15 @@ pub fn spawn_settlement_job(
             let credits = credits.clone();
             let revoker = revoker.clone();
             let gate = gate.clone();
+            let report = report.clone();
             async move {
-                settlement_pass(
+                settlement_job_pass(
                     &credits,
                     revoker.as_deref(),
                     &gate,
                     writes_enabled,
                     Some(&ctx),
+                    &report,
                 )
                 .await
                 .map(|_| ())
@@ -711,7 +772,27 @@ pub fn spawn_settlement_job(
     );
 }
 
-/// One settlement pass; `false` when `gate` held it and nothing was written.
+/// One pass of the settlement job: [`settlement_pass`], then the daily
+/// report. The report only reads, so a pass that failed (its sweep, or its
+/// revocations) still runs it: an order stuck processing is not silenced by
+/// another failure. A pass with the switch off skips it, as it skips every
+/// write: this node does not speak for the ledger yet.
+pub(super) async fn settlement_job_pass(
+    credits: &Credits,
+    revoker: Option<&Revoker>,
+    gate: &PassGate,
+    writes_enabled: bool,
+    ctx: Option<&JobContext>,
+    report: &StaleProcessingReport,
+) -> anyhow::Result<bool> {
+    let ran = settlement_pass(credits, revoker, gate, writes_enabled, ctx).await;
+    if !matches!(ran, Ok(false)) {
+        report.run(credits, REPORT_STALE_PROCESSING_EVERY).await;
+    }
+    ran
+}
+
+/// One settlement pass; `false` when the switch is off and nothing was written.
 pub(super) async fn settlement_pass(
     credits: &Credits,
     revoker: Option<&Revoker>,
@@ -719,9 +800,9 @@ pub(super) async fn settlement_pass(
     writes_enabled: bool,
     ctx: Option<&JobContext>,
 ) -> anyhow::Result<bool> {
-    if let Some(refusal) = gate.check(writes_enabled) {
+    if !gate.allows(writes_enabled) {
         if let Some(ctx) = ctx {
-            ctx.progress(refusal.message("operator-plane", WRITES_DISABLED_MESSAGE));
+            ctx.progress(WRITES_DISABLED_MESSAGE);
         }
         return Ok(false);
     }

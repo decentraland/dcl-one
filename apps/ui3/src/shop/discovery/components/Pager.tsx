@@ -4,7 +4,7 @@
 // through pages never moves the arrows.
 
 import { pageWindow } from "../lib/pageWindow";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import Icon from "./Icon";
 import styles from "./Pager.module.css";
 

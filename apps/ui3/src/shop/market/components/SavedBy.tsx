@@ -12,7 +12,7 @@ import Modal from "../../../components/Modal";
 import { pdpText } from "../../detail/copy";
 import LoadMore from "../../discovery/components/LoadMore";
 import { useProfiles } from "../../discovery/hooks";
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { shopPath } from "../../routes";
 import { useMarketplace } from "../access";
 import { fetchWhoPicked } from "../lib/favorites";

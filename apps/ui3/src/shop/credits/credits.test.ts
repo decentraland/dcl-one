@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFakeShop } from "../checkout/fakes";
-import { creditsNoun, creditsSrLabel, formatAmount, usdCentsToCredits, usdCentsToCreditsFloor } from "../checkout/lib/currency";
+import { creditsNoun, creditsSrLabel, formatAmount, usdCentsToCredits, usdCentsToCreditsFloor } from "@shop/checkout/lib/currency";
 import {
   cancelUsdIntents,
   creditOrderPill,
@@ -12,7 +12,7 @@ import {
   resumeCreditOrder,
   authorizeUsdCredit,
   reportIntentSubmission,
-} from "./credits";
+} from "@shop/credits/credits";
 import { nextBalancePoll } from "./hooks";
 import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, pollCreditGrant, usdForCredits } from "./payments";
 import { ORDER_NOT_FOUND, pollCreditGrantReal } from "./payments-stripe";

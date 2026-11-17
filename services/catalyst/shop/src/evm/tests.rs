@@ -83,6 +83,10 @@ mod chain_abi {
     }
 }
 
+/// MANA payments the fake chain reports by transaction hash: `(from, to)`.
+static PAYMENTS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, (Address, Address)>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// What the fake chain saw broadcast: the raw transactions it accepted.
 type RawTxs = Arc<Mutex<Vec<Vec<u8>>>>;
 
@@ -121,8 +125,9 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
             "eth_maxPriorityFeePerGas" => Json(ok(json!("0x59682f00"))),
             "eth_getTransactionCount" => Json(ok(json!("0x5"))),
             "eth_getBlockByNumber" => Json(ok(
-                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00" }),
+                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00", "timestamp": "0x6553f100" }),
             )),
+            "eth_blockNumber" => Json(ok(json!("0x50"))),
             "eth_sendRawTransaction" => {
                 let raw = req["params"][0].as_str().unwrap_or("");
                 let bytes = hex::decode(raw.trim_start_matches("0x")).unwrap_or_default();
@@ -130,7 +135,26 @@ async fn spawn_fake_chain() -> (String, RawTxs) {
                 seen.lock().unwrap().push(bytes);
                 Json(ok(json!(format!("{hash:#x}"))))
             }
-            "eth_getTransactionReceipt" => Json(ok(json!({ "status": "0x1", "logs": [] }))),
+            "eth_getTransactionReceipt" => {
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                let paid = PAYMENTS.lock().unwrap().get(&hash).copied();
+                match paid {
+                    Some((from, to)) => Json(ok(json!({
+                        "status": "0x1",
+                        "blockNumber": "0x10",
+                        "logs": [{
+                            "address": MANA,
+                            "topics": [
+                                format!("0x{}", hex::encode(alloy_primitives::keccak256("Transfer(address,address,uint256)"))),
+                                format!("0x{:0>64}", hex::encode(from)),
+                                format!("0x{:0>64}", hex::encode(to)),
+                            ],
+                            "data": format!("0x{:064x}", 7_000_000_000_000_000_000u128),
+                        }],
+                    }))),
+                    None => Json(ok(json!({ "status": "0x1", "logs": [] }))),
+                }
+            }
             "eth_call" => {
                 let call = &req["params"][0];
                 let to = call
@@ -471,6 +495,118 @@ fn component(pool: PgPool) -> TransactionComponent {
 
 fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
+}
+
+#[tokio::test]
+async fn the_free_call_budget_never_holds_back_a_sale() {
+    use axum::response::IntoResponse;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    // A day no other test reserves in.
+    let at = chrono::NaiveDate::from_ymd_opt(2100, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tc.reserve_free_call(
+                10,
+                budget,
+                &sender(&a),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                at,
+            )
+            .await
+        }
+    };
+    free(&addrs[0], 2).await.expect("first free call");
+    free(&addrs[1], 2).await.expect("second free call");
+    let err = free(&addrs[2], 2).await.unwrap_err();
+    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert_eq!(
+        err.into_response().status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at,
+    )
+    .await
+    .expect("a sale still relays when the free-call budget is spent");
+    free(&addrs[2], 0).await.expect("0 is no limit");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn sales_and_credits_spends_are_paid_calls() {
+    let settings = Settings::for_tests();
+    let call = |to: &str, data: String| super::transaction::TransactionData {
+        from: VICTIM.to_string(),
+        params: vec![to.to_string(), data],
+    };
+    let credits_manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
+    let meta = |inner: Vec<u8>| {
+        format!(
+            "0x{}",
+            hex::encode(
+                executeMetaTransactionCall {
+                    userAddress: VICTIM.parse().unwrap(),
+                    functionSignature: inner.into(),
+                    sigR: Default::default(),
+                    sigS: Default::default(),
+                    sigV: 27,
+                }
+                .abi_encode()
+            )
+        )
+    };
+    let mut use_credits = crate::policy_entry::USE_CREDITS_SELECTOR.to_vec();
+    use_credits.extend([0u8; 32]);
+    assert!(super::transaction::is_paid_call(
+        &settings,
+        &call(credits_manager, meta(use_credits.clone()))
+    ));
+    // The checkout client relays credits spends in the combined-signature form.
+    let combined = format!(
+        "0x{}",
+        hex::encode(
+            super::abi::combined_sig::executeMetaTransactionCall {
+                userAddress: VICTIM.parse().unwrap(),
+                functionData: use_credits.into(),
+                signature: vec![0u8; 65].into(),
+            }
+            .abi_encode()
+        )
+    );
+    assert!(
+        super::transaction::is_paid_call(&settings, &call(credits_manager, combined)),
+        "a combined-signature useCredits is a credits spend"
+    );
+    assert!(
+        !super::transaction::is_paid_call(
+            &settings,
+            &call(credits_manager, meta(vec![0xde, 0xad, 0xbe, 0xef]))
+        ),
+        "the manager's other functions are free calls"
+    );
+    assert!(
+        !super::transaction::is_paid_call(&settings, &call(COLLECTION, "0xa22cb465".into())),
+        "an approval on a collection is a free call"
+    );
 }
 
 #[tokio::test]
@@ -1560,6 +1696,35 @@ async fn upstream_524_keeps_the_slot_as_indeterminate() {
 /// An app whose only chain access is a direct signer against the fake chain
 /// and whose pool never connects: it serves the endpoints that read the chain
 /// without touching Postgres (payments config, nonce, balance).
+/// A confirmed payment reports where and how deep it was mined.
+#[tokio::test]
+async fn verify_reports_the_payment_block_and_depth() {
+    let (app, key, _) = chain_only_app(true).await;
+    let relayer = key.unwrap().address();
+    let payer = Address::repeat_byte(0x22);
+    let hash = format!("0x{}", "c4".repeat(32));
+    PAYMENTS
+        .lock()
+        .unwrap()
+        .insert(hash.clone(), (payer, relayer));
+    let (status, text) = send(
+        &app,
+        "POST",
+        "/v1/payments/verify",
+        Some(json!({ "txHash": hash }).to_string()),
+        &[("authorization", &format!("Bearer {ADMIN}"))],
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["status"], "confirmed");
+    assert_eq!(v["from"], format!("{payer:#x}"));
+    assert_eq!(v["valueWei"], "7000000000000000000");
+    assert_eq!(v["blockNumber"], 16);
+    assert_eq!(v["blockTimestamp"], 0x6553f100);
+    assert_eq!(v["confirmations"], 0x50 - 16);
+}
+
 async fn chain_only_app(with_signer: bool) -> (axum::Router, Option<PrivateKeySigner>, RawTxs) {
     let (chain_url, raws) = spawn_fake_chain().await;
     let mut settings = Settings {
@@ -2362,6 +2527,93 @@ async fn the_relay_guards_use_credits_to_dcl_ones_amoy_manager() {
         .expect("on Polygon the address is no CreditsManager: the guard judges nothing");
 }
 
+/// dcl-one's own Polygon manager is guarded like the shared one: a relayed
+/// `executeMetaTransaction(useCredits)` to it is decoded on Polygon's routes and
+/// judged, so a resale through any of its marketplaces is refused and a mint of a
+/// mirrored wearable passes. On Amoy the same address is no CreditsManager, so this
+/// guard judges nothing there; what keeps it off Amoy is the relay's whitelist and
+/// the audited domain, which name it on Polygon only.
+#[tokio::test]
+async fn the_relay_guards_use_credits_to_dcl_ones_polygon_manager() {
+    use super::abi::{ItemToBuy, buyCall, offchain};
+    use crate::guards::relay::guard_meta_transaction;
+    use crate::policy_entry::{
+        DCL_ONE_POLYGON_MANAGER, call_args, is_credits_manager, manager_routes,
+    };
+    use crate::types::ChainId;
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    seed_item(&pool, COLLECTION, 4, "wearable_v2", VICTIM).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let manager = format!("{DCL_ONE_POLYGON_MANAGER:#x}");
+    let collection: Address = COLLECTION.parse().unwrap();
+    let routes = manager_routes(ChainId::POLYGON).unwrap();
+    let one_mana = U256::from(1_000_000_000_000_000_000u128);
+
+    let resale_through = |marketplace: Address| {
+        signed_split_calldata(
+            &key,
+            &use_credits(
+                marketplace,
+                offchain::acceptCall::SELECTOR,
+                call_args(&offchain::acceptCall {
+                    _trades: vec![offchain_trade(key.address(), 3, collection, 42)],
+                }),
+                U256::ZERO,
+            ),
+        )
+    };
+    for marketplace in routes.marketplaces {
+        match guard_meta_transaction(&pool, 137, &user, &manager, &resale_through(*marketplace))
+            .await
+        {
+            Err(ApiError::PaymentRule(refused)) => {
+                assert_eq!(refused.detail()["code"], "creditsNotAllowed", "{refused}")
+            }
+            other => panic!(
+                "a resale through {marketplace:#x} paid with credits through dcl-one's Polygon manager must be refused: {other:?}"
+            ),
+        }
+    }
+
+    let mint = signed_split_calldata(
+        &key,
+        &use_credits(
+            routes.collection_store,
+            buyCall::SELECTOR,
+            call_args(&buyCall {
+                itemsToBuy: vec![ItemToBuy {
+                    collection,
+                    ids: vec![U256::from(4)],
+                    prices: vec![one_mana],
+                    beneficiaries: vec![key.address()],
+                }],
+            }),
+            U256::ZERO,
+        ),
+    );
+    guard_meta_transaction(&pool, 137, &user, &manager, &mint)
+        .await
+        .expect("a mint of a mirrored wearable through dcl-one's Polygon manager is allowed");
+
+    assert!(!is_credits_manager(ChainId::AMOY, DCL_ONE_POLYGON_MANAGER));
+    guard_meta_transaction(
+        &pool,
+        80002,
+        &user,
+        &manager,
+        &resale_through(routes.marketplaces[2]),
+    )
+    .await
+    .expect("on Amoy the address is no CreditsManager: the guard judges nothing");
+}
+
 /// `POST /v1/broker/buy` is the credit-funded lane: a resale (an order-book
 /// token, an ERC-721 trade) is refused before the claim and the broadcast;
 /// a mint is admitted once the mirrors describe it.
@@ -2474,6 +2726,112 @@ async fn the_broker_refuses_a_resale_before_any_broadcast_and_admits_a_mirrored_
     clear_items_pass(&pool).await;
 }
 
+/// `checkout::broker::resume` drives a claim from its row alone, with no
+/// request body: a sent trade buy whose payload is gone forwards the token
+/// the row recorded, a forwarding claim settles on its receipt without a new
+/// broadcast, and a key with no claim is not found.
+#[tokio::test]
+async fn a_claimed_broker_buy_resumes_from_its_row_alone() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let relayer_key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let state = state(pool.clone(), settings);
+    let claim = |key: String,
+                 mode: &'static str,
+                 status: &'static str,
+                 token: Option<&'static str>,
+                 forward: Option<String>| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.broker_purchases \
+                 (idempotency_key, tx_hash, forward_tx_hash, collection, token_id, buyer_address, \
+                  escrow_address, price_wei, chain_id, mode, status) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 137, $8, $9)",
+            )
+            .bind(&key)
+            .bind(format!("{:#x}", B256::repeat_byte(0xaa)))
+            .bind(forward)
+            .bind(COLLECTION)
+            .bind(token)
+            .bind(BUYER)
+            .bind(RULE_ESCROW)
+            .bind(mode)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+            key
+        }
+    };
+
+    let sent = claim(
+        format!("resume-sent-{}", Uuid::new_v4()),
+        "trade",
+        "sent",
+        Some("7"),
+        None,
+    )
+    .await;
+    let forward = crate::checkout::broker::resume(&state, &sent)
+        .await
+        .unwrap();
+    assert_eq!(
+        raws.lock().unwrap().len(),
+        1,
+        "only the escrow forward is broadcast"
+    );
+    let (status, token, recorded): (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT status, minted_token_id, forward_tx_hash FROM shop.broker_purchases \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&sent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "confirmed");
+    assert_eq!(
+        token.as_deref(),
+        Some("7"),
+        "the recorded token is forwarded"
+    );
+    assert_eq!(recorded.as_deref(), Some(forward.as_str()));
+
+    let hash = format!("{:#x}", B256::repeat_byte(0xbb));
+    let forwarding = claim(
+        format!("resume-forwarding-{}", Uuid::new_v4()),
+        "primary",
+        "forwarding",
+        None,
+        Some(hash.clone()),
+    )
+    .await;
+    assert_eq!(
+        crate::checkout::broker::resume(&state, &forwarding)
+            .await
+            .unwrap(),
+        hash
+    );
+    assert_eq!(raws.lock().unwrap().len(), 1, "nothing new is broadcast");
+
+    let missing = crate::checkout::broker::resume(&state, "resume-never-claimed").await;
+    assert!(matches!(missing, Err(ApiError::NotFound(_))), "{missing:?}");
+
+    sqlx::query("DELETE FROM shop.broker_purchases WHERE idempotency_key = ANY($1)")
+        .bind(vec![sent, forwarding])
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 /// `POST /v1/broker/names/buy`: a registered NAME is a resale (MANA only),
 /// the registration of an available NAME a primary the ledger may fund.
 #[tokio::test]
@@ -2538,4 +2896,374 @@ async fn the_names_broker_refuses_a_registered_name_resale_and_registers_an_avai
         name_buy(json!({ "mode": "mint", "name": "nacho", "buyerAddress": BUYER })).await;
     assert_eq!(status, 200, "an available NAME registers: {body}");
     assert_eq!(raws.lock().unwrap().len(), 1);
+}
+
+/// The direct signer's fee cap bounds the fee it signs, `max_fee = 2 * base + tip` (3.5 gwei on
+/// the fake chain), not the node's `eth_gasPrice` (1 gwei): at the cap it sends, one wei under it
+/// nothing reaches `eth_sendRawTransaction`, and with no cap it sends as before.
+#[tokio::test]
+async fn the_direct_signer_refuses_a_fee_over_its_cap_before_sending() {
+    use super::chain::ChainComponent;
+    use super::signer::DirectSigner;
+    let (url, raws) = spawn_fake_chain().await;
+    let chain = Arc::new(ChainComponent::new(
+        Outbound::for_tests(),
+        &url,
+        Duration::from_secs(5),
+    ));
+    let key = hex::encode(PrivateKeySigner::random().to_bytes());
+    let signed_fee: u128 = 2 * 1_000_000_000 + 1_500_000_000;
+    let signer = |cap: Option<u128>| {
+        DirectSigner::new(
+            chain.clone(),
+            &key,
+            137,
+            1_500_000,
+            Duration::from_millis(1),
+            Duration::from_millis(50),
+        )
+        .unwrap()
+        .with_max_fee_per_gas(cap)
+    };
+    let to = Address::repeat_byte(0x11);
+
+    let err = signer(Some(signed_fee - 1))
+        .send_direct_call(to, Bytes::new())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ApiError::HighCongestion(why) if why.contains("RELAYER_MAX_FEE_PER_GAS_WEI")),
+        "a fee over the cap is a retryable 503 HIGH_CONGESTION: {err:?}"
+    );
+    assert!(
+        raws.lock().unwrap().is_empty(),
+        "a fee over the cap is never sent, though eth_gasPrice is under it"
+    );
+
+    signer(Some(signed_fee))
+        .send_direct_call(to, Bytes::new())
+        .await
+        .expect("a fee at the cap is sent");
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    signer(None)
+        .send_direct_call(to, Bytes::new())
+        .await
+        .expect("no cap, no refusal");
+    assert_eq!(raws.lock().unwrap().len(), 2);
+}
+
+fn trial_relay() -> Settings {
+    Settings {
+        trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::default()),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some("http://127.0.0.1:1/".into()),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    }
+}
+
+/// Under CREDITS_TRIAL_MODE the relay is how the trial's buyers spend their credits, so its
+/// writes open with OPS_WRITES_ENABLED, not DATA_WRITES_ENABLED: with the data plane off and the
+/// operator plane on, a relayed meta-transaction passes the gate and reaches the relay's own
+/// checks.
+#[tokio::test]
+async fn a_trial_relay_opens_with_the_operator_plane_while_data_writes_stay_off() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    for path in ["/v1/transactions"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_ne!(status, 503, "{path} passes the gate: {text}");
+    }
+}
+
+/// With the operator plane off, a trial's relay answers the credits 503 (naming
+/// OPS_WRITES_ENABLED) even while DATA_WRITES_ENABLED is on, and the relayer controls still
+/// pass the gate and stop at the admin bearer.
+#[tokio::test]
+async fn a_trial_relay_is_held_by_the_operator_plane_even_with_data_writes_on() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: true,
+            ops_writes_enabled: false,
+            ..trial_relay()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["message"],
+        crate::shared::writes::WRITES_DISABLED_MESSAGE,
+        "{text}"
+    );
+    for path in ["/v1/admin/relayer/toggle", "/v1/admin/relayer/signer"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_eq!(status, 403, "{path}: {text}");
+        assert!(
+            text.contains("CATALYRST_ECONOMY_ADMIN_TOKEN is unset"),
+            "{path}: {text}"
+        );
+    }
+    let (status, _) = send(&app, "GET", "/v1/admin/relayer", None, &[]).await;
+    assert_ne!(status, 503, "a read passes the gate");
+}
+
+/// Outside a trial the relay keeps the data plane's gate: OPS_WRITES_ENABLED alone does not
+/// open it.
+#[tokio::test]
+async fn outside_a_trial_the_relay_keeps_the_data_plane_gate() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    assert!(text.contains("DATA_WRITES_ENABLED=false"), "{text}");
+}
+
+/// Under CREDITS_TRIAL_MODE the relay's one route is its own capped direct signer: any OZ or
+/// upstream setting, even an incomplete one, refuses the start, and so does a missing signer
+/// piece, an uncapped gas limit or a missing or zero fee cap. The refusal names variables only.
+#[test]
+fn a_trial_relay_has_one_capped_route() {
+    assert!(trial_relay().refuse_an_open_trial_relay().is_ok());
+    for (name, open) in [
+        (
+            "OZ_RELAYER_URL",
+            Settings {
+                oz_relayer_url: Some("https://oz.example".into()),
+                ..trial_relay()
+            },
+        ),
+        (
+            "OZ_RELAYER_ID",
+            Settings {
+                oz_relayer_id: Some("relayer".into()),
+                ..trial_relay()
+            },
+        ),
+        (
+            "OZ_RELAYER_API_KEY",
+            Settings {
+                oz_relayer_api_key: Some("key-SECRET".into()),
+                ..trial_relay()
+            },
+        ),
+        (
+            "TRANSACTIONS_UPSTREAM_URL",
+            Settings {
+                transactions_upstream_url: Some("https://transactions.example".into()),
+                ..trial_relay()
+            },
+        ),
+    ] {
+        let why = open.refuse_an_open_trial_relay().unwrap_err().to_string();
+        assert!(why.contains(name) && !why.contains("SECRET"), "{why}");
+    }
+    for (needs, closed) in [
+        (
+            "META_TX_BROADCAST_ENABLED",
+            Settings {
+                meta_tx_broadcast_enabled: false,
+                ..trial_relay()
+            },
+        ),
+        (
+            "RELAYER_PRIVATE_KEY_FILE",
+            Settings {
+                relayer_private_key: None,
+                ..trial_relay()
+            },
+        ),
+        (
+            "RPC_ENDPOINT_POLYGON",
+            Settings {
+                polygon_rpc_url: None,
+                ..trial_relay()
+            },
+        ),
+        (
+            "MAX_GAS_LIMIT",
+            Settings {
+                max_gas_limit: 0,
+                ..trial_relay()
+            },
+        ),
+        (
+            "RELAYER_MAX_FEE_PER_GAS_WEI",
+            Settings {
+                relayer_max_fee_per_gas_wei: None,
+                ..trial_relay()
+            },
+        ),
+        (
+            "RELAYER_MAX_FEE_PER_GAS_WEI",
+            Settings {
+                relayer_max_fee_per_gas_wei: Some(0),
+                ..trial_relay()
+            },
+        ),
+        (
+            "CREDITS_TRIAL_BUYERS",
+            Settings {
+                trial_buyers: None,
+                ..trial_relay()
+            },
+        ),
+    ] {
+        let why = closed.refuse_an_open_trial_relay().unwrap_err().to_string();
+        assert!(why.contains(needs), "{why}");
+    }
+}
+
+/// A trial's relayer key signs on the collections chain alone: with ETH_RPC_URL set, as a mirror
+/// always has it, the NAMEs chain signer is not built from it; outside a trial it still is.
+#[tokio::test]
+async fn a_trial_never_reuses_the_relayer_key_on_the_names_chain() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://127.0.0.1:1/none")
+        .unwrap();
+    let with_eth = |settings: Settings| Settings {
+        eth_rpc_url: Some("http://127.0.0.1:1/".into()),
+        ..settings
+    };
+    let trial = State::new(pool.clone(), Outbound::for_tests(), with_eth(trial_relay()))
+        .expect("a complete trial relay starts");
+    assert!(trial.eth_signer.is_none());
+    let open = State::new(
+        pool,
+        Outbound::for_tests(),
+        with_eth(Settings {
+            trial_mode: false,
+            ..trial_relay()
+        }),
+    )
+    .expect("outside a trial the relay starts as before");
+    assert!(open.eth_signer.is_some());
+    // The fee cap is the collections-chain signer's alone: the NAMEs chain signer keeps its fees.
+    assert_eq!(
+        open.transaction
+            .direct_signer()
+            .and_then(|s| s.max_fee_per_gas()),
+        Some(500_000_000_000)
+    );
+    assert_eq!(open.eth_signer.as_ref().unwrap().max_fee_per_gas(), None);
+}
+
+/// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
+/// relay's own signer as the pay-to address of a top-up the credits lane then refuses.
+#[tokio::test]
+async fn a_trial_refuses_the_mana_payment_routes() {
+    let (chain_url, _raws) = spawn_fake_chain().await;
+    let key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(key.to_bytes())),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::default()),
+        ..Settings::for_tests()
+    };
+    let app = router(state(lazy_pool(), settings));
+    let wallet = format!("{:#x}", key.address());
+    for path in [
+        "/v1/payments/config".to_string(),
+        format!("/v1/payments/nonce/{wallet}"),
+        format!("/v1/payments/balance/{wallet}"),
+    ] {
+        let (status, body) = get_json(&app, &path).await;
+        assert_eq!(status, 403, "{path}: {body}");
+        assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    }
+    let (status, text) = send(
+        &app,
+        "POST",
+        "/v1/payments/verify",
+        Some("{}".to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 403, "{text}");
+}
+
+/// A trial's relayer pays gas for the trial's buyers only: a meta-transaction signed for any other
+/// wallet is refused with 403 before the daily quota is charged or anything is broadcast, while a
+/// listed buyer's relays as before.
+#[tokio::test]
+async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let buyer = PrivateKeySigner::random();
+    let stranger = PrivateKeySigner::random();
+    let buyer_address = format!("{:#x}", buyer.address());
+    let stranger_address = format!("{:#x}", stranger.address());
+    let settings = Settings {
+        trial_mode: true,
+        trial_buyers: Some(
+            crate::credits::trial::TrialBuyers::parse(Some(
+                &buyer_address.to_uppercase().replace("0X", "0x"),
+            ))
+            .unwrap(),
+        ),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some(chain_url),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+
+    let (status, body) = post_transaction(
+        &app,
+        &stranger_address,
+        COLLECTION,
+        &signed_split_calldata(&stranger, FS),
+    )
+    .await;
+    assert_eq!(status, 403, "{body}");
+    assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    assert_eq!(
+        row_count(&pool, &stranger_address).await,
+        0,
+        "no quota charged"
+    );
+    assert!(
+        raws.lock().unwrap().is_empty(),
+        "nothing broadcast for a stranger"
+    );
+
+    let (status, body) = post_transaction(
+        &app,
+        &buyer_address,
+        COLLECTION,
+        &signed_split_calldata(&buyer, FS),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "a listed buyer's meta-transaction relays: {body}"
+    );
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    cleanup_user(&pool, &buyer_address).await;
+    cleanup_user(&pool, &stranger_address).await;
 }

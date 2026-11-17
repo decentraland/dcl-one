@@ -1,0 +1,1346 @@
+{
+  "source": "decentraland/sites@cfdfa1a51216f9dc90c5b148686a95e7ee9c2862",
+  "path": "/rewards-terms",
+  "oracleA": {
+    "renderedFrom": "git archive cfdfa1a5, vite build and preview",
+    "capturedAt": "2026-11-04T02:33:12.566Z"
+  },
+  "oracleB": {
+    "url": "https://decentraland.org/rewards-terms",
+    "bundle": "@dcl/sites/0.76.0",
+    "capturedAt": "2026-11-04T02:32:14.129Z"
+  },
+  "canonical": [
+    {
+      "tag": "a",
+      "href": "/brand",
+      "children": [
+        {
+          "text": "Logo and Name"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/content",
+      "children": [
+        {
+          "text": "Content Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/ethics",
+      "children": [
+        {
+          "text": "Code of Ethics"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/rewards-terms",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/credits-terms",
+      "children": [
+        {
+          "text": "Credits"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/security",
+      "children": [
+        {
+          "text": "Security"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/privacy",
+      "children": [
+        {
+          "text": "Privacy Policy"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/referral-terms",
+      "children": [
+        {
+          "text": "Referral"
+        }
+      ]
+    },
+    {
+      "tag": "a",
+      "href": "/terms",
+      "children": [
+        {
+          "text": "Terms of Use"
+        }
+      ]
+    },
+    {
+      "tag": "h1",
+      "children": [
+        {
+          "text": "Rewards Program"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#general-provisions",
+              "children": [
+                {
+                  "text": "1. General Provisions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#program-duration",
+              "children": [
+                {
+                  "text": "2. Program Duration and Structure"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#credits-and-prize-allocation",
+              "children": [
+                {
+                  "text": "3. Credits and Prize Allocation"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#eligibility-and-participation",
+              "children": [
+                {
+                  "text": "4. Eligibility and Participation"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#earnings-and-credit-allocation",
+              "children": [
+                {
+                  "text": "5. Earnings and Credit Allocation"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#reward-validity-and-usage",
+              "children": [
+                {
+                  "text": "6. Reward Validity and Usage"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#non-transferability",
+              "children": [
+                {
+                  "text": "7. Non-Transferability and Restrictions"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#email-notifications",
+              "children": [
+                {
+                  "text": "8. Email Notifications"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#miscellaneous",
+              "children": [
+                {
+                  "text": "9. Miscellaneous"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#seasons",
+              "children": [
+                {
+                  "text": "10. Seasons"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#first-season",
+              "children": [
+                {
+                  "text": "First Season (2025)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#second-season",
+              "children": [
+                {
+                  "text": "Second Season (2025)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#third-season",
+              "children": [
+                {
+                  "text": "Third Season (2025)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#fourth-season",
+              "children": [
+                {
+                  "text": "Fourth Season (2026)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#fifth-season",
+              "children": [
+                {
+                  "text": "Fifth Season (2026)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#sixth-season",
+              "children": [
+                {
+                  "text": "Sixth Season (2026)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "tag": "a",
+              "href": "#seventh-season",
+              "children": [
+                {
+                  "text": "Seventh Season (2026)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Terms and Conditions of the Rewards Program"
+        }
+      ]
+    },
+    {
+      "anchor": "general-provisions"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "1. General Provisions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.1. The Rewards Program (the \"Program\") is offered by the Decentraland Foundation and is conducted in specific Seasons, the dates of which will be announced by the Decentraland Foundation."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.2. Participation in the Program constitutes acceptance of these Terms and Conditions, as well as the Decentraland Terms of Use, Privacy Policy, and Content Policy."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "1.3. The Decentraland Foundation reserves the right to modify, suspend, or terminate the Program at its discretion."
+        }
+      ]
+    },
+    {
+      "anchor": "program-duration"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "2. Program Duration and Structure"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "2.1. The Program is organized in Seasons (the \"Season\"). The Decentraland Foundation will announce the start and end dates for each Season."
+        }
+      ]
+    },
+    {
+      "anchor": "credits-and-prize-allocation"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "3. Credits and Prize Allocation"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.1. Credits issued under the Program may only be used on primary sales of Polygon Wearables & Emotes (L1 sales are excluded)."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.2. Each Marketplace Credit is valued in each Season; however this value may be changed (lowered or increased) in the future at the discretion of the Decentraland Foundation."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.3. Credits do not represent voting power (VP)."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "3.4. A maximum total reward budget is allocated per Season. Once this budget is exhausted, no further rewards will be granted during that Season."
+        }
+      ]
+    },
+    {
+      "anchor": "eligibility-and-participation"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "4. Eligibility and Participation"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.1. To be eligible for rewards, participants must complete specified actions, attend designated events, or fulfill other tasks as determined by the Decentraland Foundation."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "4.2. The Decentraland Foundation reserves the right to verify the completion of required actions before awarding any rewards."
+        }
+      ]
+    },
+    {
+      "anchor": "earnings-and-credit-allocation"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "5. Earnings and Credit Allocation"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.1. Participants who fully complete all designated weekly goals will earn the maximum Marketplace Credits per week mentioned in the corresponding Season."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.2. The maximum Marketplace Credits a user can earn during the Season shall be determined in each Season."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.3. A weekly goal must be fully completed to receive its associated credit value."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "5.4. Participants will earn credits only for the goals they fully complete; it is not necessary to complete every goal in order to receive some credit."
+        }
+      ]
+    },
+    {
+      "anchor": "reward-validity-and-usage"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "6. Reward Validity and Usage"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.1. Rewards will be valid for a period of weeks to be announced in each Season (the \"validity period\")."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "6.2. Any rewards not redeemed within the validity period will expire and become non-redeemable."
+        }
+      ]
+    },
+    {
+      "anchor": "non-transferability"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "7. Non-Transferability and Restrictions"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.1. Rewards are non-transferable and may only be used by the designated recipient."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.2. Credits must be issued to a specific beneficiary (a valid EVM Address) and can only be utilized by that beneficiary."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.3. Rewards cannot be exchanged for cash, MANA, or any other alternative benefits."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.4. Credits cannot be used to publish a collection, used on Ethereum for this iteration, or transferred between users."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "7.5. The Decentraland Foundation reserves the right to revoke or cancel rewards if they are misused or if participants are found to be in violation of the Program's terms."
+        }
+      ]
+    },
+    {
+      "anchor": "email-notifications"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "8. Email Notifications"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "8.1. By participating in the Program, you consent to receive email notifications related to \"Weekly Rewards.\""
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "8.2. The Decentraland Foundation may add additional email notification categories in the future."
+        }
+      ]
+    },
+    {
+      "anchor": "miscellaneous"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "9. Miscellaneous"
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.1. The Decentraland Foundation is not responsible for any technical malfunctions, errors, or issues that may affect participation in the Program."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "9.2. Any disputes regarding the Program shall be resolved at the sole discretion of the Decentraland Foundation."
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "For further inquiries, please contact "
+        },
+        {
+          "tag": "a",
+          "href": "mailto:legal@decentraland.org",
+          "children": [
+            {
+              "text": "legal@decentraland.org"
+            }
+          ]
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "anchor": "seasons"
+    },
+    {
+      "tag": "h2",
+      "children": [
+        {
+          "text": "10. Seasons"
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "first-season",
+      "children": [
+        {
+          "text": "First Season (2025)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The First Season starts on May 19, 2025 and finishes July 14, 2025."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The First Season will run for 8 weeks, with each week defined as Monday 00:00 UTC to Sunday 23:59 UTC."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The maximum total reward budget for the first Season is set at 640,000 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "The maximum a user can earn during the 8-week trial Season is 64 Marketplace Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Rewards will be valid for a period of ten (10) weeks from the Season launch date (the \"validity period\")."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Marketplace Credit is valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals and Credit Values:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - Value: 4 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - Value: 2 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "View 3 new Profiles - Value: 1 Credit"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Visit 3 new locations - Value: 1 Credit"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "second-season",
+      "children": [
+        {
+          "text": "Second Season (2025)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts August 11, 2025, finishes October 12, 2025."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "9 weeks, Monday 00:00 UTC to Sunday 23:59 UTC."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Budget: 640,000 Credits. Max per user: 360 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: eleven (11) weeks from launch (October 26, 2025 at 23:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits (Must remain in-world 10+ min each day)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 10+ min each event)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "View 3 new Profiles - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Visit 3 new locations - 5 Credits"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "third-season",
+      "children": [
+        {
+          "text": "Third Season (2025)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts October 27, 2025, finishes December 21, 2025."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "8 weeks. Budget: 640,000 Credits. Max per user: 320 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: ten (10) weeks (January 4, 2026 at 23:59:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 5+ min)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Explore a weekly location - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Snap A Photo Emoting With Someone - 5 Credits"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "fourth-season",
+      "children": [
+        {
+          "text": "Fourth Season (2026)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts January 12, 2026, finishes March 01, 2026."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "7 weeks. Budget: 640,000 Credits. Max per user: 280 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: nine (9) weeks (March 15, 2026 at 23:59:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 5+ min)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Explore a weekly location - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Snap A Photo Emoting With Someone - 5 Credits"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "fifth-season",
+      "children": [
+        {
+          "text": "Fifth Season (2026)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts March 16, 2026, finishes April 19, 2026."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "5 weeks. Budget: 640,000 Credits. Max per user: 200 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: six (6) weeks (April 26, 2026 at 23:59:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 5+ min)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Explore a weekly location - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Snap A Photo Emoting With Someone - 5 Credits"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "sixth-season",
+      "children": [
+        {
+          "text": "Sixth Season (2026)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts April 27, 2026, finishes May 24, 2026."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "4 weeks. Budget: 640,000 Credits. Max per user: 160 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: five (5) weeks (May 31, 2026 at 23:59:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 5+ min)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Explore a weekly location - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Snap A Photo Emoting With Someone - 5 Credits"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "h3",
+      "id": "seventh-season",
+      "children": [
+        {
+          "text": "Seventh Season (2026)"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Starts June 15, 2026, finishes July 19, 2026."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "5 weeks. Budget: 640,000 Credits. Max per user: 200 Credits."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Validity: six (6) weeks (July 26, 2026 at 23:59:59)."
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Each Credit valued at 1 MANA."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "p",
+      "children": [
+        {
+          "text": "Weekly Goals:"
+        }
+      ]
+    },
+    {
+      "tag": "ul",
+      "children": [
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Log into DCL on at least 3 separate days - 20 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Attend at least 2 events - 10 Credits (Must remain 5+ min)"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Explore a weekly location - 5 Credits"
+            }
+          ]
+        },
+        {
+          "tag": "li",
+          "children": [
+            {
+              "text": "Snap A Photo Emoting With Someone - 5 Credits"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

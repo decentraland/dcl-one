@@ -4,7 +4,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 import { useSearchParams } from "react-router";
 
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { useSeo } from "../discovery/hooks";
 import { useMarketplaceAccess } from "../market/access";
 import NamesBrowse from "./NamesBrowse";

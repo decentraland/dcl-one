@@ -3,9 +3,9 @@
 // network (the exact amount in its title).
 
 import ManaMark from "../../../atoms/ManaMark";
-import { isPolygon } from "../../model/chain";
-import { formatMana, formatManaPrice, type ManaWei } from "../../model/money";
-import { creditsUnit, formatCreditsFull } from "../../checkout/lib/currency";
+import { isPolygon } from "@shop/model/chain";
+import { formatMana, formatManaPrice, type ManaWei } from "@shop/model/money";
+import { creditsUnit, formatCreditsFull } from "@shop/checkout/lib/currency";
 import CreditMark from "./CreditMark";
 import "./amount.css";
 

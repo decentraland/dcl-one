@@ -220,6 +220,14 @@ pub struct EconomyConfig {
     #[arg(long, env = "MAX_TRANSACTIONS_PER_DAY", default_value_t = 10)]
     pub max_transactions_per_day: i64,
 
+    /// Free meta-transactions (no sale, no credits spend) the relayer pays for per day across every address; 0 is no limit. Sales are never held back by it.
+    #[arg(
+        long,
+        env = "MAX_RELAYED_TRANSACTIONS_PER_DAY",
+        default_value_t = 20_000
+    )]
+    pub max_relayed_transactions_per_day: i64,
+
     /// The dApps' contract-addresses JSON (public https); unset, only the collections mirror admits.
     #[arg(long, env = "CONTRACT_ADDRESSES_URL")]
     pub contract_addresses_url: Option<String>,
@@ -250,6 +258,11 @@ pub struct EconomyConfig {
 
     #[arg(long, env = "MAX_GAS_LIMIT", default_value_t = 1_500_000)]
     pub max_gas_limit: u64,
+
+    /// The highest fee per gas, in wei, the direct relay signer signs: EIP-1559
+    /// `max_fee_per_gas`, a legacy `gas_price`. Unset, no cap; required under CREDITS_TRIAL_MODE.
+    #[arg(long, env = "RELAYER_MAX_FEE_PER_GAS_WEI")]
+    pub relayer_max_fee_per_gas_wei: Option<u128>,
 
     #[arg(long, env = "OZ_RELAYER_URL")]
     pub oz_relayer_url: Option<String>,
@@ -439,6 +452,19 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_REVOKER_KEY", hide_env_values = true)]
     pub credits_revoker_key: Option<String>,
 
+    /// A closed trial of on-chain credits: only CREDITS_TRIAL_BUYERS get new credit
+    /// authorizations, the MANA top-up routes refuse, and the node refuses to start with a card
+    /// rail, a mock card, a relay fallback, an uncapped relay or no revoker. The relay's writes
+    /// then open with OPS_WRITES_ENABLED, the credits switch, instead of DATA_WRITES_ENABLED.
+    #[arg(long, env = "CREDITS_TRIAL_MODE", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_trial_mode: bool,
+
+    /// The trial's buyers, comma-separated addresses (or `_FILE`): the root signer of a request's
+    /// auth chain must be one of them. Empty or unset under CREDITS_TRIAL_MODE: no new credit is
+    /// authorized.
+    #[arg(long, env = "CREDITS_TRIAL_BUYERS", hide_env_values = true)]
+    pub credits_trial_buyers: Option<String>,
+
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
@@ -458,6 +484,15 @@ pub struct ShopConfig {
         default_value = "https://decentraland.org/shop"
     )]
     pub shop_base_url: String,
+
+    /// Credits' feature service; empty uses explicit node overrides only.
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_URL", default_value = "")]
+    pub credits_feature_flags_url: String,
+    /// Credits' own Referer context, normalized with https when no scheme is supplied.
+    #[arg(long, env = "CREDITS_SERVER_URL", default_value = "")]
+    pub credits_server_url: String,
+    #[arg(long, env = "CREDITS_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
+    pub credits_feature_flags_refresh_secs: u64,
 
     /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
     /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
@@ -496,6 +531,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_USAGE_START_BLOCK")]
     pub credits_usage_start_block: Option<u64>,
 
+    /// MANA top-ups mined before this block are refused; unset, any block.
+    #[arg(long, env = "CREDITS_TOPUP_START_BLOCK")]
+    pub credits_topup_start_block: Option<u64>,
+
+    /// Blocks a MANA top-up transfer needs on top of it before it is credited.
+    #[arg(long, env = "CREDITS_TOPUP_MIN_CONFIRMATIONS", default_value_t = 64)]
+    pub credits_topup_min_confirmations: u64,
+
     #[arg(long, env = "CREDITS_USAGE_INDEX_INTERVAL_SECS", default_value_t = 30)]
     pub credits_usage_index_interval_secs: u64,
 
@@ -517,8 +560,9 @@ pub struct ShopConfig {
 
     /// Walk the Rentals contract's logs on Ethereum (shop.rental_event, over TRADE_RPC_URLS 1=
     /// or, on mainnet, ETH_RPC_URL): listing status sync and the rental notifications.
-    #[arg(long, env = "SHOP_RENTALS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
-    pub shop_rentals_index_enabled: bool,
+    /// Unset: on whenever that endpoint is configured; `false` turns it off.
+    #[arg(long, env = "SHOP_RENTALS_INDEX_ENABLED", action = clap::ArgAction::Set)]
+    pub shop_rentals_index_enabled: Option<bool>,
 }
 
 #[cfg(test)]
@@ -731,10 +775,19 @@ mod tests {
             c.shop.credits_checkout_success_url.is_empty()
                 && c.shop.credits_checkout_cancel_url.is_empty()
         );
-        assert!(
-            !c.shop.shop_rentals_index_enabled,
-            "the rentals index is opt-in"
+        assert_eq!(
+            c.shop.shop_rentals_index_enabled, None,
+            "the rentals index follows the chain-1 endpoint unless set"
         );
+        let off = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--shop-rentals-index-enabled",
+            "false",
+        ])
+        .unwrap();
+        assert_eq!(off.shop.shop_rentals_index_enabled, Some(false));
         assert!(
             !c.shop.credits_usage_index_enabled
                 && c.shop.credits_usage_start_block.is_none()

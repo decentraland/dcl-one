@@ -1,9 +1,9 @@
 // from: shop@3a322cf9:app/src/pages/Cart.tsx (the summary panel: TotalLine "Total: N items" + TotalValue).
 // The total alone, as upstream draws it: the balance and a shortfall are not stated here, the rail buttons
 // below (PaymentCtas) are the choice, and the credits fallback opens the top-up.
-import type { CartPartition } from "../../cart/partition";
-import { chainLabel } from "../../model/chain";
-import { creditsFloor, formatUsd } from "../../model/money";
+import type { CartPartition } from "@shop/cart/partition";
+import { chainLabel } from "@shop/model/chain";
+import { creditsFloor, formatUsd } from "@shop/model/money";
 import { ManaAmount } from "../../credits/components/Amount";
 import { CreditsAmount as ShopCredits } from "../../discovery/components/PriceTag";
 import "./cartsummary.css";

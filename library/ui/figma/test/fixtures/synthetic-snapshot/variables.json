@@ -1,0 +1,295 @@
+{
+  "collections": [
+    {
+      "name": "Primitives",
+      "modes": [
+        "Value"
+      ],
+      "variables": [
+        {
+          "name": "Neutral/White",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#fcfcfc",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Neutral/Gray",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#cfcdd4",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Neutral/Mid",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#716b7c",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Neutral/Dark",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#161518",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Brand/Primary",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#ff2d55",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Brand/Primary Light",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#ff5c7c",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Brand/Primary Dark",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#d80029",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Brand/Accent",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#ffbc5b",
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "name": "Alpha/White 10",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#ffffff",
+              "alpha": 0.1
+            }
+          }
+        },
+        {
+          "name": "Alpha/Black 50",
+          "type": "COLOR",
+          "values": {
+            "Value": {
+              "hex": "#000000",
+              "alpha": 0.5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Semantic",
+      "modes": [
+        "Dark"
+      ],
+      "variables": [
+        {
+          "name": "bg/page",
+          "type": "COLOR",
+          "values": {
+            "Dark": {
+              "alias": "Neutral/Dark",
+              "collection": "Primitives"
+            }
+          }
+        },
+        {
+          "name": "bg/surface",
+          "type": "COLOR",
+          "values": {
+            "Dark": {
+              "alias": "Neutral/Mid",
+              "collection": "Primitives"
+            }
+          }
+        },
+        {
+          "name": "text/primary",
+          "type": "COLOR",
+          "values": {
+            "Dark": {
+              "alias": "Neutral/White",
+              "collection": "Primitives"
+            }
+          }
+        },
+        {
+          "name": "text/muted",
+          "type": "COLOR",
+          "values": {
+            "Dark": {
+              "alias": "Neutral/Gray",
+              "collection": "Primitives"
+            }
+          }
+        },
+        {
+          "name": "primary/primary",
+          "type": "COLOR",
+          "values": {
+            "Dark": {
+              "alias": "Brand/Primary",
+              "collection": "Primitives"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Spacing",
+      "modes": [
+        "Value"
+      ],
+      "variables": [
+        {
+          "name": "space/4",
+          "type": "FLOAT",
+          "values": {
+            "Value": 4
+          }
+        },
+        {
+          "name": "space/8",
+          "type": "FLOAT",
+          "values": {
+            "Value": 8
+          }
+        },
+        {
+          "name": "space/12",
+          "type": "FLOAT",
+          "values": {
+            "Value": 12
+          }
+        },
+        {
+          "name": "space/16",
+          "type": "FLOAT",
+          "values": {
+            "Value": 16
+          }
+        },
+        {
+          "name": "space/24",
+          "type": "FLOAT",
+          "values": {
+            "Value": 24
+          }
+        },
+        {
+          "name": "radius/sm",
+          "type": "FLOAT",
+          "values": {
+            "Value": 4
+          }
+        },
+        {
+          "name": "radius/md",
+          "type": "FLOAT",
+          "values": {
+            "Value": 8
+          }
+        },
+        {
+          "name": "radius/full",
+          "type": "FLOAT",
+          "values": {
+            "Value": 999
+          }
+        }
+      ]
+    },
+    {
+      "name": "Layout",
+      "modes": [
+        "desktop",
+        "large-desktop",
+        "tablet",
+        "mobile"
+      ],
+      "variables": [
+        {
+          "name": "layout/breakpoint-min",
+          "type": "FLOAT",
+          "values": {
+            "desktop": 1024,
+            "large-desktop": 1536,
+            "tablet": 768,
+            "mobile": 0
+          }
+        },
+        {
+          "name": "layout/margin-x",
+          "type": "FLOAT",
+          "values": {
+            "desktop": 48,
+            "large-desktop": 48,
+            "tablet": 32,
+            "mobile": 16
+          }
+        },
+        {
+          "name": "layout/max-width",
+          "type": "FLOAT",
+          "values": {
+            "desktop": 1024,
+            "large-desktop": 1024,
+            "tablet": 768,
+            "mobile": 375
+          }
+        },
+        {
+          "name": "font-size/heading-xl",
+          "type": "FLOAT",
+          "values": {
+            "desktop": 60,
+            "large-desktop": 60,
+            "tablet": 60,
+            "mobile": 32
+          }
+        },
+        {
+          "name": "font-size/label-sm-caps",
+          "type": "FLOAT",
+          "values": {
+            "desktop": 12,
+            "large-desktop": 12,
+            "tablet": 12,
+            "mobile": 12
+          }
+        }
+      ]
+    }
+  ]
+}

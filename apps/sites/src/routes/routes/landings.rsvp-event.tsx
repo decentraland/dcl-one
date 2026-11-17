@@ -29,14 +29,14 @@ const FALLBACK: PageDefaults = {
   variant: "confirm",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const requestedId = url.searchParams.get("event")?.trim() || null;
 
   const { sid, assignment, wrap } = await pageLoader(
     request,
-    
+    context,
     FALLBACK,
   );
 
@@ -82,7 +82,7 @@ export default function LandingsRsvpEvent({ loaderData }: Route.ComponentProps) 
     jumpHref:
       e?.url ??
       (e ? eventJumpUrl(e) : null) ??
-      `/whats-on/${encodeURIComponent(eventId)}`,
+      `/events?id=${encodeURIComponent(eventId)}`,
   };
 
   return (

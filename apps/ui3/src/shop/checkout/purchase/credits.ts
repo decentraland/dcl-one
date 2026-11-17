@@ -7,7 +7,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { requireContracts, type ContractInfo } from "../chain/contracts";
 import { isRevertedTxError, revertedTxHash, sendAndConfirm } from "../chain/wallet";
 import {

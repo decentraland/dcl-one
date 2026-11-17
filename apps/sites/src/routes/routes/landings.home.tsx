@@ -25,9 +25,9 @@ const FALLBACK: PageDefaults = {
   variant: "hero_cta",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const [{ sid, wrap }, { content, live }] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadHome(),
   ]);
   return wrap({ sid, content, live });
@@ -61,7 +61,7 @@ function toRails(content: HomeContent): LdHomeRail[] {
         ? eventItems(rail).map((ev) => ({
             id: ev.id,
             title: ev.title,
-            href: `/whats-on/${encodeURIComponent(ev.id)}`,
+            href: `/events?id=${encodeURIComponent(ev.id)}`,
             category: ev.category,
             live: ev.live,
             when: ev.when,

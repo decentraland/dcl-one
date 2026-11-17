@@ -1,0 +1,44 @@
+{
+ "page": {"id":"10:6","name":"Demo Search"},
+ "components": [
+  {
+   "kind": "component",
+   "id": "70:1",
+   "name": "SearchBox",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "70:1",
+    "name": "SearchBox",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "SearchBox",
+     "w": 280,
+     "h": 40,
+     "layout": {"mode":"HORIZONTAL","pad":[8,12,8,12],"gap":8,"main":"MIN","cross":"CENTER"},
+     "radius": 20,
+     "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+     "children": [
+      {"type":"INSTANCE","name":"Heart","component":"sample/heart","w":16,"h":16},
+      {
+       "type": "TEXT",
+       "name": "Placeholder",
+       "w": 48,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Search",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}

@@ -5,9 +5,9 @@
 import { useEffect, useState } from "react";
 
 import { revalidationIdentity } from "../cart/revalidate";
-import type { CartPartition } from "../cart/partition";
-import type { CartLine } from "../model/purchase";
-import type { PaymentMethod } from "../model/settlement";
+import type { CartPartition } from "@shop/cart/partition";
+import type { CartLine } from "@shop/model/purchase";
+import type { PaymentMethod } from "@shop/model/settlement";
 import type { CartRail } from "./lib/cart-rails";
 import type { CheckoutView } from "./useCheckout";
 

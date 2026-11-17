@@ -3,9 +3,9 @@
 // shown: every path returns curated copy or the caller's own fallback. Wallet-state failures (wrong
 // network, an unauthorized wallet) are named on every screen, because "try again" is false for them.
 
-import { isShopApiError } from "../../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { chainLabel, isWalletUnauthorizedError, isWrongNetworkError } from "./network";
-import { CURRENCY } from "./currency";
+import { CURRENCY } from "@shop/checkout/lib/currency";
 
 type ErrLike = { code?: unknown; status?: number; message?: string; name?: string };
 

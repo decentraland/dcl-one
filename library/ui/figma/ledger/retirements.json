@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "retired": [
+    {
+      "pageId": "8711:16075",
+      "componentId": "13023:4278",
+      "name": "NotificationsPanelEmpty",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Notifications.json#component:13023:4278",
+        "figma/figma-snapshot/components/Notifications.json#variant:13023:4278"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "8711:16075",
+      "componentId": "8162:2780",
+      "name": "NotificationsPanel",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Notifications.json#component:8162:2780",
+        "figma/figma-snapshot/components/Notifications.json#variant:8162:2780"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "8711:16580",
+      "componentId": "8198:1815",
+      "name": "FriendUserEntry",
+      "reason": "Merged into FriendEntry 16321:172 by the designer (owner-approved 2026-11-04)",
+      "owned": [
+        "figma/figma-snapshot/components/Friends.json#component:8198:1815",
+        "figma/figma-snapshot/components/Friends.json#variant:8198:1821",
+        "figma/figma-snapshot/components/Friends.json#variant:8198:1846",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17639"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "8711:16580",
+      "componentId": "8711:17305",
+      "name": "RequestEntry",
+      "reason": "Merged into FriendEntry 16321:172 by the designer (owner-approved 2026-11-04)",
+      "owned": [
+        "figma/figma-snapshot/components/Friends.json#component:8711:17305",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17306",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17320",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17328",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17350"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "8711:16580",
+      "componentId": "8711:17473",
+      "name": "BlockEntry",
+      "reason": "Merged into FriendEntry 16321:172 by the designer (owner-approved 2026-11-04)",
+      "owned": [
+        "figma/figma-snapshot/components/Friends.json#component:8711:17473",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17474",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17534",
+        "figma/figma-snapshot/components/Friends.json#variant:8711:17538"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "11616:2243",
+      "name": "EventCard",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:11616:2243",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2244",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2263",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2289",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2306",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2334",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2353",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2379",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2390",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2414",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2415",
+        "figma/figma-snapshot/components/Events.json#variant:11618:2668",
+        "figma/figma-snapshot/components/Events.json#variant:11665:3988",
+        "figma/figma-snapshot/components/Events.json#variant:11667:542"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "11616:2611",
+      "name": "LargeCTA",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:11616:2611",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2612",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2615",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2618"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "11616:2629",
+      "name": "Community",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:11616:2629",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2630",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2634"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "11616:2638",
+      "name": "ShortCTA",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:11616:2638",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2639",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2642",
+        "figma/figma-snapshot/components/Events.json#variant:11616:2645"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "13726:381",
+      "name": "FeaturedWearable",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:13726:381",
+        "figma/figma-snapshot/components/Events.json#variant:13726:379",
+        "figma/figma-snapshot/components/Events.json#variant:13726:380"
+      ],
+      "sharedExclusions": []
+    },
+    {
+      "pageId": "9373:2154",
+      "componentId": "9373:2562",
+      "name": "CardHover",
+      "reason": "Replaced by the designer's rebuilt set(s); owner-approved 2026-11-04",
+      "owned": [
+        "figma/figma-snapshot/components/Events.json#component:9373:2562",
+        "figma/figma-snapshot/components/Events.json#variant:9373:2563",
+        "figma/figma-snapshot/components/Events.json#variant:9373:2581",
+        "figma/figma-snapshot/components/Events.json#variant:9373:2601",
+        "figma/figma-snapshot/components/Events.json#variant:9373:2616",
+        "figma/figma-snapshot/components/Events.json#variant:9373:2631"
+      ],
+      "sharedExclusions": []
+    }
+  ]
+}

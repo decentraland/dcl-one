@@ -67,14 +67,32 @@ CREATE SCHEMA worlds;
 -- nft-ownership; an allow-list's wallets are world_permissions rows with
 -- permission = 'access' and its communities world_access_communities rows.
 -- `settings_version` is bumped by every settings-affecting write (deploy
--- refresh, PUT /settings, access edits, mirror ingest) under the row lock so
--- a settings consumer can refuse an out-of-order update.
+-- refresh, PUT /settings, access edits) under the row lock so a settings
+-- consumer can refuse an out-of-order update. A mirrored row takes its
+-- source's counter, or its own plus one when a copied setting changes and the
+-- source's is not ahead, so it never goes back; a copied access change bumps
+-- it too. `access_set_here` is set by the owner's access writes on this node
+-- (POST /permissions/access and the allow-list edits, core::store) and
+-- `settings_set_here` by a PUT /settings that changes a setting the mirror
+-- copies; `*_set_by` is the owner that wrote it. The worlds mirror leaves
+-- either setting as it is while that owner holds the name, as this node's
+-- own owner lookup says (Policy::current_owner, never the source's
+-- /permissions owner, which trails a sale; core::store::mirror_keeps_local,
+-- under the row lock it already takes). It clears the pair and copies the
+-- source's once the name has another holder. A row marked before the setter
+-- was recorded (`*_set_by` NULL) takes the holder of the next pass as its
+-- setter, and an unknown holder keeps every mark.
+-- No index: they are read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,
     access_type text NOT NULL DEFAULT 'unrestricted',
     access_secret_hash text,
     access_nft text,
+    access_set_here boolean NOT NULL DEFAULT false,
+    access_set_by text,
+    settings_set_here boolean NOT NULL DEFAULT false,
+    settings_set_by text,
     blocked_since timestamp without time zone,
     spawn_coordinates text,
     title text,
@@ -140,28 +158,30 @@ CREATE TABLE worlds.world_scenes (
 CREATE INDEX world_scenes_world_name_created_idx
     ON worlds.world_scenes (world_name, created_at DESC);
 
--- A scene's storage collaborators: the lowercased string entries of its
--- `metadata.logsPermissions` array, from the raw JSON text (an entry spelled
--- with escapes never matches; no stored json/jsonb value makes it fail, so it can index json
--- columns that may hold `\u0000`). The storage routes' grant
--- (`storage::has_logs_access`) and `GET /collaborator` compare against it.
-CREATE FUNCTION worlds.logs_permissions(text) RETURNS text[]
+-- A scene's storage collaborators: the string entries of its
+-- `metadata.logsPermissions` array as `JSON.parse` reads them (escapes
+-- decoded), lowercased. An entry carrying an escape PostgreSQL cannot decode
+-- (`\u0000`, a surrogate) is left out, as it names no address; so no stored
+-- json/jsonb value makes it fail, and it can index json columns that may hold
+-- `\u0000`. The storage routes' grant (`storage::has_logs_access`) and
+-- `GET /collaborator` compare against it.
+CREATE FUNCTION worlds.logs_permissions_decoded(text) RETURNS text[]
     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT ARRAY(
-        SELECT lower(btrim(e::text, '"'))
+        SELECT lower(e #>> '{}')
         FROM json_array_elements(CASE WHEN json_typeof($1::json) = 'array' THEN $1::json ELSE '[]'::json END) e
-        WHERE json_typeof(e) = 'string')
+        WHERE json_typeof(e) = 'string' AND e::text !~ '\\u(0000|[dD][89a-fA-F])')
 $$;
 
 -- `GET /collaborator`: the local world scenes listing the signer.
-CREATE INDEX world_scenes_logs_permissions_idx ON worlds.world_scenes
-    USING gin (worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text))
+CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
+    USING gin (worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text))
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
 -- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_idx ON content.deployments
-    USING gin (worlds.logs_permissions((entity_metadata -> 'logsPermissions')::text))
+CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────

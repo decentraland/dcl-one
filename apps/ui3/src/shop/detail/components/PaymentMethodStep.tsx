@@ -15,14 +15,14 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import ManaMark from "../../../atoms/ManaMark";
-import { formatCredits, formatCreditsFull } from "../../checkout/lib/currency";
+import { formatCredits, formatCreditsFull } from "@shop/checkout/lib/currency";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
-import { rarityCardPalette } from "../../discovery/lib/rarity";
-import { formatMana, formatManaPrice, type ManaWei } from "../../model/money";
-import type { CartLineDisplay } from "../../model/purchase";
-import type { MixedPayment } from "../../payment/present";
+import { rarityCardPalette } from "@shop/discovery/lib/rarity";
+import { formatMana, formatManaPrice, type ManaWei } from "@shop/model/money";
+import type { CartLineDisplay } from "@shop/model/purchase";
+import type { MixedPayment } from "@shop/payment/present";
 import creditsCoin from "../assets/credits-coin.webp?url";
 import styles from "./PaymentMethodStep.module.css";
 

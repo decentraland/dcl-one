@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { copyText } from "../../../../data/clipboard";
-import { shortAddress } from "../../../model/address";
+import { shortAddress } from "@shop/model/address";
 import Icon from "../../components/Icon";
 import { useProfile } from "../../hooks";
 import { getAvatarBackgroundColor, getDisplayName } from "../../lib/avatarColor";

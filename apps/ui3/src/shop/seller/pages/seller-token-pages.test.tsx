@@ -2,10 +2,10 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { MANA, nftRow } from "../../market/fixtures";
-import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "../../market/lib/contracts";
+import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "@shop/market/lib/contracts";
 import { createManaListing } from "../../market/lib/trades";
 import { fakeChain, fakeWallet, type FakeRoute } from "../../market/testing";
 import { mountShop } from "../../market/testHarness";

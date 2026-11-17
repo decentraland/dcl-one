@@ -19,10 +19,11 @@
 // same softened sun shadows as scene materials (see bound_material.wgsl)
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
-    // far bound of the last cascade = the shadow distance for this light
+    // the far bound of the last cascade is the shadow distance for this light
     let light = &lights.directional_lights[light_id];
     let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
-    return soften_directional_shadow(base, far, view_z);
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
 }
 
 #ifdef ENVIRONMENT_MAP

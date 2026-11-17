@@ -48,6 +48,7 @@ fn spawned_hashes(world: &World) -> Vec<String> {
         .map(|ev| match &ev.location {
             SceneIpfsLocation::Hash(hash) => hash.clone(),
             SceneIpfsLocation::Urn(urn) => urn.clone(),
+            SceneIpfsLocation::ContentFile { hash, file } => format!("{hash}/{file}"),
         })
         .collect()
 }
@@ -91,6 +92,44 @@ fn loading_current_scene_defers_other_scenes() {
 
     assert!(world.resource::<CurrentSceneLoading>().0);
     assert!(spawned_hashes(&world).is_empty());
+}
+
+#[test]
+fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() {
+    let mut world = lifecycle_world();
+    spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    let location = SceneIpfsLocation::ContentFile {
+        hash: "wearable".to_owned(),
+        file: "male.smart_wearable".to_owned(),
+    };
+    world.resource_mut::<PortableScenes>().insert(
+        "wearable-sw-male".to_owned(),
+        PortableSource {
+            pid: "urn:decentraland:matic:collections-v2:0xabc:0".to_owned(),
+            parent_scene: None,
+            ens: None,
+            super_user: false,
+            kind: PortableKind::SmartWearable {
+                name: "wearable".to_owned(),
+                location: location.clone(),
+            },
+        },
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // the current scene still defers its neighbour, but not the wearable
+    assert!(world.resource::<CurrentSceneLoading>().0);
+    let events = world.resource::<Events<LoadSceneEvent>>();
+    let locations = events
+        .iter_current_update_events()
+        .map(|ev| &ev.location)
+        .collect::<Vec<_>>();
+    assert_eq!(locations, [&location]);
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("wearable-sw-male"));
 }
 
 #[test]

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CartPartition } from "../cart/partition";
-import { CHAIN } from "../model/chain";
+import type { CartPartition } from "@shop/cart/partition";
+import { CHAIN } from "@shop/model/chain";
 import { partitionMana } from "./useRailCheckout";
 
 const group = (method: "credits" | "mana", chainId: number, amount: bigint) =>

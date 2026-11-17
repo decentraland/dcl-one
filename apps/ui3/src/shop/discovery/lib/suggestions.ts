@@ -2,7 +2,7 @@
 // The detail page's rail: the anchor's collection first (never truncated), padded to a target with the
 // creator's other items and then similar ones. Identity is (contract, item), not the feed's `id`.
 
-import type { CatalogItem } from "./catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 export const SUGGESTIONS_TARGET = 15;
 

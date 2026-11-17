@@ -9,7 +9,7 @@
 // Purchase complete is the success page the cart navigates to, as upstream's.
 import { createPortal } from "react-dom";
 
-import type { CartLineDisplay } from "../../model/purchase";
+import type { CartLineDisplay } from "@shop/model/purchase";
 import { DialogAsset, DialogAssetList, DialogHead, DialogShell, ErrorBody, NoFundsBody, ProcessingBody, useDialog } from "./CheckoutDialog";
 
 const TEXT = {

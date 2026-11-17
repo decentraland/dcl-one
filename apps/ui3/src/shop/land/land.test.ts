@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { landTokenId } from "../../data/catalyst/landListing";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import {
   DEFAULT_LAND_FILTERS,
   fetchLandNfts,
@@ -14,7 +14,8 @@ import {
   landParcels,
   landSortsFor,
 } from "./api";
-import { landCategoryOf, landChainId, landNetwork, LAND_NETWORKS } from "./contracts";
+import { landChainId } from "./chain";
+import { landCategoryOf, landNetwork, LAND_NETWORKS } from "@shop/land/contracts";
 import { computeEstateFingerprint, isEstateListingAffectedByUpgrade, ESTATE_V2_FINGERPRINT_LISTING_CUTOFF } from "./estate";
 import { distanceText, estateProximity, parcelProximity, proximityIndex } from "./proximity";
 import { stubClient } from "./testkit";

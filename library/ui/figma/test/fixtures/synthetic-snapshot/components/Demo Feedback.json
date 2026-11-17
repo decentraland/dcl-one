@@ -1,0 +1,252 @@
+{
+ "page": {"id":"10:4","name":"Demo Feedback"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "40:1",
+   "name": "Toast",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Property 1":{"type":"VARIANT","default":"Success","options":["Success","Error Close"]}},
+   "base": {
+    "id": "40:2",
+    "name": "Property 1=Success",
+    "props": {"Property 1":"Success"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Property 1=Success",
+     "w": 380,
+     "h": 48,
+     "layout": {"mode":"HORIZONTAL","pad":[12,16,12,16],"gap":12,"main":"MIN","cross":"CENTER"},
+     "radius": 8,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Message",
+       "w": 40,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Saved",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "40:3",
+     "name": "Property 1=Error Close",
+     "props": {"Property 1":"Error Close"},
+     "patches": [
+      {
+       "at": [],
+       "replace": {
+        "type": "COMPONENT",
+        "name": "Property 1=Error Close",
+        "w": 380,
+        "h": 48,
+        "layout": {"mode":"HORIZONTAL","pad":[12,16,12,16],"gap":12,"main":"MIN","cross":"CENTER"},
+        "radius": 8,
+        "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+        "children": [
+         {
+          "type": "TEXT",
+          "name": "Message",
+          "w": 340,
+          "h": 42,
+          "sizing": ["FIXED","HUG"],
+          "text": "Something went wrong while saving, try again",
+          "textStyle": "body/sm",
+          "font": "Inter Regular",
+          "fontSize": 14,
+          "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "component",
+   "id": "40:10",
+   "name": "ProgressBar",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "40:10",
+    "name": "ProgressBar",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "ProgressBar",
+     "w": 200,
+     "h": 24,
+     "layout": {"mode":"VERTICAL","pad":[0,0,0,0],"gap":4,"main":"MIN","cross":"MIN"},
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Caption",
+       "w": 28,
+       "h": 17,
+       "sizing": ["HUG","HUG"],
+       "text": "40%",
+       "textStyle": "Legacy Caption",
+       "font": "Inter Regular",
+       "fontSize": 12,
+       "fills": [{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]
+      },
+      {
+       "type": "FRAME",
+       "name": "Track",
+       "w": 200,
+       "h": 4,
+       "sizing": ["FILL","FIXED"],
+       "radius": 2,
+       "fills": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+       "children": [{"type":"FRAME","name":"Fill","w":80,"h":4,"x":0,"y":0,"radius":2,"fills":[{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]}]
+      }
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "40:20",
+   "name": "Slot",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "40:20",
+    "name": "Slot",
+    "props": {},
+    "tree": {"type":"COMPONENT","name":"Slot","w":120,"h":40,"fills":[{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],"children":[]}
+   },
+   "others": [],
+   "truncated": true
+  },
+  {
+   "kind": "component",
+   "id": "40:30",
+   "name": "Page Dots",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"Content#1:0":{"type":"SLOT","slotDefault":{"kind":"synthetic"}}},
+   "base": {
+    "id": "40:30",
+    "name": "Page Dots",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Page Dots",
+     "w": 48,
+     "h": 8,
+     "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":8,"main":"MIN","cross":"CENTER"},
+     "children": [
+      {"type":"ELLIPSE","name":"Dot","w":8,"h":8,"fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]},
+      {"type":"ELLIPSE","name":"Dot","w":8,"h":8,"fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]},
+      {"type":"ELLIPSE","name":"Dot","w":8,"h":8,"fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "40:40",
+   "name": "PhotoCard",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "40:40",
+    "name": "PhotoCard",
+    "props": {},
+    "tree": {"type":"COMPONENT","name":"PhotoCard","w":80,"h":80,"radius":8,"fills":[{"type":"IMAGE","imageRef":"synthetic-photo","scaleMode":"FILL"}],"children":[]}
+   },
+   "others": [],
+   "images": {
+    "synthetic-photo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAAXNSR0IArs4c6QAAACtJREFUeJxjyGFgcGCAAQcGB4bKAz+gLAswDWaCJRsOMDg0QMTA2AKiyQIAJPEIBrcvRBoAAAAASUVORK5CYII="
+   }
+  },
+  {
+   "kind": "component",
+   "id": "40:50",
+   "name": "AvatarStack",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "40:50",
+    "name": "AvatarStack",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "AvatarStack",
+     "w": 56,
+     "h": 24,
+     "layout": {"mode":"HORIZONTAL","pad":[0,0,0,0],"gap":-8,"main":"MIN","cross":"CENTER"},
+     "sizing": ["HUG","HUG"],
+     "children": [
+      {"type":"ELLIPSE","name":"Avatar","w":24,"h":24,"fills":[{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}]},
+      {"type":"ELLIPSE","name":"Avatar","w":24,"h":24,"fills":[{"type":"SOLID","hex":"#ffbc5b","token":"Primitives/Brand/Accent"}]},
+      {"type":"ELLIPSE","name":"Avatar","w":24,"h":24,"fills":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}
+     ]
+    }
+   },
+   "others": []
+  },
+  {
+   "kind": "component",
+   "id": "40:60",
+   "name": "Badge",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "40:60",
+    "name": "Badge",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "Badge",
+     "w": 40,
+     "h": 20,
+     "layout": {"mode":"HORIZONTAL","pad":[2,8,2,8],"gap":0,"main":"CENTER","cross":"CENTER"},
+     "radius": 10,
+     "fills": [{"type":"SOLID","hex":"#ff2d55","token":"Primitives/Brand/Primary"}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 24,
+       "h": 16,
+       "sizing": ["HUG","HUG"],
+       "text": "New",
+       "textStyle": "caption",
+       "font": "Inter Regular",
+       "fontSize": 12,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}

@@ -9,9 +9,9 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { ManaAmount } from "../../discovery/components/PriceTag";
-import { t } from "../../discovery/intl";
+import { t } from "@shop/discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import { useProfiles, type CreatorProfile } from "../../discovery/hooks";

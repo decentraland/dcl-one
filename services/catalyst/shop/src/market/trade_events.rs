@@ -22,10 +22,11 @@
 //! the unavailable envelope and the feeds keep the expiry and local
 //! cancellation rule.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol};
 use anyhow::Context;
 use axum::Json;
@@ -40,8 +41,9 @@ use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_TRADE_EVENTS, LogGro
 use super::listings::{
     self, OffChainMarketplace, TradeAssetInput, TradeChecksInput, TradeCreation,
 };
+use super::wire::format_ether;
 use super::{MarketplaceState, SharedState, Source, unavailable};
-use crate::land_authz::indexer::RpcLog;
+use crate::chain_index::rpc::RpcLog;
 
 pub const TOPIC_TRADED: &str = "0xaaecdfa7e74e704650fcb273f630f42f68974eff42bfffc1732cf30db9e4685b";
 /// V3 adds `bytes32 indexed _tradeDigest`; the data is the same Trade tuple.
@@ -209,17 +211,6 @@ pub struct TradeEvent {
     pub signer: Option<String>,
     pub assets: Option<Value>,
     pub tx_hash: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn assets_json(assets: &[AssetTuple]) -> Value {
@@ -743,25 +734,6 @@ fn insert_opt(map: &mut serde_json::Map<String, Value>, key: &str, v: &Option<St
     }
 }
 
-/// `format_ether` (catalyrst-market logic/numeric.rs, ethers v6): wei as a
-/// decimal MANA amount, the fraction trimmed to at least one digit.
-fn format_ether(wei: &str) -> String {
-    let trimmed = wei.trim();
-    let digits = if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        "0".to_string()
-    } else {
-        trimmed.trim_start_matches('0').to_string()
-    };
-    let padded = format!("{digits:0>19}");
-    let split = padded.len() - 18;
-    let fraction = padded[split..].trim_end_matches('0');
-    format!(
-        "{}.{}",
-        &padded[..split],
-        if fraction.is_empty() { "0" } else { fraction }
-    )
-}
-
 pub(crate) fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
     let price = trade.sent_amount.clone().unwrap_or_default();
     let mut m = serde_json::Map::new();
@@ -802,10 +774,10 @@ pub(super) async fn bid_asset(
     let net = network.to_ascii_lowercase();
     let contract = asset.contract_address.to_ascii_lowercase();
     Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
-        (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+        (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
             nft_meta(pool, land_image_base, &net, &contract, token).await?
         }
-        (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+        (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
             item_meta(pool, &net, &contract, item).await?
         }
         _ => None,
@@ -821,12 +793,12 @@ pub(super) fn bid_received_notification(
     trade_id: &str,
     network: &str,
     bid: &listings::TradeCreation,
-) -> Option<catalyst_social::notifications::NewNotification> {
+) -> Option<crate::shared::notifications::NewNotification> {
     let price = bid.sent.first().and_then(|a| a.amount.as_ref())?;
     if meta.seller.eq_ignore_ascii_case(&bid.signer) {
         return None;
     }
-    let recipient = catalyst_social::Address::parse(&meta.seller).ok()?;
+    let recipient = crate::shared::identity::Address::parse(&meta.seller).ok()?;
     let mut m = serde_json::Map::new();
     m.insert("image".into(), json!(meta.image));
     m.insert("seller".into(), json!(meta.seller));
@@ -848,7 +820,7 @@ pub(super) fn bid_received_notification(
         )),
     );
     m.insert("network".into(), json!(network));
-    let mut n = catalyst_social::notifications::NewNotification::now(
+    let mut n = crate::shared::notifications::NewNotification::now(
         recipient,
         "bid_received",
         Value::Object(m),
@@ -1098,7 +1070,7 @@ async fn accepted_event(
     let mut metas = Vec::new();
     for (asset_type, contract, token_id, item_id) in &trade.assets {
         let meta = match (*asset_type, token_id, item_id) {
-            (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+            (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
                 nft_meta(
                     &state.pool,
                     &state.settings.land_image_base_url,
@@ -1108,7 +1080,7 @@ async fn accepted_event(
                 )
                 .await
             }
-            (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+            (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
                 item_meta(&state.pool, &network, contract, item).await
             }
             _ => Ok(None),
@@ -1230,7 +1202,7 @@ pub fn parse_address(s: &str) -> Option<Address> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::{B256, FixedBytes, keccak256};
+    use alloy_primitives::{B256, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
 
     #[test]
@@ -1486,6 +1458,16 @@ pub(crate) mod tests {
         assert_eq!(format_ether("200000000000000000000"), "200.0");
         assert_eq!(format_ether("1"), "0.000000000000000001");
         assert_eq!(format_ether(""), "0.0");
+        for input in ["", "  ", "000000", "bad", "-1", "1.0", "é"] {
+            assert_eq!(format_ether(input), "0.0", "{input:?}");
+        }
+        assert_eq!(format_ether("  001000000000000000000 "), "1.0");
+        assert_eq!(format_ether("1000000000000000001"), "1.000000000000000001");
+        let oversized = "9".repeat(100);
+        assert_eq!(
+            format_ether(&oversized),
+            format!("{}.{}", "9".repeat(82), "9".repeat(18))
+        );
     }
 
     #[test]

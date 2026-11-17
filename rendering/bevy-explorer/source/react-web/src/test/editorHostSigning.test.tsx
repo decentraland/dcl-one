@@ -7,12 +7,12 @@ import userEvent from '@testing-library/user-event'
 // the bridge scene's tree has it: this file is out of `tsc` (tsconfig.json), which runs before that install
 import { Authenticator, type AuthChain } from '../../bridge-scene/node_modules/@dcl/crypto'
 import { createUnsafeIdentity } from '../../bridge-scene/node_modules/@dcl/crypto/dist/crypto'
-import { PopupHost } from '../design'
-import { useEditorHost } from '../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../features/editorHost/host/host'
-import { localSigner, signDeployment, signFetch } from '../features/editorHost/host/sign'
-import type { Signer } from '../features/editorHost/host/signer'
-import { fakeSession } from './harness'
+import { PopupHost } from '@hud/design'
+import { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import type { DclEditorHostV1 } from '@explorer-core/features/editorHost/host/host'
+import { localSigner, signDeployment, signFetch } from '@explorer-core/features/editorHost/host/sign'
+import type { Signer } from '@explorer-core/features/editorHost/host/signer'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1
@@ -26,7 +26,7 @@ const host = (): DclEditorHostV1 => w.__dclEditorHost!
 const owner = createUnsafeIdentity()
 // The entry the auth site leaves in localStorage, and the profile the engine reports for it.
 async function signIn(): Promise<void> {
-  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 60, async (message) =>
+  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
     Authenticator.createSignature(owner, message)
   )
   localStorage.setItem(`single-sign-on-${owner.address.toLowerCase()}`, JSON.stringify(identity))
@@ -57,7 +57,7 @@ describe('editor host signing', () => {
     // a stored login for another wallet than the one in-world signs nothing
     const other = createUnsafeIdentity()
     const otherKey = `single-sign-on-${other.address.toLowerCase()}`
-    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 60, async (message) =>
+    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
       Authenticator.createSignature(other, message)
     )
     localStorage.setItem(otherKey, JSON.stringify(otherIdentity))
@@ -209,7 +209,7 @@ describe('editor host signing', () => {
     const abort = new AbortController()
     const dropped = expect(host().signedFetch(url, { method: 'DELETE', signal: abort.signal })).rejects.toThrow('aborted')
     await screen.findByRole('dialog')
-    abort.abort()
+    act(() => abort.abort())
     await dropped
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(fetched).not.toHaveBeenCalled()

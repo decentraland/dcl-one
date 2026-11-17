@@ -1,4 +1,5 @@
 import { reactRouter } from "@react-router/dev/vite";
+import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,16 @@ import { validateAliasObject } from "../ui3/vite.validate.js";
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
+const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
+const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
+const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
+const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
+// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
+// to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
+const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
+const oneUi = fileURLToPath(new URL("../../library/ui", import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -28,6 +39,8 @@ const monaco = fileURLToPath(new URL("./node_modules/monaco-editor", import.meta
 const three = fileURLToPath(new URL("./node_modules/three", import.meta.url));
 const qrcode = fileURLToPath(new URL("./node_modules/qrcode-generator", import.meta.url));
 const reactQuery = fileURLToPath(new URL("./node_modules/@tanstack/react-query", import.meta.url));
+// `ws` is not installed (pnpm-workspace.yaml removes it): the packages that import it get the platform WebSocket.
+const platformWebSocket = fileURLToPath(new URL("./src/core/lib/platform-websocket.ts", import.meta.url));
 
 // The ONE base: the v2 node the SSR process reads. The dev proxy forwards the
 // prefixes browsers call directly to the same node (nginx does this on a host).
@@ -66,6 +79,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     }),
     "/places/api/": to(),
     "/events/api/": to(),
+    // The Events page reads the event list here from the browser too (`fetchEvents`).
+    "/events/v1/": to(),
     "/shop-api": to(),
     "/marketplace-api": to(),
     "/social-api": to(),
@@ -76,18 +91,23 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/worlds-content-server": to(),
     "/builder-api": to(),
     "/camera-reel-service": to(),
+    "/report-user": to(),
     "/transactions-api": to(),
+    // The tip forward (/play's Donate), signed by the login: the node tells the creator `tip_received`.
+    "/events-notifier/": to(),
     "/price/": to(),
     "/_play": to(),
     "/auth-api": to(),
-    // The NAME banned list (shop/names/api.ts) and the image derivatives
+    // The NAME banned list (library/shop/names/api.ts) and the image derivatives
     // (`/media/convert`) the cards request.
     "/dcl-lists": to(),
     "/media/": to(),
     // The operator plane (src/main.rs): credits, the relay and the imposter store.
-    "/credits": to(),
+    "^/credits(?:[/?]|$)": to(),
     "/rpc": to({ ws: true }),
     "/bvimposters": to(),
+    // The scene workers' routing map and third-party proxy (scene_proxy.rs).
+    "/_scene": to(),
     // The web Explorer (/play) reaches the rest of the gateway's prefix table
     // (services/catalyst/tests/conformance/routes.tsv) from this origin: the realm
     // provider, comms, asset bundles, feature flags, badges and the social relay.
@@ -101,6 +121,9 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
+    // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
+    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -220,7 +243,14 @@ function icoTypeLikeServe(): Plugin {
   };
 }
 
+// The short commit /play is built from, "" without a git checkout: the sign-in screens show it.
+function playBuild(): string {
+  const out = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" });
+  return out.status === 0 ? out.stdout.trim() : "";
+}
+
 export default defineConfig({
+  define: { __PLAY_BUILD__: JSON.stringify(playBuild()) },
   plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
@@ -241,20 +271,34 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
-    alias: {
-      ...validateAliasObject(),
-      "@ui": ui,
-      "@catalyst-api": catalystApi,
-      "@": src,
-      "monaco-editor": monaco,
-      three,
-      "qrcode-generator": qrcode,
-      "@tanstack/react-query": reactQuery,
-    },
+    alias: [
+      ...Object.entries({
+        ...validateAliasObject(),
+        "@ui": ui,
+        "@catalyst-api": catalystApi,
+        "@shop": shopCore,
+        "@hud-host": hudHost,
+        "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
+        "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
+        "@noble/hashes/utils.js": noble("hashes/utils.js"),
+        "@hud": hud,
+        "@explorer-core": explorerCore,
+        "@": src,
+        "monaco-editor": monaco,
+        three,
+        "qrcode-generator": qrcode,
+        "@tanstack/react-query": reactQuery,
+        ws: platformWebSocket,
+      }).map(([find, replacement]) => ({ find, replacement })),
+      { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
+      { find: /^@dcl\/one-ui\/foundations\.css$/, replacement: join(oneUi, "foundations", "foundations.css") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
+      { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
+    ],
     dedupe: ["viem", "react", "react-dom", "zod"],
   },
   optimizeDeps: {

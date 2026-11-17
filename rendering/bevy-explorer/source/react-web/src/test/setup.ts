@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom/vitest'
+import 'fake-indexeddb/auto'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { resetProfileStore } from '../features/session/profileStore'
+import { resetProfileStore } from '@hud/features/session/profileStore'
 
 afterEach(() => {
   cleanup()
@@ -38,3 +39,7 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
   String(input instanceof Request ? input.url : input).includes('/api/events')
     ? Promise.resolve(new Response(JSON.stringify({ ok: true, data: [] })))
     : realFetch(input, init)) as typeof fetch
+
+// jsdom doesn't play media; the sign-in music (features/startup/useLoginMusic.ts) plays on mount.
+HTMLMediaElement.prototype.play = () => Promise.resolve()
+HTMLMediaElement.prototype.pause = () => {}

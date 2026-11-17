@@ -1,8 +1,8 @@
 // from: shop@94584a5c:app/src/components/SaleTimer/SaleTimer.tsx, app/src/components/OfferStock/OfferStock.tsx
 import { useEffect, useState } from "react";
 
-import { t } from "../intl";
-import { countdownParts, formatCountdown, saleTimeLeft } from "../lib/sale";
+import { t } from "@shop/discovery/intl";
+import { countdownParts, formatCountdown, saleTimeLeft } from "@shop/discovery/lib/sale";
 import Icon from "./Icon";
 import "./sale.css";
 

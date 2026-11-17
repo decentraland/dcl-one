@@ -154,14 +154,13 @@ const FALLBACK: PageDefaults = {
   variant: "scenes_first",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const view = url.searchParams.get("view") === "published" ? "published" : "local";
   const creator = (url.searchParams.get("creator")?.trim() || readWallet(request)) ?? "";
   const publishedAddress = readWallet(request) || "";
 
-  const { sid, wrap, data: { scenes, error, published } } = await pageLoaderWith(
-    request,  FALLBACK, async () => {
+  const { sid, wrap, data: { scenes, error, published } } = await pageLoaderWith(request, context,  FALLBACK, async () => {
       let scenes: CreatorScene[] = [];
       let error = false;
       if (view === "local") {

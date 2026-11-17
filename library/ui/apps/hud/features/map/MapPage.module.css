@@ -1,0 +1,9 @@
+/* The map fills the menu body edge to edge, cancelling the body's padding. */
+.wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: -22px clamp(-120px, -6vw, -20px) -22px;
+  overflow: hidden;
+  background: var(--map-bg);
+}

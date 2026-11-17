@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
-import { sameAddress } from "../../model/address";
+import { sameAddress } from "@shop/model/address";
 import { shopPath } from "../../routes";
 import type { Bid } from "../lib/api";
 import { bidPrice, cancelBid, isBidExpired } from "../purchase/bids";

@@ -10,8 +10,8 @@ import { useMemo, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import type { ChainId } from "../../model/chain";
-import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "../../model/money";
+import type { ChainId } from "@shop/model/chain";
+import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "@shop/model/money";
 import { dataUnavailable } from "../../market/lib/api";
 import { formatDate, LoadFailure, Loading, useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import { useCreatorSales } from "../hooks";

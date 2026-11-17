@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/lib/listingKey.spec.ts
 import { describe, it, expect } from "vitest"
 import { listingKey } from "./listingKey"
-import type { UnifiedListing } from "../api"
+import type { UnifiedListing } from "@shop/discovery/api"
 
 // Minimal factory — listingKey only reads source/tradeId/contractAddress/itemId/tokenId.
 function listing(over: Partial<UnifiedListing>): UnifiedListing {

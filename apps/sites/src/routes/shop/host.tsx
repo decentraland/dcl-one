@@ -8,7 +8,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
-import { createShopClient, identitySigner, setShopClient } from "@ui/shop/api";
+import { createShopClient, hostApiOptions, identitySigner, setShopClient } from "@ui/shop/api";
 import { ShopServicesProvider, type ShopServices } from "@ui/shop/checkout/services";
 import ShopChrome from "@ui/shop/discovery/frames/ShopChrome";
 import { ShopWalletProvider } from "@ui/shop/wallet/context";
@@ -26,7 +26,7 @@ let installed = false;
 export function installSitesShopClient(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
-  setShopClient(createShopClient({ signer: () => identitySigner(getIdentity() as AuthIdentity | null) }));
+  setShopClient(createShopClient(hostApiOptions({ signer: () => identitySigner(getIdentity() as AuthIdentity | null) })));
 }
 
 const noSubscription = () => () => {};

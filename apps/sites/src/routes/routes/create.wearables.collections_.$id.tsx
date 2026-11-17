@@ -36,7 +36,7 @@ const FALLBACK: PageDefaults = {
   variant: "split-detail",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const tab = readTab(url.searchParams.get("tab"));
 
@@ -51,7 +51,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     sid,
     wrap,
     data: { collection, source, itemCount, fallback, missing },
-  } = await pageLoaderWith(request,  FALLBACK, () =>
+  } = await pageLoaderWith(request, context,  FALLBACK, () =>
     loadCollectionDetail(id, { signal: request.signal }, address),
   );
 

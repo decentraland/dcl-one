@@ -1,12 +1,12 @@
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { manaFromWhole } from "../../model/money";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { manaFromWhole } from "@shop/model/money";
+import { BOOK } from "@shop/payment/fixtures";
 import { WrongNetworkError } from "../../wallet/chain";
 import { LEGACY_BID_ROW, RECEIVED_BIDS, MANA } from "../fixtures";
-import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, LEGACY_ACCEPT_BID_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "../lib/contracts";
+import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, LEGACY_ACCEPT_BID_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "@shop/market/lib/contracts";
 import { createManaListing, createUsdPeggedListing, type Trade } from "../lib/trades";
 import { fakeChain, fakeWallet, noWait } from "../testing";
 import { archiveBid, archivedBidIds, resetArchivedBidsForTests, unarchiveBid } from "../store/archivedBids";
@@ -51,7 +51,7 @@ describe("bids are MANA only", () => {
     });
     const phases: string[] = [];
     const posted: unknown[] = [];
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     const { fakeShop } = await import("../testing");
     const shop = fakeShop([{ method: "POST", path: /^\/v1\/trades$/, reply: ({ body }) => (posted.push(body), { status: 201, body: { ok: true, data: { ...(body as object), id: "t-9", contract: MARKET } } }) }]);
     setShopClient(shop.client);

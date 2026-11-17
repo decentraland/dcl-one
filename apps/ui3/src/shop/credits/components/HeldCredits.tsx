@@ -6,7 +6,7 @@
 import { useEffect, useId, useRef, useState, type FocusEvent } from "react";
 
 import { ClockIcon } from "../../../atoms/icons";
-import type { HeldCredits as Held } from "../credits";
+import type { HeldCredits as Held } from "@shop/credits/credits";
 import { CreditsAmount } from "./Amount";
 import "./heldcredits.css";
 

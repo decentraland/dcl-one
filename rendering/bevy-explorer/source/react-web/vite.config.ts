@@ -1,46 +1,78 @@
-import { spawn } from 'node:child_process'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { extname, join, normalize } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
-// default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
+// default systemScene in dev, with scene hot-reload) alongside vite, so `pnpm run dev` is the ONE
 // command. If :8100 is already serving (your own terminal, or Playwright's webServer), leave it
-// alone. The child is killed with the dev server (detached group so sdk-commands' own children
-// don't survive as orphans). BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
+// alone. The child outlives vite's restarts and is stopped when the dev server's process ends, with
+// sdk-commands' own children (a detached group on POSIX, taskkill's tree on Windows), so none
+// survive as orphans. BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
 // sets it because it runs :8100 as its own webServer, and a child spawned from here would outlive
 // its SIGKILL of the vite process group (own group, inherited stdio) and hang the test run's exit.
 function bridgeScenePreview(): Plugin {
   return {
     name: 'bridge-scene-preview',
     apply: 'serve',
-    configureServer(server) {
+    configureServer() {
       if (process.env.BRIDGE_SCENE_PREVIEW === '0') return
       const probe = createConnection({ port: 8100, host: '127.0.0.1' })
       probe.once('connect', () => probe.destroy()) // already running — reuse it
       probe.once('error', () => {
         console.log('[bridge-scene] starting live preview on :8100')
-        // --no-install: only run the locally-installed @dcl/sdk-commands bin. Without it, a stale
-        // bridge-scene/node_modules makes npx fetch the UNRELATED registry package "sdk-commands".
-        const child = spawn('npx', ['--no-install', 'sdk-commands', 'start', '--no-client', '--port', '8100'], {
-          cwd: fileURLToPath(new URL('./bridge-scene', import.meta.url)),
+        // Run the locally-installed @dcl/sdk-commands bin with this node, not through npx: npx would
+        // fetch the UNRELATED registry package "sdk-commands" when bridge-scene/node_modules is stale,
+        // and on Windows npx is npx.cmd, which Node starts only through a shell.
+        const cwd = fileURLToPath(new URL('./bridge-scene', import.meta.url))
+        // A throw here would stop vite: this runs in the probe's error handler.
+        const pkgDir = join(cwd, 'node_modules/@dcl/sdk-commands')
+        let script: string
+        try {
+          const { bin } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+            bin?: string | Record<string, string>
+          }
+          const path = typeof bin === 'string' ? bin : bin?.['sdk-commands']
+          if (!path) throw new Error('package.json names no sdk-commands bin')
+          script = join(pkgDir, path)
+        } catch (error) {
+          console.warn(`[bridge-scene] cannot start @dcl/sdk-commands (run pnpm install in react-web/bridge-scene): ${error}`)
+          return
+        }
+        // Windows has no process group to signal, so the tree is stopped with taskkill.
+        const windows = process.platform === 'win32'
+        const child = spawn(process.execPath, [script, 'start', '--no-client', '--port', '8100'], {
+          cwd,
           stdio: ['ignore', 'inherit', 'inherit'],
-          detached: true
+          detached: !windows
         })
+        // Runs at process exit, not at the server's close: a restart (an edit to this file, `r`)
+        // builds the new server before it closes this one, so the new server's probe finds this
+        // preview on :8100 and reuses it, and stopping it at close would leave the dev loop without
+        // one. On Windows, once the child is gone its pid may belong to another process, which
+        // taskkill /T /F would kill with its tree. A POSIX process group is not reused while a
+        // member lives, so its survivors are still stopped.
+        let stopped = false
         const stop = (): void => {
-          if (child.pid != null) {
-            try {
-              process.kill(-child.pid, 'SIGTERM')
-            } catch {
-              /* already gone */
-            }
+          if (stopped || child.pid == null) return
+          if (windows && (child.exitCode !== null || child.signalCode !== null)) return
+          stopped = true
+          try {
+            if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+            else process.kill(-child.pid, 'SIGTERM')
+          } catch {
+            /* already gone */
           }
         }
-        server.httpServer?.once('close', stop)
         process.once('exit', stop)
+        // Node runs no exit listener when SIGINT or SIGHUP ends it, and vite handles only SIGTERM.
+        // Ctrl+C would then leave the POSIX child running: its own group is out of the terminal's reach.
+        process.once('SIGINT', () => process.exit(130))
+        process.once('SIGHUP', () => process.exit(129))
       })
     }
   }
@@ -78,7 +110,8 @@ const MIME: Record<string, string> = {
 // bundle (../deploy/web) and the built bridge scene in a same-origin iframe —
 // no npm download needed.
 export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
-  const root = fileURLToPath(new URL(dirFromConfig, import.meta.url))
+  // an absolute directory as is: `new URL` reads a Windows drive letter as a URL scheme
+  const root = isAbsolute(dirFromConfig) ? dirFromConfig : fileURLToPath(new URL(dirFromConfig, import.meta.url))
   return {
     name: `serve-static:${prefix}`,
     configureServer(server) {
@@ -86,7 +119,9 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
         if (!req.url || !req.url.startsWith(prefix)) return next()
         const rel = decodeURIComponent(req.url.slice(prefix.length).split('?')[0])
         let file = normalize(join(root, rel))
-        if (file !== root && !file.startsWith(root + '/')) {
+        // relative(), not a '/' prefix check: on Windows the joined path uses '\'
+        const inside = relative(root, file)
+        if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
           res.statusCode = 403
           return res.end('forbidden')
         }
@@ -113,7 +148,7 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
 
 // Dev-only: the scene editor package (a dcl-editor checkout's packages/web/dist, named by
 // WEB_EDITOR_DIR) served same-origin under /editor/, where `?editor` loads it from on localhost
-// (src/features/editorHost). Without the variable nothing is mounted.
+// (library/ui/apps/hud/features/editorHost). Without the variable nothing is mounted.
 function editorPackage(): Plugin[] {
   const checkout = process.env.WEB_EDITOR_DIR
   if (!checkout) return []
@@ -151,12 +186,18 @@ function coiHeadersExceptAuth(): Plugin {
   }
 }
 
+// The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
+function hudBuild(): string {
+  const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
+  return out.status === 0 ? out.stdout.trim() : ''
+}
+
 export default defineConfig(({ command, mode }) => ({
   // ?native=1 (CEF HUD mode) is honoured only where it's legitimate: the bundle:native build
   // (--mode native) that CEF loads from disk, and the dev server (react_hud_cef.rs supports
   // REACT_HUD_URL at a vite dev server). Deployed web builds compile it FALSE so a crafted
   // link can't switch them into native mode and skip the launch gates (see src/App.tsx MODE).
-  define: { __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native') },
+  define: { __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native'), __HUD_BUILD__: JSON.stringify(hudBuild()) },
   // Production is served from a VERSIONED CDN subpath (cdn.decentraland.org/<pkg>/<version>/ —
   // see deploy/web/scripts/prebuild.js), so built asset URLs can't be origin-absolute. CI passes
   // PUBLIC_URL for an absolute CDN base; otherwise './' (relative → works from any path, e.g. a
@@ -165,15 +206,15 @@ export default defineConfig(({ command, mode }) => ({
   // The editor host's signing script's own deps: it is outside the page's import graph, so they
   // would be found when it first loads, and a late find reloads the page.
   optimizeDeps: { include: ['@noble/curves/secp256k1.js', '@noble/hashes/sha3.js'] },
+  resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   plugins: [
     react(),
     bridgeScenePreview(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
-    // The IPFS-cache service worker, at the ROOT so its scope covers the page (like prod). The
-    // engine tags cacheable asset fetches with an X-IPFS header for it; without a SW to strip
-    // that header the requests need a CORS preflight, which the peer catalysts reject — no
-    // scenes, no avatars. (serveStatic handles a single file fine: rel resolves to the root.)
+    // The service worker, at the ROOT so its scope covers the page (like prod): page isolation
+    // headers and the editor's preview realm. (serveStatic handles a single file fine: rel
+    // resolves to the root.)
     serveStatic('/service_worker.js', '../deploy/web/service_worker.js'),
     // importScripts'd by the service worker (the editor's preview realm), so it sits beside it.
     serveStatic('/preview_realm.js', '../deploy/web/preview_realm.js'),
@@ -206,7 +247,11 @@ export default defineConfig(({ command, mode }) => ({
             // The shell (index.html): its own code, and what it shares with the HUD. Ahead of the
             // HUD's groups, which would otherwise take these along with the modules that import them.
             { name: 'crypto', test: /node_modules\/@noble\//, priority: 1 },
-            { name: 'shell', test: /\/src\/(lib\/(shell|prefs)|features\/auth\/(sso|guest|thirdweb))\.ts/, priority: 1 },
+            { name: 'shell', test: /\/(src|apps\/hud|explorer-core)\/(lib\/(shell|prefs)|features\/auth\/(sso|guest|thirdweb))\.ts/, priority: 1 },
+            // The host module the shared HUD reads (`@hud-host`, src/host.ts) and what it reads, and the
+            // signer the shell and the editor share: the shell page needs them, so they go with it rather
+            // than with the first HUD chunk that imports them.
+            { name: 'shell', test: /\/src\/(host|lib\/(baseDomain|bootMode|entryParams|loopbackHost|publicUrl))\.ts|\/(apps\/hud|explorer-core)\/(engine\/generated\/(serviceTable|webParamTable)|shell\/sign)\.ts/, priority: 1 },
             {
               name(id) {
                 if (id.includes('node_modules')) return 'vendor'
@@ -216,8 +261,9 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                if (id.includes('/src/design/') && !id.includes('Showcase')) return 'design'
-                if (/\/src\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                // The shared HUD (library/ui/apps/hud, library/explorer-core) is split the same way as this app's own sources.
+                if (/\/(src|apps\/hud|explorer-core)\/design\//.test(id) && !id.includes('Showcase')) return 'design'
+                if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
                 return null
               }
             }
@@ -231,6 +277,8 @@ export default defineConfig(({ command, mode }) => ({
     // can be reached through a tunnel. The leading dot matches any subdomain; scoping to this
     // domain keeps Vite's DNS-rebinding protection on for everything else.
     allowedHosts: ['.trycloudflare.com'],
+    // The shared sources live outside this app (vite.shared.ts).
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES, INTER_FILES] },
     // Proxy the auth dapp so it is served same-origin on localhost — sign in locally against
     // zone and the signed AuthIdentity lands in this origin's localStorage (the marketplace
     // does the same). Because it's same-origin, the auth site also accepts our localhost

@@ -8,7 +8,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
 import { isGaslessUnavailable, isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";

@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 // listing (the Shop's browse card is shop/discovery/components/AssetCard, priced under the payment rule).
 import ManaMark from "../../atoms/ManaMark";
 import { Coin } from "../../atoms/icons";
-import { creditsSrLabel } from "../../shop/checkout/lib/currency";
+import { creditsSrLabel } from "@shop/checkout/lib/currency";
 import "./itemcard.css";
 
 const RARITY_LABELS: Record<string, string> = {

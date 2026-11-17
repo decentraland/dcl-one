@@ -8,10 +8,10 @@
 // accepts the signed trade, or executes the legacy on-chain order.
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
-import { withCapHeadroom, type ManaWei } from "../../model/money";
+import type { ChainId } from "@shop/model/chain";
+import { withCapHeadroom, type ManaWei } from "@shop/model/money";
 import type { Order } from "../lib/api";
-import { LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, marketplaceForTrade } from "../lib/contracts";
+import { LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, marketplaceForTrade } from "@shop/market/lib/contracts";
 import { ensureManaAllowance } from "../lib/mana";
 import { acceptTrade, TRADE_ASSET, type Trade } from "../lib/trades";
 import { sendCall, waitForReceipt, type WaitOptions } from "../lib/tx";

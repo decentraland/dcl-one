@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
-import { chainLabel, type ChainId } from "../../model/chain";
-import { formatMana, type ManaWei } from "../../model/money";
+import { chainLabel, type ChainId } from "@shop/model/chain";
+import { formatMana, type ManaWei } from "@shop/model/money";
 import { declined, isTxPending, isTxReverted } from "../../market/lib/tx";
 import { fetchTrade, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { buyTradeWithMana, type OrderPhase } from "../../market/purchase/executeOrder";

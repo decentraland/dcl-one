@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::structs::{CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use input_manager::InputPriorities;
 use ipfs::IpfsResource;
 use wallet::Wallet;
 
@@ -119,11 +120,14 @@ fn http_origin(value: &str) -> Option<String> {
 
 /// Report, as JSON, whether the player is in world as the benchmark autopilot judges it: signed
 /// in, no world hold, the realm connected and the player not out of world. `arrivals` counts the
-/// player's returns to the world: read it before a teleport or realm change and wait for it to grow
+/// player's returns to the world: read it before a teleport or realm change and wait for it to grow.
+/// `keyboardClaimed` is whether a text field (the HUD's or the engine's) holds the keyboard, so keys
+/// are typed and resolve no action: a key sent while it is true never reaches a binding
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/world_state")]
 struct WorldStateCommand;
 
+#[allow(clippy::too_many_arguments)]
 fn world_state_cmd(
     mut input: ConsoleCommand<WorldStateCommand>,
     ipfs: Option<Res<IpfsResource>>,
@@ -131,6 +135,7 @@ fn world_state_cmd(
     wallet: Res<Wallet>,
     world_hold: Option<Res<WorldHold>>,
     realm: Res<CurrentRealm>,
+    priorities: Option<Res<InputPriorities>>,
     player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
 ) {
     if let Some(Ok(_)) = input.take() {
@@ -157,6 +162,8 @@ fn world_state_cmd(
                 "lambdasOrigin": ipfs.as_ref().and_then(|io| io.lambda_endpoint()).as_deref().and_then(http_origin),
                 "worldHeld": state.world_held,
                 "outOfWorld": state.out_of_world,
+                // none where the app takes no input (the headless client)
+                "keyboardClaimed": priorities.map(|p| p.keyboard_claimed()),
                 // the same axes as /player_position
                 "position": player.map(|(t, _)| [t.translation.x, t.translation.y, -t.translation.z]),
             })
@@ -250,6 +257,58 @@ mod tests {
         assert_eq!(state["outOfWorld"], true);
         assert_eq!(state["arrivals"], 0);
         assert_eq!(state["position"], serde_json::json!([8.0, 0.0, 24.0]));
+        // no input in this app
+        assert_eq!(state["keyboardClaimed"], serde_json::Value::Null);
+    }
+
+    /// `keyboardClaimed` follows the keyboard's reservation by a text field, not a panel's.
+    #[test]
+    fn world_state_reports_a_text_field_holding_the_keyboard() {
+        use input_manager::{InputPriority, InputType};
+
+        let mut app = App::new();
+        app.add_plugins((
+            ConsolePlugin {
+                add_bevy_console: false,
+            },
+            WorldStatePlugin,
+        ))
+        .init_resource::<Wallet>()
+        .init_resource::<CurrentRealm>()
+        .init_resource::<InputPriorities>();
+        app.update();
+
+        let ask = |app: &mut App| -> serde_json::Value {
+            let answer = Arc::new(Mutex::new(None));
+            let responder: ConsoleResponder = {
+                let answer = answer.clone();
+                Arc::new(move |result| *answer.lock().unwrap() = Some(result))
+            };
+            app.world_mut().send_event(ConsoleCommandEntered {
+                command_name: "/world_state".to_owned(),
+                args: Vec::new(),
+                responder: Some(responder),
+            });
+            app.update();
+            let reply = answer.lock().unwrap().take().expect("no reply");
+            serde_json::from_str(&reply.unwrap()).unwrap()
+        };
+
+        assert_eq!(ask(&mut app)["keyboardClaimed"], false);
+        // a HUD panel takes the world's input, not the keyboard
+        app.world_mut()
+            .resource_mut::<InputPriorities>()
+            .reserve(InputType::All, InputPriority::Ui);
+        assert_eq!(ask(&mut app)["keyboardClaimed"], false);
+        // a HUD text field takes the keyboard
+        app.world_mut()
+            .resource_mut::<InputPriorities>()
+            .reserve(InputType::Keyboard, InputPriority::UiText);
+        assert_eq!(ask(&mut app)["keyboardClaimed"], true);
+        app.world_mut()
+            .resource_mut::<InputPriorities>()
+            .release(InputType::Keyboard, InputPriority::UiText);
+        assert_eq!(ask(&mut app)["keyboardClaimed"], false);
     }
 
     #[test]

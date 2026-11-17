@@ -57,7 +57,7 @@ const FALLBACK: PageDefaults = {
   variant: "wizard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const collectionId = url.searchParams.get("collection")?.trim() || null;
@@ -68,8 +68,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     "";
   const needsConnect = address === "";
 
-  const { sid, assignment, wrap, data: { collections, error } } = await pageLoaderWith(
-    request,  FALLBACK, async () => {
+  const { sid, assignment, wrap, data: { collections, error } } = await pageLoaderWith(request, context,  FALLBACK, async () => {
       let collections: BuilderCollection[] = [];
       let error = false;
       if (!needsConnect) {

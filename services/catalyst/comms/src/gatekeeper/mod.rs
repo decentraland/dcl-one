@@ -1,13 +1,14 @@
 //! The comms gatekeeper (the old `catalyrst-comms`, upstream
 //! comms-gatekeeper), a service inside `catalyst serve`, through local calls
-//! and shared SQL over the ONE pool. Seven submodules: `admission` (LiveKit
+//! and shared SQL over the ONE pool. Eight submodules: `admission` (LiveKit
 //! admission for scenes and worlds, the world mints, the Pulse relay
 //! authority and the island feed), `moderation` (scene admins and bans,
 //! platform bans and warnings), `voice` (private-message and
 //! voice tokens, community voice rooms), `streaming` (a place's RTMP ingress
 //! credential), `webhook` (the LiveKit webhook that drives presence),
-//! `events` (the participant events handed to worlds) and `revocation` (the
-//! one entry point that evicts revoked participants from the live rooms).
+//! `events` (the participant events handed to worlds), `revocation` (the
+//! one entry point that evicts revoked participants from the live rooms) and
+//! `reports` (the player report intake `serve` nests at `/report-user`).
 //!
 //! What it needs from the crates above it comes in through
 //! [`crate::interfaces`]: world access, the protected wallets of a world
@@ -22,7 +23,7 @@
 //! onto which worlds' core maps its permission and block revocations), the
 //! social RPC's voice runtime ([`voice::rooms::VoiceRooms`],
 //! implemented by [`CommsState`]) and a scene's live participants
-//! (`explore::places::live::Participants`). Social's MLS delivery service
+//! (`CommsState::live_participants`, which `serve` hands Explore). Social's MLS delivery service
 //! (`social::messaging`, on its own state) is mounted beside these routes
 //! with its own signed-fetch and community-binding authorization.
 //!
@@ -60,6 +61,8 @@ pub mod events;
 pub use crate::shared::livekit;
 pub mod moderation;
 pub(crate) mod removal;
+pub mod removed_places;
+pub mod reports;
 pub mod revocation;
 pub mod streaming;
 pub mod voice;
@@ -133,6 +136,9 @@ pub struct RawSettings {
     pub community_voice_no_moderator_ttl_ms: i64,
     /// `VOICE_CHAT_EXPIRED_BATCH_SIZE` (default 50).
     pub voice_expired_batch_size: i64,
+    /// `REPORT_EVIDENCE_DAILY_MIB` (default 2048): the node-wide bound of
+    /// the player report intake.
+    pub report_evidence_daily_mib: u32,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
 }
@@ -147,60 +153,8 @@ impl RawSettings {
             voice_initial_connection_ttl_ms: 300_000,
             community_voice_no_moderator_ttl_ms: 300_000,
             voice_expired_batch_size: 50,
+            report_evidence_daily_mib: 2048,
             ..Default::default()
-        }
-    }
-
-    /// The process environment under the old names, for the wiring until
-    /// `Config` carries these fields.
-    pub fn from_env() -> Self {
-        let d = Self::defaults();
-        let var = |name: &str| {
-            std::env::var(name)
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let num = |name: &str, default: i64| {
-            var(name)
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(default)
-        };
-        Self {
-            livekit_host: var("LIVEKIT_HOST").unwrap_or(d.livekit_host),
-            livekit_api_host: var("LIVEKIT_API_HOST"),
-            livekit_ws_url: var("LIVEKIT_WS_URL"),
-            livekit_api_key: var("LIVEKIT_API_KEY").unwrap_or_default(),
-            livekit_api_secret: var("LIVEKIT_API_SECRET").unwrap_or_default(),
-            livekit_allow_dev_creds: matches!(
-                var("LIVEKIT_ALLOW_DEV_CREDS").as_deref(),
-                Some("1" | "true" | "TRUE" | "yes")
-            ),
-            private_messages_room_id: var("PRIVATE_MESSAGES_ROOM_ID")
-                .unwrap_or(d.private_messages_room_id),
-            authoritative_server_address: var("AUTHORITATIVE_SERVER_ADDRESS"),
-            moderator_token: var("MODERATOR_TOKEN"),
-            moderator_addresses: var("PLATFORM_USER_MODERATORS").unwrap_or_default(),
-            gatekeeper_auth_token: var("COMMS_GATEKEEPER_AUTH_TOKEN"),
-            land_operators_url: var("COMMS_LAND_OPERATORS_URL"),
-            lease_authorizations_url: var("LEASE_AUTHORIZATIONS_URL"),
-            voice_connection_interrupted_ttl_ms: num(
-                "VOICE_CHAT_CONNECTION_INTERRUPTED_TTL",
-                d.voice_connection_interrupted_ttl_ms,
-            ),
-            voice_initial_connection_ttl_ms: num(
-                "VOICE_CHAT_INITIAL_CONNECTION_TTL",
-                d.voice_initial_connection_ttl_ms,
-            ),
-            community_voice_no_moderator_ttl_ms: num(
-                "COMMUNITY_VOICE_CHAT_NO_MODERATOR_TTL",
-                d.community_voice_no_moderator_ttl_ms,
-            ),
-            voice_expired_batch_size: num(
-                "VOICE_CHAT_EXPIRED_BATCH_SIZE",
-                d.voice_expired_batch_size,
-            ),
-            commit_hash: var("COMMIT_HASH"),
         }
     }
 }
@@ -222,6 +176,10 @@ pub struct Settings {
     /// `None` lists no lease holder and fetches nothing.
     pub lease_authorizations_url: Option<String>,
     pub voice: VoiceDbConfig,
+    /// Declared evidence bytes the player report intake accepts in 24 hours
+    /// from all wallets and addresses ([`reports`]). The value is the
+    /// operator's policy, not a measurement.
+    pub report_evidence_daily_bytes: i64,
     pub commit_hash: Option<String>,
 }
 
@@ -248,6 +206,10 @@ impl std::fmt::Debug for Settings {
             .field("land_operators_url", &self.land_operators_url)
             .field("lease_authorizations_url", &self.lease_authorizations_url)
             .field("voice", &self.voice)
+            .field(
+                "report_evidence_daily_bytes",
+                &self.report_evidence_daily_bytes,
+            )
             .field("commit_hash", &self.commit_hash)
             .finish()
     }
@@ -373,6 +335,7 @@ impl Settings {
                 community_no_moderator_ttl_ms: raw.community_voice_no_moderator_ttl_ms,
                 expired_batch_size: raw.voice_expired_batch_size,
             },
+            report_evidence_daily_bytes: i64::from(raw.report_evidence_daily_mib) * 1024 * 1024,
             commit_hash: raw.commit_hash,
         })
     }
@@ -396,6 +359,10 @@ impl Settings {
             land_operators_url: None,
             lease_authorizations_url: None,
             voice: VoiceDbConfig::default(),
+            report_evidence_daily_bytes: i64::from(
+                RawSettings::defaults().report_evidence_daily_mib,
+            ) * 1024
+                * 1024,
             commit_hash: None,
         }
     }
@@ -435,6 +402,8 @@ pub struct CommsState {
     pub caches: admission::scene::SceneCaches,
     /// Where the LiveKit webhook's participant events are also handed.
     pub room_events: Option<Arc<dyn RoomEventSink>>,
+    /// Where every verified participant event is stored before it is acknowledged.
+    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
     webhooks: webhook::WebhookCoordinator,
     /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
     pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
@@ -491,6 +460,7 @@ impl CommsState {
             eip1654,
             caches: admission::scene::SceneCaches::default(),
             room_events: None,
+            room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
             world_mint: admission::world_mint::MintState::default(),
@@ -524,13 +494,48 @@ impl CommsState {
     /// The island feed's settings, the NATS link of `NATS_URL` and, with a
     /// v4 audience, the realm-lane fence. Before
     /// [`Self::with_room_authority_key`], whose island rooms read the fence.
-    pub fn with_cluster(
-        mut self,
+    pub fn with_cluster(self, config: admission::cluster::ClusterConfig) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_cluster_for_test(
+        self,
         config: admission::cluster::ClusterConfig,
     ) -> anyhow::Result<Self> {
+        self.with_cluster_inner(config, false)
+    }
+    fn with_cluster_inner(
+        mut self,
+        config: admission::cluster::ClusterConfig,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let config = config.normalized();
+        anyhow::ensure!(
+            !generation_required
+                || config.nats_url.is_none()
+                || config.control_v4_audience.is_some(),
+            "configured island credentials require a deployment audience and fenced Pulse generation"
+        );
         self.island_safety = admission::cluster::safety::SafetyStore::new(self.pool.clone());
         self.assignments = admission::cluster::fence_for(self.pool.clone(), &config)?;
+        #[cfg(any(test, feature = "test-support"))]
+        if !generation_required {
+            self.island_safety =
+                admission::cluster::safety::SafetyStore::unfenced_test(self.pool.clone());
+            self.assignments = config
+                .control_v4_audience
+                .clone()
+                .map(|audience| {
+                    admission::cluster::fence::PgAssignmentFence::unfenced_test_with_limit(
+                        self.pool.clone(),
+                        audience,
+                        config.peer_state_max,
+                    )
+                    .map(Arc::new)
+                })
+                .transpose()
+                .map_err(|error| anyhow::anyhow!("fixture fence: {error}"))?;
+        }
         self.bus = match config.nats_url.clone() {
             Some(url) => Arc::new(bus::BrokerBus::new(Some(url), "catalyst-comms")),
             None => {
@@ -566,10 +571,29 @@ impl CommsState {
         self
     }
 
+    pub fn with_room_event_store(mut self, store: Arc<dyn events::RoomEventStore>) -> Self {
+        self.room_event_store = Some(store);
+        self
+    }
+
     /// Mounts the Pulse room authority with `PULSE_ROOM_AUTHORITY_KEY` (32
     /// base64url bytes, distinct from the LiveKit secret); `None` leaves the
     /// route unmounted and the application relay unusable.
-    pub fn with_room_authority_key(mut self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+    pub fn with_room_authority_key(self, encoded_key: Option<&str>) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, true)
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_room_authority_key_for_test(
+        self,
+        encoded_key: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        self.with_room_authority_key_inner(encoded_key, false)
+    }
+    fn with_room_authority_key_inner(
+        mut self,
+        encoded_key: Option<&str>,
+        generation_required: bool,
+    ) -> anyhow::Result<Self> {
         let Some(encoded) = encoded_key.map(str::trim).filter(|k| !k.is_empty()) else {
             tracing::info!(
                 "PULSE_ROOM_AUTHORITY_KEY unset; the Pulse room authority is not mounted (application relay off)"
@@ -589,12 +613,33 @@ impl CommsState {
             )
             .with_assignments(self.assignment_reader()),
         );
-        let authority = admission::relay_authority::RelayAuthority::new(
-            policy,
-            self.livekit.api_key.clone(),
-            self.livekit.api_secret.as_bytes().to_vec(),
-            service_key,
-        )
+        let authority = if generation_required {
+            let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
+                anyhow!("room authority requires a deployment audience and fenced Pulse generation")
+            })?;
+            admission::relay_authority::RelayAuthority::new_with_generation(
+                policy,
+                self.livekit.api_key.clone(),
+                self.livekit.api_secret.as_bytes().to_vec(),
+                service_key,
+                self.pool.clone(),
+                audience,
+            )
+        } else {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                admission::relay_authority::RelayAuthority::unfenced_test(
+                    policy,
+                    self.livekit.api_key.clone(),
+                    self.livekit.api_secret.as_bytes().to_vec(),
+                    service_key,
+                )
+            }
+            #[cfg(not(any(test, feature = "test-support")))]
+            {
+                return Err(anyhow!("unfenced room authority is unavailable"));
+            }
+        }
         .map_err(|e| anyhow!("PULSE_ROOM_AUTHORITY_KEY: {e}"))?;
         self.relay_authority = Some(Arc::new(authority));
         tracing::info!(
@@ -1042,6 +1087,7 @@ mod settings_tests {
         );
         assert_eq!(s.private_messages_room_id, "private-messages");
         assert_eq!(s.voice.expired_batch_size, 50);
+        assert_eq!(s.report_evidence_daily_bytes, 2048 * 1024 * 1024);
         raw.authoritative_server_address = Some("nope".into());
         assert!(Settings::resolve(raw.clone()).is_err());
         raw.authoritative_server_address = None;

@@ -28,10 +28,11 @@ use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::access::{Access, AccessGrant, Ban, WorldAdmission};
+use crate::access::{Access, AccessGrant, AccessType, Ban, WorldAdmission};
 use crate::gatekeeper::SharedState;
 use crate::gatekeeper::livekit::{AccessToken, build_adapter_url, join_grants};
 use crate::rooms::{ResolveError, RoomRequest, WORLD_ROOM_PREFIX};
+use crate::shared::identity::Address;
 use crate::shared::signed_fetch::SignedPath;
 use crate::signed_fetch::{EXPLORER_METADATA_KEYS, map_auth_error_api, require_verified};
 use crate::world_identity::{SceneId, WorldName};
@@ -115,6 +116,25 @@ impl SecretThrottle<'_> {
         }
     }
 
+    /// Whether the caller has used up the window's attempts, without charging one: upstream's
+    /// `isRateLimited`, asked before anything else on a shared-secret world. A read fault is an
+    /// error, as every other throttle fault here is (upstream lets it through).
+    pub async fn is_limited(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
+        let limited = super::functions::bounded(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT attempts >= $3 FROM social.world_secret_attempts \
+                 WHERE world_name = $1 AND subject = $2 AND window_start > $4",
+            )
+            .bind(self.world)
+            .bind(self.subject_key())
+            .bind(self.max_attempts.clamp(1, i32::MAX as u32) as i32)
+            .bind(window_start_cutoff(now))
+            .fetch_optional(self.pool),
+        )
+        .await?;
+        Ok(limited.unwrap_or(false))
+    }
+
     /// A right secret forgets the caller's earlier failures in this world, as
     /// upstream's `clearAttempts` does after a successful handshake.
     pub async fn clear(&self) {
@@ -176,7 +196,7 @@ fn invalid_world(world_name: &str, adapter: bool) -> ApiError {
 
 /// `logic/comms/errors.ts` texts.
 const PLATFORM_BANNED: &str = "Access denied, platform-banned user.";
-const DENY_LISTED: &str = "Access denied, deny-listed wallet.";
+pub(crate) const DENY_LISTED: &str = "Access denied, deny-listed wallet.";
 
 fn not_allowed(world_name: &str) -> String {
     format!("You are not allowed to access world \"{world_name}\".")
@@ -383,11 +403,62 @@ fn require_explorer_handshake(metadata: &serde_json::Value) -> Result<(), ApiErr
     Ok(())
 }
 
+/// The caller's access to `world` (and `scene` in it). Bans and owner or grantee access are
+/// established without bcrypt; only a caller who needs the secret takes one of the shared
+/// source-IP attempts, and a full budget answers 429.
+async fn decide_access(
+    state: &SharedState,
+    world: &WorldName,
+    identity: &Address,
+    secret: Option<&str>,
+    scene: Option<&SceneId>,
+    attempts: &SecretThrottle<'_>,
+    now: NaiveDateTime,
+) -> Result<Access, ApiError> {
+    let mut access = state
+        .policy
+        .can_access(world, identity, None, scene, None, now)
+        .await;
+    if matches!(access, Ok(Access::InvalidSecret)) || (access.is_err() && secret.is_some()) {
+        let reservation = attempts
+            .reserve(now)
+            .await
+            .map_err(undetermined)?
+            .ok_or_else(too_many_attempts)?;
+        access = state
+            .policy
+            .can_access(world, identity, secret, scene, None, now)
+            .await;
+        attempts
+            .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
+            .await;
+    }
+    access.map_err(undetermined)
+}
+
+/// The answer to a refused access; an admitted one is whether the shared secret admitted it.
+fn refusal(access: Access, world_name: &str, explorer_handshake: bool) -> Result<bool, ApiError> {
+    match access {
+        Access::Allowed(grant) => Ok(grant == AccessGrant::SharedSecret),
+        Access::Banned(Ban::Scene) => Err(ApiError::unauthorized(format!(
+            "You are banned from world \"{world_name}\"."
+        ))),
+        Access::Banned(_) => Err(ApiError::unauthorized(PLATFORM_BANNED)),
+        // `world-comms-handler` answers a refused secret 403, `comms-adapter-handler` 401.
+        Access::InvalidSecret if explorer_handshake => {
+            Err(ApiError::unauthorized(not_allowed(world_name)))
+        }
+        Access::InvalidSecret => Err(ApiError::forbidden(not_allowed(world_name))),
+        Access::NotAllowed => Err(ApiError::unauthorized(not_allowed(world_name))),
+    }
+}
+
 /// `target` is the world name on the two `/worlds/...` routes and the room
 /// id (`world-<name>`) on `/get-comms-adapter`, whose prefix is checked after
 /// the signed fetch and the handshake metadata, as upstream checks it. Then,
-/// in upstream's order: platform ban, deny list, the world (a name that cannot
-/// be a world is an unknown one), and the rest.
+/// in upstream's order: the shared-secret throttle, platform ban, deny list, the
+/// world (a name that cannot be a world is an unknown one), the world's access,
+/// the scene and its bans, capacity.
 async fn mint(
     state: &SharedState,
     target: &str,
@@ -417,6 +488,41 @@ async fn mint(
     let secret = auth.secret();
     let now = chrono::Utc::now().naive_utc();
 
+    let world = WorldName::parse(world_name)
+        .ok()
+        .filter(|world| world.display() == world_name);
+    let admission = match &world {
+        Some(world) => Some(
+            state
+                .policy
+                .world_admission(world, now)
+                .await
+                .map_err(undetermined)?,
+        ),
+        None => None,
+    };
+    let ip = crate::shared::client_ip::client_ip(headers);
+    let subject = if ip.is_empty() {
+        identity.as_str().to_string()
+    } else {
+        crate::shared::client_ip::source_key(&ip)
+    };
+    let attempts = SecretThrottle {
+        pool: &state.pool,
+        world: world.as_ref().map_or("", WorldName::key),
+        subject: &subject,
+        max_attempts: state.world_mint.max_secret_attempts,
+    };
+    // Upstream's first check on a shared-secret world: a caller out of attempts gets 429 before
+    // any ban, owner or access is looked at. It charges nothing.
+    if matches!(
+        admission,
+        Some(WorldAdmission::Open(AccessType::SharedSecret))
+    ) && attempts.is_limited(now).await.map_err(undetermined)?
+    {
+        return Err(too_many_attempts());
+    }
+
     match crate::gatekeeper::moderation::admission_ban(
         state.policy.as_ref(),
         state.bans.as_ref(),
@@ -436,61 +542,55 @@ async fn mint(
     if state.deny_list.is_denied(identity.as_str()).await {
         return Err(ApiError::unauthorized(DENY_LISTED));
     }
-    let world = WorldName::parse(world_name)
-        .ok()
-        .filter(|world| world.display() == world_name)
-        .ok_or_else(|| invalid_world(world_name, explorer_handshake))?;
-
-    let admission = state
-        .policy
-        .world_admission(&world, now)
-        .await
-        .map_err(undetermined)?;
-    let ip = crate::shared::client_ip::client_ip(headers);
-    let subject = if ip.is_empty() {
-        identity.as_str().to_string()
-    } else {
-        crate::shared::client_ip::source_key(&ip)
+    let Some(world) = world.as_ref() else {
+        return Err(invalid_world(world_name, explorer_handshake));
     };
-    let attempts = SecretThrottle {
-        pool: &state.pool,
-        world: world.key(),
-        subject: &subject,
-        max_attempts: state.world_mint.max_secret_attempts,
-    };
-
-    if matches!(admission, WorldAdmission::Unknown | WorldAdmission::Blocked) {
+    if !matches!(admission, Some(WorldAdmission::Open(_))) {
         return Err(invalid_world(world_name, explorer_handshake));
     }
 
+    let scene_not_found = || {
+        ApiError::not_found(format!(
+            "Scene \"{}\" not found in world \"{world_name}\".",
+            scene_id.unwrap_or_default()
+        ))
+    };
+    // A scene that is not in the world is answered after the world's access, as upstream asks
+    // the owner and the access setting before it looks the scene up: a caller without access
+    // learns nothing about the world's scenes.
+    let missing_scene = || async {
+        let access = decide_access(
+            state,
+            world,
+            &identity,
+            secret.as_deref(),
+            None,
+            &attempts,
+            now,
+        )
+        .await;
+        match access {
+            Err(error) => error,
+            Ok(Access::Allowed(_) | Access::Banned(Ban::Scene)) => scene_not_found(),
+            Ok(refused) => refusal(refused, world_name, explorer_handshake)
+                .err()
+                .unwrap_or_else(scene_not_found),
+        }
+    };
     let scene = match scene_id {
-        Some(id) => Some(
-            SceneId::parse(id)
-                .ok()
-                .filter(|scene| scene.as_str() == id)
-                .ok_or_else(|| {
-                    ApiError::not_found(format!(
-                        "Scene \"{id}\" not found in world \"{world_name}\"."
-                    ))
-                })?,
-        ),
+        Some(id) => match SceneId::parse(id).ok().filter(|scene| scene.as_str() == id) {
+            Some(scene) => Some(scene),
+            None => return Err(missing_scene().await),
+        },
         None => None,
     };
     let request = match &scene {
-        Some(scene) => RoomRequest::WorldScene {
-            world: &world,
-            scene,
-        },
-        None => RoomRequest::WorldLobby { world: &world },
+        Some(scene) => RoomRequest::WorldScene { world, scene },
+        None => RoomRequest::WorldLobby { world },
     };
     let resolved = match state.scenes.resolve(request).await {
         Ok(r) => r,
-        Err(ResolveError::SceneNotInWorld { .. }) => {
-            return Err(ApiError::not_found(format!(
-                "Scene \"{}\" not found in world \"{world_name}\".",
-                scene_id.unwrap_or_default()
-            )));
-        }
+        Err(ResolveError::SceneNotInWorld { .. }) => return Err(missing_scene().await),
         // The lobby: the row vanished since `world_admission`, still an unknown world.
         Err(ResolveError::UnresolvedRoom(_)) if scene_id.is_none() => {
             return Err(invalid_world(world_name, explorer_handshake));
@@ -504,59 +604,21 @@ async fn mint(
         Err(e) => return Err(undetermined(e)),
     };
 
-    let started = authorization_started(&state.pool, &world)
+    let started = authorization_started(&state.pool, world)
         .await
         .map_err(undetermined)?;
 
-    // Establish bans and independent owner/grantee access without doing bcrypt. Only
-    // callers who actually need a secret consume the shared source-IP budget.
-    let mut access = state
-        .policy
-        .can_access(
-            &world,
-            &identity,
-            None,
-            resolved.scene_id.as_ref(),
-            None,
-            now,
-        )
-        .await;
-    if matches!(access, Ok(Access::InvalidSecret)) || (access.is_err() && secret.is_some()) {
-        let reservation = attempts
-            .reserve(now)
-            .await
-            .map_err(undetermined)?
-            .ok_or_else(too_many_attempts)?;
-        access = state
-            .policy
-            .can_access(
-                &world,
-                &identity,
-                secret.as_deref(),
-                resolved.scene_id.as_ref(),
-                None,
-                now,
-            )
-            .await;
-        attempts
-            .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
-            .await;
-    }
-    let by_secret = match access.map_err(undetermined)? {
-        Access::Allowed(grant) => grant == AccessGrant::SharedSecret,
-        Access::Banned(Ban::Scene) => {
-            return Err(ApiError::unauthorized(format!(
-                "You are banned from world \"{world_name}\"."
-            )));
-        }
-        Access::Banned(_) => return Err(ApiError::unauthorized(PLATFORM_BANNED)),
-        // `world-comms-handler` answers a refused secret 403, `comms-adapter-handler` 401.
-        Access::InvalidSecret if explorer_handshake => {
-            return Err(ApiError::unauthorized(not_allowed(world_name)));
-        }
-        Access::InvalidSecret => return Err(ApiError::forbidden(not_allowed(world_name))),
-        Access::NotAllowed => return Err(ApiError::unauthorized(not_allowed(world_name))),
-    };
+    let access = decide_access(
+        state,
+        world,
+        &identity,
+        secret.as_deref(),
+        resolved.scene_id.as_ref(),
+        &attempts,
+        now,
+    )
+    .await?;
+    let by_secret = refusal(access, world_name, explorer_handshake)?;
 
     let participants = state
         .presence
@@ -570,7 +632,7 @@ async fn mint(
     }
     let proof = authorization_proof(
         &state.livekit.api_secret,
-        &world,
+        world,
         identity.as_str(),
         &resolved.room,
         started,
@@ -736,32 +798,96 @@ mod throttle_tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
+        // Resolve the installed function names outside the stamp's own bound.
+        crate::gatekeeper::admission::functions::installed(&pool)
+            .await
+            .unwrap();
+        let label = format!("stamp-{}", uuid::Uuid::new_v4());
+        let stamp_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                pool.connect_options()
+                    .as_ref()
+                    .clone()
+                    .application_name(&label),
+            )
+            .await
+            .unwrap();
+        sqlx::query("SELECT 1").execute(&stamp_pool).await.unwrap();
         let world = WorldName::parse(&format!("stamp-{}.dcl.eth", uuid::Uuid::new_v4())).unwrap();
         sqlx::query("INSERT INTO worlds.worlds(name) VALUES($1)")
             .bind(world.key())
             .execute(&pool)
             .await
             .unwrap();
-        let mut edit = pool.begin().await.unwrap();
-        sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
-            .bind(world.key())
-            .fetch_one(&mut *edit)
+        // The stamp's lock wait gives up after its function-local lock timeout
+        // (55P03), which refuses the mint. A host stall longer than that
+        // between the observed wait and the edit's commit is therefore a
+        // refused stamp, never an early one: only that refusal reruns the
+        // scenario, and every accepted stamp must follow the edit.
+        let mut refusals = Vec::new();
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let mut edit = pool.begin().await.unwrap();
+            sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR UPDATE")
+                .bind(world.key())
+                .fetch_one(&mut *edit)
+                .await
+                .unwrap();
+            let (stamp_pool, stamped) = (stamp_pool.clone(), world.clone());
+            let stamp =
+                tokio::spawn(async move { authorization_started(&stamp_pool, &stamped).await });
+            // A time inside the edit at which the stamp is observed blocked on
+            // the edit's row lock. The bound only ends a hang.
+            let cutoff = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    let waiting: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity \
+                         WHERE application_name=$1 AND wait_event_type='Lock')",
+                    )
+                    .bind(&label)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                    if waiting {
+                        let now: NaiveDateTime =
+                            sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+                                .fetch_one(&mut *edit)
+                                .await
+                                .unwrap();
+                        return Some(now);
+                    }
+                    if stamp.is_finished() {
+                        return None;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                }
+            })
             .await
-            .unwrap();
-        let cutoff: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
-            .fetch_one(&mut *edit)
-            .await
-            .unwrap();
-        let (cloned_pool, cloned_world) = (pool.clone(), world.clone());
-        let stamp =
-            tokio::spawn(async move { authorization_started(&cloned_pool, &cloned_world).await });
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        assert!(
-            !stamp.is_finished(),
-            "stamp must wait for the accepted edit"
+            .expect("the stamp reaches the edit's row lock");
+            edit.commit().await.unwrap();
+            match stamp.await.unwrap() {
+                Ok(stamped) => {
+                    let cutoff = cutoff.expect("stamp must wait for the accepted edit");
+                    assert!(stamped >= cutoff, "{stamped} precedes the edit at {cutoff}");
+                    return;
+                }
+                Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => {
+                    let elapsed = started.elapsed();
+                    eprintln!(
+                        "stamp gave up at its lock timeout after {elapsed:?}; rerunning the edit"
+                    );
+                    refusals.push((elapsed, error.to_string()));
+                }
+                Err(error) => panic!("stamp failed: {error}"),
+            }
+        }
+        let elapsed: Vec<_> = refusals.iter().map(|(elapsed, _)| *elapsed).collect();
+        let last = refusals.last().map_or("", |(_, error)| error.as_str());
+        panic!(
+            "every stamp gave up at its lock timeout ({} attempts, elapsed {elapsed:?}); last: {last}",
+            refusals.len()
         );
-        edit.commit().await.unwrap();
-        assert!(stamp.await.unwrap().unwrap() >= cutoff);
     }
 
     /// Concurrent attempts each reserve atomically: only `max` get past the throttle.

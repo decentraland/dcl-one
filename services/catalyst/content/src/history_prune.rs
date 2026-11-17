@@ -1,11 +1,11 @@
-//! The content history prune: a sync-only node drops the deployments no
+//! The content history prune: a node drops the deployments no
 //! pointer is served by any more (superseded by a newer entity over the
 //! same pointers, or unpublished), their `content_files` rows and the blobs
 //! nothing else names, once they have been out of `active_pointers` for the
 //! grace period. `failed_deployments`, `processed_snapshots`, the cursors
 //! and `local_entities` are never touched, and a row `local_entities` names
-//! (this node's own deployment, tombstoned or not) is never pruned, nor is a
-//! row such a deployment superseded.
+//! (this node's own scene, tombstoned or not) is never pruned, nor is a row
+//! such a scene superseded.
 //!
 //! Peer sync does not need the history rows to stay correct. Its only
 //! already-known probe is `sync_deployer::is_entity_deployed` (the bloom
@@ -18,9 +18,11 @@
 //! covers what a restart can replay (minutes); the cost of a re-offer is a
 //! download, never a wrong pointer.
 //!
-//! An authoritative node (`CONTENT_WRITES_ENABLED`) keeps its history, so
-//! the job refuses to run beside the switch, and a pass with the switch off
-//! still keeps every row a local deployment superseded.
+//! Pruning is the operator's choice (`CONTENT_HISTORY_PRUNE_ENABLED`),
+//! independent of `CONTENT_WRITES_ENABLED`. Local scenes and the rows they
+//! superseded always stay; every other superseded version, local or peer,
+//! goes. Nothing needs those: the forwarder never sends a superseded row, a
+//! peer only needs the active entity, and only scenes can be unpublished.
 //!
 //! Superseded at: a row has no such column; it is the later of the row's own
 //! `local_timestamp` (a late replay lands already superseded) and its
@@ -76,8 +78,6 @@ pub const SERIES: [&str; 6] = [
 pub struct PruneOptions {
     /// `CONTENT_HISTORY_PRUNE_ENABLED`.
     pub enabled: bool,
-    /// `CONTENT_WRITES_ENABLED`: an authoritative node keeps its history.
-    pub content_writes_enabled: bool,
     /// How long a row stays after it left `active_pointers`
     /// (`CONTENT_HISTORY_PRUNE_GRACE_HOURS`).
     pub grace: Duration,
@@ -96,7 +96,6 @@ impl PruneOptions {
     pub fn from_config(config: &Config) -> Self {
         Self {
             enabled: config.content.content_history_prune_enabled,
-            content_writes_enabled: config.writes.content_writes_enabled,
             grace: Duration::from_secs(
                 config
                     .content
@@ -123,13 +122,7 @@ impl PruneOptions {
 
     /// Why a pass would not run; `None` when it runs.
     pub fn skip_reason(&self) -> Option<&'static str> {
-        if !self.enabled {
-            Some("CONTENT_HISTORY_PRUNE_ENABLED=false")
-        } else if self.content_writes_enabled {
-            Some("CONTENT_WRITES_ENABLED=true: an authoritative node keeps its deployment history")
-        } else {
-            None
-        }
+        (!self.enabled).then_some("CONTENT_HISTORY_PRUNE_ENABLED=false")
     }
 }
 
@@ -382,8 +375,8 @@ pub async fn run_once(
     run(pool, storage, opts, None).await
 }
 
-/// Spawns the periodic job, or logs once why it does not run (the flag off,
-/// an authoritative node) and spawns nothing. Answers whether it runs.
+/// Spawns the periodic job, or logs once why it does not run (the flag off)
+/// and spawns nothing. Answers whether it runs.
 pub fn spawn(jobs: &Jobs, pool: PgPool, storage: Arc<Storage>, opts: PruneOptions) -> bool {
     if let Some(reason) = opts.skip_reason() {
         tracing::info!(reason, "content history prune: not running");
@@ -435,33 +428,14 @@ mod tests {
             .connect_with(opts.database("postgres"))
             .await
             .unwrap();
-        let name = format!(
-            "catalyst_test_prune_{}",
-            &uuid::Uuid::new_v4().simple().to_string()[..12]
-        );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let mut url = url::Url::parse(&base_url).unwrap();
-        url.set_path(&format!("/{name}"));
-        let pool = crate::db::connect_pool(
-            url.as_str(),
-            &crate::db::PoolSettings {
-                max_connections: 2,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
+        let pool = crate::db::scratch::isolated_pool(2).await?;
+        let name = pool.connect_options().get_database().unwrap().to_string();
         Some((pool, admin, name))
     }
 
     fn options(grace: Duration, batch: usize) -> PruneOptions {
         PruneOptions {
             enabled: true,
-            content_writes_enabled: false,
             grace,
             batch,
             pause_between_batches: Duration::ZERO,
@@ -548,8 +522,8 @@ mod tests {
     /// superseder is too recent, and an orphan no pointer names: the pass
     /// drops the superseded and the orphan with their `content_files` and
     /// exclusive blobs (their entity files too), keeps the shared blob, the
-    /// active rows, the local row and the young ones; the switch and the
-    /// flag refuse a pass; a second pass finds nothing.
+    /// active rows, the local row and the young ones; the flag refuses a
+    /// pass; a second pass finds nothing.
     #[tokio::test]
     async fn superseded_rows_go_with_their_exclusive_blobs_and_everything_active_local_or_young_stays()
      {
@@ -614,24 +588,6 @@ mod tests {
         assert_eq!(rows, 7);
 
         let grace = Duration::from_secs(86_400);
-        let refused = run_once(
-            &pool,
-            &storage,
-            &PruneOptions {
-                content_writes_enabled: true,
-                ..options(grace, 1)
-            },
-        )
-        .await
-        .unwrap();
-        assert!(
-            refused
-                .skipped
-                .as_deref()
-                .unwrap()
-                .starts_with("CONTENT_WRITES_ENABLED=true"),
-            "{refused:?}"
-        );
         let off = run_once(
             &pool,
             &storage,
@@ -763,9 +719,82 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A pass that runs while writes are off (a node that had them on and
-    /// turns them on again) keeps the scene a local deployment superseded,
-    /// however old; the local scene's unpublish leaves it superseded.
+    /// Only local scenes carry provenance: a local profile superseded by a
+    /// newer local profile is pruned like a peer row, and the active one stays.
+    #[tokio::test]
+    async fn a_superseded_local_profile_is_pruned_and_the_active_one_stays() {
+        use crate::write_deployer::WriteDeployer;
+        use alloy::signers::{Signer, local::PrivateKeySigner};
+
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+        let key: PrivateKeySigner =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let signer = format!("{:#x}", key.address());
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        let mut ids = Vec::new();
+        for (timestamp, version) in [(now_ms - 1_000, 1), (now_ms, 2)] {
+            let entity = serde_json::json!({
+                "version": "v3",
+                "type": "profile",
+                "pointers": [signer],
+                "timestamp": timestamp,
+                "content": [],
+                "metadata": {"avatars": [], "version": version}
+            });
+            let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+            let id = crate::auth::hash::hash_bytes_v1(&bytes);
+            let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
+            let chain = serde_json::json!([
+                {"type": "SIGNER", "payload": signer},
+                {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
+            ]);
+            // A fresh deployer per deploy: the profile rate limit is per instance.
+            WriteDeployer::with_partial_validation_for_tests(pool.clone(), storage.clone(), None)
+                .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let (old, new) = (&ids[0], &ids[1]);
+        let provenance: i64 = sqlx::query_scalar("SELECT count(*) FROM content.local_entities")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(provenance, 0, "a local profile records no provenance");
+
+        let report = run_once(&pool, &storage, &options(Duration::ZERO, 10))
+            .await
+            .unwrap();
+        assert_eq!(report.deployments, 1, "{report:?}");
+        assert!(
+            !entity_exists(&pool, old).await,
+            "the superseded version goes"
+        );
+        assert!(!storage.exist(old).await.unwrap(), "with its entity file");
+        assert!(entity_exists(&pool, new).await, "the active version stays");
+        assert!(storage.exist(new).await.unwrap());
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pass keeps the scene a local scene superseded, however old; the
+    /// local scene's unpublish leaves it superseded.
     #[tokio::test]
     async fn the_predecessor_of_a_local_deployment_is_kept() {
         let Some((pool, admin, name)) = own_database().await else {

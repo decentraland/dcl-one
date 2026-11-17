@@ -1,9 +1,12 @@
 .*
 bin/*.map
 package-lock.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
 yarn-lock.json
 build.json
 export
+static
 tsconfig.json
 tslint.json
 node_modules

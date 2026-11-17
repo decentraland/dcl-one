@@ -8,7 +8,7 @@
 import { encodeFunctionData, type Abi } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { isUserRejection, requireChain } from "../../wallet/chain";
 import { rpc } from "./rpc";
 

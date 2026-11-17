@@ -10,8 +10,8 @@ import type { ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import ThumbnailImage from "../../../components/ThumbnailImage";
-import { parseEvmAddress, sameAddress } from "../../model/address";
-import { normalizeDecimal } from "../../model/decimal";
+import { parseEvmAddress, sameAddress } from "@shop/model/address";
+import { normalizeDecimal } from "@shop/model/decimal";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import AssetActionLayout from "../frames/AssetActionLayout";

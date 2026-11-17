@@ -59,8 +59,12 @@ describe("buildSubscriptionCommit \u{2014} real notifications subscription write
     expect(out.kind).toBe("subscribe");
     expect(mSignedFetch).toHaveBeenCalledTimes(1);
     const [, url, init] = mSignedFetch.mock.calls[0];
-    expect(String(url)).toMatch(/\/subscription$/);
+    expect(new URL(String(url)).pathname).toBe("/notifications/subscription");
     expect((init as { method: string }).method).toBe("PUT");
+    expect(mSignedGet).toHaveBeenCalledWith(
+      "/notifications/subscription",
+      expect.objectContaining({ identity: IDENTITY }),
+    );
 
     const body = putBody();
     expect(body.ignore_all_email).toBe(false);
@@ -89,6 +93,66 @@ describe("buildSubscriptionCommit \u{2014} real notifications subscription write
     ).rejects.toThrow(/sign in/i);
     expect(mSignedGet).not.toHaveBeenCalled();
     expect(mSignedFetch).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the current subscription cannot be read", async () => {
+    mSignedGet.mockRejectedValue(new Error("Catalyst returned 404 Not Found"));
+    const commit = buildSubscriptionCommit(IDENTITY);
+
+    await expect(
+      commit({ kind: "subscribe", enabledTypes: ["events_started"] }),
+    ).rejects.toThrow(/404/);
+    expect(mSignedFetch).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the current subscription is not readable as one", async () => {
+    mSignedGet.mockResolvedValue({ address: IDENTITY.signer, details: { message_type: null } });
+    const commit = buildSubscriptionCommit(IDENTITY);
+
+    await expect(
+      commit({ kind: "subscribe", enabledTypes: ["events_started"] }),
+    ).rejects.toThrow(/couldn't read your current notification settings/);
+    expect(mSignedFetch).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the in-app master switch is null", async () => {
+    const current = currentSubscription();
+    mSignedGet.mockResolvedValue({ ...current, details: { ...current.details, ignore_all_in_app: null } });
+    const commit = buildSubscriptionCommit(IDENTITY);
+
+    await expect(
+      commit({ kind: "subscribe", enabledTypes: ["events_started"] }),
+    ).rejects.toThrow(/couldn't read your current notification settings/);
+    expect(mSignedFetch).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when a type's email channel is null", async () => {
+    const current = currentSubscription();
+    mSignedGet.mockResolvedValue({
+      ...current,
+      details: {
+        ...current.details,
+        message_type: { ...current.details.message_type, events_started: { email: null, in_app: true } },
+      },
+    });
+    const commit = buildSubscriptionCommit(IDENTITY);
+
+    await expect(
+      commit({ kind: "subscribe", enabledTypes: ["events_started"] }),
+    ).rejects.toThrow(/couldn't read your current notification settings/);
+    expect(mSignedFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([200, 401])("releases the PUT reply body when the node answers %i", async (status) => {
+    mSignedGet.mockResolvedValue(currentSubscription());
+    const reply = new Response('{"ok":true}', { status });
+    const cancel = vi.spyOn(reply.body!, "cancel");
+    mSignedFetch.mockResolvedValue(reply);
+    const commit = buildSubscriptionCommit(IDENTITY);
+
+    await commit({ kind: "subscribe", enabledTypes: ["events_started"] }).catch(() => undefined);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("propagates a non-ok PUT as an error (no silent success)", async () => {

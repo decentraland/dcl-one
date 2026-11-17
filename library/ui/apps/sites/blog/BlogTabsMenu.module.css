@@ -1,0 +1,92 @@
+.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-24);
+  padding: 0 var(--dcl-layout-margin-x);
+  border-bottom: 1px solid var(--dcl-transparencies-white-20);
+  background: var(--dcl-transparencies-black-20);
+}
+
+.tabs {
+  min-width: 0;
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--dcl-space-48);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  height: var(--dcl-space-64);
+  border-bottom: 4px solid transparent;
+  padding-top: 4px;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--dcl-text-primary);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: -2px;
+  border-radius: var(--dcl-radius-sm);
+}
+
+.active {
+  border-bottom-color: var(--dcl-brand-ruby);
+  color: var(--dcl-neutrals-white);
+}
+
+.search {
+  flex: none;
+  padding: var(--dcl-space-12) 0;
+}
+
+@media (max-width: 1023px) {
+  .list {
+    column-gap: var(--dcl-space-24);
+  }
+}
+
+/* Phones scroll the tabs sideways; the fade at the trailing edge shows there is more. */
+@media (max-width: 767px) {
+  .bar {
+    padding-right: 0;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to left, transparent, #000 var(--dcl-space-32));
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .list {
+    flex-wrap: nowrap;
+    gap: var(--dcl-space-8);
+    padding-right: var(--dcl-space-32);
+  }
+
+  .search {
+    display: none;
+  }
+}

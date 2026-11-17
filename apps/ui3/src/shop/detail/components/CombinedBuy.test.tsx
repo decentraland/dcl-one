@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization } from "../../checkout/fakes";
-import { CHAIN } from "../../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
-import { usdCents } from "../../model/money";
-import { presentPayment, type MixedPayment } from "../../payment/present";
-import { BOOK, storeMint } from "../../payment/fixtures";
+import { usdCents } from "@shop/model/money";
+import { presentPayment, type MixedPayment } from "@shop/payment/present";
+import { BOOK, storeMint } from "@shop/payment/fixtures";
 import { cartLineId } from "../../cart/store";
 import CombinedBuy, { readSentSplit } from "./CombinedBuy";
 

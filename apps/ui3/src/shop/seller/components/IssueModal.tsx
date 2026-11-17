@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import Button from "../../../atoms/Button";
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import type { PublishableItem } from "../lib/builder";
 import { isIssueValid, isValidIssueAddress, issueTokens, totalToIssue, type IssueEntry } from "../lib/issue";

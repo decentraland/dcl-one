@@ -1,0 +1,158 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import type { App } from './app.js'
+import type { FigmaConfig } from './config.js'
+import { expandVariants } from './capture/expand-variants.js'
+import { pageFolder } from './generators/components.js'
+import { IMAGE_PLACEHOLDER } from './generators/image-fills.js'
+import { cssName, excludePrimitives, TokenIndex } from './generators/tokens.js'
+import { textStyleClass } from './generators/naming.js'
+import type { RawNode } from './ir/raw-components.js'
+import type { TokenCollection } from './ir/schemas.js'
+import { mapVariants, viewKey } from './mappers/variants.js'
+import { loadSpecsFromSource } from './specs.js'
+import type { FigmaSource } from './sources/types.js'
+
+function visibleTexts(node: RawNode): string[] {
+  if (node.hidden || node.opacity === 0) return []
+  return [
+    ...(node.type === 'TEXT' && node.text ? [node.text] : []),
+    ...(node.children ?? []).flatMap(visibleTexts)
+  ]
+}
+
+// Catalog entries in inventory order, plus the stroke widths derived from every variant tree. The scope
+// guard recomputes the same stroke widths over a staged snapshot, so both must come from this function.
+async function reviewComponents(source: FigmaSource, config: FigmaConfig) {
+  const { specs } = await loadSpecsFromSource(source, config)
+  const aliases = Object.fromEntries(
+    Object.entries(config.variantAliases).map(([key, value]) => [key.toLowerCase(), value])
+  )
+  const strokeWidths = new Set<number>()
+  const collectStrokes = (node: RawNode) => {
+    for (const width of node.strokeWeights ??
+      (typeof node.strokeWeight === 'number' ? [node.strokeWeight] : []))
+      if (width > 0) strokeWidths.add(width)
+    node.children?.forEach(collectStrokes)
+  }
+  const components = []
+  for (const spec of specs) {
+    const page = await source.getComponentPage(spec.page)
+    const raw = page?.components.find((component) => component.id === spec.figmaId)
+    if (!raw) throw new Error(`Missing review capture for ${spec.name}`)
+    const expanded = expandVariants(raw)
+    const propertiesById = new Map(expanded.map((variant) => [variant.id, variant.props]))
+    const mapped = mapVariants(raw, expanded, {
+      wordAliases: aliases,
+      ...(config.components[raw.name] ?? {})
+    })
+    const exception = config.selection?.exceptions.find(
+      (item) => item.pageId === page!.page.id && item.componentId === raw.id
+    )
+    components.push({
+      name: spec.name,
+      page: spec.page,
+      id: spec.figmaId,
+      needsManual: spec.needsManual,
+      notes: spec.notes,
+      ...(exception ? { exception: exception.reason } : {}),
+      variants: mapped.variants.map((variant) => {
+        collectStrokes(variant.tree)
+        return {
+          id: variant.figmaId,
+          name: variant.figmaName,
+          properties: propertiesById.get(variant.figmaId)!,
+          key: viewKey(variant),
+          state: variant.interaction,
+          props: {
+            ...variant.values,
+            ...variant.booleans,
+            ...variant.flags,
+            ...(variant.interaction === 'base' ? {} : { forceState: variant.interaction })
+          },
+          width: variant.tree.w,
+          height: variant.tree.h,
+          texts: visibleTexts(variant.tree)
+        }
+      })
+    })
+  }
+  return { components, strokeWidths: [...strokeWidths].sort((a, b) => a - b) }
+}
+
+// Foundations paints each token through its CSS variable, so it lists only what the tokens emit.
+function foundationTokens(collections: TokenCollection[], excluded: readonly string[]) {
+  const emitted = excludePrimitives(collections, excluded)
+  const index = new TokenIndex(emitted)
+  return emitted.flatMap((collection) =>
+    collection.variables.flatMap((token) =>
+      collection.modes.map((mode) => ({
+        collection: collection.name,
+        mode,
+        name: token.name,
+        type: token.type,
+        cssName: cssName(token.name),
+        value: index.resolve(token, mode)
+      }))
+    )
+  )
+}
+
+async function writeReviewManifest(app: App, root?: string) {
+  const source = app.createSource('snapshot')
+  const { components: reviewed, strokeWidths } = await reviewComponents(source, app.config)
+  // The gallery publishes no Figma imagery: it says, per component, how many image fills its generated
+  // stylesheet replaced with the neutral placeholder, so a missing image is disclosed instead of passing as design.
+  const generated = path.join(app.resolveOutDir(), 'components')
+  const components = await Promise.all(
+    reviewed.map(async (component) => {
+      const css = await readFile(
+        path.join(generated, pageFolder(component.page), `${component.name}.module.css`),
+        'utf8'
+      )
+      return { ...component, imageFillsOmitted: css.split(IMAGE_PLACEHOLDER).length - 1 }
+    })
+  )
+  const [collections, textStyles, icons, syncState] = await Promise.all([
+    source.getTokenCollections(),
+    source.getTextStyles(),
+    source.getIcons(),
+    source.getSyncState?.()
+  ])
+  const tokens = foundationTokens(collections, app.config.excludedPrimitives)
+  const reviewRoot = root ? path.resolve(app.cwd, root) : path.resolve(app.resolveOutDir(), '../..')
+  const directory = path.join(reviewRoot, 'src/review')
+  await mkdir(directory, { recursive: true })
+  const manifest = {
+    components,
+    pages: syncState?.pages ?? [],
+    foundations: {
+      tokens,
+      textStyles: textStyles.map((style) => ({ ...style, className: textStyleClass(style.name) })),
+      strokeWidths,
+      // Metadata only: the gallery draws icons with the generated components, and Figma's SVG exports are not
+      // published.
+      icons: icons.map(({ name, nodeId, section, category, group, variant, width, height }) => ({
+        name,
+        nodeId,
+        section,
+        category,
+        group,
+        variant,
+        width,
+        height
+      })),
+      effects: { ready: false, status: 'Disabled in Figma. Existing captured effects are frozen.' }
+    }
+  }
+  await writeFile(path.join(directory, 'catalog.json'), JSON.stringify(manifest, null, 2) + '\n')
+  return {
+    components: components.length,
+    variants: components.reduce((count, component) => count + component.variants.length, 0),
+    tokens: tokens.length,
+    textStyles: textStyles.length,
+    icons: icons.length
+  }
+}
+
+export { foundationTokens, reviewComponents, writeReviewManifest }

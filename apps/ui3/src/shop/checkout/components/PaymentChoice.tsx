@@ -2,11 +2,11 @@
 //       supersedes v2 ui3/src/marketplace/components/MkPaymentSection.tsx
 import { useId } from "react";
 
-import { outageText, reasonText } from "../../payment/copy";
-import type { PaymentOptionView, PaymentPresentation } from "../../payment/present";
-import type { PaymentMethod } from "../../model/settlement";
-import { chainLabel } from "../../model/chain";
-import { creditsCeil, creditsFloor, mulCents, mulMana } from "../../model/money";
+import { outageText, reasonText } from "@shop/payment/copy";
+import type { PaymentOptionView, PaymentPresentation } from "@shop/payment/present";
+import type { PaymentMethod } from "@shop/model/settlement";
+import { chainLabel } from "@shop/model/chain";
+import { creditsCeil, creditsFloor, mulCents, mulMana } from "@shop/model/money";
 import { CreditsAmount, ManaAmount } from "../../credits/components/Amount";
 import "./paymentchoice.css";
 

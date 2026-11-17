@@ -3,7 +3,7 @@
 // strongest intent), then recently viewed. Favourites are not seeds: the server reads them itself for
 // a signed request.
 
-import type { CatalogItem } from "./catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 export const MAX_SEEDS = 20;
 

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { partitionCart, type CartGroup } from "../../cart/partition";
+import { partitionCart, type CartGroup } from "@shop/cart/partition";
 import { createCartStore, type CartStorage, type CartStore } from "../../cart/store";
-import type { CartLine, PurchaseOffer } from "../../model/purchase";
-import type { Session } from "../../model/settlement";
-import { presentPayment } from "../../payment/present";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
+import { presentPayment } from "@shop/payment/present";
 import {
   BOOK,
   CREATOR_COUPON_ADDRESS,
@@ -18,7 +18,7 @@ import {
   wearableResale,
   web2,
   web3,
-} from "../../payment/fixtures";
+} from "@shop/payment/fixtures";
 import {
   batchAuthorization,
   createFakeChain,
@@ -35,7 +35,7 @@ import { reviewCart, resolveLine, partitionReservations, couponForTrade, classif
 import { resumeCheckout, runGroup, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
-import { createSpendGuard } from "./spend-guard";
+import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 
 function memoryStorage(): CartStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();

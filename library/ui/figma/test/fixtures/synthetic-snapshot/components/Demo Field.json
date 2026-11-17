@@ -1,0 +1,53 @@
+{
+ "page": {"id":"10:5","name":"Demo Field"},
+ "components": [
+  {
+   "kind": "set",
+   "id": "60:1",
+   "name": "Field",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {"State":{"type":"VARIANT","default":"Default","options":["Default","Hover"]}},
+   "base": {
+    "id": "60:2",
+    "name": "State=Default",
+    "props": {"State":"Default"},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "State=Default",
+     "w": 240,
+     "h": 40,
+     "layout": {"mode":"HORIZONTAL","pad":[10,12,10,12],"gap":8,"main":"MIN","cross":"CENTER"},
+     "radius": 8,
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "strokes": [{"type":"SOLID","hex":"#716b7c","token":"Primitives/Neutral/Mid"}],
+     "strokeWeight": 1,
+     "strokeAlign": "INSIDE",
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Placeholder",
+       "w": 40,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Name",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]
+      }
+     ]
+    }
+   },
+   "others": [
+    {
+     "id": "60:3",
+     "name": "State=Hover",
+     "props": {"State":"Hover"},
+     "patches": [{"at":[],"set":{"name":"State=Hover"}},{"at":[],"set":{"strokes":[{"type":"SOLID","hex":"#cfcdd4","token":"Primitives/Neutral/Gray"}]}}]
+    }
+   ]
+  }
+ ]
+}

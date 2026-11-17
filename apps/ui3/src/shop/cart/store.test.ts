@@ -1,11 +1,11 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { evmAddress } from "../model/address";
-import { itemAsset, tokenAsset } from "../model/asset";
-import { CHAIN } from "../model/chain";
-import { storeMint, web3 } from "../payment/fixtures";
-import { partitionCart } from "./partition";
+import { evmAddress } from "@shop/model/address";
+import { itemAsset, tokenAsset } from "@shop/model/asset";
+import { CHAIN } from "@shop/model/chain";
+import { storeMint, web3 } from "@shop/payment/fixtures";
+import { partitionCart } from "@shop/cart/partition";
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, useCart, type CartStorage } from "./store";
 
 function memory(): CartStorage & { data: Map<string, string> } {

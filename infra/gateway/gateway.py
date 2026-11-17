@@ -12,14 +12,50 @@ import subprocess
 # `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
 WORLDS_DEPLOY_CAP = "360m"
 WORLDS_SETTINGS_CAP = "12m"
+# The badges backfill body (social badges `MAX_BACKFILL_BODY_BYTES`); a
+# gateway test pins it.
+BADGES_BACKFILL_CAP = "64m"
+# One uploaded badge art file (social badges `MAX_ASSET_BODY_BYTES`); a
+# gateway test pins it.
+BADGES_ASSET_CAP = "16m"
+# One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
+# gateway test pins it.
+REPORT_EVIDENCE_CAP = "5m"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
 CONTENT_DEPLOY_CAP = "248m"
+# World storage bodies: the largest storage route maximum at the deployed
+# defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
+# plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below
+# it) and a little headroom, so the service's own 413 is the one a client
+# meets and nginx buffers no more than that. Raising a value cap means raising
+# this; a gateway test pins it against the defaults. The gateway's own 413 has
+# the service's shape without a byte count, which differs per route.
+STORAGE_BODY_HEADROOM_BYTES = 4 * 1024
+STORAGE_BODY_CAP_BYTES = 512 * 1024 + 1024 + STORAGE_BODY_HEADROOM_BYTES
+STORAGE_TOO_LARGE = {"error": "Payload Too Large",
+                     "message": "Request body exceeds the maximum allowed size"}
+# Storage writes one untrusted address may have in flight, keyed like the write
+# budget (reads and trusted callers are not counted): each body is buffered in
+# the gateway's temp space before the service answers.
+STORAGE_UPLOADS_PER_ADDRESS = 10
 # Uploads one address may have in flight on a deploy route: nginx buffers each
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
+# The gateway's own answers on a worlds deploy: named location, status,
+# Retry-After seconds (0 for none) and the worlds service's {error, message} body.
+WORLDS_DEPLOY_ERRORS = [
+    ("@worlds_deploy_too_large", 413, 0,
+     {"error": "Payload Too Large", "message": "The multipart request is too large."}),
+    ("@worlds_deploy_rate", 429, 1,
+     {"error": "Too Many Requests",
+      "message": "Too many deploy requests from this client, please retry shortly."}),
+    ("@worlds_deploy_busy", 429, 5,
+     {"error": "Too Many Requests",
+      "message": "Too many uploads in progress from this client, please retry shortly."}),
+]
 # Segment delivers each webhook event as its own POST from a few egress
 # addresses, and the HMAC in the app is the gate: this guard sits above the
 # sink's sizing (DATABASE.md, about 280 inserts/s) so a delivery is never
@@ -30,6 +66,12 @@ WEBHOOK_BURST = 600
 
 def words(value):
     return [word for word in re.split(r"[\s,]+", value.strip()) if word]
+
+
+def count(value, name):
+    if not re.fullmatch(r"[1-9][0-9]{0,5}", value.strip()):
+        raise ValueError(f"{name} must be a positive integer")
+    return int(value)
 
 
 def networks(value):
@@ -97,8 +139,15 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
            for proxy in trusted for caller in storage_trusted
            if ipaddress.ip_network(proxy).version == ipaddress.ip_network(caller).version):
         raise ValueError("GATEWAY_STORAGE_TRUSTED_CIDRS must not overlap GATEWAY_TRUSTED_PROXY_CIDRS")
+    # Per-client budget for everything outside the content, storage, worlds and deploy zones. A web
+    # explorer boot is about 150 same-origin requests in its first second (shell, engine
+    # modules for every worker, profile, realm), so the defaults let one boot through and
+    # still bound a single address.
+    read_rate = count(env.get("GATEWAY_READ_RATE", "100"), "GATEWAY_READ_RATE")
+    read_burst = count(env.get("GATEWAY_READ_BURST", "300"), "GATEWAY_READ_BURST")
     return {
         "domain": domain, "hosts": aliases, "resolvers": " ".join(resolvers),
+        "read_rate": read_rate, "read_burst": read_burst,
         "apis": [upstream(value) for value in words(env.get("GATEWAY_APIS_UPSTREAMS", "apis:5210"))],
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
@@ -109,11 +158,20 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     }
 
 
+# Worlds routes: reads (GET, HEAD, OPTIONS) are not rate-limited, as upstream; writes and
+# the admin routes (reachable from admin networks only) keep the server-wide read budget.
+WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
+
+# First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
+BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
+
+
 def render(table, cfg, mime):
     if not cfg["apis"] or not cfg["sites"]:
         raise ValueError("Both API and Sites upstreams are required")
     prefixes = site_prefixes(table["sites"])
     for prefix in prefixes:
+        # Only the exact /content page is Sites', on the apex host (the content_root map).
         if prefix in ("/ws", "/hot-scenes", "/content") or any(
                 prefix == path or prefix.startswith(path + "/") for path in table["internal"]):
             raise ValueError(f"Sites claims a reserved API path: {prefix}")
@@ -122,6 +180,11 @@ def render(table, cfg, mime):
                     "asset-bundle-registry-abgen": "/asset-bundle-registry",
                     "rpc-social-service-ea": "/social-rpc", "market": "/shop",
                     "storage": "/world-storage", "comms-gatekeeper-local": "/comms-gatekeeper"}
+    # A host whose path already carries its prefix is not prefixed again, except
+    # badges.: upstream's own paths start with /badges (/badges/<id>/tiers), so
+    # only a second segment the badges router mounts counts as prefixed. No
+    # catalog badge id equals one (/badges/status is the mount, not a badge).
+    badges_mounts = "|".join(BADGES_MOUNTS)
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -130,6 +193,7 @@ def render(table, cfg, mime):
                        if target else f'"~^{name}:" "";')
     apex_hosts = " ".join(f'{host} "";' for host in [cfg["domain"], *cfg["hosts"]])
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
+    read_rate, read_burst = cfg["read_rate"], cfg["read_burst"]
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
     sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
@@ -158,7 +222,8 @@ def render(table, cfg, mime):
                         'add_header Cross-Origin-Opener-Policy $coop_fallback always;')
     locations = location("= /_gateway/healthz", 'access_log off; return 200 "ok\\n";')
     # The operator gate is applied in the server rewrite phase, before any
-    # location or .data regex, and again after a root alias internal redirect.
+    # location or .data regex; a root alias rewrites with `break`, so the gate
+    # lists alias prefixes (market, camera-reel) beside their targets.
     for path in ("/admin", "/server"):
         locations += pair(path, "sites" if path in prefixes else "apis", True)
     for row in table["node"]:
@@ -194,45 +259,114 @@ def render(table, cfg, mime):
     # spelling, so the match ignores case too.
     locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
         "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
+    # The gateway's own refusals on a worlds deploy answer the worlds service's JSON
+    # envelope instead of nginx's HTML pages; the app's own errors pass through, as the
+    # proxy does not intercept them. Both request limits answer 429, but error_page
+    # keys on the status alone, so limit_conn is raised here as an internal 503 that
+    # only its named location catches and turns back into 429 with its own text (the
+    # app's own 503 shed answer is not intercepted). A body that stalls for
+    # client_body_timeout gets no answer: nginx logs 408 and closes the connection
+    # without a response, which error_page cannot replace.
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
+        f"limit_req zone=deploy burst=4 nodelay; {uploads} limit_conn_status 503;\n"
+        "error_page 413 = @worlds_deploy_too_large; error_page 429 = @worlds_deploy_rate;\n"
+        "error_page 503 = @worlds_deploy_busy;"))
+    # axum's Json, which the app's deploy answers use, sends application/json without
+    # a charset, and nginx adds none to it.
+    json_error = ("default_type application/json;\n" + security_headers + "\n"
+                  "add_header Access-Control-Allow-Origin $cors_fallback always;\n")
+    for name, status, retry, body in WORLDS_DEPLOY_ERRORS:
+        retry_after = f"add_header Retry-After {retry} always;\n" if retry else ""
+        text = json.dumps(body, separators=(",", ":"))
+        locations += location(name, json_error + retry_after + f"return {status} '{text}';")
+    # Upstream worlds-content-server limits no route by rate. Every worlds location but the
+    # deploy names the worlds zone, which replaces the server-wide read zone and counts only
+    # writes and admin calls. Settings uploads are buffered here like deploys, so they also
+    # take a per-address connection cap.
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
-        f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
-    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
-        "limit_req zone=content burst=1000 nodelay;"))
-    locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
-        "client_max_body_size 11m;"))
+        f"client_max_body_size {WORLDS_SETTINGS_CAP}; {WORLDS_LIMIT} "
+        f"limit_conn worlds_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
+    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis", WORLDS_LIMIT))
+    locations += pair("/worlds-content-server", "apis", extra=WORLDS_LIMIT)
+    # The same routes on the root mount (worlds. and peer. hosts). Root /wallet/ is the
+    # credits alias and root /admin is the operator's, so neither is listed.
+    locations += location('~ "^/world/"', proxy("apis", WORLDS_LIMIT))
+    for path in ("/index", "/worlds", "/worlds/status"):
+        locations += location("= " + path, proxy("apis", WORLDS_LIMIT))
+    # The player report intake: one evidence file for each PUT, and no deeper path. The
+    # match also covers the moderator's evidence read, so a key that ends in `.data` stays
+    # ahead of the Sites regex below. The app reads the credentials after nginx buffers the
+    # body, so concurrent uploads are capped as on the deploy routes. Every other
+    # /report-user request takes `location /` and the server-wide cap.
+    locations += location('~ "^/report-user/api/reports/(players/)?[^/]+/evidence/[^/]+$"', proxy("apis",
+        f"client_max_body_size {REPORT_EVIDENCE_CAP}; {uploads}"))
+    # Both badges host forms reach this already rewritten under /badges. The admin
+    # check is a bearer token the app reads after nginx buffers the body, so
+    # concurrent uploads are capped as on the deploy routes.
+    locations += location('~ "^/badges/badges/[^/]+/backfill$"', proxy("apis",
+        f"client_max_body_size {BADGES_BACKFILL_CAP}; {uploads}"))
+    # The admin art upload (PUT) shares its path with the public read: only a PUT
+    # counts toward its own connection cap ($badge_asset_upload_key).
+    locations += location('~ "^/badges/assets/.+$"', proxy("apis",
+        f"client_max_body_size {BADGES_ASSET_CAP}; "
+        f"limit_conn badge_asset_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
                           proxy("apis", "client_max_body_size 21m;"))
     locations += location('~ "^/explorer/0x[0-9a-fA-F]{40}/(wearables|emotes)$"', proxy("apis"))
     # Keep the Sites .data regex after every API regex.
     locations += location(r"~ \.data$", proxy("sites"))
     for prefix in prefixes:
-        if prefix not in ("/admin", "/server"):
+        if prefix in ("/admin", "/server"):
+            continue
+        # The Cast pages are the exact /cast and the stream and watch links (/cast/s/, /cast/w/,
+        # longer than the gatekeeper's ^~ /cast/); the rest of /cast/ stays the gatekeeper's
+        # (root-aliases.nix).
+        if prefix == "/cast":
+            locations += location("= /cast", proxy("sites"))
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
+        else:
             locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/security", "/brand"):
+                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
         locations += location("= " + path, proxy("sites"))
+    # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
+    # /content stays the content server's.
+    locations += location("= /content", proxy("$content_root"))
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
                       "limit_req zone=storage_write burst=60 nodelay; "
-                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+                      "limit_req zone=storage_trusted burst=1000 nodelay; "
+                      f"limit_conn storage_uploads {STORAGE_UPLOADS_PER_ADDRESS};\n"
+                      f"client_max_body_size {STORAGE_BODY_CAP_BYTES}; "
+                      "error_page 413 = @storage_too_large;")
     locations += location("= /world-storage", proxy("apis", storage_limits))
     locations += location("^~ /world-storage/", proxy("apis", storage_limits))
+    # A storage host request, forwarded as the client spelled it under the
+    # /world-storage prefix ($storage_raw_uri), so an encoded `/` or `?` in a
+    # key reaches the service; only the server rewrite reaches it.
+    locations += location("= /__gateway_storage_raw",
+                          "internal;\n" + proxy("apis$storage_raw_uri", storage_limits))
+    locations += location("@storage_too_large", json_error + f"return 413 '{json.dumps(STORAGE_TOO_LARGE, separators=(',', ':'))}';")
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
+        # nginx keeps the app's Content-Type, Accept-Ranges and Cache-Control on
+        # the redirect and drops its other headers, so ETag and the expose list
+        # are copied back. The app answers every Range it supports itself; one it
+        # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
+                   'max_ranges 0;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
+                   'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
-                   'add_header Cache-Control "public, max-age=31536000, immutable";\n'
                    + security_headers)
     locations += location("= /__protected_storage", "return 404;")
     locations += location("^~ /__protected_storage/", storage)
@@ -280,6 +414,10 @@ http {{
         {apex_hosts}
         "~^(?<gateway_sub>[a-z0-9-]+)\\.{domain}$" $gateway_sub;
     }}
+    map $gateway_subdomain $content_root {{
+        default apis;
+        "" sites;
+    }}
     map $gateway_subdomain $gateway_prefix {{
         default /$gateway_subdomain;
         "" "";
@@ -292,9 +430,30 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:/badges/({badges_mounts})(/|$)" "";
+        "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
+    }}
+    # The storage hosts' rewrite, from the unnormalized $request_uri: the
+    # decoded $uri would turn an encoded `/` or `?` in a key into a separator.
+    # Dot segments and empty segments keep the normalized rewrite.
+    map "$gateway_subdomain:$request_uri" $storage_raw_uri {{
+        default "";
+        "~*^[^:]*:[^?]*/(\\.|%2e){{1,2}}([/?]|$)" "";
+        "~^[^:]*:[^?]*//" "";
+        "~^(storage|world-storage):/world-storage([/?]|$)" "";
+        "~^(storage|world-storage):(?<storage_raw>/.*)$" /world-storage$storage_raw;
+        "~^gateway:/storage(?<storage_rest>/.*)$" /world-storage$storage_rest;
+    }}
+    # A decoded `?` would split a rewritten path; a /world-storage request
+    # that is not rewritten is forwarded as sent.
+    map "$gateway_uri:$uri" $ambiguous_path {{
+        volatile;
+        default 0;
+        "~^:/world-storage(/|$)" 0;
+        "~[?]" 1;
     }}
     map "$gateway_subdomain:$request_uri" $original_path {{
         default $request_uri;
@@ -307,10 +466,15 @@ http {{
     }}
     # The telemetry dash entries guard the old serve's routes: they leave with the
     # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
+    # An admin segment under an API mount is a bearer-only route, as are the worlds collector and
+    # reprocess aliases; /events/admin pages stay public.
     map $uri $operator_path {{
         volatile;
         default 0;
         "~*^/(admin|server)(\\\\W|$)" 1;
+        "~*^/((shop-api|marketplace-api|market|transactions-api|signatures-api|credits|rpc|price|badges|builder-api|camera-reel-service|camera-reel|worlds-content-server|world-storage|scene-state|presence|social-api|social-rpc|comms-gatekeeper)/)?((v1|api)/)?admin(\\\\W|$)" 1;
+        "~*^/(places|events)/(v1|api)/admin(\\\\W|$)" 1;
+        "~*^/worlds-content-server/(gc|reprocess-ab)(\\\\W|$)" 1;
         "~*^/metabase(/|\\\\.|$)" 1;
         "~*^/telemetry/dash/(sql|flag|group/target)(\\\\.data)?/?$" 1;
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
@@ -336,13 +500,26 @@ http {{
     map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
-    limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
+    # Requests with an empty key are not counted: worlds reads are not limited, while
+    # writes and the admin routes (admin networks only) get 30 r/s per address.
+    map "$request_method:$uri" $worlds_limit_key {{
+        default $binary_remote_addr;
+        "~^[^:]+:/worlds-content-server/(admin|gc|reprocess-ab)(/|$)" $binary_remote_addr;
+        "~^(GET|HEAD|OPTIONS):" "";
+    }}
+    limit_req_zone $worlds_limit_key zone=worlds:10m rate=30r/s;
+    limit_conn_zone $worlds_limit_key zone=worlds_uploads:10m;
+    limit_req_zone $binary_remote_addr zone=read:10m rate={read_rate}r/s;
     limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
     limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
     limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
     limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    # An empty key is not counted: badge art reads share no upload cap.
+    map $request_method $badge_asset_upload_key {{ PUT $binary_remote_addr; default ""; }}
+    limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;
+    limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
@@ -370,12 +547,13 @@ http {{
     server {{
         listen 8080;
         server_name {domain_names};
-        if ($uri ~ "[?]") {{ return 400; }}
+        if ($storage_raw_uri) {{ rewrite ^ /__gateway_storage_raw last; }}
+        if ($ambiguous_path) {{ return 400; }}
         if ($gateway_uri) {{ rewrite ^ $gateway_uri; }}
         if ($internal_path) {{ return 404; }}
         if ($operator_denied) {{ return 403; }}
         client_max_body_size 1m;
-        limit_req zone=read burst=60 nodelay;
+        limit_req zone=read burst={read_burst} nodelay;
         {locations}
     }}
 }}

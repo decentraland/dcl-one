@@ -12,7 +12,7 @@
 
 import { useSyncExternalStore } from "react";
 
-import { assetKey, parseAssetId, type AssetId } from "../model/asset";
+import { assetKey, parseAssetId, type AssetId } from "@shop/model/asset";
 import {
   type CartLine,
   type CartLineDisplay,
@@ -20,11 +20,11 @@ import {
   type CartProvenance,
   type PurchaseOffer,
   type PurchaseState,
-} from "../model/purchase";
-import { decodePaymentMethod, decodePurchaseOffer, encodePurchaseOffer } from "../model/wire";
-import type { PaymentMethod } from "../model/settlement";
-import { applyEvent, newCheckout, type GroupEvent } from "./machine";
-import type { CartGroup } from "./partition";
+} from "@shop/model/purchase";
+import { decodePaymentMethod, decodePurchaseOffer, encodePurchaseOffer } from "@shop/model/wire";
+import type { PaymentMethod } from "@shop/model/settlement";
+import { applyEvent, newCheckout, type GroupEvent } from "@shop/cart/machine";
+import type { CartGroup } from "@shop/cart/partition";
 
 export type CartStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
