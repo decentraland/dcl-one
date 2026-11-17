@@ -87,10 +87,6 @@
     "primitives": 19,
     "tokens": 0
   },
-  "apps/ui3/src/web/events/EventDetailDialog.module.css": {
-    "primitives": 0,
-    "tokens": 94
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
