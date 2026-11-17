@@ -62,7 +62,7 @@ describe("home sections", () => {
           title="Live"
           cards={[]}
           labels={{ live: "LIVE", by: "by" }}
-          viewAll={{ label: "All", href: "/whats-on" }}
+          viewAll={{ label: "All", href: "/events" }}
         />,
       ),
     ).toBe("");
@@ -80,7 +80,7 @@ describe("home sections", () => {
           },
         ]}
         labels={{ live: "LIVE", by: "by" }}
-        viewAll={{ label: "All", href: "/whats-on" }}
+        viewAll={{ label: "All", href: "/events" }}
       />,
     );
     expect(html).toContain("Real event");

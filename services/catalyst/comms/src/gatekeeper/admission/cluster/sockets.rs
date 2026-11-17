@@ -21,6 +21,13 @@ pub enum IslandDelivery {
 /// Delivery is to its mailbox, not a client receipt; reconnect announcements
 /// recover assignments for sessions this process does not currently hold.
 pub trait IslandSockets: Send + Sync {
+    fn selected_transport_is_current(
+        &self,
+        snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
+    ) -> bool {
+        snapshot.selected_origin == 1
+    }
+
     fn deliver_island(
         &self,
         wallet: &str,

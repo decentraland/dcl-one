@@ -1,0 +1,13 @@
+name       = "winit"
+upstream   = "https://github.com/rust-windowing/winit"
+commit     = "f6893a4390dfe6118ce4b33458d458fd3efd3025"
+ref        = "v0.30.12"
+origin     = "https://github.com/robtfm/winit"
+origin_rev = "b7ec4cf9cd448f68e9ddc10d01e93a92a7177b63"
+license    = "Apache-2.0"
+paths      = ["."]
+exclude    = []
+base_tree  = "8547ad98883505588aee1fe9be0c13c1c4f0535b"
+tree       = "cf43e3094c555f3b96a03c4e194a2ce2d8d49a54"
+rev        = "8489cc6aeade093910e99f009095aa4fd1c85921"
+nix_hash   = "sha256-aCiK+X7Ic7+zn8b+z0x2rlRAy+2N50zMXUD3i99q3Uc="

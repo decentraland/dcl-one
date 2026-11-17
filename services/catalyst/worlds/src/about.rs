@@ -9,6 +9,7 @@ use super::SharedState;
 use super::queries::{self, WorldScene};
 use crate::core::http::ApiError;
 use crate::core::settings_policy::js_truthy;
+use crate::index::content_file_hash;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -303,7 +304,10 @@ fn is_locally_published(scenes: &[WorldScene]) -> bool {
 
 fn strip_ens_suffix(name: &str) -> &str {
     let cut = name.len().saturating_sub(ENS_WORLD_SUFFIX.len());
-    match name[cut..].eq_ignore_ascii_case(ENS_WORLD_SUFFIX) && cut > 0 {
+    let has_suffix = name
+        .get(cut..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(ENS_WORLD_SUFFIX));
+    match has_suffix && cut > 0 {
         true => &name[..cut],
         false => name,
     }
@@ -384,14 +388,8 @@ impl RuntimeMeta {
             .and_then(Value::as_number)
             .cloned();
 
-        let content = scene.entity.get("content").and_then(Value::as_array);
         let resolve = |filename: &str| -> Option<String> {
-            content.and_then(|arr| {
-                arr.iter()
-                    .find(|c| c.get("file").and_then(Value::as_str) == Some(filename))
-                    .and_then(|c| c.get("hash").and_then(Value::as_str))
-                    .map(str::to_string)
-            })
+            content_file_hash(&scene.entity, filename).map(str::to_string)
         };
         let minimap_data_image = mini_map
             .and_then(|m| m.get("dataImage"))
@@ -489,6 +487,14 @@ mod tests {
             "swiss-cube"
         );
         assert_eq!(resolve_realm_name(".dcl.eth", None, true, true), ".dcl.eth");
+    }
+
+    #[test]
+    fn stripping_respects_non_ascii_names() {
+        // The suffix-length cut lands inside the three-byte euro sign.
+        assert_eq!(strip_ens_suffix("€abcdefg"), "€abcdefg");
+        assert_eq!(strip_ens_suffix("café.dcl.eth"), "café");
+        assert_eq!(strip_ens_suffix("名前.DCL.ETH"), "名前");
     }
 
     #[test]

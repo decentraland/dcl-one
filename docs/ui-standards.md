@@ -162,6 +162,14 @@ Components need visible focus, keyboard interaction, labels, sufficient
 contrast and reduced-motion support. Do not override reduced-motion rules
 from a component module.
 
+A component that cannot meet one of these rules records a named exception
+here, with its measurement, reason, scope and the change that removes it.
+Each exception covers only its stated scope.
+
+| Exception                    | Measurement                                                                                                                                                                                                                                       | Reason                                                                                                                                           | Scope                                                                                                                                              | Removed by                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `titlebar-selected-contrast` | Snow (#fcfcfc, Figma `neutrals/snow`) label and icon on #ff7439 (Figma `color/action-secondary`, `--dcl-primary-alt-primary-alt` here; `--dcl-action-secondary` names the same value): 2.62:1 at 16px/600, below 4.5:1 (AA) and 3:1 (large text). | The design system's Explorer selected-state pair from Figma title bar 16959:168 ("explorer (orange when selected)"), chosen by the design owner. | The selected TitleBar section, Explorer variant only. On web pages, the Figma web variant (white when selected, dark label) is the compliant path. | A Figma palette change for that state. |
+
 ### Migrating existing styles
 
 A migration covers one bounded component and its consumers, and is scheduled
@@ -191,6 +199,15 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   SDK toolchain's
   `apps/dcl-scene-cli/scripts/`, `src/templates/` and `testdata/`. It is a
   best-effort check: a pass does not prove the change follows this standard.
+- `make check` and CI also run `tooling/ui_standards.py --token-floor`. For
+  each stylesheet of the surfaces that use the shared foundations (the
+  `FLOOR_PATHS` of the script) it fails when the `var(--dcl-` uses drop
+  below, or the uses of an `apps/ui3` `atoms/primitives.css` property rise
+  above, the counts in `tooling/ui-token-floor.json`, and when that file
+  records a stylesheet that is not there. After a deliberate change (a moved
+  or removed stylesheet, a count that must change), run
+  `python3 tooling/ui_standards.py --write-token-floor` and commit the file
+  with the change.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -378,7 +395,7 @@ import { theme } from "@dcl/one-ui/foundations";
 import "@dcl/one-ui/foundations.css";
 ```
 
-`@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles ([ADR](adr/2026-11-09-shared-ui-import-name.md)). Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.

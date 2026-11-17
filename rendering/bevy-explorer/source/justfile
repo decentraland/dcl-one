@@ -7,6 +7,9 @@ set positional-arguments
 # the wasm rustflags (+atomics, ...) need nightly; same pin as apps/bevy-explorer/build-web.py
 wasm_toolchain := "nightly-2026-04-15"
 
+# the bridge scene's package manager; a shell with pnpm on its PATH sets PNPM=pnpm (nix develop .#wasm does)
+pnpm := env_var_or_default("PNPM", "corepack pnpm@12.21.0")
+
 # nixos: cef's bundled libvulkan.so.1 can't find the system's vulkan drivers without this
 nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { 'XDG_DATA_DIRS="/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"' } else { "" }
 
@@ -20,10 +23,10 @@ wasm: ts-bindings
     rm -f ./deploy/web/engine/pkg-scene/.gitignore
     # inline the scene runtime's glue into the sandbox worker — the engine loads
     # pkg/sandbox_worker.bundle.js, so this must re-run on every wasm build.
-    npx --yes esbuild@0.28.1 ./deploy/web/engine/sandbox_worker.js --bundle --format=esm --log-level=error --outfile=./deploy/web/engine/pkg/sandbox_worker.bundle.js
-    cd react-web && npm install
-    cd react-web/bridge-scene && npm install
-    cd react-web && npm run dev -- --open
+    cd react-web && {{pnpm}} install --frozen-lockfile --ignore-scripts
+    node ./react-web/node_modules/esbuild/bin/esbuild ./deploy/web/engine/sandbox_worker.js --bundle --format=esm --log-level=error --outfile=./deploy/web/engine/pkg/sandbox_worker.bundle.js
+    cd react-web/bridge-scene && {{pnpm}} install --frozen-lockfile --ignore-scripts && {{pnpm}} --filter @dcl/hashing build
+    cd react-web && {{pnpm}} run dev --open
 
 # regenerate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
 # structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts).
@@ -33,9 +36,9 @@ ts-bindings:
 # bundle the react HUD page + bridge scene into assets/ (the files native runs from).
 # ts-bindings first so the TS the page + bridge scene import is regenerated from the Rust structs.
 bundle-native: ts-bindings
-    cd react-web && npm install
-    cd react-web/bridge-scene && npm install
-    cd react-web && npm run bundle:native
+    cd react-web && {{pnpm}} install --frozen-lockfile --ignore-scripts
+    cd react-web/bridge-scene && {{pnpm}} install --frozen-lockfile --ignore-scripts && {{pnpm}} --filter @dcl/hashing build
+    cd react-web && {{pnpm}} run bundle:native
     mkdir -p target && touch target/.bundle-native-stamp
 
 # bundle only if react-web, its checked shared dependency graph,

@@ -127,13 +127,13 @@ async fn the_route_is_bearer_gated() {
     let unset: SharedState = Arc::new(State::new(unset, Settings::default()));
     let body = json!({ "registries": [] }).to_string();
     let (status, body_json) = backfill(&unset, "halloweeks_2026", Some("Bearer x"), &body).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body_json["error"], json!("admin token not configured"));
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json["error"], json!("Not Authorized"));
 
     let state = state().await.unwrap();
     for presented in [None, Some("Bearer wrong")] {
         let (status, _) = backfill(&state, "halloweeks_2026", presented, &body).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{presented:?}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{presented:?}");
     }
 }
 
@@ -190,6 +190,18 @@ async fn badge_and_body_checks_follow_upstream() {
     let (status, _) = post(&state, "traveler", json!([registry(&addr, json!({}))])).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, body) = post(&state, "traveler", json!([])).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["userProgressesMerged"], json!(0));
+}
+
+#[tokio::test]
+async fn the_backfill_takes_bodies_over_the_shared_limit() {
+    let Some(state) = state().await else {
+        return;
+    };
+    let bearer = format!("Bearer {TOKEN}");
+    let body = json!({ "registries": [], "pad": "x".repeat(2 * super::MAX_BODY_BYTES) });
+    let (status, body) = backfill(&state, "traveler", Some(&bearer), &body.to_string()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["userProgressesMerged"], json!(0));
 }

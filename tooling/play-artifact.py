@@ -14,8 +14,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = 'rendering/bevy-explorer/source/'
-# The vendored Bevy the engine compiles (rendering/bevy-explorer/docs/guidelines/bevy-fork.md).
-BEVY = 'rendering/bevy-explorer/bevy/'
+# The crates the engine compiles from tracked bytes. Bevy and the forked crates are git
+# dependencies: Cargo.lock, under SOURCE, names their revisions.
+VENDOR = 'rendering/bevy-explorer/vendor/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
 # The ts-rs bindings both HUD hosts compile (scripts/gen-ts-bindings.sh writes them; tracked).
@@ -79,7 +80,10 @@ def input_files(root=ROOT, revision=None, engine_only=False):
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
-        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or path in shared or path in INPUTS
+        return (path.startswith((SOURCE, VENDOR, PROTO, '.cargo/')) or path in shared or path in INPUTS
+                # bevy-ci.py selects the web lane for these paths and drops markdown.
+                or (not engine_only and ((path.startswith('library/hashing/') and not path.endswith('.md'))
+                                        or path == 'tooling/check-local-hashing.mjs'))
                 or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
@@ -116,10 +120,15 @@ def input_files(root=ROOT, revision=None, engine_only=False):
             tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
-            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo')
+            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, VENDOR, PROTO, '.cargo')
                        for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
                        if p.is_file()]
             tracked += list(INPUTS) + list(shared)
+            if not engine_only:
+                tracked += [p.relative_to(root).as_posix() for p in (root / 'library/hashing').rglob('*')
+                            if p.is_file()]
+                if (root / 'tooling/check-local-hashing.mjs').is_file():
+                    tracked.append('tooling/check-local-hashing.mjs')
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]
         hashes = {}
         for path in sorted(set(filter(selected, tracked))):

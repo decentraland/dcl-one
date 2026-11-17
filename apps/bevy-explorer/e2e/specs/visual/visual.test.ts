@@ -53,8 +53,8 @@ for (const scene of SCENES) {
     `${scene.id} matches its reference`,
     async ({ explorer, t, report, restore }) => {
       const [x, y] = scene.base
-      // The frame is to agree with the next. The scene hides avatars, not the HUD's nametag over
-      // the hidden player, whose name is the session's fresh guest's: off for the frame. The
+      // The frame is to agree with the next. The scene hides avatars, not the nametag over the
+      // hidden player, whose name is the session's fresh guest's: off for the frame. The
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
       // agree: held still for the frame.
       restore(async () => {
@@ -104,3 +104,31 @@ for (const scene of SCENES) {
     { session: SESSION, timeoutMs: SCENARIO_TIMEOUT_MS }
   )
 }
+
+/** The names `scenes/avatar-shape` gives its five avatars, whose ids are `npc-1` to `npc-5`. */
+const AVATAR_SHAPE_NAMES = ['NPC One', 'NPC Two', 'NPC Three', 'NPC Four (Parent)', 'NPC Five (Child of Four)']
+
+scenario(
+  "a scene's avatars carry their names",
+  async ({ explorer }) => {
+    const [x, y] = SCENES.find((scene) => scene.id === 'avatar-shape')!.base
+    const nametags = await explorer.json<{ visible: boolean }>('/nametags true')
+    assert.equal(nametags.visible, true, 'the nametags should be on')
+    await explorer.teleport(x, y)
+    // a tag shows once its avatar is built, so the five arrive one by one
+    const tags = await until(
+      async () => (await explorer.nametags()).tags.filter((tag) => tag.sceneAvatar),
+      (tags) => tags.length === AVATAR_SHAPE_NAMES.length,
+      { timeoutMs: SCENE_LIVE_TIMEOUT_MS, intervalMs: 1000, what: `the ${AVATAR_SHAPE_NAMES.length} avatars of avatar-shape to show their nametags` }
+    )
+    assert.deepEqual(tags.map((tag) => tag.name).sort(), [...AVATAR_SHAPE_NAMES].sort())
+    for (const tag of tags) {
+      assert.equal(tag.player, null, `${tag.name} is no player`)
+      assert.match(tag.suffix, /^#pc-[1-5]$/, `${tag.name} should end in its id's last four characters`)
+      assert.equal(tag.verified, false)
+      assert.equal(tag.voice, 'off')
+      assert.notEqual(tag.headOffset, null, `${tag.name} should stand over a built avatar`)
+    }
+  },
+  { session: SESSION, timeoutMs: SCENARIO_TIMEOUT_MS }
+)

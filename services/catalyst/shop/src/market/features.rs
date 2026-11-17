@@ -16,8 +16,8 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::MarketplaceState;
-use crate::explore::api::feature_flags;
 use crate::jobs::{Jobs, PeriodicCfg};
+use crate::shared::feature_flags;
 
 /// The application the Shop's flags are read under: a key `shop-x` is `dapps-shop-x` in the file.
 pub const APP: &str = "dapps";

@@ -1796,12 +1796,40 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
     cleanup_mirror(&pool, &[contract_of(&t, 1)]).await;
 }
 
+async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &str) {
+    sqlx::query(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+             total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', lower($1), $2::numeric, 137, 'wearable_v2', $3, lower($4), 'common', 0, 10, 10, 0, '', 'Item', 'hat', 0, 0, 0, now())",
+    )
+    .bind(contract)
+    .bind(item_id)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}:{item_id}"))
+    .bind(creator)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The `public_item_order` ids the shared `unified_trades` view serves now.
+async fn open_item_order_ids(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH {} SELECT id::text FROM unified_trades WHERE type = 'public_item_order'",
+        super::catalog::unified_trades_cte("$1", "$2")
+    )))
+    .bind(chrono::Utc::now().naive_utc())
+    .bind(None::<chrono::NaiveDateTime>)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
 fn item_order_json(signer: &str, contract: &str) -> String {
     format!(
         r#"{{ "signer": "{signer}", "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137,
              "checks": {{ "uses": 1, "expiration": 4102444800000, "effective": 0, "salt": "0x1234", "contractSignatureIndex": 0, "signerSignatureIndex": 0, "allowedRoot": "0x", "externalChecks": [] }},
              "sent": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "1", "extra": "0x"}} ],
-             "received": [ {{"assetType": 1, "contractAddress": "0x2222222222222222222222222222222222222222", "amount": "1000000000000000000", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
+             "received": [ {{"assetType": 1, "contractAddress": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", "amount": "1000000000000000000", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
     )
 }
 
@@ -1828,15 +1856,44 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     ));
     listings::test_support::sign(&mut trade, &marketplace);
     let signer = trade.signer.clone();
+    // A primary sale is the creator's: an unmirrored item, or another
+    // creator's, is refused before the insert.
+    assert!(matches!(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::ItemUnknown
+    ));
+    seed_item_row(&pool, &contract, "1", WALLET_A).await;
+    assert!(matches!(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::NotTheCreator
+    ));
+    // The rows a reader serves leave out an item order its creator did not sign.
+    let foreign = listings::insert_trade(&pool, &trade, "MATIC", marketplace.address)
+        .await
+        .unwrap();
+    assert!(!open_item_order_ids(&pool).await.contains(&foreign));
+    delete_trade(&pool, &foreign).await;
+    sqlx::query("UPDATE shop.items SET creator = lower($2) WHERE contract_address = $1")
+        .bind(&contract)
+        .bind(&signer)
+        .execute(&pool)
+        .await
+        .unwrap();
     let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
         .await
         .unwrap();
+    assert!(open_item_order_ids(&pool).await.contains(&id));
     assert!(matches!(
         listings::create_trade(&pool, None, &trade, &signer, 1_000)
             .await
             .unwrap_err(),
         listings::TradeCreationError::Duplicate
     ));
+    seed_item_row(&pool, &contract_of(&t, 8), "1", &sf::address()).await;
     let (kind, stored_signer, contract_col, assets): (String, String, String, i64) = sqlx::query_as(
         "SELECT t.type::text, t.signer, t.contract, (SELECT count(*) FROM shop.trade_assets a WHERE a.trade_id = t.id) FROM shop.trades t WHERE t.id = $1::uuid",
     )
@@ -1976,13 +2033,14 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     for id in [id, created] {
         delete_trade(&pool, &id).await;
     }
+    cleanup_mirror(&pool, &[contract, contract_of(&t, 8)]).await;
 }
 
 fn item_bid_json(signer: &str, contract: &str, item_id: &str) -> String {
     format!(
         r#"{{ "signer": "{signer}", "signature": "0x00", "type": "bid", "network": "MATIC", "chainId": 137,
              "checks": {{ "uses": 1, "expiration": 4102444800000, "effective": 0, "salt": "0x1234", "contractSignatureIndex": 0, "signerSignatureIndex": 0, "allowedRoot": "0x", "externalChecks": [] }},
-             "sent": [ {{"assetType": 1, "contractAddress": "0x2222222222222222222222222222222222222222", "amount": "1500000000000000000", "extra": "0x"}} ],
+             "sent": [ {{"assetType": 1, "contractAddress": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", "amount": "1500000000000000000", "extra": "0x"}} ],
              "received": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "{item_id}", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
     )
 }
@@ -2144,6 +2202,239 @@ async fn a_bid_stands_without_its_notification() {
     delete_trade(&pool, &id).await;
     delete_trade(&pool, &self_bid).await;
     cleanup_mirror(&pool, &[contract]).await;
+}
+
+/// marketplace-server ae872a4a `validateTradeByType` refuses a second open
+/// order for an item or NFT and a second open bid by the same bidder on the
+/// same asset (409); a closed one no longer counts.
+#[tokio::test]
+async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 4);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    seed_item_row(&pool, &contract, "1", &signer).await;
+    let signed = |json: String, salt: &str| {
+        let mut trade = listings::test_support::parse(
+            &json.replace(r#""salt": "0x1234""#, &format!(r#""salt": "{salt}""#)),
+        );
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+    let create = |trade: listings::TradeCreation| {
+        let (pool, signer) = (pool.clone(), signer.clone());
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        async move { listings::create_trade(&pool, None, &trade, &signer, now_ms).await }
+    };
+
+    let first = create(signed(item_order_json(&signer, &contract), "0x01"))
+        .await
+        .unwrap();
+    let second = create(signed(item_order_json(&signer, &contract), "0x02")).await;
+    let err = second.unwrap_err();
+    assert!(
+        matches!(err, listings::TradeCreationError::DuplicateOpen(_)),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "There is already an open order for this Item"
+    );
+    // Once the first order is closed, the item can be listed again.
+    sqlx::query("UPDATE shop.trades SET expires_at = '2000-01-01' WHERE id = $1::uuid")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let relisted = create(signed(item_order_json(&signer, &contract), "0x02"))
+        .await
+        .unwrap();
+
+    let bid = create(signed(item_bid_json(&signer, &contract, "7"), "0x03"))
+        .await
+        .unwrap();
+    let err = create(signed(item_bid_json(&signer, &contract, "7"), "0x04"))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "There is already a bid with the same parameters"
+    );
+    // Another item is another asset.
+    let other_bid = create(signed(item_bid_json(&signer, &contract, "8"), "0x04"))
+        .await
+        .unwrap();
+
+    for id in [first, relisted, bid, other_bid] {
+        delete_trade(&pool, &id).await;
+    }
+    cleanup_mirror(&pool, &[contract]).await;
+}
+
+/// An open NFT order blocks only its own signer's second order: another
+/// wallet's still-open order (a previous owner's, never executed) does not
+/// block the current owner, and a cancelled order releases the token.
+#[tokio::test]
+async fn an_open_nft_order_blocks_only_its_signers_second_order() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 5);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let order = |token_id: &str, salt: &str, by: &str| {
+        let mut trade = listings::test_support::parse(
+            &listings::test_support::trade_json_on(&signer, "0x00", 137)
+                .replace(r#""salt": "0x1234""#, &format!(r#""salt": "{salt}""#)),
+        );
+        trade.sent[0].contract_address = contract.clone();
+        trade.sent[0].token_id = Some(token_id.to_string());
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade.signer = by.to_string();
+        trade
+    };
+    let now = chrono::Utc::now().naive_utc();
+    let check = |trade: listings::TradeCreation| {
+        let pool = pool.clone();
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let out = listings::refuse_duplicate_open(&mut tx, &trade, "MATIC", None, now).await;
+            tx.rollback().await.unwrap();
+            out
+        }
+    };
+    let mine = listings::insert_trade(
+        &pool,
+        &order("5", "0x31", &signer),
+        "MATIC",
+        marketplace.address,
+    )
+    .await
+    .unwrap();
+    let previous_owner = listings::insert_trade(
+        &pool,
+        &order("6", "0x32", WALLET_A),
+        "MATIC",
+        marketplace.address,
+    )
+    .await
+    .unwrap();
+
+    let err = check(order("5", "0x33", &signer)).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "There is already an open order for this NFT"
+    );
+    check(order("5", "0x33", WALLET_A))
+        .await
+        .expect("another wallet's order is not this signer's duplicate");
+    check(order("6", "0x34", &signer))
+        .await
+        .expect("a previous owner's open order does not block the current owner");
+
+    let hashed: String =
+        sqlx::query_scalar("SELECT hashed_signature FROM shop.trades WHERE id = $1::uuid")
+            .bind(&mine)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.trade_cancellations (target_hashed_signature, kind, signer, signature) VALUES ($1, 'signer', lower($2), '0x00')",
+    )
+    .bind(&hashed)
+    .bind(&signer)
+    .execute(&pool)
+    .await
+    .unwrap();
+    check(order("5", "0x33", &signer))
+        .await
+        .expect("a cancelled order releases the token");
+
+    for id in [mine, previous_owner] {
+        delete_trade(&pool, &id).await;
+    }
+}
+
+/// A token or item id stored before the create path checked it (an empty
+/// string, a hex spelling) is left out of the open bids and listings, never a
+/// cast error that fails the whole read.
+#[tokio::test]
+async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 3);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let nft_bid = |token_id: &str, salt: &str| {
+        let mut trade = listings::test_support::parse(
+            &item_bid_json(&signer, &contract, "1")
+                .replace(r#""assetType": 4"#, r#""assetType": 3"#)
+                .replace(r#""itemId": "1""#, &format!(r#""tokenId": "{token_id}""#))
+                .replace(r#""salt": "0x1234""#, &format!(r#""salt": "{salt}""#)),
+        );
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+    let mut ids = Vec::new();
+    for (token_id, salt) in [("", "0x11"), ("0x2a", "0x12"), ("42", "0x13")] {
+        ids.push(
+            listings::insert_trade(
+                &pool,
+                &nft_bid(token_id, salt),
+                "MATIC",
+                marketplace.address,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    let mut order =
+        listings::test_support::parse(&listings::test_support::trade_json_on(&signer, "0x00", 137));
+    order.sent[0].contract_address = contract.clone();
+    order.sent[0].token_id = Some(String::new());
+    listings::test_support::sign(&mut order, &marketplace);
+    ids.push(
+        listings::insert_trade(&pool, &order, "MATIC", marketplace.address)
+            .await
+            .unwrap(),
+    );
+
+    let bids: Vec<(String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()))
+            .bind(chrono::Utc::now().naive_utc())
+            .bind(None::<chrono::NaiveDateTime>)
+            .fetch_all(&pool)
+            .await
+            .expect("one malformed row does not fail the bids read");
+    let listed: Vec<&String> = bids
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| ids.contains(id))
+        .collect();
+    assert_eq!(listed, vec![&ids[2]], "{bids:?}");
+    let listings: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH {} SELECT id::text FROM unified_trades",
+        super::catalog::unified_trades_cte("$1", "$2")
+    )))
+    .bind(chrono::Utc::now().naive_utc())
+    .bind(None::<chrono::NaiveDateTime>)
+    .fetch_all(&pool)
+    .await
+    .expect("one malformed row does not fail the listings read");
+    assert!(!listings.contains(&ids[3]));
+
+    for id in ids {
+        delete_trade(&pool, &id).await;
+    }
 }
 
 #[tokio::test]

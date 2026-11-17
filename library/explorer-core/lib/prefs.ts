@@ -33,6 +33,7 @@ export const PREF = {
   voiceUsed: 'nearbyVoiceUsed',
   launchCount: 'launchCount',
   gpuGuideSeen: 'hud.gpuGuideSeen',
+  loginMusicMuted: 'hud.loginMusicMuted',
   featureFlagsUserId: 'hud.featureFlagsUserId'
 } as const
 

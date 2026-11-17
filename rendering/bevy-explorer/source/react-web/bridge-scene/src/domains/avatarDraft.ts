@@ -24,8 +24,8 @@ let deployed: AvatarLook | null = null
 // later save carries that look, so its outcome settles the commit (`profileSaveSettled`; another
 // close and the welcome page's save cover it with their own result).
 let superseded: { edited: AvatarLook; look: AvatarLook } | null = null
-// The look the stage wears before there is a player: the guest start page's pick, which the
-// sign-in then carries, so the player arrives already wearing it.
+// The look the stage wears before there is a player: a new account's pick, which the sign-in then
+// carries, so the player arrives already wearing it.
 let standIn: AvatarLook | null = null
 identity.onChange(() => {
   draft = null

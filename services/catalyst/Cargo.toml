@@ -3,6 +3,9 @@ name = "catalyst"
 version.workspace = true
 edition = "2024"
 description = "Decentraland Catalyst node: one application package"
+# The integration tests link as a few grouped binaries, each listed below: a file under tests/
+# runs only as a module of one of them (tooling/tests/test_dev_regressions.py checks it).
+autotests = false
 
 [lib]
 name = "catalyst"
@@ -11,6 +14,34 @@ path = "src/lib.rs"
 [[bin]]
 name = "catalyst"
 path = "src/main.rs"
+
+[[test]]
+name = "node_1"
+path = "tests/node_1.rs"
+
+[[test]]
+name = "node_2"
+path = "tests/node_2.rs"
+
+[[test]]
+name = "node_3"
+path = "tests/node_3.rs"
+
+[[test]]
+name = "shop"
+path = "tests/shop/main.rs"
+
+[[test]]
+name = "sockets_1"
+path = "tests/sockets_1.rs"
+
+[[test]]
+name = "sockets_2"
+path = "tests/sockets_2.rs"
+
+[[test]]
+name = "sockets_3"
+path = "tests/sockets_3.rs"
 
 [[test]]
 name = "stats_metrics_engine"
@@ -86,6 +117,7 @@ ipnet = "2"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 tokio-util = { version = "0.7", features = ["io"] }
 dashmap = "6"
+moka = { version = "=0.12.10", features = ["future"] }
 hashlink = "0.11"
 dragonbox_ecma = "0.1.12"
 parking_lot = "0.12"
@@ -116,6 +148,8 @@ hmac = "0.13.0"
 handlebars = { version = "6.4.4", default-features = false }
 bcrypt = "0.19.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
+# Camera preserves the pinned service's format detection, codecs and thumbnails.
+image-camera = { package = "image", version = "=0.24.9", default-features = false, features = ["gif", "jpeg", "ico", "png", "pnm", "tga", "tiff", "webp", "bmp", "hdr", "dds", "farbfeld", "openexr", "qoi"] }
 alloy-sol-types = "1.7.3"
 getrandom = "0.4.3"
 v8 = "=152.2.0"
@@ -167,7 +201,6 @@ catalyst-price = { path = "price" }
 catalyst-storage = { path = "storage" }
 catalyst-config = { path = "config" }
 catalyst-shared = { path = "shared" }
-catalyst-testing = { path = "testing" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true
