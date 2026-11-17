@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { ChainId } from '@dcl/schemas';
-import type { AuthIdentity } from 'decentraland-crypto-fetch';
+import { AuthLinkType, ChainId } from '@dcl/schemas';
 import type * as SharedFetch from '/shared/fetch';
+import { type AuthIdentity, createIdentityKeys } from '/@/lib/identity';
 import type { DeploymentComponentsStatus, Info } from '/@/lib/deploy';
 
 const REGISTRY = 'https://asset-bundle-registry.example.org';
@@ -20,12 +20,6 @@ vi.mock('/@/config', () => ({
 vi.mock('/shared/fetch', async importOriginal => ({
   ...(await importOriginal<typeof SharedFetch>()),
   fetch: (...args: unknown[]) => fetchMock(...args),
-}));
-
-vi.mock('@dcl/crypto', () => ({
-  Authenticator: {
-    signPayload: vi.fn(() => [{ type: 'SIGNER', payload: '0xtest', signature: '' }]),
-  },
 }));
 
 vi.mock('dcl-catalyst-client/dist/contracts-snapshots', () => ({
@@ -133,7 +127,11 @@ describe('fetchDeploymentStatus', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    identity = {} as AuthIdentity;
+    identity = {
+      ephemeralIdentity: createIdentityKeys(),
+      expiration: new Date(),
+      authChain: [{ type: AuthLinkType.SIGNER, payload: '0xtest', signature: '' }],
+    };
     info = { rootCID: SCENE_ID } as Info;
   });
 
@@ -149,6 +147,18 @@ describe('fetchDeploymentStatus', () => {
 
     it('should derive both statuses from that response', () => {
       expect(status).toEqual({ catalyst: 'complete', assetBundle: 'complete' });
+    });
+
+    it('should sign the request for the path of the status, in lower case', () => {
+      const [, { headers }] = fetchMock.mock.calls[0];
+      const timestamp = headers['x-identity-timestamp'];
+
+      expect(JSON.parse(headers['x-identity-auth-chain-0'])).toEqual(identity.authChain[0]);
+      expect(JSON.parse(headers['x-identity-auth-chain-1'])).toMatchObject({
+        type: AuthLinkType.ECDSA_PERSONAL_SIGNED_ENTITY,
+        payload: `get:/entities/status/${SCENE_ID.toLowerCase()}:${timestamp}:{}`,
+      });
+      expect(headers['x-identity-metadata']).toEqual('{}');
     });
   });
 

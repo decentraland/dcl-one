@@ -302,7 +302,7 @@ pub fn diagnostics(state: &WebCacheState) -> [(DiagnosticPath, Option<f64>); 12]
 }
 
 #[cfg(target_arch = "wasm32")]
-#[bevy::web_worker::page_functions]
+#[cfg_attr(feature = "web-worker", bevy::web_worker::page_functions)]
 #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
 extern "C" {
     /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
@@ -411,6 +411,30 @@ mod io {
             }
         }
         Err("no previous cache item".into())
+    }
+
+    /// The bytes of a `data:` or `blob:` url, through the global scope's `fetch` (window or worker).
+    pub async fn fetch_local(url: &str) -> Result<Vec<u8>, String> {
+        let global = js_sys::global();
+        let promise = if let Some(window) = global.dyn_ref::<web_sys::Window>() {
+            window.fetch_with_str(url)
+        } else if let Some(worker) = global.dyn_ref::<web_sys::WorkerGlobalScope>() {
+            worker.fetch_with_str(url)
+        } else {
+            return Err("no fetch in this scope".to_owned());
+        };
+        let response: web_sys::Response = JsFuture::from(promise)
+            .await
+            .map_err(|e| format!("{e:?}"))?
+            .dyn_into()
+            .map_err(|_| "fetch returned no response".to_owned())?;
+        if !response.ok() {
+            return Err(format!("status {}", response.status()));
+        }
+        let buffer = JsFuture::from(response.array_buffer().map_err(|e| format!("{e:?}"))?)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
 
     /// The cached bytes for `url`, under either key; `None` when there are none (or no cache).

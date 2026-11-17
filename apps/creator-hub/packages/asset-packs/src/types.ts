@@ -1,5 +1,9 @@
 import type { Entity, PBAvatarBase, PBAvatarEquippedData, TransformType } from '@dcl/ecs';
-import { BaseComponentNames } from './constants';
+import type { BaseComponentNames } from './constants';
+
+// The package scripts load this file with Node, which cannot resolve `./constants`. So the file
+// has no import that stays at run time, and the compiler checks the name against the constant.
+const TRIGGERS: typeof BaseComponentNames.TRIGGERS = 'asset-packs::Triggers';
 
 export type AssetPackData = {
   id: string;
@@ -109,8 +113,9 @@ export function isLegacyAssetData(value: any): value is LegacyAssetData {
 }
 
 export function getTriggerComponent(value: AssetData): TriggerData | undefined {
-  return value.composite.components.find(c => c.name === BaseComponentNames.TRIGGERS)?.data[0]
-    ?.json as TriggerData | undefined;
+  return value.composite.components.find(c => c.name === TRIGGERS)?.data[0]?.json as
+    | TriggerData
+    | undefined;
 }
 
 export function assertValidTriggerComponent(assetName: string, trigger: TriggerData) {
@@ -240,5 +245,5 @@ export type ActionCallback = () => void;
  * }
  * ```
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line no-unused-vars
 export type Slider<Min extends number, Max extends number, Step extends number = 1> = number;

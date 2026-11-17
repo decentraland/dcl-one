@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../tests/utils/TestProviders';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -10,9 +10,9 @@ import { PlaceContinuityWarning } from './component';
 
 function renderWarning(props: Parameters<typeof PlaceContinuityWarning>[0]) {
   return render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <PlaceContinuityWarning {...props} />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 
@@ -42,6 +42,14 @@ describe('PlaceContinuityWarning', () => {
     renderWarning({ kind: 'world-merge', overlap: 3 });
     expect(screen.getByRole('alert').textContent).toContain('overlaps 3 existing scenes');
     expect(screen.getByRole('alert').textContent).toContain('replaces exactly one existing scene');
+  });
+
+  it('names the Multiplayer Server storage only for a scene that uses it', () => {
+    renderWarning({ kind: 'land', storage: true });
+    expect(screen.getByRole('alert').textContent).toContain('Multiplayer Server storage');
+    cleanup();
+    renderWarning({ kind: 'world-merge', overlap: 2 });
+    expect(screen.getByRole('alert').textContent).not.toContain('Multiplayer Server storage');
   });
 
   it('explains that single-scene mode empties the world', () => {

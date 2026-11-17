@@ -79,12 +79,12 @@ function emitProgress(
 // otherwise — which is what silently skipped 281 of central-plaza's 466 models. Reading from
 // disk loses the chance to repair misaligned bytes first, so the repair moves into the reader.
 class AlignedNodeIO extends NodeIO {
-  protected override readURI(uri: string, type: 'view'): Promise<Uint8Array>;
+  protected override readURI(uri: string, type: 'view'): Promise<Uint8Array<ArrayBuffer>>;
   protected override readURI(uri: string, type: 'text'): Promise<string>;
   protected override async readURI(
     uri: string,
     type: 'view' | 'text',
-  ): Promise<Uint8Array | string> {
+  ): Promise<Uint8Array<ArrayBuffer> | string> {
     if (type === 'text') return super.readURI(uri, 'text');
     const view = await super.readURI(uri, 'view');
     const fixed = fixGlbAlignment(Buffer.from(view.buffer, view.byteOffset, view.byteLength));

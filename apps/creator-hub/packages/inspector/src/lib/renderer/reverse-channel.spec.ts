@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../utils/emitter';
+import type { Emitter } from '../utils/emitter';
 import { Quaternion, Vector3 } from '@dcl/ecs-math';
 
 import type { SceneContext } from '../babylon/decentraland/SceneContext';
@@ -37,7 +37,7 @@ describe('connectReverseChannel', () => {
   const PLAYER = 5 as never;
 
   beforeEach(() => {
-    events = mitt<RendererEvents>();
+    events = createEmitter<RendererEvents>();
     operations = {
       updateValue: vi.fn(),
       updateSelectedEntity: vi.fn(),

@@ -27,10 +27,10 @@ import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import type { Vec2 } from '@explorer-core/features/map/mapCoords'
 import { edgePoint, mapUnitsToMeters, offMap } from '@explorer-core/features/minimap/minimapLayers'
-import { homeOf } from '@explorer-core/features/map/home'
+import { homeOf, isStandingInHome } from '@explorer-core/features/map/home'
 import { fetchPlaceAt, isEmptyPlace, setPlaceFavorite } from '@explorer-core/features/map/mapApi'
 import { jumpInLink } from '@explorer-core/features/map/shareLinks'
-import { isStandingInHome, minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
+import { minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
 import {
@@ -318,7 +318,7 @@ export const Minimap = memo(function Minimap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkRealm, inWorld, parcelKey, map.x, map.y])
   const currentPlace = covers(placeHere) ? (placeHere?.place ?? null) : null
-  const homeHere = linkRealm != null && isStandingInHome(home, linkRealm, { x: map.x, y: map.y }, currentPlace)
+  const homeHere = linkRealm != null && isStandingInHome(home, inWorld ? linkRealm : null, { x: map.x, y: map.y }, currentPlace)
 
   // The favourite button: shown at once, then what the service answers; a refused change goes back.
   const favouriteRun = useRef(0)

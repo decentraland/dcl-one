@@ -13,7 +13,7 @@ import { IoOptionsOutline } from 'react-icons/io5';
 import { IoPhoneLandscapeOutline } from 'react-icons/io5';
 import { IoWarningOutline } from 'react-icons/io5';
 import { VscTrash } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import type { Entity } from '@dcl/ecs';
 import { classifyNode } from '../../shared/tree-model';
 import { codeComponentValueForLayer } from '../../code/store';

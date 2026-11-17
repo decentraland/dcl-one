@@ -1,4 +1,5 @@
-import { Box, Button, Typography } from 'decentraland-ui2';
+import Button from '@ui/atoms/Button';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import logo from '/assets/images/logo-editor.png';
@@ -16,35 +17,35 @@ export function About({ open, version, onClose }: Props) {
       title={t('modal.about.title')}
       onClose={onClose}
     >
-      <Box className="AboutModal">
+      <div className="AboutModal">
         <img
           className="AboutModalLogo"
           src={logo}
           alt="Decentraland Creator Hub"
         />
-        <Typography
+        <Text
           variant="h6"
           className="AboutModalName"
         >
           {t('modal.about.app_name')}
-        </Typography>
+        </Text>
         {version && (
-          <Typography
+          <Text
             variant="body2"
             className="AboutModalVersion"
           >
             {`v${version}`}
-          </Typography>
+          </Text>
         )}
         <Button
           className="AboutModalAction"
-          variant="contained"
+          variant="primary"
           fullWidth
           onClick={onClose}
         >
           {t('modal.about.action')}
         </Button>
-      </Box>
+      </div>
     </Modal>
   );
 }

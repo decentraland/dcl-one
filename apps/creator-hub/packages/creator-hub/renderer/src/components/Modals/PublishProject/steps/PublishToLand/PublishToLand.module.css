@@ -1,0 +1,91 @@
+.modal.modal > [role="dialog"] > div:last-child {
+  padding: 0;
+}
+
+.atlas {
+  height: 480px;
+  background-color: black;
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 16px 8px;
+}
+
+.placement {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  align-items: baseline;
+  height: 45px;
+  margin-right: 16px;
+  padding: 8px;
+  border: 1px solid grey;
+  border-radius: 8px;
+}
+
+/* Red text with no fill, as the text button before. */
+.footer .reset.reset.reset {
+  margin-left: 8px;
+  padding: 0;
+  background-color: transparent !important;
+  color: var(--dcl);
+  font-weight: 600;
+}
+
+.footer .reset.reset.reset:hover:not(:disabled) {
+  background-color: rgb(255 45 85 / 8%) !important;
+}
+
+.footer .publish.publish {
+  height: 45px;
+}
+
+/* The primary action of each step keeps its former hover and disabled colours. */
+.action.action.action.action:hover:not(:disabled) {
+  background-color: #f26276 !important;
+  box-shadow:
+    0 3px 1px -2px rgb(0 0 0 / 20%),
+    0 2px 2px 0 rgb(0 0 0 / 14%),
+    0 1px 5px 0 rgb(0 0 0 / 12%);
+}
+
+.action.action.action.action:disabled {
+  opacity: 1 !important;
+  background-color: #f8919d !important;
+  color: #fee9ec;
+  cursor: default !important;
+}
+
+.warning {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 640px;
+  margin: auto;
+  padding: 32px;
+  border-radius: 12px;
+  background-color: var(--black);
+}
+
+.warningActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* A white border and grey text, as the outlined secondary button before. With the border, the
+   padding is the one of the button beside it, so the two have the same width. */
+.warningActions .cancel.cancel.cancel {
+  padding: 7px 21px;
+  border: 1px solid rgb(255 255 255 / 50%);
+  box-shadow: none !important;
+  color: #5e5b67;
+  font-weight: 600;
+}
+
+.warningActions .cancel.cancel.cancel:hover:not(:disabled) {
+  border-color: #fff;
+  background-color: rgb(255 255 255 / 8%) !important;
+}
