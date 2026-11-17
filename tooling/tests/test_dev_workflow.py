@@ -405,8 +405,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
         label = "contains(github.event.pull_request.labels.*.name, 'ci:desktop')"
+        linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
-        self.assertIn(f"    if: github.event_name != 'pull_request' || {label}\n", found['creator-hub'])
+        self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
+        # ci:desktop builds macOS and Windows, ci:linux builds Linux; main builds all three.
+        self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])

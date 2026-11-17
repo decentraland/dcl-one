@@ -18,13 +18,14 @@
   text-underline-offset: 3px;
 }
 .ui-surface { background: var(--ui-canvas); }
-/* In the reset layer so the font-family of a @dcl/one-ui control (layers dcl.foundations, dcl.components) applies. */
+/* In the reset layer so a @dcl/one-ui control's own font-family and focus indicator (layers dcl.foundations,
+   dcl.components) win; an element whose component sets no outline keeps this focus ring. */
 @layer dcl.reset {
   :where(.ui-surface, .xc, .st, .ch) :where(button, input, select, textarea) { font-family: inherit; }
-}
-:where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 3px;
+  :where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--ui-accent);
+    outline-offset: 3px;
+  }
 }
 :where(.ui-surface, .xc, .st, .ch) ::selection { background: #ff6b8738; color: #fff; }
 .ui-page-header { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }

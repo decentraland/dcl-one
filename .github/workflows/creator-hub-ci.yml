@@ -7,8 +7,9 @@ name: Creator Hub / CI
 # reports: `changes` skips every job when nothing Creator Hub changed, and a path filter would
 # leave the check pending forever on the pull requests it filtered out.
 #
-# Pull requests build the desktop app (macOS and Windows) only with the `ci:desktop` label: add the
-# label, then push or reopen. Main and manual runs always build it.
+# Pull requests build the desktop app for macOS and Windows only with the `ci:desktop` label, and
+# for Linux only with the `ci:linux` label: add the label, then push or reopen. Main builds all
+# three; a manual run on another branch builds macOS and Windows.
 #
 # A run publishes the installers as a pre-release only on main, and only when it is asked to: a
 # push whose pull request has the `release:creator-hub` label, or a manual run with `release` set.
@@ -81,7 +82,7 @@ jobs:
               | grep -qE '^(apps/creator-hub/|apps/ui3/(package|tsconfig)\.json$|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/shop/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
             if [ "$DESKTOP" != true ]; then
-              echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app on this pull request."
+              echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS and Windows on this pull request, or ci:linux for Linux."
             fi
           else
             echo "creator-hub=false" >> "$GITHUB_OUTPUT"
@@ -161,8 +162,8 @@ jobs:
       asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
   creator-hub:
     needs: [ changes, inspector ]
-    # The macOS and Windows builds, and the test builds they attach to a pull request.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:desktop')
+    # The macOS, Windows and Linux builds, and the test builds they attach to a pull request.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:desktop') || contains(github.event.pull_request.labels.*.name, 'ci:linux')
     uses: ./.github/workflows/creator-hub-desktop.yml
     secrets:
       CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
@@ -189,6 +190,8 @@ jobs:
       inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
       inspector_version: ${{ needs.inspector.outputs.version }}
       inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}
+      macos-windows: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:desktop') }}
+      linux: ${{ github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci:linux') }}
   # Older finished pre-releases go only once the new one is fully published, which is kept. A run
   # that fails part-way leaves the previous pre-release in place, still promotable.
   prune_pre_releases:
@@ -204,7 +207,7 @@ jobs:
   # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
   # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
   # passed or were skipped (`changes` skips them all; a pull request without the `ci:desktop`
-  # label skips the builds and the prune that needs them).
+  # or `ci:linux` label skips the builds and the prune that needs them).
   result:
     name: Creator Hub CI
     if: always()

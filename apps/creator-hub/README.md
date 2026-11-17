@@ -349,11 +349,11 @@ Handles inspector package deployment:
 
 Handles desktop application builds:
 
-- **Multi-platform Builds** - macOS and Windows
-- **Code Signing** - Automatic code signing for both platforms
+- **Multi-platform Builds** - macOS, Windows and Linux (x64 AppImage and deb), for Ubuntu 22.04 and later or any system with glibc 2.35 and later
+- **Code Signing** - Automatic code signing for macOS and Windows
 - **Notarization** - macOS notarization
 - **Artifact Distribution** - Uploads to S3 and GitHub releases
-- **PR Testing** - Provides download links for PR testing; a pull request builds the desktop app only with the `ci:desktop` label (label, then push or reopen)
+- **PR Testing** - Provides download links for PR testing; a pull request builds the macOS and Windows installers only with the `ci:desktop` label, and the Linux installers only with the `ci:linux` label (label, then push or reopen)
 
 ## 🏗️ Architecture
 
@@ -526,7 +526,7 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Creator Hub App
 
-- Multi-platform builds (macOS, Windows)
+- Multi-platform builds (macOS, Windows, Linux)
 - Code signed and notarized
 - Distributed via GitHub releases and S3
 - PR builds available for testing
