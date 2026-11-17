@@ -2065,6 +2065,16 @@ pub struct ServerConfiguration {
     pub local_scene_parcels: Option<Vec<String>>,
 }
 
+impl ServerConfiguration {
+    /// Whether the realm lists its scenes up front, as a World does. A city lists none and
+    /// resolves its scenes around the player.
+    pub fn lists_scenes(&self) -> bool {
+        self.scenes_urn
+            .as_ref()
+            .is_some_and(|urns| !urns.is_empty())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MapData {
@@ -2443,6 +2453,14 @@ mod tests {
                 "{toggles}"
             );
         }
+    }
+
+    #[test]
+    fn a_realm_lists_scenes_only_with_a_scene_in_its_list() {
+        let config = |json: &str| serde_json::from_str::<ServerConfiguration>(json).unwrap();
+        assert!(config(r#"{"scenesUrn":["urn:decentraland:entity:a"]}"#).lists_scenes());
+        assert!(!config(r#"{"scenesUrn":[]}"#).lists_scenes());
+        assert!(!config(r#"{"realmName":"main"}"#).lists_scenes());
     }
 }
 

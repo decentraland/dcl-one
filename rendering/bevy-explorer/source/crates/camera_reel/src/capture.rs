@@ -311,11 +311,7 @@ fn start_capture(
         .realm_name
         .clone()
         .unwrap_or_else(|| realm.address.clone());
-    let is_world = realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_some_and(|urns| !urns.is_empty());
+    let is_world = realm.config.lists_scenes();
     let user_name = current_profile
         .profile
         .as_ref()

@@ -618,10 +618,7 @@ pub(crate) fn load_scene_javascript(
 /// over, so they share one fixed height limit; a city scene's limit grows with each connected
 /// region's parcel count.
 fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &ServerConfiguration) -> Vec<BoundRegion> {
-    let world = realm
-        .scenes_urn
-        .as_ref()
-        .is_some_and(|urns| !urns.is_empty());
+    let world = realm.lists_scenes();
     scene_regions(parcels.iter().copied())
         .into_iter()
         .map(|region| {
@@ -1335,13 +1332,7 @@ fn load_active_entities(
             }
         }
         pointers.set_realm(bounds_min, bounds_max);
-        pointers.reset_terrain(
-            current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty()),
-        );
+        pointers.reset_terrain(current_realm.config.lists_scenes());
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }
@@ -1361,11 +1352,7 @@ fn load_active_entities(
         }
 
         if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
-            let has_scene_urns = !current_realm
-                .config
-                .scenes_urn
-                .as_ref()
-                .is_none_or(Vec::is_empty);
+            let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
                 // we want to go to base but there are no specific parcels
@@ -1433,11 +1420,7 @@ fn load_active_entities(
         }
     };
 
-    let has_scene_urns = !current_realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_none_or(Vec::is_empty);
+    let has_scene_urns = current_realm.config.lists_scenes();
 
     if pointer_request.is_none()
         && !current_realm.address.is_empty()
