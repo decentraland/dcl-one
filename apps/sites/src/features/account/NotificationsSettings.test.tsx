@@ -87,6 +87,12 @@ describe("NotificationsSettings", () => {
       expect((await screen.findByRole("alert")).textContent).toContain("We couldn't load your notification settings");
       expect(screen.queryByRole("switch")).toBeNull();
       expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).disabled).toBe(true);
+
+      api.fetchSubscription.mockResolvedValue(confirmed);
+      await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
+      await loaded();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).value).toBe("jane.doe@example.com");
     });
   });
 
@@ -155,6 +161,56 @@ describe("NotificationsSettings", () => {
 
       await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(1));
       expect(api.putSubscription.mock.calls[0]![1]).toEqual({ ...details, ignore_all_email: true });
+    });
+  });
+
+  describe("when email is muted", () => {
+    it("locks the type switches, so a type change cannot unmute it", async () => {
+      const user = userEvent.setup();
+      api.fetchSubscription.mockResolvedValue({ ...confirmed, details: { ...details, ignore_all_email: true } });
+      show();
+      await loaded();
+
+      expect((screen.getByRole("switch", { name: "All email notifications" }) as HTMLInputElement).checked).toBe(false);
+      expect(screen.getByText("Turn on email notifications to choose which ones you get.")).toBeTruthy();
+      await openMarketplace(user);
+      expect((screen.getByRole("switch", { name: "Item Sold" }) as HTMLButtonElement).disabled).toBe(true);
+    });
+  });
+
+  describe("when the member toggles quickly", () => {
+    it("builds the second write on the first, still pending", async () => {
+      const user = userEvent.setup();
+      api.fetchSubscription.mockResolvedValue(confirmed);
+      const writes: Array<() => void> = [];
+      api.putSubscription.mockImplementation(() => new Promise<void>((resolve) => writes.push(resolve)));
+      show();
+      await loaded();
+      await openMarketplace(user);
+
+      await user.click(screen.getByRole("switch", { name: "Bid Received" }));
+      await user.click(screen.getByRole("switch", { name: "Royalties Earned" }));
+      await waitFor(() => expect(writes).toHaveLength(1));
+      writes[0]!();
+      await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(2));
+      writes[1]!();
+
+      const second = api.putSubscription.mock.calls[1]![1] as SubscriptionDetails;
+      expect(second.message_type.bid_received?.email).toBe(true);
+      expect(second.message_type.royalties_earned?.email).toBe(true);
+    });
+  });
+
+  describe("when an address change is pending", () => {
+    it("hides the master switch and locks the types until it is confirmed", async () => {
+      const user = userEvent.setup();
+      api.fetchSubscription.mockResolvedValue({ ...confirmed, unconfirmedEmail: "jane.new@example.com" });
+      show();
+      await loaded();
+
+      expect(screen.queryByRole("switch", { name: "All email notifications" })).toBeNull();
+      await openMarketplace(user);
+      expect((screen.getByRole("switch", { name: "Item Sold" }) as HTMLButtonElement).disabled).toBe(true);
     });
   });
 

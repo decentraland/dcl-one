@@ -85,6 +85,13 @@
   color: var(--dcl-feedback-error);
 }
 
+.loadError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
 .columns {
   display: grid;
   grid-template-columns: 1fr;

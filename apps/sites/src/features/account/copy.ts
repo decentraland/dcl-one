@@ -17,6 +17,8 @@ export const NOTIFICATIONS_COPY = {
   loadError: "We couldn't load your notification settings. Please try again later.",
   saveError: "We couldn't save your notification settings. Please try again.",
   confirmFirst: "Confirm your email to choose which notifications you get.",
+  unmuteFirst: "Turn on email notifications to choose which ones you get.",
+  retry: "Try again",
   email: {
     title: "Email Notification",
     label: "Email address",

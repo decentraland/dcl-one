@@ -83,13 +83,14 @@ describe("/account index", () => {
 });
 
 describe("/account unknown sections", () => {
-  it("answers 404 whether or not the reader is signed in", () => {
-    for (const wallet of [undefined, WALLET]) {
-      const error = thrown(() => notFoundLoader({ request: request("https://site.test/account/wallets", wallet) } as never)) as {
-        init: { status: number };
-      };
-      expect(error.init.status).toBe(404);
-    }
+  it.each([
+    ["signed out", undefined],
+    ["signed in", WALLET],
+  ])("answers 404 when %s", (_case, wallet) => {
+    const error = thrown(() => notFoundLoader({ request: request("https://site.test/account/wallets", wallet) } as never)) as {
+      init: { status: number };
+    };
+    expect(error.init.status).toBe(404);
   });
 
   it("moves an account-host request before answering", () => {

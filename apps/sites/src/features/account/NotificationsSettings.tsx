@@ -82,7 +82,7 @@ function EmailCard({ identity, email, unconfirmedEmail, details, loading, onTogg
             </span>
           ) : null}
         </h3>
-        {email && details ? (
+        {confirmed && details ? (
           <Switch
             label={COPY.email.master}
             labelHidden
@@ -164,6 +164,8 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
   const email = data?.email || "";
   const unconfirmedEmail = data?.unconfirmedEmail || "";
   const confirmed = !!email && !unconfirmedEmail;
+  const muted = !!details && !isAllEmailEnabled(details);
+  const typesLocked = !confirmed || muted;
 
   // Each write sends the details as shown, pending writes included, so quick toggles build on each other.
   const save = (next: SubscriptionDetails) => update.mutate({ identity, details: next });
@@ -187,9 +189,14 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
       />
 
       {subscription.isError && !details ? (
-        <p className={styles.error} role="alert">
-          {COPY.loadError}
-        </p>
+        <div className={styles.loadError}>
+          <p className={styles.error} role="alert">
+            {COPY.loadError}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => void subscription.refetch()}>
+            {COPY.retry}
+          </Button>
+        </div>
       ) : null}
       {update.isError ? (
         <p className={styles.error} role="alert">
@@ -199,7 +206,11 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
 
       {details ? (
         <>
-          {!confirmed ? <p className={styles.hint}>{COPY.confirmFirst}</p> : null}
+          {!confirmed ? (
+            <p className={styles.hint}>{COPY.confirmFirst}</p>
+          ) : muted ? (
+            <p className={styles.hint}>{COPY.unmuteFirst}</p>
+          ) : null}
           <div className={styles.columns}>
             {SUBSCRIPTION_GROUP_COLUMNS.map((column, index) => (
               <div className={styles.column} key={index}>
@@ -208,7 +219,7 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
                     key={group}
                     group={group}
                     details={details}
-                    disabled={!confirmed}
+                    disabled={typesLocked}
                     onToggleType={(type, enabled) => save(setTypeEmail(details, type, enabled))}
                   />
                 ))}
