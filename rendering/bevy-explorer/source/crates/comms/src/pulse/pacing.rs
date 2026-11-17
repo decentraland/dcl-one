@@ -28,8 +28,8 @@ pub const PACED_EVENTS_PER_SECOND: f64 = 10.0;
 pub const PACED_EVENTS_BURST: f64 = 8.0;
 
 /// A token bucket on the caller's clock: tokens come back at a steady rate up to a capacity, and a
-/// send spends a whole one. The pacers of this module and of [`super::movement_pacing`] are built on
-/// it, each with half of the rate the servers allow.
+/// send spends a whole one. The pacers of this module and of [`super::movement_pacing`] are built
+/// on it, each with half of the rate the servers allow.
 #[derive(Clone, Copy, Debug)]
 pub struct TokenBucket {
     refill_per_second: f64,

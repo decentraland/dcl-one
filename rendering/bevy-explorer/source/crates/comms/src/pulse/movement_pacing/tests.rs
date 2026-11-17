@@ -1,5 +1,8 @@
 use super::*;
 
+/// The most sends in any window of one second: the burst plus a second of refill.
+const MOVEMENT_MAX_SENDS_PER_SECOND: u32 = (MOVEMENT_BURST + MOVEMENT_REFILL_PER_SECOND) as u32;
+
 /// Asks at `now` and records the send when it is allowed.
 fn ask(pacer: &mut MovementPacer, now: f64, change: Change) -> bool {
     let send = pacer.should_send(now, change);

@@ -12,18 +12,18 @@
 //! `DEFAULT_INPUT_MAX_HZ` and `DEFAULT_INPUT_BURST`; the rejection is `InputRateExceeded` in
 //! `server/mod.rs`). The bucket here refills [`MOVEMENT_REFILL_PER_SECOND`] tokens a second, holds
 //! [`MOVEMENT_BURST`], and every send costs one. Any window of one second therefore holds at most
-//! [`MOVEMENT_MAX_SENDS_PER_SECOND`] sends, under the server's 20 and its burst of 16. The margin
-//! covers frames that bunch up in transit: a stall of `T` seconds delivered at once puts
+//! the burst plus a second of refill, 13 sends, under the server's 20 and its burst of 16. The
+//! margin covers frames that bunch up in transit: a stall of `T` seconds delivered at once puts
 //! `MOVEMENT_BURST + 10 T` inputs in front of the server, which stays under its 16 for `T` up to
 //! about 1.3 s. A deployment that lowers `PULSE_INPUT_MAX_HZ` or `PULSE_INPUT_BURST` below these
 //! numbers would disconnect clients, as it would for any sender.
 //!
 //! A bucket rather than a sliding window of sends, because a window lets a storm of edges (a scene
 //! swapping clips every frame, a velocity jittering across the threshold) spend a whole second of
-//! budget at once and then go silent, ordinary movement included. The bucket refills as it empties,
-//! so a storm settles to one send per [`REGULAR_SPACING_SECONDS`], the cadence of ordinary movement.
-//! An edge that finds the bucket empty is not lost: the caller keeps comparing against the last state
-//! it sent, so the edge is still there on the next frame a token is back.
+//! budget at once and then go silent, ordinary movement included. The bucket refills as it
+//! empties, so a storm settles to one send per [`REGULAR_SPACING_SECONDS`], the cadence of
+//! ordinary movement. An edge that finds the bucket empty is not lost: the caller keeps comparing
+//! against the last state it sent, so the edge is still there on the next frame a token is back.
 //!
 //! A pure object, like [`super::pacing`]: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
@@ -35,8 +35,6 @@ use super::pacing::TokenBucket;
 pub const MOVEMENT_REFILL_PER_SECOND: f64 = 10.0;
 /// Tokens the bucket holds: sends that can follow one another at once after a quiet spell.
 pub const MOVEMENT_BURST: f64 = 3.0;
-/// The most sends in any window of one second: the burst plus a second of refill.
-pub const MOVEMENT_MAX_SENDS_PER_SECOND: u32 = (MOVEMENT_BURST + MOVEMENT_REFILL_PER_SECOND) as u32;
 /// The shortest time between two sends of ordinary movement.
 pub const REGULAR_SPACING_SECONDS: f64 = 0.1;
 /// The longest time between two sends while nothing changes.
@@ -44,12 +42,12 @@ pub const IDLE_KEEPALIVE_SECONDS: f64 = 1.0;
 /// A change of velocity since the last send beyond this, in m/s, is an edge.
 ///
 /// It sits above what ordinary acceleration adds between two regular sends and below an impulse.
-/// Free fall is the steepest ordinary case: the default jump of 1.9 m leaves the ground at a little
-/// over 10 m/s (the mark `apply_movement` takes for a jump), which is gravity of about 26 to 32 m/s²,
-/// about 3 m/s in one regular spacing. A jump impulse (over 10 m/s), the landing that follows it, and
-/// a start, stop or sharp turn at the default jog speed (8.18 m/s) are all well past it. A start or
-/// stop at walking speed (2.5 m/s) stays under it and takes the next regular slot. The bucket caps
-/// what a threshold that is slightly off can cost.
+/// Free fall is the steepest ordinary case: the default jump of 1.9 m leaves the ground at a
+/// little over 10 m/s (the mark `apply_movement` takes for a jump), which is gravity of about 26
+/// to 32 m/s per second, about 3 m/s in one regular spacing. A jump impulse (over 10 m/s), the
+/// landing that follows it, and a start, stop or sharp turn at the default jog speed (8.18 m/s)
+/// are all well past it. A start or stop at walking speed (2.5 m/s) stays under it and takes the
+/// next regular slot. The bucket caps what a threshold that is slightly off can cost.
 pub const EDGE_VELOCITY_CHANGE: f32 = 4.0;
 
 /// What changed since the last send.
