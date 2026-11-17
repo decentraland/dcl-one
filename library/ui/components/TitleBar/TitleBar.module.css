@@ -43,6 +43,8 @@
   .root[data-variant='shop'] .sections {
     gap: 10px;
   }
+  /* Figma title-bar (16959:168) toggle-icon-text-button, explorer product: body/md-strong label, 20px icon,
+     8px gap, 16px inline padding. The 44px minimum keeps the native target (Figma draws 42px). */
   .section {
     position: relative;
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
@@ -51,23 +53,19 @@
     align-items: center;
     justify-content: center;
     flex: none;
-    gap: var(--dcl-space-4);
+    gap: var(--dcl-space-8);
     min-height: 44px;
     max-width: 100%;
     border: 0;
     border-radius: var(--dcl-radius-md);
-    padding: 8px 14px 8px 10px;
+    padding: 0 var(--dcl-space-16);
     background: var(--dcl-transparencies-white-10);
     color: var(--dcl-neutrals-snow);
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 22.5px;
     text-align: start;
     text-decoration: none;
     overflow-wrap: anywhere;
     cursor: pointer;
   }
-  /* Figma TitleBar (15843:56922): the selected section's label and icon are #fcfcfc on #ff7439. */
   .section[data-active] {
     background: var(--dcl-primary-alt-primary-alt);
     color: var(--dcl-neutrals-snow);
@@ -81,8 +79,8 @@
     align-items: center;
     justify-content: center;
     flex: none;
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
   }
   .controls {
     display: flex;
@@ -102,27 +100,10 @@
     min-width: 0;
     max-width: 100%;
   }
-  .slot[data-control='collection'] {
-    width: 273px;
-  }
-  .slot[data-control='filters'] {
-    width: 190px;
-  }
+  /* Figma sizes the triggers, date, create and cart controls to their content; only search is fixed. */
   .slot[data-control='search'] {
+    flex: 0 1 396px;
     width: 396px;
-  }
-  .slot[data-control='date'] {
-    width: 82px;
-  }
-  .slot[data-control='create'] {
-    width: 290px;
-  }
-  .root[data-variant='shop'] .slot[data-control='filters'],
-  .slot[data-control='sort'] {
-    width: 150px;
-  }
-  .slot[data-control='cart'] {
-    width: 44px;
   }
   .filterMenu {
     position: absolute;

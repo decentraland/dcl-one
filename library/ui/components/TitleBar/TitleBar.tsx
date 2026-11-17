@@ -38,7 +38,7 @@ export type TitleBarProps = SharedProps &
     | { variant: 'settings'; controls?: never }
     | {
         variant: 'backpack'
-        controls: { collection: ReactNode; filters: ReactNode; search: ReactNode }
+        controls: { filters: ReactNode; search: ReactNode }
       }
     | { variant: 'events'; controls: { date: ReactNode; create: ReactNode } }
     | {
@@ -53,12 +53,12 @@ export type TitleBarProps = SharedProps &
 const titles = {
   backpack: 'Backpack',
   settings: 'Settings',
-  events: 'Hangouts',
+  events: 'Events',
   places: 'Places',
   shop: 'Shop'
 } as const
 const controlOrder = {
-  backpack: ['collection', 'filters', 'search'],
+  backpack: ['filters', 'search'],
   settings: [],
   events: ['date', 'create'],
   places: ['filters', 'search'],

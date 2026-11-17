@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useRef, useState } from 'react'
-import { TitleBar, type TitleBarSection } from '@dcl/one-ui'
+import { Button, TitleBar, type TitleBarSection } from '@dcl/one-ui'
 import {
   GeneralGraphics,
   GeneralAudio,
@@ -11,7 +11,6 @@ import {
   GeneralSendEmote,
   GeneralCalendar,
   GeneralBell,
-  GeneralHost,
   GeneralAll,
   GeneralName,
   GeneralFilters,
@@ -32,25 +31,23 @@ const variant =
   requested === 'shop'
     ? requested
     : 'settings'
-const darkSelected = new URLSearchParams(location.search).get('selectedtext') === 'dark'
 const searchFocus =
   new URLSearchParams(location.search).get('searchfocus') === 'offset' ? 'offset' : undefined
 const definitions: Record<typeof variant, readonly [string, string, React.ReactNode][]> = {
   backpack: [
-    ['wearables', 'Wearables', <GeneralSecondaryBarWearables size={24} />],
-    ['emotes', 'Emotes', <GeneralSendEmote size={24} />]
+    ['wearables', 'Wearables', <GeneralSecondaryBarWearables size={20} />],
+    ['emotes', 'Emotes', <GeneralSendEmote size={20} />]
   ],
   settings: [
-    ['graphics', 'Graphics', <GeneralGraphics size={24} />],
-    ['audio', 'Audio', <GeneralAudio size={24} />],
-    ['controls', 'Controls', <GeneralControls size={24} />],
-    ['chat', 'Chat', <GeneralChat size={24} />],
-    ['lobby', 'Lobby', <GeneralLobby size={24} />]
+    ['graphics', 'Graphics', <GeneralGraphics size={20} />],
+    ['audio', 'Audio', <GeneralAudio size={20} />],
+    ['controls', 'Controls', <GeneralControls size={20} />],
+    ['chat', 'Chat', <GeneralChat size={20} />],
+    ['lobby', 'Lobby', <GeneralLobby size={20} />]
   ],
   events: [
-    ['calendar', 'Calendar', <GeneralCalendar size={24} />],
-    ['remind', 'Remind Me', <GeneralBell size={24} />],
-    ['host', 'Host', <GeneralHost size={24} />]
+    ['calendar', 'Calendar', <GeneralCalendar size={20} />],
+    ['remind', 'Remind Me', <GeneralBell size={20} />]
   ],
   places: [
     ['explore', 'Explore', <BrowseIcon />],
@@ -59,10 +56,10 @@ const definitions: Record<typeof variant, readonly [string, string, React.ReactN
     ['my-places', 'My Places', <MyPlacesIcon />]
   ],
   shop: [
-    ['all', 'All', <GeneralAll size={24} />],
-    ['wearables', 'Wearables', <GeneralSecondaryBarWearables size={24} />],
-    ['emotes', 'Emotes', <GeneralSendEmote size={24} />],
-    ['names', 'Names', <GeneralName size={24} />]
+    ['all', 'All', <GeneralAll size={20} />],
+    ['wearables', 'Wearables', <GeneralSecondaryBarWearables size={20} />],
+    ['emotes', 'Emotes', <GeneralSendEmote size={20} />],
+    ['names', 'Names', <GeneralName size={20} />]
   ]
 }
 const sections: readonly TitleBarSection[] = definitions[variant].map(([id, label, icon]) => ({
@@ -160,10 +157,6 @@ const sortOptions = [
   ['trending', 'Trending'],
   ['active', 'Most Active']
 ] as const
-const collections = [
-  ['Decentraland', 'Decentraland'],
-  ['Fixture collection', 'Fixture collection']
-] as const
 /** Figma draws general/down-arrow on a closed trigger; an open one points up. */
 function Chevron({ open }: { open: boolean }) {
   return open ? (
@@ -195,13 +188,11 @@ function App() {
   )
   const shopFilterPanel = useDisclosure('fixture-shop-filters')
   const sortPanel = useDisclosure('fixture-sort')
-  const collectionPanel = useDisclosure('fixture-collections')
   const [sort, setSort] = useState('trending')
   const [compatible, setCompatible] = useState(false)
   const [onSale, setOnSale] = useState(false)
   const [count, setCount] = useState(0)
   const [notice, setNotice] = useState('')
-  const [collection, setCollection] = useState('Decentraland')
   const sortLabel = sortOptions.find(([value]) => value === sort)![1]
   const search = (
     <div className={styles.search} data-focus={searchFocus}>
@@ -216,7 +207,7 @@ function App() {
   )
   const filters = (
     <button {...filterPanel.trigger} className={styles.control}>
-      <GeneralFilters size={24} aria-hidden="true" />
+      <GeneralFilters size={20} aria-hidden="true" />
       Filter &amp; Sort
       <Chevron open={filterPanel.open} />
     </button>
@@ -246,12 +237,7 @@ function App() {
       {compatibleView}
     </div>
   ) : null
-  const common = {
-    sections,
-    activeId,
-    onSelect: setActiveId,
-    className: darkSelected ? styles.darkSelected : undefined
-  }
+  const common = { sections, activeId, onSelect: setActiveId }
   return (
     <main className={styles.canvas}>
       <p>
@@ -265,34 +251,6 @@ function App() {
           {...common}
           variant="backpack"
           controls={{
-            collection: (
-              <div className={[styles.collection, styles.filterHost].join(' ')}>
-                <span aria-hidden="true">collection</span>
-                <button
-                  {...collectionPanel.trigger}
-                  className={[styles.control, styles.choice].join(' ')}
-                  aria-label={'Fixture collection, ' + collection}
-                >
-                  <span className={styles.value}>{collection}</span>
-                  <Chevron open={collectionPanel.open} />
-                </button>
-                <Floating disclosure={collectionPanel}>
-                  <div
-                    {...collectionPanel.panel}
-                    className={styles.popup}
-                    aria-label="Fixture collections"
-                  >
-                    <Choices
-                      legend="collection"
-                      name="fixture-collection"
-                      options={collections}
-                      value={collection}
-                      onChange={setCollection}
-                    />
-                  </div>
-                </Floating>
-              </div>
-            ),
             filters: (
               <div className={styles.filterHost}>
                 {filters}
@@ -313,10 +271,14 @@ function App() {
               </button>
             ),
             create: (
-              <a className={styles.create} href="#fixture-create">
-                <GeneralAdd size={12} aria-hidden="true" />
+              <Button
+                variant="outline"
+                size="md"
+                href="#fixture-create"
+                leadingIcon={<GeneralAdd size={20} aria-hidden="true" />}
+              >
                 create hangout
-              </a>
+              </Button>
             )
           }}
         />
@@ -330,7 +292,7 @@ function App() {
             filters: (
               <div className={styles.filterHost}>
                 <button {...shopFilterPanel.trigger} className={styles.control}>
-                  <GeneralFilters size={24} aria-hidden="true" />
+                  <GeneralFilters size={20} aria-hidden="true" />
                   Filters
                   <Chevron open={shopFilterPanel.open} />
                 </button>
@@ -363,7 +325,7 @@ function App() {
                   className={styles.control}
                   aria-label={'Sort by, ' + sortLabel}
                 >
-                  <span className={styles.value}>sort by</span>
+                  <span className={styles.value}>Sort by</span>
                   <Chevron open={sortPanel.open} />
                 </button>
                 <Floating disclosure={sortPanel} end>
@@ -390,7 +352,7 @@ function App() {
                 aria-label={'Fixture cart, ' + count}
                 onClick={() => setCount(count + 1)}
               >
-                <ShopCart size={24} aria-hidden="true" />
+                <ShopCart size={30} aria-hidden="true" />
                 <span>{count}</span>
               </button>
             )

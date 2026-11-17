@@ -11,7 +11,6 @@ const fixtures = [
     variant: 'backpack',
     title: 'Backpack',
     controls: {
-      collection: <button>Collection</button>,
       filters: <button>Filter</button>,
       search: <input aria-label="Search" />
     }
@@ -19,7 +18,7 @@ const fixtures = [
   { variant: 'settings', title: 'Settings' },
   {
     variant: 'events',
-    title: 'Hangouts',
+    title: 'Events',
     controls: { date: <button>Today</button>, create: <a href="#create">Create hangout</a> }
   },
   {
@@ -193,7 +192,7 @@ describe('when caller-owned toolbar data is empty or refused', () => {
         controls={{ date: null, create: null }}
       />
     )
-    expect(screen.getByRole('heading', { name: 'Hangouts' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Events' })).toBeInTheDocument()
     expect(document.querySelector('[data-active]')).toBeNull()
   })
 })

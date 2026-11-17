@@ -40,7 +40,7 @@ for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'])
         variant === 'settings'
           ? []
           : variant === 'backpack'
-            ? ['collection', 'filters', 'search']
+            ? ['filters', 'search']
             : variant === 'events'
               ? ['date', 'create']
               : variant === 'places'
@@ -88,7 +88,6 @@ describe('when a caller supplies a Places filter panel', () => {
 })
 for (const [variant, slot, id, inputs] of [
   ['backpack', 'filters', 'fixture-filters', 3],
-  ['backpack', 'collection', 'fixture-collections', 2],
   ['places', 'filters', 'fixture-filters', 3],
   ['shop', 'filters', 'fixture-shop-filters', 2],
   ['shop', 'sort', 'fixture-sort', 2]
@@ -113,32 +112,72 @@ for (const [variant, slot, id, inputs] of [
         }
       )
   })
-const selectedPaint = `(()=>{const e=document.querySelector('[data-active]'),s=getComputedStyle(e),i=getComputedStyle(e.querySelector('svg'));const L=c=>{const v=c.match(/[0-9.]+/g).slice(0,3).map(n=>{const x=Number(n)/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4});return .2126*v[0]+.7152*v[1]+.0722*v[2]};const a=L(s.color),b=L(s.backgroundColor);return{text:s.color,icon:i.color,background:s.backgroundColor,ratio:Math.round((Math.max(a,b)+.05)/(Math.min(a,b)+.05)*100)/100}})()`
-for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'])
-  describe('when a ' + variant + ' section is selected', () => {
-    it('should paint its label and icon with the Figma snow token on the source orange', async () => {
-      await navigate(variant)
-      // Figma TitleBar 15843:56922 draws the selected label and icon #fcfcfc on #ff7439, a 2.62:1 pair.
-      expect(await browser.evaluate(selectedPaint)).toEqual({
-        text: 'rgb(252, 252, 252)',
-        icon: 'rgb(252, 252, 252)',
-        background: 'rgb(255, 116, 57)',
-        ratio: 2.62
-      })
-    })
-    it('should keep the dark comparison label above 4.5:1 only when the parameter asks for it', async () => {
-      await browser.session.navigate(
-        browser.origin + '?variant=' + variant + '&closed=1&selectedtext=dark'
-      )
-      await browser.evaluate(
-        '(async()=>{for(let n=0;n<100&&!document.querySelector("[data-variant]");n++)await new Promise(r=>setTimeout(r,20))})()'
-      )
-      const paint = await browser.evaluate<{ text: string; icon: string; ratio: number }>(
-        selectedPaint
-      )
-      expect(paint.text).toBe('rgb(22, 21, 24)')
-      expect(paint.icon).toBe('rgb(22, 21, 24)')
-      expect(paint.ratio).toBeGreaterThanOrEqual(4.5)
+// Every painted shape of the icon, outside masks and clip paths, must use the label's color.
+const sectionPaint = (selector: string) =>
+  `(()=>{const e=document.querySelector(${JSON.stringify(selector)}),s=getComputedStyle(e);const shapes=[...e.querySelectorAll('svg path,svg circle,svg rect,svg ellipse,svg line,svg polyline,svg polygon')].filter(n=>!n.closest('mask,clipPath'));const paints=new Set();for(const n of shapes){const c=getComputedStyle(n);for(const v of [c.fill,c.stroke])if(v!=='none'&&!v.startsWith('url('))paints.add(v)}const L=c=>{const v=c.match(/[0-9.]+/g).slice(0,3).map(n=>{const x=Number(n)/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4});return .2126*v[0]+.7152*v[1]+.0722*v[2]};const a=L(s.color),b=L(s.backgroundColor);return{text:s.color,icon:[...paints],background:s.backgroundColor,ratio:Math.round((Math.max(a,b)+.05)/(Math.min(a,b)+.05)*100)/100}})()`
+async function pointer(type: string, selector: string) {
+  const point = await browser.evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+  )
+  await browser.session.send('Input.dispatchMouseEvent', {
+    type,
+    button: type === 'mouseMoved' ? 'none' : 'left',
+    clickCount: type === 'mouseMoved' ? 0 : 1,
+    ...point
+  })
+}
+const snowOnOrange = {
+  text: 'rgb(252, 252, 252)',
+  icon: ['rgb(252, 252, 252)'],
+  background: 'rgb(255, 116, 57)',
+  // Figma title-bar 16959:168 draws the selected label and icon snow on #ff7439, a 2.62:1 pair (owner decision).
+  ratio: 2.62
+}
+for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'] as const)
+  describe('when each ' + variant + ' section is selected', () => {
+    it('should paint its label and every icon shape snow on the orange at rest, hover, focus-visible and press', async () => {
+      await navigate(variant, 1920, true)
+      for (const name of sectionNames[variant]) {
+        const selector = `[data-region=primary] [role=group] > :nth-child(${sectionNames[variant].indexOf(name) + 1})`
+        await pointer('mousePressed', selector)
+        await pointer('mouseReleased', selector)
+        await pointer('mouseMoved', 'main > p')
+        await browser.evaluate('document.activeElement.blur()')
+        const rest = await browser.evaluate(sectionPaint(selector))
+        await pointer('mouseMoved', selector)
+        const hover = await browser.evaluate(sectionPaint(selector))
+        await pointer('mouseMoved', 'main > p')
+        await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`)
+        await press('Shift', 'ShiftLeft', 16)
+        const focus = await browser.evaluate<{ ring: string }>(
+          `({ring:getComputedStyle(document.querySelector(${JSON.stringify(selector)})).outlineStyle})`
+        )
+        const focused = await browser.evaluate(sectionPaint(selector))
+        await pointer('mousePressed', selector)
+        const pressed = await browser.evaluate(sectionPaint(selector))
+        await pointer('mouseReleased', selector)
+        // A fixed fill in the icon would match snow by accident; a probe color proves it follows the label.
+        const probe = await browser.evaluate<{ icon: string[] }>(
+          `(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.style.color='rgb(1, 2, 3)';const r=${sectionPaint(selector)};e.style.color='';return r})()`
+        )
+        expect({
+          name,
+          focusRing: focus.ring,
+          rest,
+          hover,
+          focused,
+          pressed,
+          probe: probe.icon
+        }).toEqual({
+          name,
+          focusRing: 'solid',
+          probe: ['rgb(1, 2, 3)'],
+          rest: snowOnOrange,
+          hover: snowOnOrange,
+          focused: snowOnOrange,
+          pressed: snowOnOrange
+        })
+      }
     })
   })
 async function tab(reverse = false) {
@@ -165,7 +204,7 @@ async function focusName() {
 const sectionNames = {
   backpack: ['Wearables', 'Emotes'],
   settings: ['Graphics', 'Audio', 'Controls', 'Chat', 'Lobby'],
-  events: ['Calendar', 'Remind Me', 'Host'],
+  events: ['Calendar', 'Remind Me'],
   places: ['Explore', 'Recent', 'Favorites', 'My Places'],
   shop: ['All', 'Wearables', 'Emotes', 'Names']
 }
@@ -180,7 +219,7 @@ for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'] as co
             variant === 'settings'
               ? []
               : variant === 'backpack'
-                ? ['Fixture collection, Decentraland', 'Filter & Sort', 'Fixture search']
+                ? ['Filter & Sort', 'Fixture search']
                 : variant === 'events'
                   ? ['Today', 'create hangout']
                   : variant === 'places'
@@ -437,7 +476,6 @@ for (const variant of ['shop', 'places', 'backpack'])
 const panels = [
   ['shop', 'Filters', 'fixture-shop-filters'],
   ['shop', 'Sort by, Trending', 'fixture-sort'],
-  ['backpack', 'Fixture collection, Decentraland', 'fixture-collections'],
   ['backpack', 'Filter & Sort', 'fixture-filters'],
   ['places', 'Filter & Sort', 'fixture-filters']
 ] as const
@@ -527,7 +565,7 @@ for (const [variant, name, id] of panels)
     })
   })
 describe('when a shop sort option is chosen', () => {
-  it('should keep the Figma sort by label and name the chosen order', async () => {
+  it('should keep the Figma Sort by label and name the chosen order', async () => {
     await navigate('shop', 1920, true)
     await clickControl('[data-control=sort] button')
     await clickControl('#fixture-sort label:nth-of-type(2)')
@@ -535,6 +573,6 @@ describe('when a shop sort option is chosen', () => {
       await browser.evaluate(
         '[document.querySelector("[data-control=sort] button")].map(b=>[b.textContent,b.getAttribute("aria-label")])[0]'
       )
-    ).toEqual(['sort by', 'Sort by, Most Active'])
+    ).toEqual(['Sort by', 'Sort by, Most Active'])
   })
 })

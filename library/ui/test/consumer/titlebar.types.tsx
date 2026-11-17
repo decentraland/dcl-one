@@ -11,7 +11,7 @@ const backpack: TitleBarProps = {
   sections,
   activeId: 'graphics',
   onSelect: () => {},
-  controls: { collection: null, filters: null, search: null }
+  controls: { filters: null, search: null }
 }
 // @ts-expect-error Search/filter controls are required for the captured Places composition.
 const missing: TitleBarProps = {

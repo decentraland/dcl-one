@@ -8,7 +8,7 @@ const shared = {
 }
 const cases: TitleBarProps[] = [
   { ...shared, variant: 'settings' },
-  { ...shared, variant: 'backpack', controls: { collection: null, filters: null, search: null } },
+  { ...shared, variant: 'backpack', controls: { filters: null, search: null } },
   { ...shared, variant: 'events', controls: { date: null, create: null } },
   { ...shared, variant: 'places', controls: { filters: null, search: null } },
   { ...shared, variant: 'shop', controls: { filters: null, sort: null, search: null, cart: 0 } }

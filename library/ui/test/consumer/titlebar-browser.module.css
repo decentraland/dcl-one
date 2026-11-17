@@ -15,7 +15,6 @@
   .search,
   .control,
   .date,
-  .create,
   .cart {
     box-sizing: border-box;
     min-height: 44px;
@@ -55,70 +54,34 @@
     outline-offset: 2px;
     box-shadow: none;
   }
-  /* ?selectedtext=dark keeps the earlier dark selected label for comparison with Figma's light one. */
-  .darkSelected [data-active] {
-    color: var(--dcl-neutrals-shadow);
-  }
   .search input::placeholder {
     color: var(--dcl-neutrals-cloudy-sky);
   }
   .control:focus-visible,
   .date:focus-visible,
-  .create:focus-visible,
   .cart:focus-visible {
     outline: 2px solid var(--dcl-neutrals-snow);
     outline-offset: 2px;
   }
+  /* Figma dropdown-trigger: 16px semibold label, 20px icon, 8px gap, 12px inline padding. */
   .control {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: var(--dcl-space-8);
-    width: 100%;
-    padding: 6px 6px 6px 14px;
+    padding: 0 var(--dcl-space-12);
     background: var(--dcl-neutrals-snow);
     color: var(--dcl-neutrals-shadow);
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .date {
-    width: 100%;
-    border-radius: 100px;
+    padding: 0 var(--dcl-space-16);
     background: var(--dcl-transparencies-white-10);
     color: var(--dcl-neutrals-snow);
     font-size: 18px;
     font-weight: 600;
-  }
-  .create {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    width: 100%;
-    padding: 8px 14px 8px 10px;
-    border: 2px solid var(--dcl-neutrals-snow);
-    background: var(--dcl-transparencies-black-40);
-    color: var(--dcl-neutrals-snow);
-    font-weight: 600;
-    text-transform: uppercase;
-    text-decoration: none;
-  }
-  .collection {
-    display: flex;
-    align-items: center;
-    gap: var(--dcl-space-12);
-    font-size: 15px;
-    font-weight: 600;
-  }
-  .choice {
-    flex: 1;
-    min-width: 0;
-    justify-content: space-between;
-    font-size: 16px;
-    font-weight: 400;
-    padding: 8px 12px;
   }
   .value {
     min-width: 0;
@@ -132,13 +95,14 @@
     align-items: center;
     justify-content: center;
     width: 44px;
-    background: var(--dcl-neutrals-snow);
-    color: var(--dcl-neutrals-shadow);
+    padding: 5px;
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
   }
   .cart span {
     position: absolute;
-    top: 0;
-    right: 0;
+    top: -4px;
+    right: -4px;
     box-sizing: border-box;
     min-width: 16px;
     padding: 0 4px;
