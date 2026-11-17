@@ -311,7 +311,7 @@ impl TerrainSurface {
         })
     }
 
-    /// Height at Unity x/z.
+    /// Height at parcel-space x/z, where z is the negated world z.
     pub fn height(&self, x: f32, unity_z: f32) -> f32 {
         height(x, unity_z, self.max_steps, self.uv_size, |parcel| {
             self.texel(parcel)
