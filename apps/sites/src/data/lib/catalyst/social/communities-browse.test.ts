@@ -37,7 +37,7 @@ describe("nextCommunitiesOffset", () => {
 
 describe("communityRows", () => {
   it("should keep a community repeated by the next page once", () => {
-    const community = { id: "a", name: "A", description: null, ownerName: null, privacy: "public" as const, membersCount: 1 };
+    const community = { id: "a", name: "A", description: null, ownerName: null, privacy: "public" as const, membersCount: 1, thumbnailUrl: null };
     const rows = communityRows([
       { rows: [community], received: 1, total: 2 },
       { rows: [community, { ...community, id: "b" }], received: 2, total: 2 },

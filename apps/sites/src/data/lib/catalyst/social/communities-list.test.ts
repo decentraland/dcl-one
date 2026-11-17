@@ -49,12 +49,27 @@ describe("fetchCommunitiesPage", () => {
     const page = await fetchCommunitiesPage({ offset: 0, search: "" }, { base: BASE });
     expect(page).toEqual({
       rows: [
-        { id: "c1", name: "Builders Guild", description: "We build things", ownerName: "Jane", privacy: "public", membersCount: 42 },
-        { id: "c2", name: "Builders Guild", description: null, ownerName: null, privacy: "private", membersCount: null },
+        { id: "c1", name: "Builders Guild", description: "We build things", ownerName: "Jane", privacy: "public", membersCount: 42, thumbnailUrl: null },
+        { id: "c2", name: "Builders Guild", description: null, ownerName: null, privacy: "private", membersCount: null, thumbnailUrl: null },
       ],
       received: 2,
       total: 2,
     });
+  });
+
+  it("should keep the cover a row names and treat an empty or N/A one as none", async () => {
+    answer({
+      data: {
+        results: [
+          row({ id: "a", thumbnailUrl: "https://cdn.example/a.png" }),
+          row({ id: "b", thumbnailUrl: "N/A" }),
+          row({ id: "c", thumbnailUrl: "  " }),
+        ],
+        total: 3,
+      },
+    });
+    const page = await fetchCommunitiesPage({ offset: 0, search: "" }, { base: BASE });
+    expect(page.rows.map((community) => community.thumbnailUrl)).toEqual(["https://cdn.example/a.png", null, null]);
   });
 
   it("should leave out a row without an id or a name but still count it as received", async () => {

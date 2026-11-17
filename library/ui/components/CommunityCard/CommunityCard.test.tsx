@@ -68,6 +68,14 @@ describe('CommunityCard', () => {
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     })
 
+    it('falls back to the second image when there is no first', () => {
+      const { container } = render(
+        <CommunityCard {...base} image={null} fallbackImage="https://cdn.example/fallback.png" />
+      )
+
+      expect(container.querySelector('img')).toHaveAttribute('src', 'https://cdn.example/fallback.png')
+    })
+
     it('shows the image placeholder without a cover', () => {
       const { container } = render(<CommunityCard {...base} image={null} />)
 

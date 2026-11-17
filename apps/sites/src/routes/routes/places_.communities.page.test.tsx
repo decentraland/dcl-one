@@ -30,6 +30,7 @@ const community = (id: string, overrides: Partial<BrowseCommunity> = {}): Browse
   ownerName: null,
   privacy: "public",
   membersCount: 1,
+  thumbnailUrl: null,
   ...overrides,
 });
 
@@ -90,6 +91,14 @@ describe("when the communities load", () => {
     expect(within(grid).getByText("1,340 members")).toBeTruthy();
     expect(within(grid).getByText("Jane")).toBeTruthy();
     expect(within(grid).getByText("Private")).toBeTruthy();
+  });
+
+  it("should draw the cover the row names, and the node's thumbnail when it names none", async () => {
+    serve([community("a", { name: "Mirrored", thumbnailUrl: "https://cdn.example/a.png" }), community("b", { name: "Local" })]);
+    renderPage();
+    await screen.findByRole("link", { name: "Mirrored" });
+    const covers = [...document.querySelectorAll("article img")].map((img) => img.getAttribute("src"));
+    expect(covers).toEqual(["https://cdn.example/a.png", "/social-api/social/communities/b/raw-thumbnail.png"]);
   });
 
   it("should name a single member in the singular", async () => {

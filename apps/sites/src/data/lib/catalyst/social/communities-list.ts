@@ -18,6 +18,7 @@ const RowSchema = z.object({
   ownerName: z.string().nullish(),
   privacy: z.string().nullish(),
   membersCount: z.number().nullish(),
+  thumbnailUrl: z.string().nullish(),
 });
 
 export type BrowseCommunity = {
@@ -27,6 +28,8 @@ export type BrowseCommunity = {
   ownerName: string | null;
   privacy: "public" | "private";
   membersCount: number | null;
+  /** The cover the row names, e.g. a mirrored community's upstream CDN image; null when it names none. */
+  thumbnailUrl: string | null;
 };
 
 export type CommunitiesPage = {
@@ -43,6 +46,11 @@ const PageEnvelope = dataOf(z.object({ results: z.array(z.unknown()), total: z.n
  * signature, so every visitor gets the same public list. A row without an id or a name is left out; a
  * body that is not a page fails the read, so the page shows its error instead of an empty grid.
  */
+function coverOf(value: string | null | undefined): string | null {
+  const url = value?.trim() ?? "";
+  return url && url !== "N/A" ? url : null;
+}
+
 export async function fetchCommunitiesPage(
   params: { offset: number; search: string; limit?: number },
   opts: { signal?: AbortSignal; base?: string } = {},
@@ -67,6 +75,7 @@ export async function fetchCommunitiesPage(
       ownerName: row.ownerName?.trim() || null,
       privacy: row.privacy === "private" ? "private" : "public",
       membersCount: row.membersCount ?? null,
+      thumbnailUrl: coverOf(row.thumbnailUrl),
     });
   }
   return { rows, received: page.data.data.results.length, total: page.data.data.total };

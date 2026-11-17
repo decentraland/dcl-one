@@ -21,7 +21,7 @@ async function run(url: string, request = new Request(url)) {
   return { payload: result.data, status: result.init?.status ?? 200 };
 }
 
-const community = { id: "c1", name: "Builders", description: null, ownerName: null, privacy: "public" as const, membersCount: 3 };
+const community = { id: "c1", name: "Builders", description: null, ownerName: null, privacy: "public" as const, membersCount: 3, thumbnailUrl: null };
 
 afterEach(() => vi.resetAllMocks());
 

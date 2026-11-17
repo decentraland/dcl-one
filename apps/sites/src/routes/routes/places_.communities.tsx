@@ -184,7 +184,8 @@ function CommunitiesExplorer({ unavailable }: { unavailable: boolean }) {
                 name={community.name}
                 href={communityHref(community.id)}
                 linkComponent={CardLink}
-                image={communityThumbnailUrl(community.id)}
+                image={community.thumbnailUrl ?? communityThumbnailUrl(community.id)}
+                fallbackImage={community.thumbnailUrl ? communityThumbnailUrl(community.id) : undefined}
                 priority={index < PRIORITY_CARDS}
                 ownerName={community.ownerName}
                 privacy={community.privacy}
