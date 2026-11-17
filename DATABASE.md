@@ -1414,6 +1414,73 @@ index: drop it before retrying).
 `client_events_seq_idx` serves the cursor scan and
 `client_events_session_moves_idx` traveler's read-back of one session.
 
+## Onboarding checkpoints workload
+
+`POST /onboarding/checkpoint` and `GET /onboarding/pending-nudges?sequence=1..3`
+(`services/catalyst/explore/src/api/onboarding.rs`, bearer `ONBOARDING_API_KEY`)
+keep the auth server's onboarding component (`decentraland/auth-server`
+`src/ports/onboarding/component.ts`, at 08461d2b) in
+`explore_api.onboarding_checkpoints` (`schemas/11_explore_api.sql`) over the
+explore pool, so every `apis` replica the gateway picks reads what any other
+wrote and a restart loses nothing. Writers: the auth server's checkpoint posts
+(1-7 per onboarding user) and the Segment `/forward` webhook's CP7 for a
+verified wallet (`social::segment_webhooks`), each a request. Reader: the
+mailer's poll of the nudge list. No production rate is measured; the expected
+order is one row per onboarding user and checkpoint reached, at most 7 per
+user, about 150 bytes plus the metadata (at most `MAX_METADATA_BYTES`, 4 KiB,
+as compact JSON; checked by the handler).
+
+Invariants: one row per `(user_id, checkpoint)` (the unique key);
+`reached_at` is the first `reached` and never moves; `completed_at` is set
+once, by `completed` or by reaching the next checkpoint; email, wallet and
+metadata are only filled in (`COALESCE`), never cleared; `wallet` is stored
+lower-cased (checked). A checkpoint is one transaction: the wallet's
+resolution (a `wallet`-identified checkpoint without an email takes the user
+and email of the lowest checkpoint, then the oldest row, bound to that wallet
+with an email), the `INSERT ... ON CONFLICT (user_id, checkpoint) DO UPDATE`
+and the completion of the previous checkpoint; concurrent reports of one
+checkpoint from several replicas meet on the key. A wallet-identified
+`reached` that resolves to no email inserts no row (no nudge could reach it),
+as before. `id` is the insertion order: the nudge list's order and the
+resolution's tie-break. Nothing references a row: no FK.
+
+The nudge read selects each user's highest checkpoint that is open, has an
+email and was reached before `now - 12/24/36 h`: the candidates through
+`onboarding_checkpoints_pending_idx` (`reached_at`, partial on `email IS NOT
+NULL AND completed_at IS NULL`, the open rows only), the later-checkpoint
+probe through the unique key, sorted by `id`. The resolution reads
+`onboarding_checkpoints_wallet_idx` (`wallet, checkpoint, id`, partial on a
+wallet and an email), one row. The upserts and completions go by the unique
+key. A test checks both reads' plans with sequential scans priced out.
+
+Retention replaces the in-process cap (10,000 rows, the oldest evicted
+first), which only bounded memory: a row is deleted `RETENTION_DAYS` (30)
+after it was first reached. The nudges fall due at most 36 h after the latest
+checkpoint, so a row that old serves only a late wallet resolution, and
+without a bound the open rows of users who stopped would make the nudge
+list grow forever (the node records no sent nudge, below). Every `reached`
+write deletes, after its commit, those of the 16 oldest rows by `id` that are
+past the retention (`FOR UPDATE SKIP LOCKED`, so two replicas never wait on
+each other); `reached_at` follows `id`, so expired rows are at the head of
+the primary key and the sweep reads 16 index entries. Sixteen per insert
+outruns the rate at which rows expire unless the inserts fall by more than
+16 times within a retention; a failed sweep is logged and the next write
+retries. Clients see the same contract: rows unseen for a month leave as the
+oldest rows did under the cap, with no fixed row count behind it.
+
+Differences from the auth server, kept from the in-process store: no
+`email_nudges` table (the node runs no nudge mailer, so no nudge is marked
+sent and the list holds every due user until they move on, complete or
+expire); `id_type` and `source` are validated and not stored (nothing reads
+them); a wallet-identified checkpoint binds the identifier as the wallet even
+when the body carries an email; ties in the resolution go to the oldest row.
+
+The table and its indexes are new objects: the object pass of `catalyst
+schema migrate` creates them on a stamped database (a step under
+`schemas/migrations/` may not create objects), with no rewrite of any
+existing table. Checkpoints the in-process store held before the upgrade are
+not carried over.
+
 ## Credits wallet flags workload
 
 `credits.wallet_flags` (`schemas/60_ops.sql`) is the multi-accounting flag
