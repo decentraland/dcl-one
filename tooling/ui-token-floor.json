@@ -107,10 +107,6 @@
     "primitives": 3,
     "tokens": 0
   },
-  "apps/ui3/src/landings/pages/ldhomepage.css": {
-    "primitives": 5,
-    "tokens": 0
-  },
   "apps/ui3/src/landings/pages/ldinvitereferralview.css": {
     "primitives": 0,
     "tokens": 9

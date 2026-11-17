@@ -105,6 +105,15 @@ class ConfigurationTest(unittest.TestCase):
         ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
              "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
+    def test_sites_route_files_claim_no_landings_prefix(self):
+        # The same file list package.nix hands the gateway.
+        routes = Path(__file__).parents[3] / "apps" / "sites" / "src" / "routes" / "routes"
+        files = [path.name for path in routes.iterdir() if path.is_file()
+                 and re.fullmatch(r".*\.(ts|tsx)", path.name) and not re.fullmatch(r".*\.(test|spec)\.(ts|tsx)", path.name)]
+        prefixes = gateway.site_prefixes(files)
+        self.assertNotIn("/landings", prefixes)
+        self.assertIn("/communities", prefixes)
+
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
         for name in ["metrics.ts", "content.ts", "ws.ts"]:

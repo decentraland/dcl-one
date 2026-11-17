@@ -372,7 +372,7 @@ function HostBanner() {
           ))}
         </div>
         <div className="wo-host__buttons">
-          <Button variant="primary" size="md" className="wo-host__btn wo-host__btn--primary" href="/landings/submit-hangout" data-testid="create-button" leadingIcon={<AddIcon />}>
+          <Button variant="primary" size="md" className="wo-host__btn wo-host__btn--primary" href="/events/new-event" data-testid="create-button" leadingIcon={<AddIcon />}>
             Create an Event
           </Button>
           <Button variant="secondary" size="md" className="wo-host__btn wo-host__btn--secondary" href="/docs/player/faqs/posting-events/" data-testid="learn-more-button">
@@ -475,7 +475,7 @@ export default function StWhatSOn({
   notice = null,
 }: StWhatSOnProps) {
   return (
-    <SitesChromeMaybe chrome={chrome} active="play" overlayNav>
+    <SitesChromeMaybe chrome={chrome} active="whatson" overlayNav>
       <div className="wo">
         <picture>
           <source media="(min-width: 600px)" srcSet={asset("assets/whatson-top.webp")} />

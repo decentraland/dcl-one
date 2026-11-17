@@ -1,4 +1,5 @@
 // Rarity background textures for item tiles (cards, slots), keyed by rarity; base is the fallback.
+import type { Rarity } from './WearableCard'
 import base from '../assets/backpack/rarity-base.webp'
 import common from '../assets/backpack/rarity-common.webp'
 import uncommon from '../assets/backpack/rarity-uncommon.webp'
@@ -30,6 +31,14 @@ const PANEL: Record<string, string> = {
 export function rarityPanel(rarity?: string | null): string {
   if (rarity == null) return infoEmpty
   return PANEL[rarity.toLowerCase()] ?? infoBase
+}
+
+const RARITIES: readonly Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
+
+/** A rarity as a service names it (any case), or base for one it doesn't know. */
+export function rarityOf(rarity?: string | null): Rarity {
+  const r = (rarity ?? '').toLowerCase()
+  return RARITIES.find((x) => x === r) ?? 'base'
 }
 
 export function rarityTile(rarity?: string): string {

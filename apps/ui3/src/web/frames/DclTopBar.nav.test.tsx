@@ -30,7 +30,8 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     expect(connect).toHaveBeenCalledOnce();
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Notifications" })).toBeNull();
-    expect(document.querySelector('.dtb__links [aria-current="page"]')).toHaveTextContent("Social");
+    // Social is not a navigation section, so its page selects none.
+    expect(document.querySelector('.dtb__links [aria-current="page"]')).toBeNull();
   });
   test("notifications are only available while signed in, and late responses cannot reopen a signed-out inbox", async () => {
     let resolveNotifications!: (value: unknown) => void;
@@ -95,14 +96,14 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
   });
 
   test("when the navigator declines an href the anchor falls back to a document load", () => {
-    const navigate = vi.fn<ChromeNavigate>((href) => href !== "/docs/");
+    const navigate = vi.fn<ChromeNavigate>((href) => href !== "/places");
     mountBar(navigate);
-    fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[1]!);
-    const docs = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/docs/\"]")!;
-    expect(fireEvent.click(docs)).toBe(true);
-    expect(navigate).toHaveBeenCalledWith("/docs/");
-    const blog = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/blog\"]")!;
-    expect(fireEvent.click(blog)).toBe(false);
+    fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[0]!);
+    const places = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/places\"]")!;
+    expect(fireEvent.click(places)).toBe(true);
+    expect(navigate).toHaveBeenCalledWith("/places");
+    const events = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/events\"]")!;
+    expect(fireEvent.click(events)).toBe(false);
   });
 
   test("without a navigator the links are plain anchors", () => {
