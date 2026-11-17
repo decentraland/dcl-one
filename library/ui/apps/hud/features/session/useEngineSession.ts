@@ -498,6 +498,8 @@ export interface MinimapState {
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
+  /** Reload the scene the player stands in, as the `/reload` chat command does. */
+  reloadScene: () => void
 }
 
 // Places browses the places API over HTTP (no bridge data) — it only needs open/close.
@@ -2768,6 +2770,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
 
+  // Reload the scene under the player: the `/reload` chat command and the minimap menu's Reload Scene.
+  const reloadScene = useCallback(() => {
+    driverRef.current?.send({ kind: 'reloadScene' })
+    // the reloaded scene starts afresh, so this visit's answers and uses go too
+    answeredPermissions.current.clear()
+    setVisitAnswers([])
+    setTriggeredPermissions([])
+    setRefusedTypes([])
+    setSeenDenied([])
+    skipRefusal.current.clear()
+  }, [])
+
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
   // command, or echoes a system message. Anything else is sent as a normal Nearby message.
@@ -2788,14 +2802,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           changeRealm(cmd.realm)
           break
         case 'reload':
-          driverRef.current?.send({ kind: 'reloadScene' })
-          // the reloaded scene starts afresh, so this visit's answers and uses go too
-          answeredPermissions.current.clear()
-          setVisitAnswers([])
-          setTriggeredPermissions([])
-          setRefusedTypes([])
-          setSeenDenied([])
-          skipRefusal.current.clear()
+          reloadScene()
           break
         case 'debug':
           requestDebugPanel(cmd.target, pushSystemMessage)
@@ -2811,7 +2818,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
       }
     },
-    [pushSystemMessage, changeRealm]
+    [pushSystemMessage, changeRealm, reloadScene]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -4937,9 +4944,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
       linkRealm,
-      setConfig: setMinimapConfig
+      setConfig: setMinimapConfig,
+      reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig]
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
   )
 
   return {
