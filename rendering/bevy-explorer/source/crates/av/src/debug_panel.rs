@@ -176,6 +176,7 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
     {
         let retry = sinks.map(|s| *s.retry.borrow());
         row["retryAttempt"] = json!(retry.map(|r| r.attempt));
+        row["retryFailures"] = json!(retry.map(|r| r.failures));
         row["retryDelaySeconds"] = json!(retry
             .and_then(|r| r.next_delay)
             .map(|delay| delay.as_secs_f64()));

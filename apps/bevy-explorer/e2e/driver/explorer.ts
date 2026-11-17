@@ -77,6 +77,7 @@ export interface MediaPlayerRow {
   source: string
   lastPlaybackState?: string | null
   retryAttempt?: number | null
+  retryFailures?: number | null
   retryDelaySeconds?: number | null
   retryGaveUp?: boolean | null
   lastError?: string | null

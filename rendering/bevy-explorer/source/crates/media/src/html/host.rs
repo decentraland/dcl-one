@@ -186,6 +186,11 @@ struct Source {
     /// The attached source's `on_fatal`.
     on_fatal: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
     retry: Cell<MediaRetry>,
+    /// Failures counted since the source was created.
+    failures: Cell<u32>,
+    /// The source has played as a live stream: its end is a dropped feed even once the browser
+    /// gives it a finite duration.
+    was_live: Cell<bool>,
     last_error: Cell<Option<&'static str>>,
     /// Failed and not playable since: the element's own states are not reported.
     failed: Cell<bool>,
@@ -217,6 +222,7 @@ impl Source {
             id: self.id,
             status: MediaRetryStatus {
                 attempt: retry.attempts(),
+                failures: self.failures.get(),
                 next_delay,
                 gave_up: retry.gave_up(),
                 last_error: self.last_error.get(),
@@ -276,6 +282,7 @@ impl Source {
         }
         self.failed.set(true);
         self.last_error.set(Some(error));
+        self.failures.set(self.failures.get() + 1);
         let step = retry.fail(first_reopen_delay());
         self.retry.set(retry);
         match step {
@@ -285,6 +292,8 @@ impl Source {
                     self.id
                 );
                 self.reopen_on_play.set(true);
+                // a failed source left attached could still raise canplay and clear the above
+                self.suspend();
                 self.send_state(VideoState::VsError);
                 self.send_retry(None);
             }
@@ -306,8 +315,9 @@ impl Source {
         }
     }
 
-    /// The source can play: a scheduled reopen is cancelled. The count restarts only once it
-    /// has played long enough ([`Self::played`]).
+    /// The source can play. The count restarts only once it has played long enough
+    /// ([`Self::played`]). Never runs while a reopen is scheduled (the state filter drops that
+    /// `canplay`); the cancel is a guard.
     fn opened(&self) {
         self.failed.set(false);
         self.reopen_on_play.set(false);
@@ -319,6 +329,9 @@ impl Source {
 
     /// The position moved: a step forward of under a second counts as playback.
     fn played(&self) {
+        if self.is_live() {
+            self.was_live.set(true);
+        }
         let time = self.media.current_time();
         let step = time - self.last_time.replace(time);
         // a seek or a loop is no playback
@@ -448,6 +461,8 @@ impl HostMedia {
             attached: RefCell::new(None),
             on_fatal: RefCell::new(None),
             retry: Cell::new(MediaRetry::default()),
+            failures: Cell::new(0),
+            was_live: Cell::new(false),
             last_error: Cell::new(None),
             failed: Cell::new(false),
             reopen_on_play: Cell::new(false),
@@ -517,7 +532,7 @@ impl HostMedia {
                     return;
                 }
                 // a live stream only ends when its feed drops
-                if source.is_live() {
+                if source.was_live.get() || source.is_live() {
                     source.fail("live stream ended");
                     return;
                 }

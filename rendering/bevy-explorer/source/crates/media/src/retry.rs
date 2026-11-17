@@ -101,6 +101,8 @@ impl MediaRetry {
 pub struct MediaRetryStatus {
     /// Reopens since the source last played for [`HEALTHY_PLAYBACK`].
     pub attempt: u32,
+    /// Failures counted since the source was created.
+    pub failures: u32,
     /// The wait before the scheduled reopen, while one is scheduled.
     pub next_delay: Option<Duration>,
     pub gave_up: bool,

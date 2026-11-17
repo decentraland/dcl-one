@@ -13,11 +13,12 @@
 // `/set_scene` points the scene commands at it, and `/media_state` gives each player's reopen
 // count, last state and last error. The count restarts after 5 s of playback.
 // `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for every source failing from then
-// on; a failure before a scenario issues it waits its 2 s. Each scenario closes its client, so the
-// short delay and the looping video end with it. Only the web backend reopens (native FFmpeg ends
-// at its first error), so on the standalone both are todos. One video plays at a time, the nearest:
-// the spawn is nearest `recover`, and the second scenario walks to `broken`. Build the scene first:
-// `pnpm run build-scenes video`.
+// on; failures before a scenario issues it wait the default 2 s, then 4 s. `retryFailures` counts
+// every failure, so the checks do not depend on when the delay applies. Each scenario closes its
+// client, so the short delay and the looping video end with it. Only the web backend reopens
+// (native FFmpeg ends at its first error), so on the standalone both are todos. One video plays at
+// a time, the nearest: the spawn is nearest `recover`, and the second scenario walks to `broken`.
+// Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -95,27 +96,18 @@ scenario(
   'a video whose source fails twice plays after two reopens',
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
-    const before = server.contentGets.get(recoverHash) ?? 0
     await prepare(explorer)
-    // the count holds from the second failure until 5 s of playback, so polling sees its peak
-    let peakAttempt = 0
-    await until(() => player(explorer, 'assets/recover.webm'), (row) => {
-      peakAttempt = Math.max(peakAttempt, row.retryAttempt ?? 0)
-      return row.lastPlaybackState === 'VS_PLAYING'
-    }, { timeoutMs: GIVE_UP_TIMEOUT_MS, intervalMs: 200, what: 'the recover screen to play' })
-    assert.equal(peakAttempt, RECOVER_FAILURES, `the recover screen reopened ${peakAttempt} times`)
     // a new player is paused until it is chosen to play, so a failure in that window reports
     // VS_ERROR before the reopen's VS_LOADING: only the outcome is checked
     await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the recover screen to log VS_PLAYING'
     })
-    const gets = (server.contentGets.get(recoverHash) ?? 0) - before
-    assert.ok(gets > RECOVER_FAILURES, `recover.webm was requested ${gets} times`)
     const row = await until(() => player(explorer, 'assets/recover.webm'), (row) => row.retryAttempt === 0, {
       timeoutMs: RESTART_TIMEOUT_MS,
       what: 'the recover screen\'s reopen count to restart after playing'
     })
+    assert.equal(row.retryFailures, RECOVER_FAILURES, `the recover screen failed ${row.retryFailures} times`)
     assert.equal(row.retryGaveUp, false)
     assert.notEqual(row.lastError, null, 'the failures left no last error')
   },
@@ -126,15 +118,13 @@ scenario(
   'a video whose source always fails gives up after five reopens',
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
-    const before = server.contentGets.get(brokenHash) ?? 0
     await prepare(explorer)
     await explorer.walkTo(BASE.x + 11, 0, BASE.z + 12)
-    const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true, {
+    const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true && row.lastPlaybackState === 'VS_ERROR', {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the broken screen to give up'
     })
-    const gets = (server.contentGets.get(brokenHash) ?? 0) - before
-    assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
+    assert.equal(row.retryFailures, 1 + MAX_REOPENS, `the broken screen failed ${row.retryFailures} times, not one open and five reopens`)
     assert.equal(row.retryAttempt, MAX_REOPENS)
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')
