@@ -25,7 +25,7 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use crate::routing::{erase, get, post};
+use crate::shared::routing::{erase, get, post};
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;

@@ -118,11 +118,12 @@ mod tests {
         );
     }
 
-    /// CI runs no clippy over this crate, so this scan keeps production routes on
-    /// `crate::routing`. Items under `#[cfg(test)]`, files named `*test*` and
-    /// `tests/` folders are test code and exempt.
+    /// CI runs no clippy over these crates, so this scan keeps their production
+    /// routes on `shared::routing`. Items under `#[cfg(test)]`, files named
+    /// `*test*` and `tests/` folders are test code and exempt.
     #[test]
     fn production_routes_do_not_use_axum_methods_directly() {
+        const CRATES: [&str; 1] = ["social"];
         const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
         fn names_a_method(after: &str) -> bool {
             let names = match after.strip_prefix('{') {
@@ -148,13 +149,15 @@ mod tests {
                     }
                     continue;
                 }
-                if !name.ends_with(".rs") || name.contains("test") || name == "routing.rs" {
+                if !name.ends_with(".rs") || name.contains("test") {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
                 // Brace depth, the depth a skipped test item closes at, and whether
                 // a `#[cfg(test)]` item has not reached its `;` or `{` yet.
                 let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
+                // Inside `use axum::{ .. }`, `routing::get` names axum's own.
+                let mut axum_group = false;
                 for (number, line) in text.lines().enumerate() {
                     let trimmed = line.trim();
                     let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
@@ -181,24 +184,39 @@ mod tests {
                         pending = true;
                         continue;
                     }
-                    if line
+                    if trimmed.starts_with("use axum::{") && !trimmed.ends_with(';') {
+                        axum_group = true;
+                    }
+                    let direct = line
                         .split_once("axum::routing::")
-                        .is_some_and(|(_, after)| names_a_method(after))
-                    {
+                        .is_some_and(|(_, after)| names_a_method(after));
+                    let grouped = (axum_group || trimmed.starts_with("use axum::{"))
+                        && trimmed
+                            .split_once("routing::")
+                            .is_some_and(|(_, after)| names_a_method(after));
+                    if direct || grouped {
                         found.push(format!("{}:{}", path.display(), number + 1));
+                    }
+                    if axum_group && trimmed.ends_with("};") {
+                        axum_group = false;
                     }
                     depth += delta;
                 }
             }
         }
         let mut found = Vec::new();
-        visit(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut found,
-        );
+        for name in CRATES {
+            visit(
+                &std::path::Path::new(env!("DCL_ONE_ROOT"))
+                    .join("services/catalyst")
+                    .join(name)
+                    .join("src"),
+                &mut found,
+            );
+        }
         assert!(
             found.is_empty(),
-            "use crate::routing instead of axum::routing at {found:?}"
+            "use crate::shared::routing instead of axum::routing at {found:?}"
         );
     }
 }
