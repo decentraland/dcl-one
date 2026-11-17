@@ -5,7 +5,6 @@
 import { useEffect, useState } from 'react'
 import { isNativeHud, siteUrl } from '@hud-host'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'
-import type { NavAction } from '@explorer-core/engine/protocol'
 import { Button, ModalShell, openPopup } from '../../design'
 import type { SessionPhase } from './useEngineSession'
 
@@ -89,18 +88,19 @@ const NO_RECORD: PlatformBanNotice = { banned: true, reason: '', customMessage: 
 
 /** Opens the platform-ban notices. Blocking once a ban is known before the first world entry since
  *  sign-in, and kept open until sign-out or a not-banned notice; dismissible after a refused travel
- *  otherwise. A refused travel under the blocking notice is dismissed at once. */
+ *  otherwise. A refused travel under the blocking notice is dismissed at once; nothing opens over
+ *  sign-in. */
 export function usePlatformBanNotices(input: {
   phase: SessionPhase
   notice: PlatformBanNotice | null
   travelRefused: boolean
   dismissTravelRefused: () => void
   signOut: () => void
-  nav: (action: NavAction) => void
+  openExternalUrl: (url: string) => Promise<boolean>
 }): void {
   const { phase, notice, travelRefused } = input
-  // the native HUD has no browser tabs of its own: the engine opens Support
-  const openSupport = isNativeHud() ? () => input.nav('support') : undefined
+  // the native HUD has no browser tabs of its own: the engine opens the help page
+  const openSupport = isNativeHud() ? () => void input.openExternalUrl(siteUrl('/help/')) : undefined
   // an in-world travel passes through `entering` too
   const [reachedWorld, setReachedWorld] = useState(false)
   useEffect(() => {
@@ -125,7 +125,7 @@ export function usePlatformBanNotices(input: {
     if (blocking && travelRefused) input.dismissTravelRefused()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelRefused is stable
   }, [blocking, travelRefused])
-  const refusedNotice = travelRefused && !blocking
+  const refusedNotice = travelRefused && !blocking && phase !== 'login'
   useEffect(() => {
     if (!refusedNotice) return
     return openPlatformBanDialog(notice ?? NO_RECORD, { onClose: input.dismissTravelRefused, openSupport })

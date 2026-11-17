@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+
+let isNative = false
+vi.mock('@hud-host', async (importOriginal) => ({ ...(await importOriginal<object>()), isNativeHud: () => isNative }))
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from '../harness'
@@ -139,9 +142,9 @@ describe('the ban notices', () => {
     render(<PopupHost />)
     const dismissTravelRefused = vi.fn()
     const signOut = vi.fn()
-    const nav = vi.fn()
-    const hook = renderHook((input: Input) => usePlatformBanNotices({ ...input, dismissTravelRefused, signOut, nav }), { initialProps: initial })
-    return { ...hook, dismissTravelRefused, signOut }
+    const openExternalUrl = vi.fn(async (_url: string) => true)
+    const hook = renderHook((input: Input) => usePlatformBanNotices({ ...input, dismissTravelRefused, signOut, openExternalUrl }), { initialProps: initial })
+    return { ...hook, dismissTravelRefused, signOut, openExternalUrl }
   }
 
   const dialog = () => screen.queryByRole('alertdialog', { name: PLATFORM_BAN_TITLE })
@@ -162,9 +165,25 @@ describe('the ban notices', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sign Out' }))
     expect(h.signOut).toHaveBeenCalledOnce()
     await waitFor(() => expect(dialog()).toBeNull())
-    // what a sign-out leaves in the session
-    h.rerender({ phase: 'login', notice: null, travelRefused: false })
+    // sign-in before the session has cleared the ban and the refusal
+    h.rerender({ phase: 'login', notice: BAN, travelRefused: true })
     expect(dialog()).toBeNull()
+  })
+
+  it('Contact Support on the native HUD asks the engine to open the help page', async () => {
+    isNative = true
+    try {
+      const open = vi.spyOn(window, 'open')
+      const h = mount({ phase: 'world', notice: BAN, travelRefused: true })
+      await waitFor(() => expect(dialog()).not.toBeNull())
+      await userEvent.click(screen.getByRole('button', { name: 'Contact Support' }))
+      expect(h.openExternalUrl).toHaveBeenCalledOnce()
+      expect(h.openExternalUrl.mock.calls[0][0]).toMatch(/\/help\/$/)
+      expect(open).not.toHaveBeenCalled()
+      open.mockRestore()
+    } finally {
+      isNative = false
+    }
   })
 
   it('stays open when entry was under way and the world loads', async () => {

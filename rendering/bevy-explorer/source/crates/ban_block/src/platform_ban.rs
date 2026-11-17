@@ -202,15 +202,23 @@ impl BanCheckSchedule {
         true
     }
 
-    /// Whether a check starts now: a trigger, or the period or the server's delay elapsed. A
-    /// kept trigger waits out the server's delay.
-    fn starts(&mut self, now: f64, triggered: bool) -> bool {
+    /// Whether a check starts now: a trigger, the period or the server's delay elapsed, or
+    /// `passed_expiry` (the known ban's passed `expires_at`) not yet checked. A kept trigger and a
+    /// passed expiry wait out the server's delay; any check started after the expiry covers it.
+    fn starts(&mut self, now: f64, triggered: bool, passed_expiry: Option<&str>) -> bool {
         let kept = self.retry_after.is_none() && self.retrigger;
-        let start = triggered || kept || due(now, self.last_checked, self.retry_after);
+        let expiry_due = passed_expiry.is_some()
+            && self.retry_after.is_none()
+            && self.expiry_checked.as_deref() != passed_expiry;
+        let start =
+            triggered || kept || expiry_due || due(now, self.last_checked, self.retry_after);
         if start {
             self.last_checked = Some(now);
             self.retry_after = None;
             self.retrigger = false;
+            if let Some(expiry) = passed_expiry {
+                self.expiry_checked = Some(expiry.to_owned());
+            }
         }
         start
     }
@@ -267,17 +275,12 @@ fn check_platform_ban(
         return;
     };
     let refresh_requested = refresh.read().count() > 0;
-    // one check once a known ban's expiry passes, after any delay the server asked for
-    let expiry = status.ban().and_then(|ban| ban.expires_at.clone());
-    let expired = ban_expired(&status, web_time::SystemTime::now())
-        && schedule.retry_after.is_none()
-        && schedule.expiry_checked != expiry;
-    if expired {
-        schedule.expiry_checked = expiry;
-    }
-    let triggered = refresh_requested
-        || expired
-        || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
+    let passed_expiry = status
+        .ban()
+        .and_then(|ban| ban.expires_at.clone())
+        .filter(|_| ban_expired(&status, web_time::SystemTime::now()));
+    let triggered =
+        refresh_requested || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
     if let Some(in_flight) = schedule.in_flight.as_mut() {
         let Some(result) = in_flight.task.complete() else {
@@ -311,7 +314,7 @@ fn check_platform_ban(
         }
     }
 
-    if !schedule.starts(now, triggered) {
+    if !schedule.starts(now, triggered, passed_expiry.as_deref()) {
         return;
     }
     let url = base_domain::url(
@@ -438,6 +441,32 @@ mod tests {
         status.reset_platform_ban();
         assert_eq!(status.state(), &PlatformBanState::Unknown);
         assert_eq!(status.source(), None);
+    }
+
+    #[test]
+    fn a_passed_expiry_is_checked_once_after_the_server_delay() {
+        const EXPIRY: Option<&str> = Some("2026-12-01T00:00:00.000Z");
+        let mut schedule = BanCheckSchedule::default();
+        schedule.follow(Some(address(1)));
+        assert!(schedule.starts(0.0, false, None));
+
+        // a failed check asks for 30 s; the expiry passes during the wait
+        schedule.delay(Some(30.0));
+        assert!(
+            !schedule.starts(10.0, false, EXPIRY),
+            "the server delay holds"
+        );
+        // the delay's own check covers the expiry
+        assert!(schedule.starts(30.0, false, EXPIRY));
+        assert!(!schedule.starts(31.0, false, EXPIRY), "no second check");
+        assert!(!schedule.starts(200.0, false, EXPIRY));
+
+        // a passed expiry with no delay starts one check at once
+        let mut schedule = BanCheckSchedule::default();
+        schedule.follow(Some(address(2)));
+        assert!(schedule.starts(0.0, false, None));
+        assert!(schedule.starts(1.0, false, EXPIRY));
+        assert!(!schedule.starts(2.0, false, EXPIRY));
     }
 
     #[test]
@@ -603,25 +632,25 @@ mod tests {
         let mut schedule = BanCheckSchedule::default();
         assert!(schedule.follow(Some(address(1))));
         assert!(
-            schedule.starts(0.0, false),
+            schedule.starts(0.0, false, None),
             "a new address is checked at once"
         );
-        assert!(!schedule.starts(1.0, false));
-        assert!(schedule.starts(1.0, true), "a trigger starts a check");
+        assert!(!schedule.starts(1.0, false, None));
+        assert!(schedule.starts(1.0, true, None), "a trigger starts a check");
 
         // a trigger during a request is kept for when the request completes
         schedule.retrigger = true;
-        assert!(schedule.starts(2.0, false));
+        assert!(schedule.starts(2.0, false, None));
         assert!(!schedule.retrigger);
-        assert!(!schedule.starts(3.0, false));
+        assert!(!schedule.starts(3.0, false, None));
 
         // a server delay is floored and then honoured, by a kept trigger too
         schedule.delay(Some(0.0));
         schedule.retrigger = true;
         assert_eq!(schedule.retry_after, Some(MIN_RETRY_SECS));
-        assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false));
+        assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false, None));
         assert!(schedule.retrigger);
-        assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false));
+        assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false, None));
         assert!(!schedule.retrigger);
 
         // the same address is no change; another drops the schedule
