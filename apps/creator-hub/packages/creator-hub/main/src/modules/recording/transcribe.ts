@@ -5,7 +5,7 @@ import log from 'electron-log/main';
 import {
   TRANSCRIBE_JOB_FILE_ENV,
   type TranscribeWorkerJob,
-  type TranscribeWorkerMessage,
+  type TranscribeWorkerResult,
   type TranscriptWord,
 } from '/shared/types/recording';
 
@@ -15,33 +15,28 @@ import { getModelPath, getToolsDir, getVadModelPath, isInstalled, type ModelId }
 
 const WORKER_PKG = '@dcl-creator-hub/transcribe-worker';
 const WORKER_BIN = 'transcribe-worker';
-// Generous: a long session on an Intel Mac without Metal transcribes at a few times real time.
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60_000;
 const STDERR_TAIL_LINES = 3;
-
-export function parseWorkerOutput(stdout: Buffer | string): TranscribeWorkerMessage[] {
-  return stdout
-    .toString()
-    .split(/\r?\n/)
-    .flatMap(line => {
-      if (!line.startsWith('{')) return [];
-      try {
-        return [JSON.parse(line) as TranscribeWorkerMessage];
-      } catch {
-        return [];
-      }
-    });
-}
 
 function tail(lines: string[]): string {
   return lines.join('').trim().split(/\r?\n/).slice(-STDERR_TAIL_LINES).join('\n');
 }
 
+async function readResult(resultPath: string): Promise<TranscribeWorkerResult | null> {
+  try {
+    return JSON.parse(await fs.readFile(resultPath, 'utf8')) as TranscribeWorkerResult;
+  } catch {
+    return null;
+  }
+}
+
+/** Transcribes a session's audio in a worker process; `signal` kills it and gives up. */
 export async function transcribe(
   wavPath: string,
   model: ModelId,
   language: string,
   prompt: string | undefined,
+  signal?: AbortSignal,
 ): Promise<TranscriptWord[]> {
   if (!(await isInstalled(model))) throw new Error('Speech-to-text is not installed yet.');
   const toolsDir = getToolsDir();
@@ -51,69 +46,75 @@ export async function transcribe(
     bin: WORKER_BIN,
     bundle: 'transcribe-worker.js',
   });
+  const sessionDir = path.dirname(wavPath);
+  const jobFile = path.join(sessionDir, 'transcribe-job.json');
+  const resultPath = path.join(sessionDir, 'transcribe-result.json');
   const job: TranscribeWorkerJob = {
     modelPath: getModelPath(model),
     vadModelPath: getVadModelPath(),
     wavPath,
+    resultPath,
     language,
     prompt,
   };
-  const jobFile = path.join(path.dirname(wavPath), 'transcribe-job.json');
   await fs.writeFile(jobFile, JSON.stringify(job));
   try {
-    return await runWorker(toolsDir, jobFile);
+    return await runWorker(toolsDir, jobFile, resultPath, signal);
   } finally {
     await fs.rm(jobFile, { force: true });
+    await fs.rm(resultPath, { force: true });
   }
 }
 
-async function runWorker(toolsDir: string, jobFile: string): Promise<TranscriptWord[]> {
+async function runWorker(
+  toolsDir: string,
+  jobFile: string,
+  resultPath: string,
+  signal?: AbortSignal,
+): Promise<TranscriptWord[]> {
   const child = runBin(WORKER_PKG, WORKER_BIN, {
     workspace: toolsDir,
     cwd: toolsDir,
     env: { [TRANSCRIBE_JOB_FILE_ENV]: jobFile },
   });
-  // Collected as it arrives: a worker killed by a signal (whisper.cpp aborting) exits with a
-  // null code, which `bin` reports as a clean exit and clears its buffers, so the reason would
-  // otherwise be gone by the time the missing result is noticed.
   const stderrLines: string[] = [];
   child.on(/[\s\S]/, line => stderrLines.push(line ?? ''), { type: 'stderr' });
 
-  // On timeout the worker is killed and waited for before the error goes out, so the next
-  // transcription never runs beside a worker that is still holding the model.
   let killed: Promise<void> | undefined;
-  const timer = setTimeout(() => {
+  let timedOut = false;
+  const stop = () => {
     killed = child.kill().catch(() => undefined);
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    stop();
   }, TRANSCRIBE_TIMEOUT_MS);
+  signal?.addEventListener('abort', stop, { once: true });
+  if (signal?.aborted) stop();
 
-  // Read the outcome from the complete buffer, not the live stream: `bin` can drop the last
-  // chunk on exit (see the optimizer's runWorker).
-  let stdout: Buffer;
   let failure: string | null = null;
   try {
-    stdout = await child.wait();
+    await child.wait();
   } catch (error) {
-    if (killed) stdout = Buffer.alloc(0);
-    else if (error instanceof StreamError) {
-      stdout = error.stdout;
-      failure = error.message;
-    } else throw error;
+    if (!killed) {
+      if (error instanceof StreamError) failure = error.message;
+      else throw error;
+    }
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', stop);
   }
   if (killed) {
     await killed;
-    throw new Error('Transcription took too long.');
+    throw new Error(timedOut ? 'Transcription took too long.' : 'Transcription was skipped.');
   }
 
   const stderr = stderrLines.join('').trim();
   if (stderr) log.error(`[Recording] transcribe worker stderr:\n${stderr}`);
-  const messages = parseWorkerOutput(stdout);
-  const error = messages.find(m => m.type === 'error');
-  if (error?.type === 'error') throw new Error(error.message);
-  const result = messages.find(m => m.type === 'result');
-  if (result?.type === 'result') return result.words;
-  const reason =
-    tail(stderrLines) || failure || 'The transcription worker exited without a result.';
-  throw new Error(reason);
+  const result = await readResult(resultPath);
+  if (result && 'error' in result) throw new Error(result.error);
+  if (result) return result.words;
+  throw new Error(
+    tail(stderrLines) || failure || 'The transcription worker exited without a result.',
+  );
 }

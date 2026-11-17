@@ -29,7 +29,7 @@ const lockfiles = import.meta.glob('./tools/*.package-lock.json', {
 const WHISPER_PKG = '@fugood/whisper.node';
 const INSTALLED_MARKER = 'installed.json';
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
-const MODEL_TIMEOUT_MS = 15 * 60_000;
+const MODEL_IDLE_TIMEOUT_MS = 60_000;
 
 // whisper.cpp's 8-bit quantized "small" models: ~265 MB, close to the full 466 MB model's accuracy.
 // "base" (~80 MB) misheard too many words in real sessions ("piss action" for "this action");
@@ -170,24 +170,21 @@ export async function getStatus(model: ModelId): Promise<RecordingToolsStatus> {
   };
 }
 
-async function withTimeout<T>(
-  task: Promise<T>,
-  ms: number,
-  message: string,
-  onTimeout: () => void,
-) {
+function idleTimeout(ms: number, message: string, onTimeout: () => void) {
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
+  let fail!: (error: Error) => void;
+  const expired = new Promise<never>((_, reject) => {
+    fail = reject;
+  });
+  const restart = () => {
+    clearTimeout(timer);
     timer = setTimeout(() => {
       onTimeout();
-      reject(new Error(message));
+      fail(new Error(message));
     }, ms);
-  });
-  try {
-    return await Promise.race([task, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
+  };
+  restart();
+  return { expired, restart, stop: () => clearTimeout(timer) };
 }
 
 async function installPackage(dir: string): Promise<void> {
@@ -220,12 +217,16 @@ async function sha256Of(file: string): Promise<string> {
 
 type Download = { url: string; target: string; sha256: string; bytes: number };
 
-// Counts bytes through and reports whole-percent steps.
-function progressCounter(total: number, onPercent: (percent: number) => void): Transform {
+function progressCounter(
+  total: number,
+  onPercent: (percent: number) => void,
+  onChunk: () => void,
+): Transform {
   let received = 0;
   let lastPercent = -1;
   return new Transform({
     transform(chunk: Buffer, _encoding, callback) {
+      onChunk();
       received += chunk.byteLength;
       const percent = Math.min(100, Math.floor((received / total) * 100));
       if (percent !== lastPercent) {
@@ -247,6 +248,11 @@ export async function downloadModel(
   await fs.mkdir(path.dirname(target), { recursive: true });
   const partial = `${target}.download`;
   const controller = new AbortController();
+  const idle = idleTimeout(
+    MODEL_IDLE_TIMEOUT_MS,
+    'Downloading the speech model took too long. Check your connection.',
+    () => controller.abort(),
+  );
   const download = (async () => {
     const response = await fetchImpl(url, { signal: controller.signal });
     if (!response.ok || !response.body) {
@@ -260,25 +266,19 @@ export async function downloadModel(
     // 'error' with nobody listening.
     await pipeline(
       Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
-      progressCounter(total, onPercent),
+      progressCounter(total, onPercent, idle.restart),
       createWriteStream(partial),
     );
   })();
   try {
-    await withTimeout(
-      download,
-      MODEL_TIMEOUT_MS,
-      'Downloading the speech model took too long. Check your connection.',
-      () => controller.abort(),
-    );
+    await Promise.race([download, idle.expired]);
     const digest = await sha256Of(partial);
     if (digest !== sha256) {
       throw new Error('The downloaded speech model is corrupted (checksum mismatch). Try again.');
     }
     await fs.rename(partial, target);
   } finally {
-    // Best effort: on Windows the partial file can still be held open for a moment after a
-    // failed pipeline, and the cleanup must not replace the error that explains the failure.
+    idle.stop();
     await fs.rm(partial, { force: true }).catch(() => undefined);
   }
 }

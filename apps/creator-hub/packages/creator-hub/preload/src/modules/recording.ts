@@ -32,6 +32,10 @@ export async function discard(dir: string) {
   return invoke('recording.discard', dir);
 }
 
+export async function skipTranscription(sessionId: string) {
+  return invoke('recording.skipTranscription', sessionId);
+}
+
 export async function toolsStatus(language: string) {
   return invoke('recording.toolsStatus', language);
 }

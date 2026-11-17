@@ -3,13 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TRANSCRIBE_JOB_FILE_ENV } from '../../shared/types/recording';
+import {
+  TRANSCRIBE_JOB_FILE_ENV,
+  type TranscribeWorkerJob,
+  type TranscribeWorkerResult,
+} from '../../shared/types/recording';
 
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   isInstalled: vi.fn(async () => true),
   toolsDir: '',
-  // bin.ts pulls in Electron paths at import time, so its error class is stood in for here.
   StreamError: class StreamError extends Error {
     constructor(
       public type: string,
@@ -39,18 +42,16 @@ const { StreamError } = mocks;
 
 type FakeWorker = {
   env: Record<string, string>;
-  jobFileDuringRun: string | null;
-  stderr: (line: string) => void;
+  job: TranscribeWorkerJob | null;
 };
 
-// A worker whose outcome the test picks: what it printed on stdout, how it exited, and what it
-// wrote to stderr while running.
 function fakeWorker(outcome: {
+  result?: TranscribeWorkerResult;
   stdout?: string;
   stderr?: string[];
   exit?: 'clean' | 'failed';
 }): FakeWorker {
-  const worker: FakeWorker = { env: {}, jobFileDuringRun: null, stderr: () => {} };
+  const worker: FakeWorker = { env: {}, job: null };
   mocks.run.mockImplementation(
     (_pkg: string, _bin: string, options: { env: Record<string, string> }) => {
       worker.env = options.env;
@@ -63,9 +64,12 @@ function fakeWorker(outcome: {
         kill: vi.fn(async () => {}),
         wait: async () => {
           const jobFile = options.env[TRANSCRIBE_JOB_FILE_ENV];
-          worker.jobFileDuringRun = fs.existsSync(jobFile)
-            ? fs.readFileSync(jobFile, 'utf8')
+          worker.job = fs.existsSync(jobFile)
+            ? (JSON.parse(fs.readFileSync(jobFile, 'utf8')) as TranscribeWorkerJob)
             : null;
+          if (worker.job && outcome.result) {
+            fs.writeFileSync(worker.job.resultPath, JSON.stringify(outcome.result));
+          }
           for (const line of outcome.stderr ?? []) handlers.forEach(h => h(`${line}\n`));
           const stdout = Buffer.from(outcome.stdout ?? '');
           if (outcome.exit === 'failed') {
@@ -147,6 +151,56 @@ describe('when the worker never answers', () => {
   });
 });
 
+describe('when the user skips the transcription', () => {
+  let sessionDir: string;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.toolsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-tools-'));
+    sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-session-'));
+    fs.writeFileSync(path.join(sessionDir, 'audio.wav'), Buffer.alloc(44));
+  });
+
+  afterEach(() => {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(mocks.toolsDir, { recursive: true, force: true });
+  });
+
+  it('should kill the worker, wait for it to die, then say it was skipped', async () => {
+    const order: string[] = [];
+    let started!: () => void;
+    const running = new Promise<void>(resolve => (started = resolve));
+    let die!: () => void;
+    mocks.run.mockImplementation(() => {
+      started();
+      return {
+        on: () => 0,
+        kill: vi.fn(async () => {
+          order.push('kill');
+          die();
+          order.push('dead');
+        }),
+        wait: () =>
+          new Promise<Buffer>((_, reject) => {
+            die = () => reject(new Error('killed'));
+          }),
+      };
+    });
+    const controller = new AbortController();
+    const outcome = transcribe(
+      path.join(sessionDir, 'audio.wav'),
+      'en',
+      'en',
+      undefined,
+      controller.signal,
+    ).catch((error: Error) => order.push(error.message));
+    await running;
+    controller.abort();
+    await outcome;
+    expect(order).toEqual(['kill', 'dead', 'Transcription was skipped.']);
+  });
+});
+
 describe('when transcribing a recording', () => {
   let sessionDir: string;
   let wavPath: string;
@@ -169,37 +223,44 @@ describe('when transcribing a recording', () => {
     let words: Awaited<ReturnType<typeof transcribe>>;
 
     beforeEach(async () => {
-      worker = fakeWorker({
-        stdout:
-          '{"type":"progress","percent":50}\n{"type":"result","words":[{"start":0,"end":200,"text":" hi"}]}\n',
-      });
+      worker = fakeWorker({ result: { words: [{ start: 0, end: 200, text: ' hi' }] } });
       words = await transcribe(wavPath, 'en', 'en', 'Barrel_3');
     });
 
     it('should hand the job over as a file next to the audio, and remove it afterwards', () => {
       const jobFile = worker.env[TRANSCRIBE_JOB_FILE_ENV];
       expect(path.dirname(jobFile)).toBe(sessionDir);
-      expect(JSON.parse(worker.jobFileDuringRun!)).toEqual({
+      expect(worker.job).toEqual({
         modelPath: '/models/en.bin',
         vadModelPath: '/models/vad.bin',
         wavPath,
+        resultPath: expect.stringContaining(sessionDir),
         language: 'en',
         prompt: 'Barrel_3',
       });
       expect(fs.existsSync(jobFile)).toBe(false);
     });
 
-    it('should return the words', () => {
+    it('should return the words from the result file and leave nothing behind', () => {
       expect(words).toEqual([{ start: 0, end: 200, text: ' hi' }]);
+      expect(fs.existsSync(worker.job!.resultPath)).toBe(false);
+    });
+  });
+
+  describe('and the worker prints the transcript on stdout instead', () => {
+    it('should ignore it, so no transcript can reach the app log through a parsed line', async () => {
+      fakeWorker({
+        stdout: '{"type":"result","words":[{"start":0,"end":200,"text":" secret"}]}\n',
+      });
+      await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow(
+        'The transcription worker exited without a result.',
+      );
     });
   });
 
   describe('and the worker reports an error', () => {
     it('should surface its message', async () => {
-      fakeWorker({
-        stdout: '{"type":"error","message":"model file is corrupt"}\n',
-        exit: 'failed',
-      });
+      fakeWorker({ result: { error: 'model file is corrupt' }, exit: 'failed' });
       await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow(
         'model file is corrupt',
       );
@@ -209,7 +270,6 @@ describe('when transcribing a recording', () => {
   describe('and the worker dies before it can report (a native crash)', () => {
     it('should surface the end of what it wrote to stderr', async () => {
       fakeWorker({
-        stdout: '{"type":"progress","percent":10}\n',
         stderr: ['ggml_metal_init: loading', 'ggml_metal_init: error: failed', 'Abort trap: 6'],
         exit: 'clean',
       });
@@ -219,25 +279,26 @@ describe('when transcribing a recording', () => {
     });
 
     it('should say it exited without a result when stderr is empty too', async () => {
-      fakeWorker({ stdout: '', exit: 'clean' });
+      fakeWorker({ exit: 'clean' });
       await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow(
         'The transcription worker exited without a result.',
       );
     });
   });
 
-  describe('and the worker exits non-zero after printing the result', () => {
-    it('should still take the result from the complete output', async () => {
-      fakeWorker({ stdout: '{"type":"result","words":[]}\n', exit: 'failed' });
+  describe('and the worker exits non-zero after writing the result', () => {
+    it('should still take the result', async () => {
+      fakeWorker({ result: { words: [] }, exit: 'failed' });
       await expect(transcribe(wavPath, 'en', 'en', undefined)).resolves.toEqual([]);
     });
   });
 
-  describe('and the job file is removed when the worker fails', () => {
-    it('should leave nothing behind', async () => {
-      const worker = fakeWorker({ stdout: '', exit: 'failed' });
+  describe('and the job and result files are left when the worker fails', () => {
+    it('should remove both', async () => {
+      const worker = fakeWorker({ result: { error: 'boom' }, exit: 'failed' });
       await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow();
       expect(fs.existsSync(worker.env[TRANSCRIBE_JOB_FILE_ENV])).toBe(false);
+      expect(fs.existsSync(worker.job!.resultPath)).toBe(false);
     });
   });
 

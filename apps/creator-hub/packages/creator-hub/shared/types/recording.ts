@@ -3,34 +3,67 @@
 // assistant can match "delete this one" to the entity they were pointing at. Preload cannot
 // import from main, so the channel names and payload shapes live here.
 
-// One thing the user did. Produced by the inspector (UI, ECS, viewport, play mode) and by the
-// Creator Hub's own window; the inspector defines an identical type on its side of the RPC.
+/** Every {@link RecordedEvent} kind. The inspector mirrors this list in `lib/recorder/types.ts`. */
+export const RECORDED_EVENT_KINDS = [
+  'click',
+  'dblclick',
+  'contextmenu',
+  'component',
+  'dialog',
+  'entity',
+  'hover',
+  'input',
+  'key',
+  'menu',
+  'mode',
+  'panel',
+  'player',
+  'scene-click',
+  'scene-appear',
+  'scene-remove',
+  'scroll',
+  'select',
+  'setting',
+  'viewport-hover',
+] as const;
+
+export type RecordedEventKind = (typeof RECORDED_EVENT_KINDS)[number];
+
+/** One thing the user did, from the inspector or the Creator Hub window. */
 export type RecordedEvent = {
-  // Date.now() when it happened (epoch ms). Every source uses the wall clock so the inspector
-  // iframe, the host window and the microphone line up without a handshake.
+  /** Epoch ms, on the wall clock every source shares. */
   t: number;
-  // Short machine tag ('click', 'hover', 'select', 'viewport-hover', 'scene-click', …).
-  kind: string;
-  // One human-readable line that makes sense to an LLM on its own.
+  kind: RecordedEventKind;
+  /** One line that reads on its own. */
   text: string;
+  /** What a `scene-appear` or `scene-remove` event is about, without the event's own wording. */
+  label?: string;
   entity?: { id: number; name?: string };
   area?: string;
   x?: number;
   y?: number;
 };
 
-// Pointer movement and where the player stands: context for what was said, not actions.
-export const HOVER_EVENT_KINDS: ReadonlySet<string> = new Set([
+export const HOVER_EVENT_KINDS: ReadonlySet<RecordedEventKind> = new Set([
   'viewport-hover',
   'hover',
   'player',
 ]);
-// What the running scene's code made appear or disappear: context, not something the user did.
-export const SCENE_EVENT_KINDS: ReadonlySet<string> = new Set(['scene-appear', 'scene-remove']);
 
-// Whether an event counts toward the "N actions" shown for a recording.
-export function isRecordedAction(kind: string): boolean {
+export const SCENE_EVENT_KINDS: ReadonlySet<RecordedEventKind> = new Set([
+  'scene-appear',
+  'scene-remove',
+]);
+
+/** Whether an event counts toward the "N actions" shown for a recording. */
+export function isRecordedAction(kind: RecordedEventKind): boolean {
   return !HOVER_EVENT_KINDS.has(kind) && !SCENE_EVENT_KINDS.has(kind);
+}
+
+/** `m:ss`, rounded down, for every recording length the app shows. */
+export function formatRecordingDuration(ms: number): string {
+  const seconds = Math.floor(Math.max(0, ms) / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 // A word from the transcript, in ms from the start of the audio. `segment` is the stretch of
@@ -55,8 +88,10 @@ export type RecordingResult = {
   actionCount: number;
   // The condensed timeline handed to the assistant as editor context with the next message.
   context: string;
-  // Set when the audio could not be transcribed; the timeline still has every action.
+  /** Set when the audio could not be transcribed; the timeline still has every action. */
   transcriptionError?: string;
+  /** Set when the user chose to send without waiting for the transcript. */
+  transcriptionSkipped?: boolean;
 };
 
 // Fire-and-forget channels (ipcRenderer.send): audio chunks and event batches arrive many times
@@ -75,22 +110,23 @@ export const RECORDING_SAMPLE_RATE = 16_000;
 // the limit; main drops audio past it as a backstop.
 export const MAX_RECORDING_MS = 10 * 60_000;
 
-// The transcription worker (main/src/transcribe-worker.ts): the job is a JSON file whose path
-// arrives in TRANSCRIBE_JOB_FILE (not the job itself: an environment value is capped at 128 KiB
-// on Linux), one JSON message per stdout line back.
+/** Days a finished session folder stays on disk once nothing touches it. */
+export const RECORDING_RETENTION_DAYS = 30;
+
+/** Names the JSON file holding the worker's {@link TranscribeWorkerJob}. */
 export const TRANSCRIBE_JOB_FILE_ENV = 'TRANSCRIBE_JOB_FILE';
+
 export type TranscribeWorkerJob = {
   modelPath: string;
   wavPath: string;
+  /** Where the worker writes its {@link TranscribeWorkerResult}; main reads it and deletes it. */
+  resultPath: string;
   language: string;
-  // Whisper's initial prompt: vocabulary to bias toward (entity names, editor terms).
+  /** Whisper's initial prompt: vocabulary to bias toward (entity names, editor terms). */
   prompt?: string;
-  // Silero VAD model: when set, the worker finds the speech with it; its own loudness-based
-  // detection is the fallback for when the detector fails.
+  /** Silero VAD model; without it the worker falls back to its own loudness detection. */
   vadModelPath?: string;
 };
 
-export type TranscribeWorkerMessage =
-  | { type: 'progress'; percent: number }
-  | { type: 'result'; words: TranscriptWord[] }
-  | { type: 'error'; message: string };
+/** The worker's outcome, written to the job's `resultPath`, never to the logged stdout. */
+export type TranscribeWorkerResult = { words: TranscriptWord[] } | { error: string };

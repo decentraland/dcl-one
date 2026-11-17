@@ -215,6 +215,90 @@ describe('when downloading a speech model', () => {
   });
 });
 
+function pacedFetch(chunks: Buffer[], gapMs: number, { stalls = false } = {}) {
+  return vi.fn(async () => {
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await new Promise(resolve => setTimeout(resolve, gapMs));
+        if (sent >= chunks.length) {
+          if (stalls) return new Promise<void>(() => {});
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunks[sent]));
+        sent += 1;
+      },
+    });
+    const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-length': String(total) }),
+      body,
+    } as unknown as Response;
+  });
+}
+
+describe('when a speech model download is slow', () => {
+  let dir: string;
+  let target: string;
+  const data = Buffer.alloc(4000, 7);
+  const chunks = Array.from({ length: 200 }, (_, i) => data.subarray(i * 20, (i + 1) * 20));
+  const IDLE_MS = 60_000;
+  const CHUNK_GAP_MS = 5000;
+  const OLD_TOTAL_CAP_MS = 15 * 60_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-download-'));
+    target = path.join(dir, 'models', 'model.bin');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function advanceLettingRealIoRun(ms: number, step: number) {
+    for (let elapsed = 0; elapsed < ms; elapsed += step) {
+      await new Promise(resolve => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(step);
+    }
+  }
+
+  function download(fetchImpl: typeof fetch) {
+    return downloadModel(
+      { url: 'https://example.invalid/m', target, sha256: sha256(data), bytes: data.byteLength },
+      () => {},
+      fetchImpl,
+    ).then(
+      () => 'done',
+      (error: Error) => error.message,
+    );
+  }
+
+  it('should keep waiting while bytes keep arriving, however long the whole download takes', async () => {
+    expect(CHUNK_GAP_MS * chunks.length).toBeGreaterThan(OLD_TOTAL_CAP_MS);
+    const outcome = download(pacedFetch(chunks, CHUNK_GAP_MS));
+    await advanceLettingRealIoRun(CHUNK_GAP_MS * (chunks.length + 20), CHUNK_GAP_MS);
+    expect(await outcome).toBe('done');
+    expect(fs.readFileSync(target)).toEqual(data);
+  });
+
+  it('should give up once no bytes have arrived for the idle timeout, and clean up', async () => {
+    const outcome = download(pacedFetch(chunks, CHUNK_GAP_MS, { stalls: true }));
+    await advanceLettingRealIoRun(CHUNK_GAP_MS * (chunks.length + 20), CHUNK_GAP_MS);
+    expect(fs.existsSync(target)).toBe(false);
+    await advanceLettingRealIoRun(IDLE_MS * 2, 1000);
+    expect(await outcome).toBe(
+      'Downloading the speech model took too long. Check your connection.',
+    );
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.existsSync(`${target}.download`)).toBe(false);
+  });
+});
+
 describe('when two installs are asked for', () => {
   let fetched: string[];
 
@@ -230,6 +314,10 @@ describe('when two installs are asked for', () => {
           fs.mkdirSync(pkgDir, { recursive: true });
           fs.writeFileSync(path.join(pkgDir, 'package.json'), '{}');
         }
+        fs.writeFileSync(
+          path.join(options.cwd, 'node_modules', '.package-lock.json'),
+          '{"lockfileVersion":3}',
+        );
         return Buffer.alloc(0);
       },
       kill: vi.fn(),

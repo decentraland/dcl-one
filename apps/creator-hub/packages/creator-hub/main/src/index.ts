@@ -24,7 +24,8 @@ import { killAllRealms } from '/@/modules/bevy-realm';
 import { stopAllProjectWatchers } from '/@/modules/project-watcher';
 import { killInspectorServer } from '/@/modules/inspector';
 import { aiStop } from '/@/modules/ai';
-import { abort as abortRecording } from '/@/modules/recording';
+import { abort as abortRecording, abortTranscription } from '/@/modules/recording';
+import { pruneOldSessions } from '/@/modules/recording/retention';
 import { stopSceneMcpServer } from '/@/modules/scene-mcp';
 import {
   clearMcpDiscovery,
@@ -162,6 +163,7 @@ app
     });
     log.info('[IPC] Ready');
     void initMcpDiscovery();
+    void pruneOldSessions();
     await restoreOrCreateMainWindow();
     log.info('[BrowserWindow] Ready');
     await addEditorsPathsToConfig();
@@ -202,7 +204,8 @@ export async function killAll() {
   }
   killInspectorServer();
   aiStop(); // reap any in-flight AI CLI turn (synchronous kill of its process group)
-  abortRecording('the app was closed'); // keep what was captured; no time to transcribe
+  abortRecording('the app was closed');
+  abortTranscription();
   stopSceneMcpServer(); // close the localhost MCP server
   stopWatchingAccessRequests();
   clearMcpDiscovery(); // and stop advertising it to outside agents

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { captureException } from '@sentry/electron/main';
 import { app, systemPreferences, type WebContents } from 'electron';
 import log from 'electron-log/main';
 
@@ -15,31 +15,21 @@ import {
 } from '/shared/types/recording';
 
 import { dropNonSpeech } from './nonspeech';
+import { discard, getRecordingsDir, holdSession, pruneProject } from './retention';
+import { cleanTitle, sanitizeEvent, vocabularyPrompt } from './sanitize';
 import { buildTimeline, renderContext, renderSessionMarkdown } from './timeline';
 import { install, isInstalled, modelFor } from './tools';
 import { transcribe } from './transcribe';
 import { pcmPeak, wavHeader, WAV_HEADER_BYTES } from './wav';
 
-// The session recorder's host side. The renderer streams microphone PCM and event batches here
-// while the creator records; this module owns the session folder, so a project or app closed
-// mid-recording still leaves a playable WAV and the actions captured so far. Writes are
-// synchronous on purpose: chunks are small (~3 KB every 100 ms) and abort() must finish inside
-// a quit handler that can't wait on stream flushes.
-
-const KEEP_SESSIONS_PER_PROJECT = 20;
-// A runaway inspector must not grow the log without bound: ~4 h of busy editing.
-const MAX_EVENTS = 50_000;
-// The renderer stops at MAX_RECORDING_MS; audio past it is dropped here in case it doesn't.
+const MAX_EVENTS = 20_000;
 const MAX_AUDIO_BYTES = (RECORDING_SAMPLE_RATE * 2 * MAX_RECORDING_MS) / 1000;
-// Below this 16-bit peak the microphone heard nothing worth transcribing (Whisper invents
-// "Thank you." on silence).
 const SILENCE_PEAK = 600;
-// The inspector's own cap (lib/recorder/types.ts MAX_TEXT_LENGTH); the same here so a line is
-// never cut differently on the two sides.
-const MAX_TEXT = 200;
-const MAX_KIND = 40;
-const MAX_NAME = 120;
-const MAX_AREA = 60;
+const AUDIO_FILE = 'audio.wav';
+const SESSION_FILES = ['events.jsonl', 'transcript.json'];
+const SKIPPED_NOTE = 'skipped, the recording was sent without waiting for it';
+const RUNNING_REFUSAL = 'This recording is still running.';
+const TRANSCRIBING_REFUSAL = 'This recording is still being transcribed.';
 
 type Session = {
   id: string;
@@ -55,16 +45,14 @@ type Session = {
   eventsFd: number;
   events: RecordedEvent[];
   ended: boolean;
+  release: () => void;
   detach: () => void;
 };
 
 let session: Session | null = null;
-// Folders whose audio.wav a transcription worker is still reading; discard() refuses them.
-const transcribing = new Set<string>();
+let stopping: { id: string; ownerId: number; skip: AbortController } | null = null;
 
-export function getRecordingsDir(): string {
-  return path.join(app.getPath('userData'), 'recordings');
-}
+export { discard };
 
 function projectFolder(projectPath: string): string {
   const slug = path
@@ -75,8 +63,6 @@ function projectFolder(projectPath: string): string {
   return `${slug}-${hash}`;
 }
 
-// Readable and unique: two sessions started within the same second (an abort followed by a
-// restart) must not share a folder, since the files are opened for truncation.
 export function timestampFolder(
   date: Date,
   suffix = crypto.randomBytes(2).toString('hex'),
@@ -90,12 +76,8 @@ export function timestampFolder(
   )}-${suffix}`;
 }
 
-// macOS gates the microphone per app; the first request shows the system prompt. Elsewhere the
-// OS doesn't ask the app, so this is a pass.
 async function ensureMicrophoneAccess(): Promise<void> {
   if (process.platform !== 'darwin') return;
-  // QA/e2e runs feed a WAV through Chromium's fake capture device; the system prompt would
-  // block them and there is no real microphone to protect.
   if (app.commandLine.hasSwitch('use-fake-device-for-media-stream')) return;
   const status = systemPreferences.getMediaAccessStatus('microphone');
   if (status === 'granted') return;
@@ -123,7 +105,7 @@ export async function start(
     timestampFolder(new Date(startedAt)),
   );
   fs.mkdirSync(dir, { recursive: true });
-  const audioFd = fs.openSync(path.join(dir, 'audio.wav'), 'w');
+  const audioFd = fs.openSync(path.join(dir, AUDIO_FILE), 'w');
   fs.writeSync(audioFd, wavHeader(0, RECORDING_SAMPLE_RATE));
   const eventsFd = fs.openSync(path.join(dir, 'events.jsonl'), 'w');
 
@@ -132,7 +114,7 @@ export async function start(
     id,
     dir,
     ownerId: owner.id,
-    projectTitle,
+    projectTitle: cleanTitle(projectTitle),
     language,
     startedAt,
     audioStartedAt: null,
@@ -142,10 +124,9 @@ export async function start(
     eventsFd,
     events: [],
     ended: false,
+    release: holdSession(dir, RUNNING_REFUSAL),
     detach: () => {},
   };
-  // The window going away (closed, reloaded, crashed) ends the recording on the spot. In-app
-  // route changes are same-document navigations and don't count.
   const onGone = () => {
     if (session?.id === id) abort('the window closed');
   };
@@ -162,13 +143,12 @@ export async function start(
     owner.off('did-start-navigation', onNavigate);
   };
 
-  // Get the speech tools downloading now (the consent dialog said so), so they are usually
-  // ready by the time the user stops.
   const model = modelFor(language);
   if (!(await isInstalled(model))) {
-    install(model, () => {}).catch(error =>
-      log.warn('[Recording] speech-to-text install failed:', error),
-    );
+    install(model, () => {}).catch(error => {
+      log.warn('[Recording] speech-to-text install failed:', error);
+      captureException(error, { tags: { source: 'recording' } });
+    });
   }
   log.info(`[Recording] started ${dir}`);
   return { sessionId: id };
@@ -181,8 +161,6 @@ function active(sessionId: string, senderId: number): Session | null {
   return session;
 }
 
-// A failed write (disk full, the folder gone) ends the session with what was captured, instead
-// of throwing inside an ipcMain listener ten times a second.
 function writeOrAbort(s: Session, write: () => void): boolean {
   try {
     write();
@@ -213,42 +191,6 @@ export function appendAudio(
   s.peak = Math.max(s.peak, pcmPeak(chunk));
 }
 
-// Every string in an event comes from the inspector, which reads it off the scene: a mesh or
-// entity name in an imported glTF or a smart item is third-party text. One line each, no
-// control characters, so none of it can forge a timeline line (a "SAID:" line in particular).
-export function cleanText(text: string, max: number): string {
-  return (
-    text
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]+/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, max)
-  );
-}
-
-export function sanitizeEvent(raw: unknown): RecordedEvent | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const e = raw as Record<string, unknown>;
-  if (typeof e.t !== 'number' || typeof e.kind !== 'string' || typeof e.text !== 'string') {
-    return null;
-  }
-  const event: RecordedEvent = {
-    t: e.t,
-    kind: cleanText(e.kind, MAX_KIND),
-    text: cleanText(e.text, MAX_TEXT),
-  };
-  const entity = e.entity as Record<string, unknown> | undefined;
-  if (entity && typeof entity.id === 'number') {
-    const name = typeof entity.name === 'string' ? cleanText(entity.name, MAX_NAME) : '';
-    event.entity = { id: entity.id, ...(name && { name }) };
-  }
-  if (typeof e.area === 'string') event.area = cleanText(e.area, MAX_AREA);
-  if (typeof e.x === 'number') event.x = e.x;
-  if (typeof e.y === 'number') event.y = e.y;
-  return event;
-}
-
 export function appendEvents(senderId: number, sessionId: string, events: unknown): void {
   const s = active(sessionId, senderId);
   if (!s || !Array.isArray(events)) return;
@@ -261,7 +203,6 @@ export function appendEvents(senderId: number, sessionId: string, events: unknow
   }
 }
 
-// Close the files, leaving a valid WAV. Synchronous so a quit handler can call it.
 function finalizeFiles(s: Session): number {
   s.ended = true;
   s.detach();
@@ -271,33 +212,16 @@ function finalizeFiles(s: Session): number {
   } finally {
     fs.closeSync(s.audioFd);
     fs.closeSync(s.eventsFd);
+    s.release();
   }
   return endedAt;
-}
-
-// Distinct entity names the user worked with: Whisper's initial prompt, so "Barrel_3" comes out
-// as written rather than "barrel three" or a homophone.
-export function vocabularyPrompt(events: RecordedEvent[]): string | undefined {
-  const counts = new Map<string, number>();
-  for (const e of events) {
-    const name = e.entity?.name;
-    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  const names = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
-  let prompt = '';
-  for (const name of names) {
-    const next = prompt ? `${prompt}, ${name}` : name;
-    if (next.length > 200) break;
-    prompt = next;
-  }
-  return prompt || undefined;
 }
 
 function writeSessionFiles(
   s: Session,
   endedAt: number,
   words: TranscriptWord[],
-  transcriptionError?: string,
+  transcription: { error?: string; skipped?: boolean } = {},
 ): RecordingResult {
   const timeline = buildTimeline({
     startedAt: s.startedAt,
@@ -316,7 +240,8 @@ function writeSessionFiles(
     renderSessionMarkdown(timeline, {
       projectTitle: s.projectTitle,
       startedAt: s.startedAt,
-      transcriptionError,
+      files: SESSION_FILES.filter(file => fs.existsSync(path.join(s.dir, file))),
+      transcriptionNote: transcription.skipped ? SKIPPED_NOTE : transcription.error,
     }),
   );
   return {
@@ -326,18 +251,22 @@ function writeSessionFiles(
     transcript: timeline.utterances.map(u => u.text).join(' '),
     actionCount: timeline.actionCount,
     context: renderContext(timeline, s.startedAt, sessionFile),
-    ...(transcriptionError && { transcriptionError }),
+    ...(transcription.error &&
+      !transcription.skipped && { transcriptionError: transcription.error }),
+    ...(transcription.skipped && { transcriptionSkipped: true }),
   };
 }
 
-// End without transcribing: the project or app is closing. Keeps what was captured.
 export function abort(reason: string): void {
   const s = session;
   if (!s || s.ended) return;
   session = null;
   try {
     const endedAt = finalizeFiles(s);
-    writeSessionFiles(s, endedAt, [], `skipped, the recording ended because ${reason}`);
+    writeSessionFiles(s, endedAt, [], {
+      error: `skipped, the recording ended because ${reason}`,
+    });
+    removeAudio(s.dir);
     log.info(`[Recording] ended early (${reason}): ${s.dir}`);
   } catch (error) {
     log.error('[Recording] failed to close the session files:', error);
@@ -350,13 +279,25 @@ export function abortIfOwner(senderId: number, sessionId: string): void {
   }
 }
 
-// The user discarded the running recording: end it without transcribing and delete what was
-// captured.
 export async function cancel(senderId: number, sessionId: string): Promise<void> {
   const s = session;
   if (!s || s.id !== sessionId || s.ownerId !== senderId) return;
   abort('the user discarded it');
   await discard(s.dir);
+}
+
+/** Gives up on the transcript of the session being stopped, so stop() answers right away. */
+export async function skipTranscription(senderId: number, sessionId: string): Promise<void> {
+  if (!stopping || stopping.id !== sessionId || stopping.ownerId !== senderId) return;
+  log.info('[Recording] sending without the transcript');
+  stopping.skip.abort();
+}
+
+/** Gives up on a transcript still running at quit, before the worker is killed from outside. */
+export function abortTranscription(): void {
+  if (!stopping) return;
+  log.info('[Recording] giving up on the transcript: the app is closing');
+  stopping.skip.abort();
 }
 
 export async function stop(senderId: number, sessionId: string): Promise<RecordingResult> {
@@ -367,47 +308,57 @@ export async function stop(senderId: number, sessionId: string): Promise<Recordi
   session = null;
   const endedAt = finalizeFiles(s);
 
-  const dir = path.resolve(s.dir);
-  transcribing.add(dir);
+  const skip = new AbortController();
+  stopping = { id: s.id, ownerId: s.ownerId, skip };
+  const release = holdSession(s.dir, TRANSCRIBING_REFUSAL);
   let words: TranscriptWord[] = [];
   let transcriptionError: string | undefined;
+  let skipped = false;
   try {
-    ({ words, transcriptionError } = await transcribeSession(s));
+    ({ words, transcriptionError, skipped = false } = await transcribeSession(s, skip.signal));
   } finally {
-    transcribing.delete(dir);
+    release();
+    if (stopping?.id === s.id) stopping = null;
   }
-  const result = writeSessionFiles(s, endedAt, words, transcriptionError);
-  void prune(path.dirname(s.dir));
+  const result = writeSessionFiles(s, endedAt, words, { error: transcriptionError, skipped });
+  removeAudio(s.dir);
+  void pruneProject(path.dirname(s.dir));
   log.info(
     `[Recording] stopped ${s.dir} (${Math.round(result.durationMs / 1000)}s, ${result.actionCount} actions, ${words.length} words)`,
   );
   return result;
 }
 
-async function prune(projectDir: string): Promise<void> {
-  try {
-    const entries = (await fsp.readdir(projectDir)).sort();
-    const stale = entries.slice(0, Math.max(0, entries.length - KEEP_SESSIONS_PER_PROJECT));
-    await Promise.all(
-      stale.map(entry => fsp.rm(path.join(projectDir, entry), { recursive: true, force: true })),
-    );
-  } catch (error) {
-    log.warn('[Recording] could not prune old sessions:', error);
-  }
-}
-
 export function isRecording(): boolean {
   return session !== null;
 }
 
-// The user discarded a finished recording before sending it: nothing of it stays on disk. Only
-// a session folder under the recordings dir qualifies, never the one still being written.
+function waitUnlessSkipped<T>(task: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  if (signal.aborted) {
+    void task.catch(() => undefined);
+    return Promise.resolve(undefined);
+  }
+  return new Promise((resolve, reject) => {
+    const giveUp = () => resolve(undefined);
+    signal.addEventListener('abort', giveUp, { once: true });
+    void task.then(resolve, reject).finally(() => signal.removeEventListener('abort', giveUp));
+  });
+}
+
+function removeAudio(dir: string): void {
+  try {
+    fs.rmSync(path.join(dir, AUDIO_FILE), { force: true });
+  } catch (error) {
+    log.warn('[Recording] could not delete the audio:', error);
+  }
+}
+
 async function transcribeSession(
   s: Session,
-): Promise<{ words: TranscriptWord[]; transcriptionError?: string }> {
+  signal: AbortSignal,
+): Promise<{ words: TranscriptWord[]; transcriptionError?: string; skipped?: boolean }> {
   if (s.audioBytes === 0) return { words: [], transcriptionError: 'no audio was captured' };
   if (s.peak === 0) {
-    // Exact digital zero is a muted or blocked input, not a quiet room (which still has noise).
     return {
       words: [],
       transcriptionError:
@@ -417,41 +368,28 @@ async function transcribeSession(
   if (s.peak < SILENCE_PEAK) return { words: [] };
   try {
     const model = modelFor(s.language);
-    await install(model, () => {});
-    // The worker finds the speech (Silero, or loudness when that fails) and transcribes each
-    // stretch; nothing of the audio is read on this thread.
+    await waitUnlessSkipped(
+      install(model, () => {}),
+      signal,
+    );
+    if (signal.aborted) return { words: [], skipped: true };
     const words = dropNonSpeech(
       await transcribe(
-        path.join(s.dir, 'audio.wav'),
+        path.join(s.dir, AUDIO_FILE),
         model,
         s.language.slice(0, 2),
         vocabularyPrompt(s.events),
+        signal,
       ),
     );
     return { words };
   } catch (error) {
+    if (signal.aborted) return { words: [], skipped: true };
     log.error('[Recording] transcription failed:', error);
+    captureException(error, { tags: { source: 'recording' } });
     return {
       words: [],
       transcriptionError: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-export async function discard(dir: string): Promise<void> {
-  const root = getRecordingsDir();
-  const target = path.resolve(dir);
-  const relative = path.relative(root, target);
-  const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-  if (!inside || relative.split(path.sep).length !== 2) {
-    throw new Error('Not a session recording folder.');
-  }
-  if (session && path.resolve(session.dir) === target) {
-    throw new Error('This recording is still running.');
-  }
-  if (transcribing.has(target)) {
-    throw new Error('This recording is still being transcribed.');
-  }
-  await fsp.rm(target, { recursive: true, force: true });
-  log.info(`[Recording] discarded ${target}`);
 }

@@ -9,6 +9,8 @@ import { run } from './bin';
 // it so the bundled real Node can run it (a file inside the asar can't be executed, and the
 // worker resolves its native dependencies by walking up from its own directory).
 
+const NPM_WRITES_LAST = '.package-lock.json';
+
 type LockedInstall = {
   dir: string;
   packageJson: string;
@@ -45,6 +47,7 @@ export async function installLocked({
 }: LockedInstall): Promise<void> {
   await fs.writeFile(path.join(dir, 'package.json'), packageJson);
   await fs.writeFile(path.join(dir, 'package-lock.json'), lockfile);
+  await fs.rm(path.join(dir, 'node_modules', NPM_WRITES_LAST), { force: true });
   const install = run('npm', 'npm', {
     args: [
       'ci',
@@ -73,6 +76,9 @@ export async function installLocked({
   if (killed) {
     await killed;
     throw new Error(timeoutMessage);
+  }
+  if (!(await exists(path.join(dir, 'node_modules', NPM_WRITES_LAST)))) {
+    throw new Error(`${what} did not finish`);
   }
   for (const pkg of expected) {
     if (!(await exists(path.join(dir, 'node_modules', pkg, 'package.json')))) {

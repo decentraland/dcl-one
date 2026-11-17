@@ -41,6 +41,10 @@ async function fakeNpmCi(cwd: string): Promise<void> {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: pkg }));
   }
+  await fs.writeFile(
+    path.join(cwd, 'node_modules', '.package-lock.json'),
+    JSON.stringify({ lockfileVersion: 3 }),
+  );
 }
 
 describe('optimizer tools', () => {
