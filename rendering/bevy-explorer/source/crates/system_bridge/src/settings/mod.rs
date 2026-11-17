@@ -32,8 +32,8 @@ use common::structs::SsaoSetting;
 use common::{
     sets::SceneSets,
     structs::{
-        AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
-        GraphicsSettings, ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage,
+        AaSetting, AppConfig, BloomSetting, CameraSmoothing, ChatBubbleVisibility, DofSetting,
+        FogSetting, GraphicsSettings, ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage,
         PointAtMarkerVisibility, PreviewMode, PrimaryCamera, SessionGraphics, ShadowSetting,
         SkyReflectionSetting, WindowSetting,
     },
@@ -62,6 +62,7 @@ pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
 pub mod cel_shading_setting;
+pub mod chat_bubble_visibility;
 pub mod constrain_ui;
 mod debug_quality;
 pub mod dm_privacy;
@@ -248,6 +249,7 @@ impl Plugin for SettingBridgePlugin {
         #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<ChatBubbleVisibility>(app, &mut settings, &mut schedule, &config);
 
         app.insert_resource(settings);
         app.add_plugins(debug_quality::DebugQualityPlugin);
