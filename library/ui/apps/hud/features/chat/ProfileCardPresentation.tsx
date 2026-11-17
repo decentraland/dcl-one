@@ -12,6 +12,7 @@ import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import hearIcon from '../../assets/voice/hear.png'
 import hushIcon from '../../assets/voice/hush.png'
+import jumpInIcon from '../../assets/friends/jump-in.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -103,6 +104,7 @@ export function ProfileCardPresentation({
   onCall,
   hushed = false,
   onSetHushed,
+  onJump,
   onViewProfile,
   onClose
 }: {
@@ -137,6 +139,9 @@ export function ProfileCardPresentation({
   hushed?: boolean
   /** Mute (true) or unmute the user's nearby voice. */
   onSetHushed?: (user: ChatUser, hushed: boolean) => void
+  /** Travel to where this friend is; set only for a friend who is not offline (unity-explorer's
+   *  Jump to Location). */
+  onJump?: (user: ChatUser) => void
   onViewProfile?: (user: ChatUser) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -189,6 +194,8 @@ export function ProfileCardPresentation({
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
   // offered for a blocked user too
   const showHush = other && (context === 'default' || context === 'friend') && !!onSetHushed
+  // the user menus offer it; the community card's member menu does not, as in unity-explorer
+  const showJump = other && (context === 'default' || context === 'friend') && !!onJump
 
   let cta: React.ReactNode = null
   // the member menu's header button only shows a friendship (to remove it): the row carries the rest
@@ -260,7 +267,13 @@ export function ProfileCardPresentation({
       <span>{hushed ? 'Hear' : 'Hush'}</span>
     </button>
   )
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showHush || hasDestructive || communityActions.length > 0 || !!invite)
+  const jump = showJump && (
+    <button type="button" className={styles.row} onClick={run(onJump)}>
+      <img src={jumpInIcon} alt="" width={16} height={16} />
+      <span>Jump to Location</span>
+    </button>
+  )
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showHush || showJump || hasDestructive || communityActions.length > 0 || !!invite)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
       <MessageIcon />
@@ -345,6 +358,7 @@ export function ProfileCardPresentation({
                 </button>
               )}
               {viewProfile}
+              {jump}
               {invite}
               {hasDestructive && <div className={styles.divider} />}
               {report}

@@ -42,3 +42,10 @@ export type { InputWebCreatorToolsProps } from './components/InputWebCreatorTool
 
 export { Switch } from './components/Switch/Switch'
 export type { SwitchProps } from './components/Switch/Switch'
+
+export { TitleBar } from './components/TitleBar/TitleBar'
+export type {
+  TitleBarProps,
+  TitleBarSection,
+  TitleBarLinkProps
+} from './components/TitleBar/TitleBar'

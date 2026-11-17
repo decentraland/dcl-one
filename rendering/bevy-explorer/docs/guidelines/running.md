@@ -222,25 +222,34 @@ State, in every build:
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
-  slots), as rendered (built or not, wearables by category, hidden categories) and the emote
+  slots), as rendered (built or not, wearables by category, hidden categories), the files it
+  could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
+  when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
   movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
+  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
+  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
+  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
+  it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
-- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
-  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
-  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
+  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
-  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
+  an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`

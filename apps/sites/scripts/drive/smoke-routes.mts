@@ -74,6 +74,7 @@ export const ROUTES: Route[] = [
   { path: "/content", auth: "out" },
   { path: "/content-policy", auth: "out" },
   { path: "/credits-terms", auth: "out" },
+  { path: "/creator-fund-terms", auth: "out" },
   { path: "/ethics", auth: "out" },
 ];
 
