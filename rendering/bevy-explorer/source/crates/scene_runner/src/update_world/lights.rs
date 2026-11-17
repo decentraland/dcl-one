@@ -1202,11 +1202,19 @@ mod tests {
             upward = upward.max(direction.y.max(0.0) * lux / LIGHT_UNIT_LUX);
         }
         // by day it is the sun's arc, after sunset too until the swing; by night the moon's
+        // within 0.1 degrees: an f32 acos near 1 resolves only about 0.02 degrees, and the
+        // slerp moves the vector by a few ulps
         for hours in [7.0, 12.0, 18.0, 19.5, 5.5] {
-            assert!(angle(directional_light(hours).0, sun_direction(hours)) < 0.01);
+            assert!(
+                angle(directional_light(hours).0, sun_direction(hours)) < 0.1,
+                "{hours}"
+            );
         }
         for hours in [22.0, 0.0, 3.0] {
-            assert!(angle(directional_light(hours).0, moon_direction(hours)) < 0.01);
+            assert!(
+                angle(directional_light(hours).0, moon_direction(hours)) < 0.1,
+                "{hours}"
+            );
         }
         // below the horizon the light grazes: at most a tenth of a unit goes upward
         assert!(upward > 0.05 && upward < 0.11, "{upward}");
