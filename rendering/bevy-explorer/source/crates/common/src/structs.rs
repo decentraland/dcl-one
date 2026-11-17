@@ -1757,6 +1757,8 @@ pub struct SceneGlobalLight {
     /// setting unless a scene overrides it, as a tint and a multiplier
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 

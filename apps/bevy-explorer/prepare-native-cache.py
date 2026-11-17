@@ -7,8 +7,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 # The tracked sources of the path dependencies outside the engine workspace. The cache keeps their
-# compiled crates. The patch series stand for the trees that tooling/patched-sources.py rebuilds.
-VENDORED = ('rendering/bevy-explorer/patches', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet')
+# compiled crates. Bevy and the forked crates are git dependencies: Cargo.lock names their revisions.
+VENDORED = ('rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet')
 KEY_FILE = ROOT / 'rendering/bevy-explorer/source/cache-key/.cargo/config.toml'
 
 

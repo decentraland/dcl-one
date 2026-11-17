@@ -3,6 +3,9 @@ name = "catalyst"
 version.workspace = true
 edition = "2024"
 description = "Decentraland Catalyst node: one application package"
+# The integration tests link as a few grouped binaries, each listed below: a file under tests/
+# runs only as a module of one of them (tooling/tests/test_dev_regressions.py checks it).
+autotests = false
 
 [lib]
 name = "catalyst"
@@ -13,13 +16,36 @@ name = "catalyst"
 path = "src/main.rs"
 
 [[test]]
-name = "stats_metrics_engine"
-path = "tests/stats_metrics_engine.rs"
-required-features = ["test-support"]
+name = "node_1"
+path = "tests/node_1.rs"
 
 [[test]]
-name = "pulse_generation"
-path = "tests/pulse_generation.rs"
+name = "node_2"
+path = "tests/node_2.rs"
+
+[[test]]
+name = "node_3"
+path = "tests/node_3.rs"
+
+[[test]]
+name = "shop"
+path = "tests/shop/main.rs"
+
+[[test]]
+name = "sockets_1"
+path = "tests/sockets_1.rs"
+
+[[test]]
+name = "sockets_2"
+path = "tests/sockets_2.rs"
+
+[[test]]
+name = "sockets_3"
+path = "tests/sockets_3.rs"
+
+[[test]]
+name = "stats_metrics_engine"
+path = "tests/stats_metrics_engine.rs"
 required-features = ["test-support"]
 
 # The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,

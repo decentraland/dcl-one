@@ -83,7 +83,7 @@ async fn harness(
     control: Option<SyncControl>,
     admins: &str,
 ) -> (Router, SharedState) {
-    let state = Arc::new(admin_state(pool, writes_enabled, admins, control).await);
+    let state = SharedState::from(admin_state(pool, writes_enabled, admins, control).await);
     (router(state.clone()), state)
 }
 
@@ -318,7 +318,7 @@ async fn siwe_sign_in_admits_an_allowlisted_wallet_and_nobody_else() {
     let mut off = Settings::clone(&state.settings);
     off.session_secret = None;
     assert!(!off.admin_enabled());
-    let off_state = Arc::new(State::new(
+    let off_state = SharedState::from(State::new(
         lazy_pool(),
         off,
         state.content.clone(),

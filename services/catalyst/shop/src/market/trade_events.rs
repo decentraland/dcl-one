@@ -793,12 +793,12 @@ pub(super) fn bid_received_notification(
     trade_id: &str,
     network: &str,
     bid: &listings::TradeCreation,
-) -> Option<catalyst_social::notifications::NewNotification> {
+) -> Option<crate::shared::notifications::NewNotification> {
     let price = bid.sent.first().and_then(|a| a.amount.as_ref())?;
     if meta.seller.eq_ignore_ascii_case(&bid.signer) {
         return None;
     }
-    let recipient = catalyst_social::Address::parse(&meta.seller).ok()?;
+    let recipient = crate::shared::identity::Address::parse(&meta.seller).ok()?;
     let mut m = serde_json::Map::new();
     m.insert("image".into(), json!(meta.image));
     m.insert("seller".into(), json!(meta.seller));
@@ -820,7 +820,7 @@ pub(super) fn bid_received_notification(
         )),
     );
     m.insert("network".into(), json!(network));
-    let mut n = catalyst_social::notifications::NewNotification::now(
+    let mut n = crate::shared::notifications::NewNotification::now(
         recipient,
         "bid_received",
         Value::Object(m),
