@@ -75,22 +75,12 @@ jobs:
       # Manual /upload-assets flow on a checked-out PR branch: needs only asset-packs and
       # runs rarely, so it stays on setup-node directly rather than the ./.github/actions/creator-hub-setup
       # composite (whose node_modules cache is keyed on the base branch's lockfile).
-      # setup-pnpm comes from the commit of this workflow (main's), not from the PR checkout.
-      - name: check out setup-pnpm from this workflow's commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: .workflow-actions
-          persist-credentials: false
-          sparse-checkout: .github/actions/setup-pnpm
-          sparse-checkout-cone-mode: false
-      - uses: ./.workflow-actions/.github/actions/setup-pnpm
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
       - name: install
-        run: make install-asset-packs
+        run: corepack enable && make install-asset-packs
 
       - name: build
         run: make build-asset-packs

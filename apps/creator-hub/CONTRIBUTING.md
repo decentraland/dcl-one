@@ -31,7 +31,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 Before contributing, ensure you have:
 
 - **Node.js** 22.x or higher
-- **pnpm 12** (`corepack enable`; CI names the exact version in `.github/actions/setup-pnpm/action.yml`)
+- **pnpm**, at the version `package.json` pins (`corepack enable` provides it)
 - **Git** installed and configured
 - **Docker** (optional, for asset-packs development)
 - Familiarity with TypeScript, React, and Electron (depending on the package)

@@ -30,8 +30,6 @@ decisions; the rest of both stands.
   (`corepack enable`, or `corepack pnpm@12.21.0`, the `PNPM` default of the SDK and protocol
   Makefiles) or through the development shell's pnpm, which switches to the pinned version. The
   Nix builds run the Nix package set's pnpm and ignore the pin.
-- The Creator Hub (`apps/creator-hub` and its Bevy agent) pins no pnpm. Its CI takes pnpm 12.21.0
-  from `.github/actions/setup-pnpm`, which checks the release against `digests.txt`.
 - `library/ui`'s `package.json` is an input of its generated components, so changing its pin is a
   component regeneration (`pnpm figma port prepare`, then `port verify`).
 - pnpm does not read `package-lock.json`. A project moves with `pnpm import`, which writes
@@ -51,7 +49,7 @@ decisions; the rest of both stands.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
   install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
 - `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
-  off the pinned pnpm (`PNPM_VERSION`; the Creator Hub's projects pin none), on a pin carrying another release's integrity
+  off the pinned pnpm (`PNPM_VERSION`), on a pin carrying another release's integrity
   (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs
   with npm or yarn, or runs anything through `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
 

@@ -27,11 +27,14 @@ outputs:
 runs:
   using: composite
   steps:
-    # The workspace has no `packageManager` field: the shared action names the pnpm version.
-    - uses: ./.github/actions/setup-pnpm
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
+
+    # pnpm at the version apps/creator-hub/package.json pins.
+    - name: Enable pnpm
+      shell: bash
+      run: corepack enable
 
     - name: Cache node_modules
       id: cache-node-modules

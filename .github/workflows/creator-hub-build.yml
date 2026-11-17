@@ -84,7 +84,6 @@ jobs:
               'apps/creator-hub/pnpm-workspace.yaml',
               'apps/creator-hub/Makefile',
               '.github/actions/creator-hub-setup/action.yml',
-              '.github/actions/setup-pnpm/action.yml',
               '.github/workflows/creator-hub-build.yml') }}
 
       - name: protoc
