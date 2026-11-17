@@ -58,4 +58,15 @@ describe('the number of outfit slots', () => {
       })
     })
   })
+
+  describe('when an outfit is saved past the free slots and the names lookup says the player owns none', () => {
+    beforeEach(() => {
+      act(() => h.driver.emit({ kind: 'outfits', metadata: { outfits: [{ slot: 6, outfit }], namesForExtraSlots: [] } }))
+      act(() => h.driver.emit({ kind: 'ownedNames', names: [] }))
+    })
+
+    it('should keep offering the extra slots so the outfit can be deleted', () => {
+      expect(h.session().backpack.outfitSlots).toBe(10)
+    })
+  })
 })

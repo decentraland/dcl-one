@@ -3834,10 +3834,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
   const dismissOutfitError = useCallback(() => setOutfitError(null), [])
-  // The live names lookup decides; until it answers, the outfits read does.
-  const extraOutfitSlots = ownedNamesKnown
-    ? ownedNames.length > 0
-    : outfits.namesForExtraSlots.length > 0 || outfits.outfits.some((o) => o.slot >= 5)
+  // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
+  // stays visible so the player can still delete it.
+  const extraSlotUsed = outfits.outfits.some((o) => o.slot >= 5)
+  const extraOutfitSlots =
+    extraSlotUsed || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no

@@ -92,6 +92,11 @@ function forgetSaved(address: string): void {
 }
 
 // Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
+/** The profile look's colour, which has no `a`; keeping it would make an unchanged look deploy. */
+function rgb({ r, g, b }: OutfitColor): RGBColor {
+  return { r, g, b }
+}
+
 function opaque(color: RGBColor & { a?: number }): OutfitColor {
   return { r: color.r, g: color.g, b: color.b, a: color.a ?? 1 }
 }
@@ -294,9 +299,9 @@ export function registerOutfits(ctx: Ctx): void {
     const { outfit } = found
     editLook({
       bodyShape: outfit.bodyShape,
-      eyes: outfit.eyes.color,
-      hair: outfit.hair.color,
-      skin: outfit.skin.color,
+      eyes: rgb(outfit.eyes.color),
+      hair: rgb(outfit.hair.color),
+      skin: rgb(outfit.skin.color),
       wearables: outfit.wearables,
       forceRender: outfit.forceRender
     })

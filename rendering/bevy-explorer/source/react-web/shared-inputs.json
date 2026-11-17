@@ -5541,7 +5541,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "f6fe9c5f6f55772248c25b68a4fdfe92c580a3084743dfb62b27bead23e1d3db"
+      "sha256": "53ab608ff61273e83ab384c01cfa204723c38610bb19c4aef5ce89a8f33540a7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -5765,7 +5765,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "2c0497ad7aee49431ceca9c18df28e5bf6ed3433916b410ce96b0ffe00df4c39"
+      "sha256": "e198917656df52a78d6a75871c9517cd379e087977f84f54a9837eb5e0f79dd0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -9344,7 +9344,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "bc3db3e6068ad54a324c32b1b2096956b36df3250f5e88befca08e5deb54e7c9"
+      "sha256": "73e875bc21a7f09c77e171d07c01c38bd0ce83e98e925ea6b95a3aef191c933b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9696,7 +9696,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitSlots.test.tsx",
-      "sha256": "058e62af375381c72b235a2a892bb54759132ecd409b2fcf765adceb2e7dc054"
+      "sha256": "366a04782e717368b93a5050c2e33509ae6885bf3fecdb22deb1843e0f6099ea"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",

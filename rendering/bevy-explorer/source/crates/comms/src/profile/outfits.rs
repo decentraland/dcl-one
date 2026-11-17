@@ -41,7 +41,7 @@ impl OutfitsState {
     }
 }
 
-/// The signed-in web3 account: guests have no catalyst outfits and keep nothing on disk.
+/// The signed-in web3 account: guests have no catalyst outfits.
 fn web3_account(wallet: &Wallet, current: &CurrentUserProfile) -> Option<String> {
     let web3 = current
         .profile

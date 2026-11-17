@@ -45,9 +45,10 @@ vi.mock('../../bridge-scene/src/domains/profile', () => ({
 }))
 
 let look: AvatarLook | null = null
+const editLook = vi.fn<(change: Partial<AvatarLook>) => void>()
 vi.mock('../../bridge-scene/src/domains/avatarDraft', () => ({
   currentLook: () => look,
-  editLook: () => {}
+  editLook: (change: Partial<AvatarLook>) => editLook(change)
 }))
 const captureAvatarThumbnail = vi.fn<() => Promise<string | null>>()
 const waitFrames = vi.fn<(frames: number) => Promise<void>>()
@@ -519,6 +520,14 @@ describe('the bridge outfits domain', () => {
       const { request } = await bridge()
       await request({ kind: 'equipOutfit', slot: 0 })
       expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', PICTURE]])
+    })
+
+    it('should put its colours on the look without alpha', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'equipOutfit', slot: 0 })
+      expect(editLook).toHaveBeenCalledWith(
+        expect.objectContaining({ eyes: grey.color, hair: grey.color, skin: grey.color })
+      )
     })
 
     describe('and the slot is deleted while the wearables load', () => {
