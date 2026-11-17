@@ -377,8 +377,9 @@ impl IpfsIo {
                         .unwrap()
                         .connect_failed += 1;
                 }
-                // the bytes behind a content hash never change, so a server that says the url is
-                // wrong says so for the rest of the session; preview always asks again
+                // a catalyst only activates an entity once it holds all of its files, so a server
+                // that says a content hash's url is wrong says so for the rest of the session;
+                // preview always asks again
                 let session = match (&e, &cache_key) {
                     (platform::FetchError::Status(status, _), Some(CacheKey::Content(_)))
                         if !self.is_preview && failed_remotes::is_definitive(*status) =>
