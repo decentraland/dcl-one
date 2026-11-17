@@ -457,6 +457,26 @@ describe('Explorer', () => {
     assert.ok(Date.now() - started >= 250, 'the window starts at the deployment it was told of')
   })
 
+  test('profileDeployWindow holds a deployment past a burst until the oldest leaves its span', async () => {
+    let version = 1
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 2
+    await explorer.userData()
+    let started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'one deployment in the span leaves room for another')
+    version = 3
+    await explorer.userData()
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'a full burst waits for its oldest deployment to leave the span')
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'and then there is room again')
+  })
+
   test('a long reply is cut in the record, not in the result', async () => {
     const fake = new FakeConsole({ screenshot: Buffer.alloc(9000, 1).toString('base64') })
     const explorer = new Explorer(fake)
