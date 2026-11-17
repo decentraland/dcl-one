@@ -422,7 +422,7 @@ jobs:
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
-            --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
+            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
