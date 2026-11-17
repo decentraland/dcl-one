@@ -378,6 +378,12 @@ command. Nothing else about the runner is part of the contract; `local-harness/w
 documents that runner (Node 24 and Chrome, no dependency), and the end-to-end suite in
 `apps/bevy-explorer/e2e` builds on it.
 
+**Driving a local scene by hand or by agent.** `pnpm run drive --scene <dir> [--position x,y]
+< commands.txt` in `apps/bevy-explorer/e2e` serves the web app and a loopback realm holding the
+built scene folders, boots a guest at the parcel (the first scene's base parcel by default), runs
+each console line read from stdin and prints one `{line, ok, reply, ms}` JSON line per command;
+it keeps the last frame as `final.png` when stdin closes. The e2e README's "Run it" has the flags.
+
 ## CI and release channels
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the most accurate source of build information — it covers fmt, clippy, the test matrix, a headless smoke test, and the web build/deploy.
