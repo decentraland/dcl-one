@@ -627,6 +627,7 @@ pub struct PlayerPositionEvent {
     pub grounded: Option<bool>,
     /// MoveKind inferred from the packet:
     ///   - `jump_count >= 2` → `DoubleJump`
+    ///   - `jump_count == 1` → `Jump`
     ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
     ///   - `is_jumping` or `is_long_jump` → `Jump`
     ///
@@ -734,6 +735,25 @@ fn prune_player_map<V>(
     }
 }
 
+/// The movement state a movement packet announces, `None` when it announces none.
+fn remote_move_kind(
+    glide_state: rfc4::movement::GlideState,
+    jump_count: i32,
+    jumping: bool,
+) -> Option<MoveKind> {
+    // Glide is checked before DoubleJump because Unity keeps `jump_count`
+    // at its last value (usually 2) through the whole glide — so the
+    // DoubleJump-first ordering would mask an active glide.
+    match (glide_state, jump_count, jumping) {
+        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
+            Some(MoveKind::Glide)
+        }
+        (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
+        (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
+        _ => None,
+    }
+}
+
 /// Apply a foreign player's [`rfc4::Movement`], whether it arrived over Pulse (as
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
@@ -782,21 +802,11 @@ fn apply_foreign_movement(
         scene_id,
         &dcl_transform,
     );
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
-    let remote_move_kind = match (
+    let remote_move_kind = remote_move_kind(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
-    ) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
-        (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
-        (_, _, true) => Some(MoveKind::Jump),
-        _ => None,
-    };
+    );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
     let precision = m
@@ -1615,6 +1625,27 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_packet_names_the_movement_state_it_announces() {
+        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+
+        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
+        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(
+            remote_move_kind(PropClosed, 2, false),
+            Some(MoveKind::DoubleJump)
+        );
+        // the jump count stays at 2 through a glide, which wins
+        assert_eq!(
+            remote_move_kind(OpeningProp, 2, false),
+            Some(MoveKind::Glide)
+        );
+        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+    }
 
     #[test]
     fn peer_emote_urns_are_bounded() {
