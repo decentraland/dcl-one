@@ -1,37 +1,28 @@
-// The Places browser, matched to the "What's On" design and decentraland.org/places: three stacked sections —
-//   1. LIVE NOW    — the 4 busiest destinations, places and worlds (a single full-width row)
-//   2. FEATURED    — the places API's curated (highlighted) set
-//   3. ALL          — a toolbar (Explore all / Favourites / My places + search + Any Category +
-//                     Sort by) over a purple grid panel of every place.
-// Live Now + Featured are curated highlights shown only on the default Explore-all view (no search,
-// no category filter); searching/filtering collapses to the All grid. Shared by the in-world
-// PlacesPage and the post-jump-in PlacesPicker; the host supplies an `onPick(place)` action.
+// The Places browser: the 68px header band the menu pages share (title,
+// section pills, Filter & Sort, search), a row of category chips, and a five-column grid of cards.
+// Shared by the in-world PlacesPage and the post-jump-in PlacesPicker; the host supplies an
+// `onPick(place)` action.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, DiscoverGrid, Dropdown, EmptyState, Heart, Pin, SearchField, Tabs, type TabItem } from '../../design'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { BrowseLoading, Button, CheckBold, ChevronDown, EmptyState, Heart, Pin, Search } from '../../design'
 import { PlaceCard } from './PlaceCard'
-import { FeaturedCarousel } from './FeaturedCarousel'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'
-import { isHiddenPlace, placePlayers, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { isHiddenPlace, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { CAT_ICONS } from '../map/mapArt'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { MenuPresentationContext } from '../menu/MenuPresentation'
 import styles from './PlacesPage.module.css'
 
-const SECTIONS: TabItem<PlacesSection>[] = [
-  { id: 'all', label: 'Explore all', icon: <CompassGlyph /> },
-  { id: 'favourites', label: 'Favourites', icon: <Heart size={15} /> },
-  { id: 'my', label: 'My places', icon: <Pin size={15} /> }
+type Pill = 'explore' | 'recent' | 'favourites' | 'my'
+// Recent is the public feed, newest first: the HUD keeps no visit history.
+const PILLS: { id: Pill; label: string; icon: React.JSX.Element; section: PlacesSection }[] = [
+  { id: 'explore', label: 'Explore', icon: <CompassGlyph />, section: 'all' },
+  { id: 'recent', label: 'Recent', icon: <RecentGlyph />, section: 'all' },
+  { id: 'favourites', label: 'Favorites', icon: <HeartGlyph />, section: 'favourites' },
+  { id: 'my', label: 'My Places', icon: <Pin size={20} />, section: 'my' }
 ]
 
-const LIVE_NOW_LIMIT = 4
-
-// "Any Category" dropdown — labels map to the usePlaces category id (featured = only_highlighted).
-const CATEGORY_OPTIONS = ['Any Category', 'Featured', 'Social', 'Music', 'Art', 'Game', 'Fashion', 'Education', 'Shop', 'Sports', 'Business']
-function categoryId(label: string): string {
-  return label === 'Any Category' ? 'all' : label.toLowerCase()
-}
-function categoryLabel(id: string): string {
-  if (id === 'all') return 'Any Category'
-  return id.charAt(0).toUpperCase() + id.slice(1)
-}
+const CATEGORIES = ['all', 'social', 'music', 'art', 'game', 'fashion', 'education', 'shop', 'sports', 'business']
 
 const SORT_OPTIONS: { label: string; value: PlacesSort }[] = [
   { label: 'Most active', value: 'most_active' },
@@ -44,9 +35,34 @@ const SEARCH_DEBOUNCE_MS = 300
 
 function CompassGlyph(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M15.5 8.5l-2 5-5 2 2-5z" />
+    </svg>
+  )
+}
+function RecentGlyph(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.4" />
+      <path d="M3.5 4v4.4h4.4M12 7.5V12l3 2" />
+    </svg>
+  )
+}
+function HeartGlyph(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20.5S3.5 15.4 3.5 9.2A4.7 4.7 0 0 1 12 6.6a4.7 4.7 0 0 1 8.5 2.6c0 6.2-8.5 11.3-8.5 11.3z" />
+    </svg>
+  )
+}
+function FilterGlyph(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <path d="M9 6h12M3 12h12M9 18h12" />
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="18" cy="12" r="2.4" />
+      <circle cx="6" cy="18" r="2.4" />
     </svg>
   )
 }
@@ -57,13 +73,16 @@ export function PlacesBrowser({
   onPick
 }: {
   account?: string | null
-  /** Slot rendered at the far right of the toolbar (e.g. the picker's "Skip" button). */
+  /** Slot rendered at the far right of the header (e.g. the picker's "Skip" button). */
   headExtra?: React.ReactNode
   onPick: (place: DiscoverPlace) => void
 }): React.JSX.Element {
-  const { places: list, liveFeed, featured: featuredFeed, loading, loadingMore, hasMore, loadMore, retry, error, search, setSearch, category, setCategory, sort, setSort, section, setSection } = usePlaces(account)
+  const { places: list, loading, loadingMore, hasMore, loadMore, retry, error, search, setSearch, category, setCategory, sort, setSort, section, setSection } = usePlaces(account)
+  const inCard = useContext(MenuPresentationContext) === 'lobbyCard'
   // Local input value, debounced into the hook's `search` so we don't refetch on every keystroke.
   const [draft, setDraft] = useState(search)
+  const [sortOpen, setSortOpen] = useState(false)
+  const [pill, setPill] = useState<Pill>('explore')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -74,79 +93,87 @@ export function PlacesBrowser({
     }
   }, [draft, setSearch])
 
-  // Each destination shows in ONE section only — Live Now → Featured → the grid — as on decentraland.org/places.
-  const liveNow = useMemo(
-    () =>
-      liveFeed
-        .filter((p) => !isHiddenPlace(p) && placePlayers(p) > 0)
-        .sort((a, b) => placePlayers(b) - placePlayers(a))
-        .slice(0, LIVE_NOW_LIMIT),
-    [liveFeed]
-  )
-  const liveIds = useMemo(() => new Set(liveNow.map((p) => p.id)), [liveNow])
-  const featured = useMemo(
-    () => featuredFeed.filter((p) => !isHiddenPlace(p) && !liveIds.has(p.id)).sort((a, b) => placePlayers(b) - placePlayers(a)),
-    [featuredFeed, liveIds]
-  )
-  const showHighlights = section === 'all' && category === 'all' && search.trim() === '' && !loading && !error
-  // The discover grid shows everything not already surfaced in a highlight section above it.
-  // A search or My places shows everything it returns: hiding is for the unfiltered browse only.
-  const filtered = search.trim() !== '' || section !== 'all'
-  const mainList = useMemo(() => {
-    if (filtered) return list
-    const kept = list.filter((p) => !isHiddenPlace(p))
-    if (!showHighlights) return kept
-    const featuredIds = new Set(featured.map((p) => p.id))
-    return kept.filter((p) => !liveIds.has(p.id) && !featuredIds.has(p.id))
-  }, [list, filtered, showHighlights, liveIds, featured])
+  // Escape closes the open sort list before the page
+  useEffect(() => {
+    if (sortOpen) return registerCancelLayer(() => setSortOpen(false))
+  }, [sortOpen])
 
-  // Live Now is a fixed 4-up row: auto-fill would take the column count from the viewport (3 at
-  // 1440px, 7 at 2560px).
-  const renderGrid = (items: DiscoverPlace[], columns?: number): React.JSX.Element => (
-    <DiscoverGrid columns={columns}>
-      {items.map((place) => (
-        <PlaceCard key={place.id} place={place} onClick={() => onPick(place)} />
-      ))}
-    </DiscoverGrid>
-  )
+  const pick = (next: (typeof PILLS)[number]): void => {
+    setPill(next.id)
+    setSection(next.section)
+    setSortOpen(false)
+    if (next.id === 'recent') setSort('created_at')
+    else if (next.id === 'explore' && sort === 'created_at') setSort('most_active')
+  }
+
+  // A search or a personal section shows everything it returns: hiding is for the unfiltered browse only.
+  const filtered = search.trim() !== '' || section !== 'all'
+  const mainList = useMemo(() => (filtered ? list : list.filter((p) => !isHiddenPlace(p))), [list, filtered])
 
   return (
-    <>
-      {showHighlights && liveNow.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>
-            <span className={styles.liveDot} /> Live Now
-          </h2>
-          {renderGrid(liveNow, 4)}
-        </section>
-      )}
+    <div className={styles.browser}>
+      <header className={styles.header}>
+        <h1 className={styles.title}>Places</h1>
+        <div className={styles.pills} role="tablist" aria-label="Places sections">
+          {PILLS.map((p) => (
+            <button key={p.id} type="button" role="tab" aria-selected={p.id === pill} className={`${styles.pill} ${p.id === pill ? styles.pillOn : ''}`.trim()} onClick={() => pick(p)}>
+              {p.icon}
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div className={styles.tools}>
+          <div className={styles.sortWrap}>
+            <button type="button" className={styles.sort} aria-haspopup="listbox" aria-expanded={sortOpen} disabled={section !== 'all'} onClick={() => setSortOpen((o) => !o)}>
+              <FilterGlyph />
+              <span>Filter &amp; Sort</span>
+              <ChevronDown size={14} />
+            </button>
+            {sortOpen && section === 'all' && (
+              <>
+                <div className={styles.sortScrim} onClick={() => setSortOpen(false)} />
+                <div className={styles.sortMenu} role="listbox" aria-label="Sort by">
+                  <div className={styles.sortHead}>Sort by</div>
+                  {SORT_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      role="option"
+                      aria-selected={o.value === sort}
+                      className={styles.sortItem}
+                      onClick={() => {
+                        setSort(o.value)
+                        setPill(o.value === 'created_at' ? 'recent' : 'explore')
+                        setSortOpen(false)
+                      }}
+                    >
+                      {o.label}
+                      {o.value === sort && <CheckBold size={14} />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <label className={styles.search}>
+            <Search size={18} />
+            <input type="search" value={draft} placeholder="Search" aria-label="Search places" onChange={(e) => setDraft(e.target.value)} />
+          </label>
+          {headExtra}
+        </div>
+      </header>
 
-      {showHighlights && featured.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Featured Places</h2>
-          <FeaturedCarousel places={featured} onPick={onPick} />
-        </section>
-      )}
-
-      <BrowseToolbar tabs={<Tabs items={SECTIONS} value={section} onChange={setSection} aria-label="Places sections" />}>
-        <BrowseControl size="search">
-          <SearchField value={draft} onChange={setDraft} placeholder="Search places" />
-        </BrowseControl>
-        <BrowseControl size="select">
-          <Dropdown options={CATEGORY_OPTIONS} value={categoryLabel(category)} onChange={(label) => setCategory(categoryId(label))} />
-        </BrowseControl>
-        {section === 'all' && <BrowseControl size="select">
-          <Dropdown
-            options={SORT_OPTIONS.map((o) => o.label)}
-            value={SORT_OPTIONS.find((o) => o.value === sort)?.label ?? 'Most active'}
-            onChange={(label) => setSort(SORT_OPTIONS.find((o) => o.label === label)?.value ?? 'most_active')}
-          />
-        </BrowseControl>}
-        {headExtra}
-      </BrowseToolbar>
+      <div className={styles.categories} role="group" aria-label="Categories">
+        {CATEGORIES.map((c) => (
+          <button key={c} type="button" aria-pressed={c === category} className={`${styles.category} ${c === category ? styles.categoryOn : ''}`.trim()} onClick={() => setCategory(c)}>
+            <img src={CAT_ICONS[c] ?? CAT_ICONS.all} alt="" width={26} height={26} draggable={false} />
+            {c}
+          </button>
+        ))}
+      </div>
 
       {/* the search the hook runs is the trimmed box: the results answer the box once they match */}
-      <BrowsePanel label="Places results" busy={loading || draft.trim() !== search}>
+      <div className={styles.results} role="region" aria-label="Places results" aria-busy={loading || draft.trim() !== search}>
         {loading ? (
           <BrowseLoading />
         ) : error && list.length === 0 ? (
@@ -165,17 +192,21 @@ export function PlacesBrowser({
             }
           />
         ) : (
-          renderGrid(mainList)
+          <div className={`${styles.grid} ${inCard ? styles.gridCard : ''}`.trim()}>
+            {mainList.map((place) => (
+              <PlaceCard key={place.id} place={place} onClick={() => onPick(place)} />
+            ))}
+          </div>
         )}
         {error && list.length > 0 && (
           <EmptyState variant="inline" tone="error" title="Couldn't load more places" subtitle={error} actions={[{ label: 'Retry', onClick: retry }]} />
         )}
         {!loading && !error && hasMore && (
-          <Button variant="secondary" disabled={loadingMore} onClick={loadMore}>
+          <Button variant="secondary" className={styles.more} disabled={loadingMore} onClick={loadMore}>
             {loadingMore ? 'Loading more…' : 'Load more places'}
           </Button>
         )}
-      </BrowsePanel>
-    </>
+      </div>
+    </div>
   )
 }

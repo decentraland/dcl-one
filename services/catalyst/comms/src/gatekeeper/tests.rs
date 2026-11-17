@@ -34,6 +34,9 @@ use super::{CommsState, Settings, SharedState};
 #[path = "canonical_rooms_tests.rs"]
 mod canonical_rooms;
 
+#[path = "cast_tests.rs"]
+mod cast;
+
 #[path = "toolkit_moderation_tests.rs"]
 mod toolkit_moderation;
 
@@ -72,8 +75,12 @@ fn state_with(pool: PgPool, settings: Settings) -> SharedState {
     Arc::new(comms_state(pool, settings))
 }
 
+/// Every acquire fails; sqlx retries the refused connect until the acquire
+/// timeout, so the default 30 s would be spent on each closed-store query.
 fn lazy_pool() -> PgPool {
-    PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
         .expect("a lazy pool never connects")
 }
 
@@ -2932,10 +2939,9 @@ async fn revoke_maps_each_arm_to_its_livekit_call() {
     assert!(!logs.contains("comms-revocation"), "{logs}");
 }
 
-/// `serve`'s one NATS link is the gatekeeper's whenever `NATS_URL` is set: the `/ws` connector
-/// publishes and subscribes over it in every process, the island subscriber in the primary.
+/// Configured credentials require an audience; building their shared NATS link does not dial it.
 #[tokio::test]
-async fn nats_url_alone_builds_the_link() {
+async fn configured_nats_requires_an_audience_and_builds_the_shared_link() {
     use super::admission::cluster::ClusterConfig;
     use super::bus::InProcessBus;
 
@@ -2943,10 +2949,23 @@ async fn nats_url_alone_builds_the_link() {
         nats_url: nats_url.map(str::to_string),
         ..ClusterConfig::default()
     };
-    let linked = comms_state(lazy_pool(), Settings::for_tests())
+    let missing_audience = comms_state(lazy_pool(), Settings::for_tests())
         .with_cluster(cluster(Some("nats://127.0.0.1:4222")))
+        .err()
+        .expect("the production constructor refuses configured credentials without an audience");
+    assert!(missing_audience.to_string().contains("deployment audience"));
+    let mut configured = cluster(Some("nats://127.0.0.1:4222"));
+    configured.control_v4_audience = Some("nats-link-test".into());
+    let linked = comms_state(lazy_pool(), Settings::for_tests())
+        .with_cluster(configured)
         .unwrap();
-    assert!(linked.bus.is_enabled(), "NATS_URL alone builds the link");
+    assert!(linked.bus.is_enabled());
+    assert!(
+        linked
+            .assignments
+            .as_ref()
+            .is_some_and(|fence| fence.generation_required())
+    );
     assert!(!linked.bus.is_connected(), "nothing dials before connect()");
 
     let unlinked = comms_state(lazy_pool(), Settings::for_tests())
@@ -3797,7 +3816,6 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
         .unwrap();
         assert_eq!(addresses, expected);
     }
-    use crate::explore::places::live::Participants;
     state.scenes = Arc::new(StubScenes {
         room: Ok(crate::rooms::ResolvedRoom {
             realm: crate::world_identity::RealmId::Shared("main".into()),
@@ -3808,10 +3826,13 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
         scene: Ok(None),
     });
     assert_eq!(
-        state.participants(false, "0,0").await,
+        state.live_participants(false, "0,0").await,
         Some(expected.clone())
     );
-    assert_eq!(state.participants(true, "Foo.eth").await, Some(expected));
+    assert_eq!(
+        state.live_participants(true, "Foo.eth").await,
+        Some(expected)
+    );
     assert_eq!(
         *observed.lock().unwrap(),
         vec![

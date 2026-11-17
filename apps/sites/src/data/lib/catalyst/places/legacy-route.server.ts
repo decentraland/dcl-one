@@ -2,9 +2,9 @@ import { redirect } from "react-router";
 import { CatalystError } from "../client";
 import { resolveLegacyPlace } from "./destinations";
 
-export async function legacyPlaceRedirect(request: Request, kind: "place" | "world", value: string) {
+export async function legacyPlaceRedirect(request: Request, position: string) {
   try {
-    const id = await resolveLegacyPlace(kind, value, { signal: request.signal });
+    const id = await resolveLegacyPlace(position, { signal: request.signal });
     if (!id) throw new Response("Place not found", { status: 404 });
     return redirect(`/places/${encodeURIComponent(id)}${new URL(request.url).search}`);
   } catch (error) {

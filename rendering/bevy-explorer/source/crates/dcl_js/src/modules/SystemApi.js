@@ -334,6 +334,11 @@ module.exports.sendChat = async function(message, channel) {
     Deno.core.ops.op_send_chat(message, channel ?? "Nearby")
 }
 
+// replace the text of the chat bubble still showing a message (its translation, or the original back)
+module.exports.setChatBubbleText = function(messageId, message) {
+    Deno.core.ops.op_set_chat_bubble_text(messageId, message)
+}
+
 // get reactions to chat messages (the local user's included) as a stream
 // type ChatReaction = {
 //   channel: string, // "Nearby" or the DM partner's wallet
@@ -805,9 +810,10 @@ module.exports.social = {
     return streamGenerator();
   },
 
-  // the community channels the local user listens to (community ids); replaces the previous set
-  setCommunityChannels: function(ids) {
-    Deno.core.ops.op_set_community_channels(ids);
+  // the communities whose chat channels the local user listens to ({ id, name });
+  // replaces the previous set
+  setCommunityChannels: function(communities) {
+    Deno.core.ops.op_set_community_channels(communities);
   }
 }
 
@@ -881,6 +887,29 @@ module.exports.getAnalyticsEventStream = async function() {
   async function* streamGenerator() {
     while (true) {
       const next = await Deno.core.ops.op_read_analytics_event_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the preview server's texture import status for the previewed scene (preview mode only)
+// type TextureOptimizationStatus = {
+//   sceneId: string,
+//   state: 'running' | 'ready' | 'failed',
+//   done: number, total: number, failed: number,
+//   bytesBefore: number, bytesAfter: number,
+//   enabled: boolean,
+//   replay: boolean, // the server's last status, replayed as the socket connected
+// }
+module.exports.getTextureOptimizationStream = async function() {
+  const rid = await Deno.core.ops.op_get_texture_optimization_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_texture_optimization_stream(rid);
       if (next === null) break;
       yield next;
     }

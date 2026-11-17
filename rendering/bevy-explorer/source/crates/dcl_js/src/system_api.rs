@@ -18,10 +18,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
-    SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, TextureOptimizationStatus,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -588,6 +589,21 @@ pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: St
         .unwrap();
 }
 
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<impl State>>,
+    message_id: String,
+    message: String,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        })
+        .unwrap();
+}
+
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -1151,6 +1167,26 @@ pub async fn op_read_analytics_event_stream(
     Ok(read_stream(state, rid).await)
 }
 
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetTextureOptimizationStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_get_avatar_modifiers(
     state: Rc<RefCell<impl State>>,
 ) -> Result<Vec<AvatarModifierState>, anyhow::Error> {
@@ -1559,11 +1595,14 @@ pub async fn op_read_community_connectivity_stream(
     Ok(read_stream(state, rid).await)
 }
 
-pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+pub fn op_set_community_channels(
+    state: Rc<RefCell<impl State>>,
+    communities: Vec<ListenedCommunity>,
+) {
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetCommunityChannels(ids))
+        .send(SystemApi::SetCommunityChannels(communities))
         .unwrap();
 }
 

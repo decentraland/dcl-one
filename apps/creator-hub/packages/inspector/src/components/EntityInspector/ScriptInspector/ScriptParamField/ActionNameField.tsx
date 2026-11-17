@@ -8,13 +8,14 @@ type Props = {
   label: React.ReactNode;
   value: string;
   entity: Entity | undefined;
+  disabled?: boolean;
   onChange: (action: string) => void;
 };
 
 // The name of one of `entity`'s actions (a string param tagged `@actionsOf <key>`). A stored name
 // that isn't one of them (typed by hand before this was a dropdown, or left over from another
 // item) stays visible and flagged until a real action is picked, instead of silently vanishing.
-export function ActionNameField({ label, value, entity, onChange }: Props) {
+export function ActionNameField({ label, value, entity, disabled, onChange }: Props) {
   const sdk = useSdk();
   const actions = (entity && sdk?.components.Actions.getOrNull(entity)?.value) || [];
   const names = actions.map(action => action.name);
@@ -28,7 +29,7 @@ export function ActionNameField({ label, value, entity, onChange }: Props) {
       label={label}
       placeholder={entity ? 'Select an action' : 'Select an item first'}
       empty="This item has no actions."
-      disabled={!entity}
+      disabled={disabled || !entity}
       options={options}
       value={value}
       error={isStale ? `"${value}" is not one of this item's actions.` : undefined}

@@ -1,15 +1,21 @@
 export type LandingsEvents = {
+  cast_connection_lost: {
+    room_id?: string;
+  };
   cast_devices_selected: {
     camera: string;
     mic: string;
     speaker: string;
   };
   cast_ended: {
-    stub: true;
+    stub: boolean;
   };
   cast_ending: Record<string, never>;
   cast_invalid_token: {
     reason: string;
+  };
+  cast_join_failed: {
+    reason?: string;
   };
   cast_join_requested: Record<string, never>;
   cast_not_found_go_home: {
@@ -29,11 +35,11 @@ export type LandingsEvents = {
   cast_preview_ready: Record<string, never>;
   cast_screenshare_failed: {
     room_id?: string;
-    stub: true;
+    stub: boolean;
   };
   cast_screenshare_started: {
     room_id?: string;
-    stub: true;
+    stub: boolean;
   };
   cast_token_checked: Record<string, never>;
   cast_token_valid: {
@@ -47,9 +53,12 @@ export type LandingsEvents = {
   cast_watch_joined: {
     place_name: string;
     room_id: string;
-    stub: true;
+    stub: boolean;
   };
   cast_watch_left: Record<string, never>;
+  cast_watch_lost: {
+    reason: string;
+  };
   cast_watch_muted: Record<string, never>;
   cast_watch_no_stream: {
     location: string;
@@ -58,10 +67,14 @@ export type LandingsEvents = {
     is_world: boolean;
     location: string;
   };
+  cast_watch_refused: {
+    kind: "error" | "waiting";
+    reason: string;
+  };
   cast_watch_unmuted: Record<string, never>;
   cast_went_live: {
     room_id?: string;
-    stub: true;
+    stub: boolean;
   };
   jump_in_completed: {
     launch_url: string;
@@ -208,11 +221,11 @@ export type LandingsEvents = {
     resolved: boolean;
   };
   lp_legal_section_clicked: {
-    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
     section: string;
   };
   lp_legal_viewed: {
-    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
   lp_rsvp_cancelled: {
     count: number;

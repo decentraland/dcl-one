@@ -8,6 +8,7 @@ import {
   useState,
   type AnchorHTMLAttributes,
   type ComponentType,
+  type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -19,7 +20,6 @@ import {
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralManaColour,
-  GeneralMenu,
   GeneralPolygonMana
 } from '../../foundations/icons/general'
 import { ShopCredits } from '../../foundations/icons/shop'
@@ -112,6 +112,10 @@ type NavBarCommonProps = {
    * page's locale so server and client agree.
    */
   locale?: string
+  /** Shown after the home link, for example a wordmark. */
+  brand?: ReactNode
+  /** Replace the component's own marks: the home link's logo, the menu button's icon and the notifications bell. */
+  icons?: { logo?: ReactNode; menu?: ReactNode; notifications?: ReactNode }
   /** Applied to the outer navigation frame, including caller positioning and stacking. */
   className?: string
 }
@@ -326,10 +330,12 @@ function Balances({
 function NotificationsButton({
   count,
   labels,
+  icon,
   onClick
 }: {
   count: number
   labels: NavBarLabels
+  icon?: ReactNode
   onClick: () => void
 }) {
   return (
@@ -342,7 +348,7 @@ function NotificationsButton({
         onClick()
       }}
     >
-      <GeneralBell size={24} aria-hidden="true" />
+      {icon ?? <GeneralBell size={24} aria-hidden="true" />}
       {count > 0 ? (
         <span className={styles.badge} aria-hidden="true">
           {count > BADGE_MAX ? `${BADGE_MAX}+` : count}
@@ -447,6 +453,9 @@ function AccountMenu({
 }
 
 function Drawer({
+  closingFrom,
+  panelRef,
+  onExited,
   scopeRef,
   headerRef,
   triggerRef,
@@ -454,6 +463,9 @@ function Drawer({
   onDesktop,
   children
 }: {
+  closingFrom: string | null
+  panelRef: RefObject<HTMLDivElement | null>
+  onExited: () => void
   scopeRef: RefObject<HTMLDivElement | null>
   headerRef: RefObject<HTMLElement | null>
   triggerRef: RefObject<HTMLButtonElement | null>
@@ -463,16 +475,39 @@ function Drawer({
 }) {
   const [top, setTop] = useState<number | null>(null)
   const [entryRevealed, setEntryRevealed] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(false)
   useLayoutEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
     const onChange = (event: MediaQueryListEvent) => {
+      setReducedMotion(event.matches)
       if (event.matches) setEntryRevealed(true)
     }
-    if (reducedMotion.matches) setEntryRevealed(true)
-    reducedMotion.addEventListener('change', onChange)
-    return () => reducedMotion.removeEventListener('change', onChange)
+    setReducedMotion(preference.matches)
+    if (preference.matches) setEntryRevealed(true)
+    preference.addEventListener('change', onChange)
+    return () => preference.removeEventListener('change', onChange)
   }, [])
+  useLayoutEffect(() => {
+    if (closingFrom === null) return
+    let active = true
+    const finish = () => {
+      if (!active) return
+      if (typeof window.matchMedia === 'function' && window.matchMedia(DESKTOP_QUERY).matches)
+        onDesktop()
+      else onExited()
+    }
+    if (reducedMotion) finish()
+    else {
+      setEntryRevealed(true)
+      const animations = panelRef.current?.getAnimations?.() ?? []
+      if (!animations.length) finish()
+      else void Promise.all(animations.map((animation) => animation.finished)).then(finish, finish)
+    }
+    return () => {
+      active = false
+    }
+  }, [closingFrom, onExited, onDesktop, panelRef, reducedMotion])
   useLayoutEffect(() => {
     let frame = 0
     const measure = () => {
@@ -560,7 +595,15 @@ function Drawer({
         onClick={onClose}
       />
       <div
+        ref={panelRef}
         className={styles.drawer}
+        inert={closingFrom !== null}
+        data-exiting={closingFrom !== null || undefined}
+        style={
+          closingFrom === null
+            ? undefined
+            : ({ '--drawer-exit-from': closingFrom } as CSSProperties)
+        }
         data-testid="navbar-panel"
         data-entry-revealed={entryRevealed || undefined}
         onFocusCapture={() => setEntryRevealed(true)}
@@ -589,6 +632,8 @@ export function NavBar({
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
+  brand,
+  icons,
   className
 }: NavBarProps) {
   // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
@@ -601,20 +646,31 @@ export function NavBar({
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerClosingFrom, setDrawerClosingFrom] = useState<string | null>(null)
+  const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
   const scopeRef = useRef<HTMLDivElement>(null)
   const count = unreadCount(notifications?.count)
   const navRef = useRef<HTMLElement>(null)
-  const dismissDrawer = useCallback(() => setDrawerOpen(false), [])
-  const closeDrawer = useCallback(() => {
+  const dismissDrawer = useCallback(() => {
+    setDrawerClosingFrom(null)
     setDrawerOpen(false)
+  }, [])
+  const requestDrawerExit = useCallback(() => {
+    const panel = drawerPanelRef.current
+    const clip = panel ? getComputedStyle(panel).clipPath : 'none'
+    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
+  const closeDrawer = useCallback(() => {
+    dismissDrawer()
+    menuButtonRef.current?.focus({ preventScroll: true })
+  }, [dismissDrawer])
   const closeDrawerOnDesktop = useCallback(() => {
-    setDrawerOpen(false)
+    dismissDrawer()
     navRef.current?.querySelector<HTMLElement>('a[href]')?.focus()
-  }, [])
+  }, [dismissDrawer])
 
   const hasAccountOverride = accountControl !== null && accountControl !== undefined
   const secondaryNavigation = drawerOpen
@@ -667,8 +723,11 @@ export function NavBar({
             className: styles.logo,
             'aria-label': labels.home,
             onClick: drawerOpen ? dismissDrawer : undefined,
-            children: <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            children: icons?.logo ?? (
+              <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            )
           })}
+          {brand}
           <ul className={styles.sections} hidden={drawerOpen}>
             {sections.map((section, index) =>
               section.items ? (
@@ -701,6 +760,7 @@ export function NavBar({
             <NotificationsButton
               count={count}
               labels={labels}
+              icon={icons?.notifications}
               onClick={() => {
                 dismissDrawer()
                 notifications.onSelect()
@@ -732,19 +792,39 @@ export function NavBar({
             aria-haspopup={drawerOpen ? undefined : 'dialog'}
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
-              setDrawerOpen((open) => !open)
+              if (!drawerOpen) setDrawerOpen(true)
+              else if (drawerClosingFrom !== null) setDrawerClosingFrom(null)
+              else requestDrawerExit()
             }}
           >
-            <GeneralMenu size={24} aria-hidden="true" />
+            {icons?.menu ?? (
+              <svg
+                width={24}
+                height={24}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            )}
             {drawerOpen ? <GeneralClose size={24} aria-hidden="true" /> : null}
           </button>
         </div>
         {drawerOpen ? (
           <Drawer
+            closingFrom={drawerClosingFrom}
+            panelRef={drawerPanelRef}
+            onExited={dismissDrawer}
             scopeRef={scopeRef}
             headerRef={navRef}
             triggerRef={menuButtonRef}
-            onClose={closeDrawer}
+            onClose={requestDrawerExit}
             onDesktop={closeDrawerOnDesktop}
           >
             <ul className={styles.drawerSections}>

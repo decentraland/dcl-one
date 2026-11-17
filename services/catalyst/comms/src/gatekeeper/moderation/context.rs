@@ -197,7 +197,7 @@ impl<'a> Context<'a> {
             place_title: current_deployment
                 .title
                 .as_deref()
-                .map(crate::explore::sanitize::strip_all_markup)
+                .map(crate::shared::markup::strip_all_markup)
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| format!("Place at {}", current_deployment.base.canonical())),
         })

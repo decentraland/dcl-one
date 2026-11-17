@@ -187,6 +187,16 @@ pub struct SatelliteView {
     pub top_left_offset: Vector2,
 }
 
+/// A community whose chat channel the local user listens to.
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ListenedCommunity {
+    pub id: String,
+    /// The community's name, shown with its messages over their authors' nametags; `None`
+    /// when the HUD doesn't know it.
+    pub name: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct ChatMessage {
@@ -566,6 +576,40 @@ pub struct SceneLoadingUi {
 pub struct AnalyticsEvent {
     pub event: String,
     pub properties: serde_json::Value,
+}
+
+/// Where the preview server's background texture import is: encoding, finished with new
+/// optimized files in place (the scene shows them on its next reload), or failed.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum TextureOptimizationState {
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The preview server's texture import status for one scene, as the preview socket delivered it
+/// (its `TEXTURE_OPTIMIZATION` text frame). `done`, `total` and `failed` count this run's
+/// textures; `bytesBefore` and `bytesAfter` are the converted images' source and KTX2 sizes;
+/// `enabled` is whether the project serves the optimized files. `replay` marks the server's last
+/// status, sent again as the socket (re)connected, not news.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct TextureOptimizationStatus {
+    pub scene_id: String,
+    pub state: TextureOptimizationState,
+    pub done: u32,
+    pub total: u32,
+    pub failed: u32,
+    // f64: a plain JS number on every runtime (exact below 2^53 bytes)
+    pub bytes_before: f64,
+    pub bytes_after: f64,
+    pub enabled: bool,
+    pub replay: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

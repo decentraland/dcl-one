@@ -99,8 +99,11 @@ class ConfigurationTest(unittest.TestCase):
     def test_sites_routes_keep_api_exceptions_and_prefix_boundaries(self):
         self.assertEqual(gateway.site_prefixes([
             "_index.tsx", "$slug.tsx", "places_.$id.tsx", "api.screens.v1.play.ts",
-            "api.marketplace-screen.ts", "internal.pair.tsx", "profile.$id.tsx",
-        ]), ["/api/marketplace-screen", "/api/screens", "/internal", "/places", "/profile"])
+            "api.marketplace-screen.ts", "internal.pair.tsx", "profile.$id.tsx", "robots[.]txt.ts",
+            "play_.app[.]html.tsx", "a[$b].tsx", "[_]x.tsx",
+            "download.tsx", "download_success.tsx", "download_.success.tsx",
+        ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
+             "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -117,6 +120,18 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("location = /cast {", text)
         self.assertEqual(text.count("location ^~ /cast/ {"), 1)
         self.assertNotIn("location /cast/ {", text)
+
+    def test_cast_stream_and_watch_links_are_sites_pages(self):
+        # The gatekeeper's links are {CAST2_URL}/s/<key> and /w/<location>, CAST2_URL = <origin>/cast.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["cast.s.$token.tsx", "cast.w.$location.tsx"], "internal": ["/metrics"],
+                 "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /cast/", "to": "/comms-gatekeeper$uri"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        for page in ("/cast/s/", "/cast/w/"):
+            with self.subTest(page=page):
+                self.assertIn(f"location ^~ {page} {{\nproxy_pass http://sites;", text)
+        self.assertEqual(text.count("location ^~ /cast/ {"), 1)
 
     def test_worlds_host_deploys_get_the_deploy_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -229,6 +244,34 @@ class ConfigurationTest(unittest.TestCase):
                      "/badges/badges/x/backfill/y", "/x/badges/badges/x/backfill"]:
             with self.subTest(path=path):
                 self.assertFalse(any("64m" in body for regex, body in regexes if regex.search(path)))
+
+    def test_badges_asset_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_ASSET_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_ASSET_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        body = next(body for regex, body in regexes if regex.search("/badges/assets/traveler/starter/2d/normal.png"))
+        self.assertIn(f"client_max_body_size {gateway.BADGES_ASSET_CAP};", body)
+        # public reads share no upload budget: only PUTs are keyed
+        self.assertNotIn("deploy_uploads", body)
+        self.assertIn("limit_conn badge_asset_uploads", body)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn('map $request_method $badge_asset_upload_key { PUT $binary_remote_addr; default ""; }', text)
+        self.assertIn("limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;", text)
+        self.assertFalse(any(regex.search("/x/badges/assets/a.png") for regex, _ in regexes
+                             if f"client_max_body_size {gateway.BADGES_ASSET_CAP};" in _))
+
+    def test_the_scene_proxy_stays_with_the_node_at_the_default_body_cap(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        text = gateway.render(self.production_table(), cfg, "/mime.types")
+        self.assertIn("location = /_scene {\nproxy_pass http://apis;\n\n}", text)
+        self.assertIn("location ^~ /_scene/ {\nproxy_pass http://apis;\n\n}", text)
+        source = (Path(__file__).parents[3] / "services/catalyst/src/scene_proxy.rs").read_text()
+        self.assertRegex(source, r"(?m)^const REQUEST_BODY_LIMIT: usize = 1 << 20;$")
+        self.assertIn("client_max_body_size 1m;", text)
 
     def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
@@ -400,6 +443,53 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)
 
+    def production_table(self):
+        """The table infra/gateway/package.nix builds, read from the same three sources."""
+        root = Path(__file__).parents[3]
+
+        def rows(text):
+            for block in re.findall(r"^ *\{\n(.*?)^ *\}$", text, re.M | re.S):
+                yield {name: bool(flag) or re.sub(r"\\(.)", r"\1", value) for name, value, flag
+                       in re.findall(r'(\w+) = (?:"((?:[^"\\]|\\.)*)"|(true));', block)}
+
+        routes = (root / "infra/gateway/routes.nix").read_text()
+        aliases = (root / "infra/gateway/root-aliases.nix").read_text()
+        table = {name: re.findall(r'"([^"]+)"', re.search(rf"{name} = \[(.*?)\];", routes, re.S)[1])
+                 for name in ("deploy", "internal")}
+        table["node"] = list(rows(routes[routes.index("node = ["):]))
+        table["aliases"] = list(rows(aliases))
+        table["sites"] = sorted(
+            path.name for path in (root / "apps/sites/src/routes/routes").iterdir()
+            if path.is_file() and re.search(r"\.tsx?$", path.name)
+            and not re.search(r"\.(test|spec)\.tsx?$", path.name))
+        self.assertEqual(len(table["node"]), routes.count("path = "))
+        self.assertEqual(len(table["aliases"]), aliases.count("key = "))
+        self.assertTrue(all(row.get("to") or row.get("rewrite") for row in table["aliases"]))
+        return table
+
+    def test_the_production_table_names_each_location_once(self):
+        # nginx refuses to start on `duplicate location`; `^~` does not change a prefix name.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        config = gateway.render(self.production_table(), cfg, "/mime.types")
+        server = config[config.rindex("\n    server {\n"):]
+        names = [re.sub(r"^\^~ ", "", key) for key in re.findall(r"^\s*location (.+?) \{$", server, re.M)]
+        self.assertGreater(len(names), 200)
+        self.assertEqual(sorted(set(names)), sorted(names))
+        # The Cast page is Sites'; everything below it stays the gatekeeper's.
+        self.assertIn("location = /cast {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /cast/ {\nrewrite ^(.*)$ /comms-gatekeeper$1 break;", config)
+        self.assertNotIn("location /cast/ {", config)
+
+    def test_a_sites_prefix_cannot_repeat_an_alias_location(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["jobs._index.tsx"], "internal": [], "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /jobs/", "to": "/comms-gatekeeper$uri"}]}
+        with self.assertRaisesRegex(ValueError, "Two locations have the name /jobs/"):
+            gateway.render(table, cfg, "/mime.types")
+        table["aliases"] = [{"key": "= /jobs", "to": "/comms-gatekeeper$uri"}]
+        with self.assertRaisesRegex(ValueError, "Two locations have the name = /jobs"):
+            gateway.render(table, cfg, "/mime.types")
+
     def test_legal_documents_route_to_sites_without_claiming_api_paths(self):
         root = Path(__file__).parents[3]
         legal_fixtures = root / "apps/sites/src/data/legal/fixtures"
@@ -427,6 +517,14 @@ class ConfigurationTest(unittest.TestCase):
                     (kind, prefix) for kind, prefix in sites_locations
                     if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
                 ])
+
+    def test_robots_txt_routes_to_sites(self):
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /robots.txt {\nproxy_pass http://sites;", config)
+        self.assertNotIn("location = /robots[ {", config)
 
     def test_content_page_is_sites_only_on_the_apex_host(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test",

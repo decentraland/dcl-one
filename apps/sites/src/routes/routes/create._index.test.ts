@@ -1,10 +1,13 @@
 import { RouterContextProvider } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
-import { loadCreateScreen } from "@/data/lib/screens/create.server";
+import { fetchHotScenes } from "@/data/lib/create-landing/live-scenes";
 import { loader, sdkWorkspaceHandoff } from "./create._index";
 
-vi.mock("@/data/lib/screens/create.server", () => ({ loadCreateScreen: vi.fn() }));
-vi.mock("@/core/lib/telemetry/page-loader", () => ({ sidLoader: vi.fn() }));
+vi.mock("@/data/lib/create-landing/live-scenes", async (actual) => ({
+  ...(await actual<typeof import("@/data/lib/create-landing/live-scenes")>()),
+  fetchHotScenes: vi.fn(),
+}));
+vi.mock("@/core/lib/telemetry/page-loader", () => ({ pageLoader: vi.fn() }));
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -33,7 +36,7 @@ it("hands /create?projectUrl= to the SDK workspace by a fragment-free document r
   expect(location).not.toContain("#");
   expect(new URL(location, "https://sites.test").searchParams.has("token")).toBe(false);
   expect(headers.get("cache-control")).toBe("private, no-store");
-  expect(loadCreateScreen).not.toHaveBeenCalled();
+  expect(fetchHotScenes).not.toHaveBeenCalled();
 });
 
 it("only a projectUrl is a handoff, and a token in the query is not carried", () => {

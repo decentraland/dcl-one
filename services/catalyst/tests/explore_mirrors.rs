@@ -2571,7 +2571,7 @@ async fn destinations_decorate_live_and_next_events_from_the_mirrored_catalogue(
     db.teardown().await;
 }
 
-/// Opt-in (`cargo test --test explore_mirrors -- --ignored live_`): one bounded
+/// Opt-in (`cargo test --test node_1 -- --ignored explore_mirrors::live_`): one bounded
 /// live pass of the worlds mirror against places.decentraland.org (about 1.6k
 /// worlds, 17 pages of 100), through the checked source and the real client,
 /// then the routes over the mirrored rows and the status markers.

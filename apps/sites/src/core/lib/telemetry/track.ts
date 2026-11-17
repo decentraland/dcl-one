@@ -84,7 +84,18 @@ function withoutSensitivePairs(part: string): string {
     .join("&");
 }
 
-export function withoutSensitiveParams(url: string): string {
+/** Path segments that are credentials: a Cast stream link's streaming key (`/cast/s/{key}`) is
+ * all `POST /cast/streamer-token` checks. */
+const SENSITIVE_PATHS: Array<[RegExp, string]> = [[/\/cast\/s\/[^/?#]+/, "/cast/s/:key"]];
+
+export function withoutSensitivePath(path: string): string {
+  let out = path;
+  for (const [pattern, replacement] of SENSITIVE_PATHS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+export function withoutSensitiveParams(raw: string): string {
+  const url = withoutSensitivePath(raw);
   const h = url.indexOf("#");
   const beforeHash = h < 0 ? url : url.slice(0, h);
   const fragment = h < 0 ? "" : url.slice(h + 1);
@@ -220,7 +231,7 @@ function context(): SegmentContext {
     direct: true,
     page: {
       url: withoutSensitiveParams(window.location.href),
-      path: window.location.pathname,
+      path: withoutSensitivePath(window.location.pathname),
       referrer: withoutSensitiveParams(typeof document !== "undefined" ? document.referrer : ""),
       title: typeof document !== "undefined" ? document.title : "",
     },
