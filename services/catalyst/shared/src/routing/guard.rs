@@ -167,7 +167,8 @@ fn direct_lines(text: &str) -> Vec<usize> {
     // a test-only item has not reached its `;` or `{` yet.
     let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
     // Inside a multi-line `use axum::{ .. }` or `use axum::routing::{ .. }`.
-    let (mut axum_group, mut routing_group) = (false, false);
+    // A routing group nested in `use axum::{ .. }` ends at its own `}`.
+    let (mut axum_group, mut routing_group, mut nested) = (false, false, false);
     for (number, (line, original)) in code.lines().zip(text.lines()).enumerate() {
         let trimmed = line.trim();
         let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
@@ -202,6 +203,7 @@ fn direct_lines(text: &str) -> Vec<usize> {
         if trimmed.starts_with("use axum::routing::{") && opens_group {
             routing_group = true;
         }
+        let opens_nested = axum_group && trimmed.ends_with("routing::{");
         let direct = line
             .split_once("axum::routing::")
             .is_some_and(|(_, after)| names_a_method(after));
@@ -213,7 +215,7 @@ fn direct_lines(text: &str) -> Vec<usize> {
             && !trimmed.starts_with("use ")
             && trimmed
                 .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .any(|name| METHODS.contains(&name));
+                .any(|name| METHODS.contains(&name) || name == "self");
         let module = trimmed == "use axum::routing;"
             || ((axum_group || trimmed.starts_with("use axum::{"))
                 && trimmed
@@ -222,9 +224,18 @@ fn direct_lines(text: &str) -> Vec<usize> {
         if direct || grouped || in_routing_group || module {
             found.push(number + 1);
         }
+        if nested && trimmed.starts_with('}') {
+            routing_group = false;
+            nested = false;
+        }
+        if opens_nested {
+            routing_group = true;
+            nested = true;
+        }
         if trimmed.ends_with("};") {
             axum_group = false;
             routing_group = false;
+            nested = false;
         }
         depth += delta;
     }
@@ -243,7 +254,7 @@ fn names_a_method(after: &str) -> bool {
         } else {
             1
         })
-        .any(|name| METHODS.contains(&name))
+        .any(|name| METHODS.contains(&name) || name == "self")
 }
 
 #[cfg(test)]
@@ -308,8 +319,17 @@ use axum::routing::{
 use axum::routing;
 use axum::{Json, routing};
 use axum::routing::MethodRouter;
+use axum::{
+    Json,
+    routing::{
+        MethodRouter,
+        get,
+    },
+    Router,
+};
+use axum::routing::{self, MethodRouter};
 "##;
-        assert_eq!(direct_lines(text), [7, 15, 18, 20, 21]);
+        assert_eq!(direct_lines(text), [7, 15, 18, 20, 21, 27, 31]);
     }
 
     #[test]
