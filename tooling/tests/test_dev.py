@@ -94,13 +94,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual(len({valkey, rtmp, relay, health}), 4)
         # LiveKit and the ingress meet in the stack's Valkey; the server hands out the ingress's RTMP URL.
         yaml = dev.livekit_yaml(self.config)
-        for line in ('redis:', f'  address: 127.0.0.1:{valkey}', 'ingress:',
+        password = self.config['VALKEY_PASSWORD']
+        self.assertGreaterEqual(len(password), 32)
+        for line in ('redis:', f'  address: 127.0.0.1:{valkey}', f'  password: {password}', 'ingress:',
                      f'  rtmp_base_url: rtmp://127.0.0.1:{rtmp}/x'):
             self.assertIn(line + '\n', yaml)
         ingress = dev.ingress_yaml(self.config)
         signaling = dev.livekit_ports(self.config)[0]
         for line in (f"api_key: {self.config['LIVEKIT_API_KEY']}", f"api_secret: {self.config['LIVEKIT_API_SECRET']}",
-                     f'ws_url: ws://127.0.0.1:{signaling}', f'  address: 127.0.0.1:{valkey}',
+                     f'ws_url: ws://127.0.0.1:{signaling}', f'  address: 127.0.0.1:{valkey}', f'  password: {password}',
                      f'rtmp_port: {rtmp}', 'whip_port: -1', f'http_relay_port: {relay}', f'health_port: {health}',
                      # A busy development machine still takes a stream.
                      '  rtmp_cpu_cost: 0.01', '  min_idle_ratio: 0.001'):
@@ -112,10 +114,16 @@ class DevTest(unittest.TestCase):
                          {'host': '127.0.0.1', 'port': health, 'path': '/'})
         self.assertIn('valkey-ready', processes['valkey']['readiness_probe']['exec']['command'])
         self.assertTrue({'valkey', 'ingress'} <= set(dev.SERVICES))
-        argv = dev.valkey_argv(self.config)
-        self.assertEqual(argv[argv.index('--port') + 1], str(valkey))
-        self.assertEqual(argv[argv.index('--bind') + 1], '127.0.0.1')
-        self.assertEqual(argv[argv.index('--save') + 1], '', 'nothing is written to disk')
+        for line in ('bind 127.0.0.1', f'port {valkey}', f'requirepass {password}', 'save ""', 'appendonly no'):
+            self.assertIn(line + '\n', dev.valkey_conf(self.config))
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execvpe') as execvpe:
+            dev.task('valkey')
+        program, argv, env = execvpe.call_args.args
+        conf = self.state / 'valkey.conf'
+        self.assertEqual((program, argv), ('valkey-server', ['valkey-server', str(conf)]))
+        self.assertNotIn(password, ' '.join(argv), 'the password stays out of ps')
+        self.assertEqual(conf.read_text(), dev.valkey_conf(self.config))
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600)
         with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execvpe') as execvpe:
             dev.task('ingress')
         program, argv, env = execvpe.call_args.args
@@ -127,7 +135,31 @@ class DevTest(unittest.TestCase):
         for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
             config = {**self.config, 'public_origin': origin}
             rtmp = dev.ingress_ports(config)[1]
-            self.assertIn(f'  rtmp_base_url: rtmp://{host}:{rtmp}/x\n', dev.livekit_yaml(config))
+            self.assertEqual(dev.rtmp_base_url(config), f'rtmp://{host}:{rtmp}/x')
+            self.assertIn(f'  rtmp_base_url: {dev.rtmp_base_url(config)}\n', dev.livekit_yaml(config))
+            # status prints what the server hands out.
+            with patch.object(dev, 'pc', return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(dev, 'tls_files', return_value=None), contextlib.redirect_stdout(io.StringIO()) as out, \
+                    patch.object(dev, 'settings', return_value=config):
+                dev.status()
+            self.assertIn(f'RTMP ingress: {dev.rtmp_base_url(config)}', out.getvalue())
+
+    def test_a_stack_running_since_before_the_ingress_asks_for_a_full_restart(self):
+        old_graph = {name: {} for name in dev.project(self.config)['processes'] if name not in ('valkey', 'ingress')}
+        dev.save_json(self.state / 'process-compose.json', {'processes': old_graph})
+        self.assertEqual(dev.stale_graph(self.config), {'valkey', 'ingress'})
+        with patch.object(dev, 'supervisor_running', return_value=True):
+            # LiveKit's config now names Valkey, which the old graph never started.
+            with self.assertRaisesRegex(RuntimeError, 'predates ingress, valkey.*down, then foundation-dev up'):
+                dev.prepare_supervisor()
+            with patch.object(dev.sys, 'argv', ['foundation-dev', 'restart', 'livekit']), \
+                    patch.object(dev, 'pc') as pc, self.assertRaisesRegex(RuntimeError, 'predates'):
+                dev.main()
+            pc.assert_not_called()
+        dev.save_json(self.state / 'process-compose.json', {'processes': dev.project(self.config)['processes']})
+        self.assertEqual(dev.stale_graph(self.config), set())
+        dev.save_json(self.state / 'process-compose.json', {'processes': {'postgres': {}}})
+        self.assertEqual(dev.stale_graph(self.config), set(), 'a PostgreSQL-only run has its own check')
 
     def test_a_stack_created_before_the_ingress_gets_a_free_block_and_keeps_it(self):
         old = {k: v for k, v in self.config.items() if k != 'ingress_port'}
@@ -709,7 +741,9 @@ class DevTest(unittest.TestCase):
     def test_livekit_and_its_ingress_start_on_the_generated_config(self):
         if not dev.ports_free(self.config['port']) or not dev.ingress_ports_free(self.config['ingress_port']):
             self.skipTest('the test port block is busy')
-        valkey = self.start_server(dev.valkey_argv(self.config), {})
+        conf = self.state / 'valkey.conf'
+        conf.write_text(dev.valkey_conf(self.config))
+        valkey = self.start_server(['valkey-server', str(conf)], {})
         deadline = time.monotonic() + 20
         while not dev.valkey_ready(self.config):
             self.assertIsNone(valkey.poll(), 'valkey-server exited')
@@ -718,13 +752,17 @@ class DevTest(unittest.TestCase):
         livekit = self.start_server(['livekit-server'], {'LIVEKIT_CONFIG': dev.livekit_yaml(self.config)})
         self.wait_http_ok(livekit, dev.livekit_ports(self.config)[0], 'livekit-server')
         ingress = self.start_server(['ingress'], {'INGRESS_CONFIG_BODY': dev.ingress_yaml(self.config)})
-        self.wait_http_ok(ingress, dev.ingress_ports(self.config)[3], 'ingress')
+        # The first start on a fresh store scans GStreamer's plugins first.
+        self.wait_http_ok(ingress, dev.ingress_ports(self.config)[3], 'ingress', timeout=300)
         # The request /scene-stream-access makes (IngressClient::create_ingress): the server answers
         # with the stack's RTMP listener, which a streaming app then pushes to.
         info = self.livekit_twirp('Ingress', 'CreateIngress', {'ingressAdmin': True}, {
             'inputType': 'RTMP_INPUT', 'name': 'room-ingress', 'roomName': 'room', 'participantIdentity': 'streamer'})
+        # The server answers in proto field names (`stream_key`, `ingress_id`), which the API's
+        # parse_ingress reads (twirp_answers_in_proto_field_names_are_read in shared/src/livekit.rs).
         self.assertEqual(info['url'], f'rtmp://127.0.0.1:{dev.ingress_ports(self.config)[1]}/x')
-        self.assertTrue(info['stream_key'])
+        self.assertTrue(info['stream_key'] and info['ingress_id'])
+        self.assertNotIn('streamKey', info)
 
     def livekit_twirp(self, service, method, grant, body):
         def b64(raw):

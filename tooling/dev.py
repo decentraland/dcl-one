@@ -97,16 +97,11 @@ def save_json(path, value):
     temporary.replace(path)
 
 
-def ports_free(base, webtransport=None):
+def bindable(endpoints):
+    """Whether every (kind, port, address) can be bound now."""
     sockets = []
     try:
-        # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
-        # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
-        for kind, port, address in [*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                                        base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7,
-                                        base + 8, base + 9)),
-                                    *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
-                                    *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])]:
+        for kind, port, address in endpoints:
             sock = socket.socket(socket.AF_INET, kind)
             sockets.append(sock)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -121,6 +116,15 @@ def ports_free(base, webtransport=None):
             sock.close()
 
 
+def ports_free(base, webtransport=None):
+    # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
+    # (the Sites port, or the public origin's port on every interface) and ENet ports, LiveKit's media.
+    return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                     *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
+                     *([(socket.SOCK_DGRAM, webtransport, '0.0.0.0')] if webtransport else [])])
+
+
 def livekit_credentials():
     # The stack's own LiveKit server holds no data, so a stack created before it gets a pair on its next start.
     return {'LIVEKIT_API_KEY': 'API' + secrets.token_hex(6), 'LIVEKIT_API_SECRET': secrets.token_hex(32)}
@@ -128,23 +132,9 @@ def livekit_credentials():
 
 def ingress_ports_free(base):
     # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
-    # the ingress listens so a streaming app on another machine reaches it.
-    sockets = []
-    try:
-        for port, address in ((base, '127.0.0.1'), (base + 1, '0.0.0.0'), (base + 2, '127.0.0.1'),
-                              (base + 3, '127.0.0.1')):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sockets.append(sock)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((address, port))
-        return True
-    except OSError as error:
-        if error.errno == errno.EADDRINUSE:
-            return False
-        raise
-    finally:
-        for sock in sockets:
-            sock.close()
+    # livekit-ingress always listens (it has no bind address setting).
+    return bindable([(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
+                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')])
 
 
 def ingress_block(base):
@@ -159,8 +149,8 @@ def ingress_block(base):
 
 def missing_settings(config):
     """The generated settings `config` lacks: the LiveKit pair, the moderator token the API checks and Pulse
-    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), and the
-    LiveKit Ingress port block."""
+    polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), the
+    LiveKit Ingress port block and the password LiveKit and the ingress use for Valkey."""
     added = {}
     if 'LIVEKIT_API_SECRET' not in config:
         added.update(livekit_credentials())
@@ -168,6 +158,8 @@ def missing_settings(config):
         added['MODERATOR_TOKEN'] = secrets.token_hex(32)
     if 'ingress_port' not in config:
         added['ingress_port'] = ingress_block(config['port'])
+    if 'VALKEY_PASSWORD' not in config:
+        added['VALKEY_PASSWORD'] = secrets.token_hex(32)
     return added
 
 
@@ -274,10 +266,7 @@ def livekit_ports(config):
 
 def livekit_yaml(config):
     signaling, tcp, udp = livekit_ports(config)
-    valkey, rtmp, _, _ = ingress_ports(config)
-    origin = public(config)
-    rtmp_host = origin[1] if origin else '127.0.0.1'
-    rtmp_host = f'[{rtmp_host}]' if ':' in rtmp_host else rtmp_host
+    valkey = ingress_ports(config)[0]
     key = config['LIVEKIT_API_KEY']
     # Signaling listens on loopback, as the rest of the stack. Media cannot: browsers gather no loopback
     # ICE candidates, so the server offers this machine's own interface addresses (no STUN); a session
@@ -300,11 +289,21 @@ def livekit_yaml(config):
             - http://127.0.0.1:{config['port']}/comms-gatekeeper/livekit-webhook
         redis:
           address: 127.0.0.1:{valkey}
+          password: {config['VALKEY_PASSWORD']}
         ingress:
-          rtmp_base_url: rtmp://{rtmp_host}:{rtmp}/x
+          rtmp_base_url: {rtmp_base_url(config)}
         logging:
           level: info
         ''')
+
+
+def rtmp_base_url(config):
+    # What /scene-stream-access hands a streamer: loopback, or behind a public origin its host, where the
+    # RTMP port must be reachable directly (a TLS front or an HTTP tunnel does not carry RTMP).
+    origin = public(config)
+    host = origin[1] if origin else '127.0.0.1'
+    host = f'[{host}]' if ':' in host else host
+    return f'rtmp://{host}:{ingress_ports(config)[1]}/x'
 
 
 def ingress_ports(config):
@@ -327,6 +326,7 @@ def ingress_yaml(config):
         ws_url: ws://127.0.0.1:{signaling}
         redis:
           address: 127.0.0.1:{valkey}
+          password: {config['VALKEY_PASSWORD']}
         rtmp_port: {rtmp}
         whip_port: -1
         http_relay_port: {relay}
@@ -339,16 +339,28 @@ def ingress_yaml(config):
         ''')
 
 
-def valkey_argv(config):
-    return ['valkey-server', '--bind', '127.0.0.1', '--port', str(ingress_ports(config)[0]),
-            '--save', '', '--appendonly', 'no']
+def valkey_conf(config):
+    # A file, so the password never shows in ps; nothing is saved to disk.
+    return textwrap.dedent(f'''\
+        bind 127.0.0.1
+        port {ingress_ports(config)[0]}
+        requirepass {config['VALKEY_PASSWORD']}
+        save ""
+        appendonly no
+        ''')
 
 
 def valkey_ready(config):
     try:
         with socket.create_connection(('127.0.0.1', ingress_ports(config)[0]), timeout=5) as sock:
-            sock.sendall(b'PING\r\n')
-            return sock.recv(64).startswith(b'+PONG')
+            sock.sendall(f"AUTH {config['VALKEY_PASSWORD']}\r\nPING\r\n".encode())
+            reply = b''
+            while reply.count(b'\r\n') < 2:
+                chunk = sock.recv(64)
+                if not chunk:
+                    break
+                reply += chunk
+            return reply == b'+OK\r\n+PONG\r\n'
     except OSError:
         return False
 
@@ -1012,7 +1024,10 @@ def task(name):
     elif name == 'valkey':
         # Holds only LiveKit's routing state for this run: nothing is saved to disk.
         env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR') if key in os.environ}
-        os.execvpe('valkey-server', valkey_argv(config), env)
+        conf = STATE / 'valkey.conf'
+        conf.touch(mode=0o600)
+        conf.write_text(valkey_conf(config))
+        os.execvpe('valkey-server', ['valkey-server', str(conf)], env)
     elif name == 'valkey-ready':
         if not valkey_ready(config):
             sys.exit(1)
@@ -1055,7 +1070,7 @@ def status():
     config = settings()
     print(f"Sites: http://127.0.0.1:{config['port'] + 2}   API: http://127.0.0.1:{config['port']}   "
           f"LiveKit: ws://127.0.0.1:{livekit_ports(config)[0]}   Pulse: https://127.0.0.1:{pulse_ports(config)[0]} (UDP)   "
-          f"NATS: {nats_url(config)}   RTMP ingress: rtmp://127.0.0.1:{ingress_ports(config)[1]}/x")
+          f"NATS: {nats_url(config)}   RTMP ingress: {rtmp_base_url(config)}")
     if origin := public(config):
         tls = tls_files(config)
         print(f"Public: {config['public_origin']}   /ws and /rtc through the front; Pulse UDP {origin[1]}:{pulse_ports(config)[0]}"
@@ -1068,6 +1083,15 @@ def status():
     return pc('process', 'list', '--output', 'wide').returncode
 
 
+def stale_graph(config):
+    """Processes the running supervisor's graph lacks: a stack started before they were added, whose
+    restarted tasks would already expect them (LiveKit reads Valkey)."""
+    running = set(json.loads((STATE / 'process-compose.json').read_text())['processes'])
+    if running == {'postgres'}:
+        return set()
+    return set(project(config)['processes']) - running
+
+
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
@@ -1075,6 +1099,9 @@ def prepare_supervisor(postgres_only=False):
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:
             raise RuntimeError('PostgreSQL-only stack is running. Run foundation-dev down before starting the full stack.')
+        if missing := stale_graph(config):
+            raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
+                               'Run foundation-dev down, then foundation-dev up.')
         return None
     # Behind a public origin without a port Pulse's WebTransport sits outside the block; it must be free too.
     webtransport = pulse_ports(config)[0]
@@ -1465,6 +1492,9 @@ def main():
             os.execvp('journalctl', ['journalctl', '--user', '-f', '-n', '80', '-u', service_name()])
         os.execvp('tail', ['tail', '-n', '80', '-F', str(STATE / f'{args.service}.log')])
     elif args.command == 'restart':
+        if supervisor_running() and (missing := stale_graph(settings())):
+            raise RuntimeError(f"The running stack predates {', '.join(sorted(missing))}. "
+                               'Run foundation-dev down, then foundation-dev up.')
         return pc('process', 'restart', args.service).returncode
     elif args.command == 'profile':
         if supervisor_running():

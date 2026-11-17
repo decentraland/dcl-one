@@ -25,8 +25,11 @@ Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occ
 saved port fails startup.
 
 A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
-(`foundation-dev status` prints the listener). The ingress needs a minute or two on its
-first start while GStreamer scans its plugins.
+(`foundation-dev status` prints it). Behind a public origin that URL names the origin's
+host, so its RTMP port must be reachable there directly: a TLS front or an HTTP tunnel
+does not carry RTMP. The ingress needs a minute or two on its first start while
+GStreamer scans its plugins. A stack started before the ingress existed needs
+`foundation-dev down`, then `up`.
 
 | `foundation-dev …` | Action |
 | --- | --- |
