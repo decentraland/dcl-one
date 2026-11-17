@@ -10,8 +10,9 @@ use common::{
     dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, PrimaryPlayerRes,
-        PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback, SceneDrivenAnimationRequest,
+        avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
+        PlayerModifiers, PrimaryPlayerRes, PrimaryUser, SceneDrivenAnim,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationRequest,
     },
 };
 use dcl_component::{
@@ -66,6 +67,7 @@ impl Plugin for AvatarMovementPlugin {
         );
 
         app.init_resource::<AvatarMovementInfo>();
+        app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
         app.init_resource::<CentralCollisions>();
@@ -79,6 +81,8 @@ impl Plugin for AvatarMovementPlugin {
                 ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
                 ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority,
                 ActivePlayerComponent::<InputModifier>::pick_by_priority,
+                update_locomotion_speeds
+                    .after(ActivePlayerComponent::<AvatarLocomotionSettings>::pick_by_priority),
                 update_priority_scene.after(
                     ActivePlayerComponent::<AvatarMovement>::pick_latest_frame_only_by_priority,
                 ),
@@ -104,6 +108,38 @@ impl Plugin for AvatarMovementPlugin {
                 .chain()
                 .in_set(PostUpdateSets::PlayerUpdate),
         );
+    }
+}
+
+/// The speeds the active locomotion settings give; a speed they leave unset is the player's own
+/// (configured speed with area modifiers).
+fn locomotion_speeds(
+    base: &PrimaryUser,
+    settings: Option<&PbAvatarLocomotionSettings>,
+) -> LocomotionSpeeds {
+    LocomotionSpeeds {
+        walk: settings
+            .and_then(|s| s.walk_speed)
+            .unwrap_or(base.walk_speed),
+        jog: settings.and_then(|s| s.jog_speed).unwrap_or(base.jog_speed),
+        run: settings.and_then(|s| s.run_speed).unwrap_or(base.run_speed),
+    }
+}
+
+/// Keeps the player's [`LocomotionSpeeds`] in step with the active locomotion settings.
+#[allow(clippy::type_complexity)]
+fn update_locomotion_speeds(
+    mut player: Query<(
+        &PrimaryUser,
+        Option<&PlayerModifiers>,
+        Option<&ActivePlayerComponent<AvatarLocomotionSettings>>,
+        &mut LocomotionSpeeds,
+    )>,
+) {
+    for (user, modifiers, active, mut speeds) in player.iter_mut() {
+        let base = modifiers.map_or_else(|| user.clone(), |m| m.combine(user));
+        let settings = active.map(|a| &a.component.0);
+        speeds.set_if_neq(locomotion_speeds(&base, settings));
     }
 }
 
@@ -1060,6 +1096,42 @@ fn accumulate_movement_periods(
             period.collision_push += push;
             period.collision_push_time += dt;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unset_locomotion_speeds_use_the_players_own() {
+        let base = PrimaryUser {
+            walk_speed: 3.0,
+            jog_speed: 7.0,
+            run_speed: 9.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            locomotion_speeds(&base, None),
+            LocomotionSpeeds {
+                walk: 3.0,
+                jog: 7.0,
+                run: 9.0
+            }
+        );
+        let settings = PbAvatarLocomotionSettings {
+            walk_speed: Some(1.0),
+            run_speed: Some(20.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            locomotion_speeds(&base, Some(&settings)),
+            LocomotionSpeeds {
+                walk: 1.0,
+                jog: 7.0,
+                run: 20.0
+            }
+        );
     }
 }
 

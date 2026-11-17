@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 
 import { loader as downloadLoader } from "./download";
-import { loader as creatorHubLoader } from "./landings.creator-hub-download";
+import { loader as creatorHubLoader } from "./download_.creator-hub";
 
 const LINUX_CHROME = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -67,9 +67,9 @@ describe("/download", () => {
   });
 });
 
-describe("/landings/creator-hub-download?step=success", () => {
+describe("/download/creator-hub?step=success", () => {
   it("opens the Creator Hub steps page for the detected system", async () => {
-    const response = await thrown(() => creatorHubLoader(args("/landings/creator-hub-download?step=success", MAC_CHROME)));
+    const response = await thrown(() => creatorHubLoader(args("/download/creator-hub?step=success", MAC_CHROME)));
     expect(response.headers.get("Location")).toMatch(/^\/download\/creator-hub-success\?os=macos&arch=(arm64|amd64)$/);
   });
 });

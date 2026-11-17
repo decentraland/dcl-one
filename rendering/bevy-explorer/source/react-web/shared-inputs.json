@@ -179,6 +179,10 @@
           "kind": "directory"
         },
         {
+          "name": "gifting",
+          "kind": "directory"
+        },
+        {
           "name": "lobby",
           "kind": "directory"
         },
@@ -398,6 +402,19 @@
         },
         {
           "name": "friendLocation.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/explorer-core/features/gifting",
+      "entries": [
+        {
+          "name": "giftItem.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "picker.ts",
           "kind": "regular"
         }
       ]
@@ -767,6 +784,14 @@
           "kind": "regular"
         },
         {
+          "name": "giftItem.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "giftPicker.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "googleTag.test.ts",
           "kind": "regular"
         },
@@ -1020,6 +1045,10 @@
         },
         {
           "name": "friends",
+          "kind": "directory"
+        },
+        {
+          "name": "gifting",
           "kind": "directory"
         },
         {
@@ -1613,6 +1642,23 @@
         },
         {
           "name": "jump-in.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/gifting",
+      "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
+        {
+          "name": "gift.png",
           "kind": "regular"
         }
       ]
@@ -3136,6 +3182,10 @@
           "kind": "directory"
         },
         {
+          "name": "gifting",
+          "kind": "directory"
+        },
+        {
           "name": "lobby",
           "kind": "directory"
         },
@@ -3790,6 +3840,39 @@
         },
         {
           "name": "signOutOfWorld.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting",
+      "entries": [
+        {
+          "name": "GiftPicker.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "GiftPicker.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "GiftReceivedPopup.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "GiftReceivedPopup.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "GiftTransferPanel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "GiftTransferPanel.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "useGifting.ts",
           "kind": "regular"
         }
       ]
@@ -4927,6 +5010,22 @@
           "kind": "regular"
         },
         {
+          "name": "giftEntryPoints.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "giftPicker.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "giftReceived.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "giftTransferPanel.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "home.session.test.tsx",
           "kind": "regular"
         },
@@ -5330,7 +5429,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
-      "sha256": "ef0b7bb27c67a68ecbab80763a4992f90b8e1bb6ef1a642efaadc577f344016a"
+      "sha256": "f15285b6e3a8093e611b3ab5c580f0793049f9059edd6280d72ea4a12a8cc64b"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
@@ -5411,6 +5510,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gallery.ts",
       "sha256": "5003b68f51d959b4173131e6565ee73843493079367998bea4a76a4fa3871d5a"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/gifting.ts",
+      "sha256": "49f3bbf60f79a4233d5df7260c26ad05c1d61ce32d330d3db17bab8eeadd2d5b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
@@ -5518,7 +5621,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "23c3f6beec165b9455a8b80314780db93811c542307c1d3b0109de8d8819b5c9"
+      "sha256": "5a819859a98146654c1caacfaca2ff6bcb06f03c0678f29ccfe5eec0d5a0e51d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
@@ -5543,6 +5646,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
       "sha256": "4aa5d626ea06638e442481f8d35de09b49623b4d222f30db5161b8739674b3ab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/lib/mockGifting.ts",
+      "sha256": "0f5eccfa138b65599ea318d66429ac2168bc22da15bd2ed83a22a0c7591746bc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/publicUrl.ts",
@@ -5621,6 +5728,10 @@
       "sha256": "e537bdf69eae99b6293066842b9efbfa57a7b66e8c560886110555ff0f2447fc"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeGifting.test.ts",
+      "sha256": "f941781f015cd89d75370256d8280c857e9b2acefaf38252a243cf61c285cf85"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
       "sha256": "a2574c7e35adc26259d437de40653d9fbf330834331bd9332200d937f6234ffb"
     },
@@ -5678,7 +5789,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/contentCache.test.ts",
-      "sha256": "4b98ba64109ff816c1cfd60ba93427a2616c86cda821123bbfbc7496f6eda317"
+      "sha256": "8c3ee87ceb15b847c2ffb20b7a534fd063625c0561678c5bffc179ade0a460b9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -5738,7 +5849,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/serviceWorkerContentCache.test.ts",
-      "sha256": "3b8805c5f697e3e40564fb4f0febc4ee9b2c4f46c807e3bf365d2a6bc886cc6e"
+      "sha256": "179c86a40ac1e98c97ef73f75821a9baee6df245b5d279bebb59f92c893db928"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
@@ -5786,7 +5897,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "dca26a2517130a010e8b3f3f8ad9a7644d909f18c9da650c31eae367c2eeb806"
+      "sha256": "3033c3e09124951dc88427c6bc37ec814845940de43426ba63c05c93d7a05cf8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -5814,6 +5925,7 @@
     "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
+    "rendering/bevy-explorer/source/react-web/src/lib/mockGifting.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/publicUrl.ts",
     "rendering/bevy-explorer/source/react-web/src/lib/systemScene.ts",
     "rendering/bevy-explorer/source/react-web/src/main.tsx",
@@ -5833,6 +5945,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeGifting.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
@@ -5926,7 +6039,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "4ef15015b338e7bfc92771072095ca788dde8e1e9888f5e7b4565151ee9bf022"
+      "sha256": "0086fe8c75ce98c60d40690df5419afbe08670dfeb7df045406bcff06bc5af6c"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -5966,7 +6079,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "cf1457fdba4d4b6e3aa3d6e0e6b8a7815f07167133513388805b8e6fdeb45794"
+      "sha256": "59ec7d7d98adb8a341a7d6ca6bf4d61256fd0f9eae73ec0317f58e12d80fd644"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6097,6 +6210,14 @@
       "sha256": "dc2c989c1726c5512a24ac34ea87f11426c73e704d6f7b5c9dc5c46f06f5d837"
     },
     {
+      "path": "library/explorer-core/features/gifting/giftItem.ts",
+      "sha256": "2a382c7c3b09a134e22887e4d627651170a6012ab669cd2682057146a8cfd7b6"
+    },
+    {
+      "path": "library/explorer-core/features/gifting/picker.ts",
+      "sha256": "39e709c4a1f7de899850244c01dd6a623c632aae4439377e880570e489521587"
+    },
+    {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
       "sha256": "09fc040712d05b412e649256e4bec17256203b364c2562189443691156d8816b"
     },
@@ -6206,7 +6327,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "791fb5a923422f30d18d26ede2bfcbb2d1229506fdfd78fe94cb1eb22d755bed"
+      "sha256": "fe97d0005c7d85164b982e333e055f5704b5e2bc7e7098fc5f34f0ab51fdb645"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -6397,6 +6518,14 @@
       "sha256": "765c89962851ec95ecf78507a1943e98c90a6665ee141da57d639eec198b9866"
     },
     {
+      "path": "library/explorer-core/test/giftItem.test.ts",
+      "sha256": "d4b5042fe474ef446674e6ddcdd42b7132d6dae2bac0dbbe23ba20613b00b242"
+    },
+    {
+      "path": "library/explorer-core/test/giftPicker.test.ts",
+      "sha256": "385354e98d747f934a281bf6718cca98a6bbcfee84c39f8e2139ae27114eefc9"
+    },
+    {
       "path": "library/explorer-core/test/googleTag.test.ts",
       "sha256": "ce251bd79c22cf7ea9344030678460e6c86b61c3c03b81acd5122208dce38bde"
     },
@@ -6466,7 +6595,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "50e192abfbba1a50e5a67acdc7d475c2eb1b2ca55dc7ac1b720b65af5348005e"
+      "sha256": "16c0388140551911f4b82a503e30caea3fa50d514a445a1a2930e0e1655628d8"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -6951,6 +7080,10 @@
     {
       "path": "library/ui/apps/hud/assets/friends/jump-in.png",
       "sha256": "327a558d74d397ebc0283eddc109b1bde3f8b720d67d1b7789327c9c363d703c"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/gifting/gift.png",
+      "sha256": "fa12fdfcbee4b1d4bbe10b891f424815e2ff3269d2d535ca4a6fe4956618a2b0"
     },
     {
       "path": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
@@ -8154,7 +8287,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "2f0dbbb8b57fe5c93ddfa16e199c90ccd312284e4f223478a93859e65eb1ad57"
+      "sha256": "a0ac3bf7b995b6ba895c642bcfd02ef3599f87ab05fc8519d29bd4975a346b9d"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -8262,11 +8395,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/WearableCard.module.css",
-      "sha256": "f8d40f74fd4ffc64b43d8211ad7b457a95e270447b49c001b7baba446de2d2cd"
+      "sha256": "e60d013e883af9620898bf8bde4d6c444cccbd4b079e5d37794587e2c1cf81a7"
     },
     {
       "path": "library/ui/apps/hud/design/WearableCard.tsx",
-      "sha256": "2f97c4ed7862b18760f6565c9c701fd4467cac8aef9858ae956846a5e5718242"
+      "sha256": "1a344c9d193c5ad78f185132f703830301df58a555fa9469b30b79369a4f019f"
     },
     {
       "path": "library/ui/apps/hud/design/icons.tsx",
@@ -8274,7 +8407,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "5365b61e1b8485f23f1d3b3a1719c81675c84604ce1995ce9136c7a014e3cfea"
+      "sha256": "4ca15dfc818d8a47a6c14710b515ae4909a2e2e6027dd0765b2ab6436e19f74f"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -8286,7 +8419,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
-      "sha256": "e1a144f578a50cbfd859957b6280f63860de83ea3864b3a4b33117ef1668c6f5"
+      "sha256": "cae16f1ce1c61943c5ab8fa5f1db5fca2d926a65a5a736117f0cfd0b3de131ab"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackModal.module.css",
@@ -8366,7 +8499,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "5c80ca611e4d54a959ab63f57cfceac48c098a4063b37e80b4c8c44f76e44f98"
+      "sha256": "631a3fb799e50e8a2eb89bd325764de93bbe3d436621576ced619588aaef92a0"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -8785,6 +8918,34 @@
       "sha256": "c8d417c2f2c44f515a561714f7f064f4b4ccc588ef9b1c2277071ec86abe0898"
     },
     {
+      "path": "library/ui/apps/hud/features/gifting/GiftPicker.module.css",
+      "sha256": "1af4fc38aa125a919968825028550755dff5c45a02171e2b1f3958ef485b134f"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "sha256": "9fe5e50564f9cb62ed9b9419ff4cfe4f126cbcc3ed2c46e5b444198a9ba252a3"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
+      "sha256": "c97502b2952878dadc2b3fdabc07e366d6b2c29e3d4569066ace5e6a09550d69"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "sha256": "7e05c6703ff6a053e034c1bbe07438ba43abd27fb8e141290850c1a32e08964b"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
+      "sha256": "665cd9f93f5905952720ac393f2c213fc34a1e9f3a0ae992febc252e83f08b17"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "sha256": "9a0983c372da282edc9deb4551887d3e4f30301be8554567623920279bc1738d"
+    },
+    {
+      "path": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "sha256": "5aa063c49b4d48dbbdd725359f092bd959e31e74bd7e74521f3f62dd3c799cf1"
+    },
+    {
       "path": "library/ui/apps/hud/features/lobby/Lobby.module.css",
       "sha256": "944eae030b9ba4facd82fb274a24b6829ee2fe6be47f731602c4d035a114f174"
     },
@@ -8978,7 +9139,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
-      "sha256": "a6257749a95572dd38c995b44889f674b5beb32bbb89772a4ea9ecfd602a3f77"
+      "sha256": "e628bc4d5a1818f7eb038520fca7671ffce7614c7754e7da5cafba8e7b928431"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.module.css",
@@ -8986,11 +9147,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.tsx",
-      "sha256": "63298b335a12a30fbb2a6614eeb624dc84251569bc54682cffebf9b00ef8d1d3"
+      "sha256": "217bc29a26f410c51e15903f6ce108250d9afe95dc968250d3c9bc50ac95ae52"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/summary.ts",
-      "sha256": "39caba7ef76521d12693620ae93ccfbc00bc44e5a249f4a3c38030b5332c579b"
+      "sha256": "e5694c9cba0da10a5def7b6178599a2d561473885a56bef762b170e473407cf3"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.module.css",
@@ -9094,7 +9255,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "10a811f4291967bc2513b6d666ffd93b01572328f02d056a0a70659549d37e76"
+      "sha256": "dfd274d9199c7a21b74089faca416ce18e5a30261b788a2f5b58847b343f18c0"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -9118,11 +9279,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "292d4d45cb2dddcc532ddde841c81d86a03a3fe4301404e5ecf5906551aeaa8f"
+      "sha256": "9bc429f1df7b8530bd4155c24648dccc0c8233937661dfef8d8cd0009d13083a"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "50e4d6e290e9562bbcf52830b330256653e1738f1f561519a8096b4bfd690f4b"
+      "sha256": "5bf9945042a5ff8c7f80432e3a090ae900c9faa976272b89cb36510a9ba68009"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -9130,7 +9291,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
-      "sha256": "0c866895ac227f24ec9eaddd804f039bf6dfd5d2b0f15a7085268a377d4e6f37"
+      "sha256": "306b2db94b12b8d542ed010a9ece826c15ac0e8a58bf5bdc71654da8a6886f0b"
     },
     {
       "path": "library/ui/apps/hud/features/session/SceneLoadingOverlay.module.css",
@@ -9162,7 +9323,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cd87a14203f17ef836b9dd48cad54c460c271f6da502d4029f313b953484aaed"
+      "sha256": "42594452f547663f451fb5b59f5b37dcbb43433b7c39c6d7a96de6f9e52a78b9"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9370,7 +9531,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
-      "sha256": "8cb6b5976c652296251692491eb9546e798d3b1a49bca197bbd48c2411b3c65f"
+      "sha256": "6c0cf6e1b0b526a7c7caf46be5f3a3a32f5da19cd10833da9042a7eb77844477"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",
@@ -9466,11 +9627,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "137ef88702f7758966b547703a1393471abf611d7c2d55a2924881b61c7378bc"
+      "sha256": "bd0ddfe507b8f6575bcb1e7a9755a3edf9f3517c76fe338d1a9d4260dd0cc2e4"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "7250233499473766bcd14dcbca8a447b5dd1a3e45be26d0aff2a2768877695e1"
+      "sha256": "d6d184c7ce55e33562c75572a8bedc0a45ef53ba74bdb176218f4216d3381656"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -9647,6 +9808,22 @@
     {
       "path": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
       "sha256": "8c2d3e3b4dbb184947b0c9e6d28ec598452679126235c9d817e0861ce3e5850c"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "sha256": "73213bf269529ecea4b033e6f12c29584de6fd72fd80c986b84feadf6299085d"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "sha256": "b9b12df3538dfdb3857a2665d064b08c72d523cdf69082324a10928e769f9c9e"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "sha256": "07ed92d3d009dcf6616fa57098ea4431bcd03928e1c55f329a5ea69fa0b42fad"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
+      "sha256": "b89636052962398c9393e5ceb26c250a9236f182f905ef2626beb81fda1d1668"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",
@@ -11766,6 +11943,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/giftItem.test.ts",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/giftItem.test.ts",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/giftItem.test.ts",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/giftPicker.test.ts",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/giftPicker.test.ts",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/giftPicker.test.ts",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/googleTag.test.ts",
       "to": "library/explorer-core/shell/googleTag.ts",
       "kind": "native:runtime"
@@ -12873,6 +13080,21 @@
     {
       "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
       "kind": "test:runtime"
     },
     {
@@ -19192,6 +19414,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/ui/apps/hud/assets/voice/call.png",
       "kind": "native:runtime"
     },
@@ -23286,6 +23523,261 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/communities/LoadMore.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/explorer-core/features/events/eventsApi.ts",
       "kind": "native:runtime"
@@ -27262,6 +27754,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
       "to": "library/ui/apps/hud/features/profile/Passport.tsx",
       "kind": "native:runtime"
     },
@@ -28372,6 +28879,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
       "to": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
       "kind": "native:runtime"
     },
@@ -28642,6 +29179,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -28848,6 +29400,36 @@
     {
       "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
       "to": "library/ui/apps/hud/features/friends/jumpToFriend.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
       "kind": "test:runtime"
     },
     {
@@ -36063,6 +36645,156 @@
     {
       "from": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -40902,6 +41634,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/gifting/giftItem.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/gifting/picker.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/lobby/lobbyApi.ts",
       "kind": "type"
     },
@@ -41273,6 +42015,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/friendLocation.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/giftItem.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/giftPicker.test.ts",
       "kind": "type"
     },
     {
@@ -42053,6 +42805,26 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gifting/GiftPicker.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gifting/GiftReceivedPopup.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gifting/GiftTransferPanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/gifting/useGifting.ts",
       "kind": "type"
     },
     {
@@ -42868,6 +43640,26 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/gallery.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/giftReceived.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/giftTransferPanel.test.tsx",
       "kind": "type"
     },
     {
@@ -45183,6 +45975,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/friends/jump-in.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/gifting/gift.png",
       "kind": "test:asset"
     },
     {

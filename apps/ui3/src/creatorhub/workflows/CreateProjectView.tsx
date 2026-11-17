@@ -173,7 +173,7 @@ export default function CreateProjectView({
             {result?.via === "download" && (
               <a
                 className="create-project-wizard__btn"
-                href="/landings/creator-hub-download"
+                href="/download/creator-hub"
               >
                 Get the desktop app
               </a>

@@ -1,5 +1,6 @@
 mod batch_sizes;
 pub mod bevy_variants;
+pub mod cache_heal;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -671,6 +672,7 @@ impl Plugin for IpfsIoPlugin {
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
         app.add_plugins(bevy_variants::BevyVariantsPlugin);
+        app.add_plugins(cache_heal::CacheHealPlugin);
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(web_cache_plugin::WebCachePlugin {
             preview: self.preview,
@@ -1077,6 +1079,8 @@ pub struct IpfsIo {
     // urls that failed, answered from memory on a repeat request (`failed_remotes`)
     failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    // cached entries checked after a failed load (`cache_heal`)
+    pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1121,6 +1125,7 @@ impl IpfsIo {
             in_flight: Default::default(),
             failed_remotes: Default::default(),
             bevy_variants: Default::default(),
+            cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1500,19 +1505,20 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
-    /// cache entry goes through `web_cache`).
+    /// Drops the cached bytes under `key`, if there are any, and says whether there were (native
+    /// only: on web the worker's cache entry goes through `web_cache`).
     #[cfg(not(target_arch = "wasm32"))]
-    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
             .cache_path()
             .and_then(|root| root.join_relative(key.name()))
         else {
-            return Ok(());
+            return Ok(false);
         };
         match async_fs::remove_file(&cached).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
