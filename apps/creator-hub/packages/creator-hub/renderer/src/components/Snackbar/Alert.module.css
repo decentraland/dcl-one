@@ -1,0 +1,52 @@
+/* A snackbar alert: the card surface, white text and a centred row.
+   The clear gradient changes no colour. A centred notice can start on a part of a pixel, and the browser places
+   the edges of a surface that has a background image as the ui2 notice had them. */
+.alert.alert {
+  align-items: center;
+  border: 0;
+  background: var(--card) linear-gradient(rgba(255, 255, 255, 0), rgba(255, 255, 255, 0));
+  color: var(--white);
+}
+
+/* The icon box. */
+.alert > span {
+  font-size: 22px;
+  opacity: 0.9;
+}
+
+.glyph {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+}
+
+/* A filled button keeps its own label colour: its fill is --dcl too.
+   The attribute keeps this selector readable by the spec that matches it against the buttons.
+   The second selector keeps the colour on a disabled button. */
+[data-snackbar-alert] button:not([class~="btn--primary"]),
+[data-snackbar-alert] button[class~="btn"]:not([class~="btn--primary"]):disabled {
+  color: var(--dcl);
+}
+
+.alert [class~="btn"]:not([class~="Button"]) {
+  min-width: 64px;
+}
+
+/* The medium button of the notices: the brand fill and 0.4px between letters. */
+.alert [class~="btn--md"]:not([class~="Button"]) {
+  --brand-cta: var(--dcl);
+
+  letter-spacing: 0.4px;
+}
+
+/* A button that follows another button keeps a 10px margin. */
+.alert [class~="btn"] + [class~="btn"] {
+  margin-left: 10px;
+}
+
+/* A button without a fill: the text button of the notices. */
+.alert [class~="btn"]:not([class~="btn--primary"]):not([class~="Button"]) {
+  padding: 6px 8px;
+}

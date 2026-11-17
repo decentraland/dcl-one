@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SceneParcels } from '@dcl/schemas';
-import { Atlas } from 'decentraland-ui2/dist/components/Atlas/Atlas';
-import { Box, Button, styled, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { useSelector } from '#store';
 
@@ -11,22 +10,22 @@ import { selectors as landSelectors } from '/@/modules/store/land';
 import { Lands } from '/@/lib/land';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+import { Button } from '/@/components/Button';
+import { Atlas } from '/@/components/WorldAtlas/Atlas';
+import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { COLORS, type Props, type Coordinate } from '../../types';
 import { breaksLandPlaceContinuity, calculateParcels, parseCoords } from '../../utils';
 import { PublishModal } from '../../PublishModal';
 import { PlaceContinuityWarning } from '../../PlaceContinuityWarning';
 
-const CONTENT_SERVER = config.get('PEER_URL');
+import styles from './PublishToLand.module.css';
 
-const PublishToLandModal = styled(PublishModal)({
-  '& > .MuiPaper-root > .MuiBox-root:last-child': {
-    padding: 0,
-  },
-});
+const CONTENT_SERVER = config.get('PEER_URL');
 
 export function PublishToLand(props: Props) {
   const { project, publishScene } = useEditor();
   const { updateProject, updateSceneJson } = useWorkspace();
+  const storage = useMultiplayerStorage(project?.path);
   const tiles = useSelector(state => state.land.tiles);
   const landTiles = useSelector(state => landSelectors.getLandTiles(state.land));
   const [hover, setHover] = useState<Coordinate>({ x: 0, y: 0 });
@@ -171,6 +170,12 @@ export function PublishToLand(props: Props) {
     [tiles, landTiles],
   );
 
+  // One array per change of a layer, so the map paints again only then.
+  const layers = useMemo(
+    () => [ownedLayer, strokeLayer, highlightLayer],
+    [ownedLayer, strokeLayer, highlightLayer],
+  );
+
   const handlePlacement = useCallback(
     (x: number, y: number) => {
       if (!isValid) return;
@@ -222,27 +227,19 @@ export function PublishToLand(props: Props) {
         {...props}
         onBack={handleCancelWarning}
       >
-        <Box
-          display="flex"
-          flexDirection="column"
-          gap={3}
-          padding={4}
-          margin="auto"
-          maxWidth={640}
-          borderRadius={2}
-          sx={{ backgroundColor: 'var(--black)' }}
-        >
-          <PlaceContinuityWarning kind="land" />
-          <Box
-            display="flex"
-            gap={1}
-          >
+        <div className={styles.warning}>
+          <PlaceContinuityWarning
+            kind="land"
+            storage={storage}
+          />
+          <div className={styles.warningActions}>
             <Button
               color="secondary"
               variant="outlined"
               size="large"
               fullWidth
               onClick={handleCancelWarning}
+              className={styles.cancel}
             >
               {t('modal.publish_project.place_continuity.cancel')}
             </Button>
@@ -252,56 +249,42 @@ export function PublishToLand(props: Props) {
               fullWidth
               disabled={isPublishing}
               onClick={handleConfirmWarning}
+              className={styles.action}
             >
               {t('modal.publish_project.place_continuity.confirm')}
             </Button>
-          </Box>
-        </Box>
+          </div>
+        </div>
       </PublishModal>
     );
   }
 
   return (
-    <PublishToLandModal
+    <PublishModal
       title={t('modal.publish_project.land.action')}
       size="large"
       {...props}
+      className={styles.modal}
     >
-      <Box data-testid="publish-modal-publish-to-land">
-        <Box
-          height={480}
-          style={{ backgroundColor: 'black' }}
+      <div data-testid="publish-modal-publish-to-land">
+        <div
+          className={styles.atlas}
           data-testid="publish-modal-publish-to-land-atlas"
         >
-          {/* @ts-expect-error TODO: Update properties in UI2, making the not required `optional` */}
           <Atlas
             tiles={tiles}
-            layers={[ownedLayer, strokeLayer, highlightLayer]}
+            layers={layers}
             onHover={handleHover}
             onClick={handlePlacement}
             withZoomControls
-            x={initialPlacement?.x as number}
-            y={initialPlacement?.y as number}
+            height={480}
+            x={initialPlacement?.x}
+            y={initialPlacement?.y}
           />
-        </Box>
-        <Box
-          padding={2}
-          paddingBottom={1}
-          display="flex"
-          justifyContent="space-between"
-          alignItems="center"
-        >
-          <Box
-            flex={1}
-            display="flex"
-            padding={1}
-            mr={2}
-            sx={{ border: '1px solid grey', borderRadius: '8px' }}
-            justifyContent="center"
-            alignItems="baseline"
-            height={45}
-          >
-            <Typography
+        </div>
+        <div className={styles.footer}>
+          <div className={styles.placement}>
+            <Text
               variant="body1"
               data-testid="publish-modal-publish-to-land-placement"
             >
@@ -310,19 +293,19 @@ export function PublishToLand(props: Props) {
                     coords: `${placement.x},${placement.y}`,
                   })
                 : t('modal.publish_project.land.select_parcel.select_parcel')}
-            </Typography>
+            </Text>
             {placement && (
               <Button
                 variant="text"
                 size="small"
                 onClick={handleClearPlacement}
                 data-testid="publish-modal-publish-to-land-reset"
-                sx={{ marginLeft: 1, padding: 0 }}
+                className={styles.reset}
               >
                 {t('modal.publish_project.land.select_parcel.actions.reset')}
               </Button>
             )}
-          </Box>
+          </div>
           <Button
             variant="contained"
             color="primary"
@@ -330,14 +313,14 @@ export function PublishToLand(props: Props) {
             onClick={handleNext}
             disabled={!placement || isChecking || isPublishing}
             data-testid="publish-modal-publish-to-land-action"
-            sx={{ height: '45px' }}
+            className={`${styles.publish} ${styles.action}`}
           >
             {isChecking
               ? t('modal.publish_project.place_continuity.checking')
               : t('modal.publish_project.land.select_parcel.actions.publish')}
           </Button>
-        </Box>
-      </Box>
-    </PublishToLandModal>
+        </div>
+      </div>
+    </PublishModal>
   );
 }

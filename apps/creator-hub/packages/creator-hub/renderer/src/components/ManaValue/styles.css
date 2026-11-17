@@ -4,7 +4,7 @@
   gap: 8px;
 }
 
-/* Matches how decentraland-ui2's own Mana component fills the icon. */
+/* The icon takes the colour of the text, as the Mana value did before. */
 .ManaValue svg path {
   fill: currentColor;
 }

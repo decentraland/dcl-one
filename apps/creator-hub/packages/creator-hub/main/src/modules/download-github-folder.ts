@@ -1,8 +1,8 @@
-/* eslint-disable no-useless-escape */
+/* oxlint-disable no-useless-escape */
 
 import fs from 'fs/promises';
 import path from 'path';
-import extract from 'extract-zip';
+import extract from '@dcl/zip-extract';
 import { fetch } from '/shared/fetch';
 
 // Function to parse GitHub URL for root or subfolder

@@ -1,0 +1,152 @@
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  width: 100%;
+  padding-bottom: 100px;
+}
+
+.content > [class~="Loader"] {
+  flex: 1;
+  height: auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 56px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+
+.headerActions.headerActions.headerActions.headerActions.headerActions.headerActions.headerActions
+  [class~="Button"] {
+  height: 40px;
+  margin: 0;
+  padding: 8px 24px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+  text-transform: uppercase;
+}
+
+.ownerName {
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.selfOwner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.roleRow {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.roleRow > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.roleRow dt {
+  color: var(--dcl-silver);
+  font-size: 0.875rem;
+}
+
+.roleRow dd {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+.roleRow > div:last-child {
+  gap: 10px;
+}
+
+.roleRow dd [class~="Avatar"] {
+  gap: 6px;
+}
+
+/* The avatar and its face are 28px here. */
+.roleRow.roleRow dd [data-size] {
+  width: 28px;
+  height: 28px;
+}
+
+/* The face of the ui3 AvatarFace: the atom gives it a hashed class only. */
+.roleRow.roleRow dd [data-size] > span {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--palette-whiteTransparent-soft);
+}
+
+.roleRow dd [class~="Avatar"] [class~="Paragraph"] span {
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.tabBar.tabBar {
+  --focus-ring-color: var(--palette-info-light);
+  --focus-ring-width: 2px;
+
+  gap: 40px;
+  min-height: 0;
+  border-bottom: 1px solid var(--palette-whiteTransparent-soft);
+}
+
+/* The tab labels keep the font list of the ui2 tabs, which does not start with Inter. */
+.tabBar .tab.tab {
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 4px;
+  color: var(--dcl-silver);
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.1875rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.tabBar .tab.tab:hover,
+.tabBar .tab.tab[aria-selected="true"] {
+  color: var(--palette-neutral-softWhite);
+}
+
+.tabBar .tab.tab[aria-selected="true"]::after {
+  background: var(--palette-neutral-softWhite);
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}

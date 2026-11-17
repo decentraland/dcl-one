@@ -1,19 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AddIcon from '@mui/icons-material/Add';
-import ArrowForwardIcon from '@mui/icons-material/ChevronRight';
-import MultiSceneIcon from '@mui/icons-material/Layers';
-import ParcelsIcon from '@mui/icons-material/GridOn';
-import OutlinedParcelsIcon from '@mui/icons-material/GridViewOutlined';
-import LocationIcon from '@mui/icons-material/LocationOn';
-import type { SceneParcels, WorldConfiguration } from '@dcl/schemas';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
-  MenuItem,
-  Select,
-  Typography,
-  type SelectChangeEvent,
-  Switch,
-  Box,
-} from 'decentraland-ui2';
+  AddIcon,
+  ChevronRightIcon as ArrowForwardIcon,
+  LayersIcon as MultiSceneIcon,
+  GridOnIcon as ParcelsIcon,
+  GridViewOutlinedIcon as OutlinedParcelsIcon,
+  LocationOnIcon as LocationIcon,
+} from '/@/components/Icons/material';
+import type { SceneParcels, WorldConfiguration } from '@dcl/schemas';
+import { Select, SelectOption } from '@ui/atoms/Select';
+import Text from '@ui/atoms/Text';
+import Toggle from '@ui/atoms/Toggle';
 
 import type { Project } from '/shared/types/projects';
 import FallbackThumbnail from '/assets/images/scene-thumbnail-fallback.png';
@@ -35,6 +32,7 @@ import {
 import { addBase64ImagePrefix } from '/@/modules/image';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { useAuth } from '/@/hooks/useAuth';
 import { WorldPermissionName, type WorldScene } from '/@/lib/worlds';
 import { coordsToId } from '/@/lib/land';
@@ -253,13 +251,13 @@ export function PublishToWorld(props: Props) {
           project={project}
         >
           {worldLoadFailed && (
-            <Box className="WorldLoadError">
-              <Typography
+            <div className="WorldLoadError">
+              <Text
                 variant="body2"
-                color="error"
+                tone="error"
               >
                 {t('modal.publish_project.worlds.select_world.load_error')}
-              </Typography>
+              </Text>
               <Button
                 variant="outlined"
                 color="secondary"
@@ -268,7 +266,7 @@ export function PublishToWorld(props: Props) {
               >
                 {t('modal.publish_project.worlds.select_world.actions.retry')}
               </Button>
-            </Box>
+            </div>
           )}
           {step === Step.SELECTION && (
             <SelectWorld
@@ -339,6 +337,18 @@ function SelectWorld({
   onPublish: (projectUpdates: Partial<Project>) => Promise<void>;
 }) {
   const names = useSelector(state => state.ens.data);
+  const descriptionId = useId();
+  const multiSceneLabelId = useId();
+  // A list opened with the pointer shows no active row until a key is pressed.
+  const [menuKeys, setMenuKeys] = useState(false);
+  const menuClassName = menuKeys
+    ? 'SelectWorld-SelectMenu'
+    : 'SelectWorld-SelectMenu SelectWorld-SelectMenu-Pointer';
+  const handleMenuKeyDown = useCallback(() => setMenuKeys(true), []);
+  const handleMenuPointerDown = useCallback(() => setMenuKeys(false), []);
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    if (!open) setMenuKeys(false);
+  }, []);
   const [ensProvider, setENSProvider] = useState(
     project.worldConfiguration?.name
       ? getEnsProvider(project.worldConfiguration?.name)
@@ -362,32 +372,29 @@ function SelectWorld({
     return _names;
   }, [names, ensProvider]);
 
-  const handleClaimNewName = useCallback(
-    (event: React.MouseEvent<HTMLElement, MouseEvent>) => {
-      event.preventDefault();
-      if (ensProvider === ENSProvider.DCL) {
-        misc.openExternal('https://decentraland.org/marketplace/names/claim');
-      } else {
-        misc.openExternal('https://ens.domains');
-      }
-    },
-    [ensProvider],
-  );
+  const handleClaimNewName = useCallback(() => {
+    if (ensProvider === ENSProvider.DCL) {
+      misc.openExternal('https://decentraland.org/marketplace/names/claim');
+    } else {
+      misc.openExternal('https://ens.domains');
+    }
+  }, [ensProvider]);
 
   const handleChangeSelectProvider = useCallback(
-    (e: SelectChangeEvent) => {
-      setENSProvider(e.target.value as ENSProvider);
+    (provider: ENSProvider) => {
+      setENSProvider(provider);
       onChangeName('');
     },
     [onChangeName],
   );
 
   const handleChangeSelectName = useCallback(
-    (e: SelectChangeEvent) => {
-      if (!e.target.value) return;
-      onChangeName(e.target.value);
+    (worldName: string) => {
+      if (!worldName) return;
+      if (worldName === CLAIM_NAME_VALUE) return handleClaimNewName();
+      onChangeName(worldName);
     },
-    [onChangeName],
+    [onChangeName, handleClaimNewName],
   );
 
   const handleNext = useCallback(async () => {
@@ -425,89 +432,112 @@ function SelectWorld({
   // dispatch the save — and a failed save is likewise no reason to block:
   // the thumbnail is decorative, the deploy works without it.
   const projectIsReady = project.status !== 'loading';
+  const claimLabel =
+    ensProvider === ENSProvider.DCL
+      ? t('modal.publish_project.worlds.select_world.claim_new_name')
+      : t('modal.publish_project.worlds.select_world.claim_new_ens_domain');
 
   return (
     <div
       className="SelectWorld"
       data-testid="publish-modal-publish-to-world-select-world"
     >
-      <div className="selection">
-        <Typography
+      <div
+        className="selection"
+        onKeyDown={handleMenuKeyDown}
+        onPointerDown={handleMenuPointerDown}
+      >
+        <Text
+          id={descriptionId}
           variant="h6"
-          color="#A09BA8"
+          className="StepDescription"
         >
           {t('modal.publish_project.worlds.select_world.description')}
-        </Typography>
+        </Text>
         <Row>
-          <Select
-            variant="outlined"
-            color="secondary"
+          <div
             className="SelectWorld-ENSProvider"
             data-testid="publish-modal-publish-to-world-select-world-ens-provider"
-            value={ensProvider}
-            onChange={handleChangeSelectProvider}
           >
-            <MenuItem
-              value={ENSProvider.DCL}
-              data-testid="publish-modal-publish-to-world-select-world-ens-provider-dcl"
+            <Select
+              variant="outlined"
+              fullWidth
+              placement="bottom"
+              menuClassName={menuClassName}
+              onOpenChange={handleMenuOpenChange}
+              icon={selectArrow}
+              aria-labelledby={descriptionId}
+              value={ensProvider}
+              onChange={handleChangeSelectProvider}
+              renderValue={provider => <ENSProviderLabel provider={provider} />}
             >
-              <img
-                className="SelectWorld-ENSProvider-Img"
-                src={LogoDCLSVG}
-              />
-              {t(`modal.publish_project.worlds.select_world.ens_providers.${ENSProvider.DCL}`)}
-            </MenuItem>
-            <MenuItem
-              value={ENSProvider.ENS}
-              data-testid="publish-modal-publish-to-world-select-world-ens-provider-ens"
-            >
-              <img
-                className="SelectWorld-ENSProvider-Img"
-                src={LogoENSSVG}
-              />
-              {t(`modal.publish_project.worlds.select_world.ens_providers.${ENSProvider.ENS}`)}
-            </MenuItem>
-          </Select>
-          <Select
-            variant="outlined"
-            color="secondary"
+              {ENS_PROVIDERS.map(provider => (
+                <SelectOption
+                  key={provider}
+                  value={provider}
+                  label={t(`modal.publish_project.worlds.select_world.ens_providers.${provider}`)}
+                >
+                  <span
+                    className="SelectWorld-ENSProvider-Option"
+                    data-testid={`publish-modal-publish-to-world-select-world-ens-provider-${provider}`}
+                  >
+                    <ENSProviderLabel provider={provider} />
+                  </span>
+                </SelectOption>
+              ))}
+            </Select>
+          </div>
+          <div
             className="SelectWorld-WorldName"
             data-testid="publish-modal-publish-to-world-select-world-select"
-            displayEmpty
-            value={name}
-            onChange={handleChangeSelectName}
-            disabled={listNames.length === 0}
-            endAdornment={worldSettings.status === 'loading' ? <Loader size="20px" /> : null}
-            renderValue={selected => {
-              if (selected === '') {
-                return <em>{t('modal.publish_project.worlds.select_world.placeholder')}</em>;
-              }
-
-              return selected;
-            }}
           >
-            <MenuItem
-              disabled
-              value=""
+            <Select
+              variant="outlined"
+              fullWidth
+              placement="bottom"
+              menuClassName={menuClassName}
+              onOpenChange={handleMenuOpenChange}
+              icon={selectArrow}
+              aria-labelledby={descriptionId}
+              value={name}
+              onChange={handleChangeSelectName}
+              disabled={listNames.length === 0}
+              placeholder={<em>{t('modal.publish_project.worlds.select_world.placeholder')}</em>}
+              endAdornment={worldSettings.status === 'loading' ? <Loader size="20px" /> : null}
+              renderValue={selected => selected}
             >
-              <em>{t('modal.publish_project.worlds.select_world.placeholder')}</em>
-            </MenuItem>
-            {listNames.map((_world: string) => (
-              <MenuItem
-                key={_world}
-                value={_world}
-                data-testid={`publish-modal-publish-to-world-select-world-select-item-${_world.toLowerCase()}`}
+              <SelectOption
+                key="placeholder"
+                value=""
+                disabled
+                className={name ? undefined : 'SelectWorld-NamePlaceholder'}
               >
-                {_world}
-              </MenuItem>
-            ))}
-            <MenuItem onClick={handleClaimNewName}>
-              <AddIcon />
-              {ensProvider === ENSProvider.DCL
-                ? t('modal.publish_project.worlds.select_world.claim_new_name')
-                : t('modal.publish_project.worlds.select_world.claim_new_ens_domain')}
-            </MenuItem>
-          </Select>
+                <em>{t('modal.publish_project.worlds.select_world.placeholder')}</em>
+              </SelectOption>
+              {listNames.map((_world: string) => (
+                <SelectOption
+                  key={_world}
+                  value={_world}
+                  label={_world}
+                >
+                  <span
+                    data-testid={`publish-modal-publish-to-world-select-world-select-item-${_world.toLowerCase()}`}
+                  >
+                    {_world}
+                  </span>
+                </SelectOption>
+              ))}
+              <SelectOption
+                key="claim"
+                value={CLAIM_NAME_VALUE}
+                label={claimLabel}
+                className="SelectWorld-ClaimName"
+              >
+                <AddIcon />
+                {claimLabel}
+              </SelectOption>
+            </Select>
+          </div>
         </Row>
       </div>
       {name && (
@@ -515,20 +545,21 @@ function SelectWorld({
           <Row>
             <MultiSceneIcon />
             <div className="AdvancedSettingsHeaderTexts">
-              <Typography>
+              <Text id={multiSceneLabelId}>
                 {t('modal.publish_project.worlds.select_world.multi_scene.title')}
-              </Typography>
-              <Typography
+              </Text>
+              <Text
                 variant="body2"
                 className="AdvancedSettingsDescription"
               >
                 {t('modal.publish_project.worlds.select_world.multi_scene.description')}
-              </Typography>
+              </Text>
             </div>
-            <Switch
+            <Toggle
               checked={isMultiSceneEnabled}
-              onChange={(_e, checked) => onChangeMultiScene(checked)}
+              onChange={onChangeMultiScene}
               disabled={!hasWorldWidePermissions}
+              ariaLabelledBy={multiSceneLabelId}
             />
           </Row>
           {isMultiSceneEnabled && worldSettings.status !== 'loading' && (
@@ -545,15 +576,15 @@ function SelectWorld({
                 />
               </div>
               <div className="WorldInfoContent">
-                <Typography className="CurrentWorldLabel">
+                <Text className="CurrentWorldLabel">
                   {t('modal.publish_project.worlds.select_world.multi_scene.current_world')}
-                </Typography>
-                <Typography
+                </Text>
+                <Text
                   variant="h6"
                   className="WorldTitle"
                 >
                   {worldSettings.settings?.title || project.title}
-                </Typography>
+                </Text>
                 <Row className="WorldMetadata">
                   <InfoItem
                     icon={<MultiSceneIcon />}
@@ -588,12 +619,40 @@ function SelectWorld({
   );
 }
 
+const ENS_PROVIDERS = [ENSProvider.DCL, ENSProvider.ENS];
+// The value of the claim row of the name select. A World name has no colon.
+const CLAIM_NAME_VALUE = ':claim';
+
+const selectArrow = (
+  <svg
+    className="SelectWorld-SelectArrow"
+    viewBox="0 0 24 24"
+    focusable="false"
+    aria-hidden="true"
+  >
+    <path d="M7 10l5 5 5-5z" />
+  </svg>
+);
+const ENS_PROVIDER_LOGOS = { [ENSProvider.DCL]: LogoDCLSVG, [ENSProvider.ENS]: LogoENSSVG };
+
+function ENSProviderLabel({ provider }: { provider: ENSProvider }) {
+  return (
+    <>
+      <img
+        className="SelectWorld-ENSProvider-Img"
+        src={ENS_PROVIDER_LOGOS[provider]}
+      />
+      {t(`modal.publish_project.worlds.select_world.ens_providers.${provider}`)}
+    </>
+  );
+}
+
 function InfoItem({ icon, label }: { icon: React.ReactNode; label: string }) {
   if (!label) return null;
   return (
     <div className="WorldInfoItem">
       {icon}
-      <Typography variant="body2">{label}</Typography>
+      <Text variant="body2">{label}</Text>
     </div>
   );
 }
@@ -775,12 +834,12 @@ function SelectLocation({
 
   return (
     <div className="SelectLocation">
-      <Typography
+      <Text
         variant="h6"
-        color="#A09BA8"
+        className="StepDescription"
       >
         {t('modal.publish_project.worlds.select_world.location.description')}
-      </Typography>
+      </Text>
       <WorldAtlas
         layers={[permissionsLayer, placedStrokeLayer, placedHighlightLayer, hoverLayer]}
         onHover={handleHover}
@@ -789,14 +848,14 @@ function SelectLocation({
         colorsOverride={!hasWorldWidePermissions ? { availableParcel: '#43404a' } : undefined}
         floatingContent={
           permissionsSet.size > 0 && (
-            <Box className="AvailableParcelsCount">
+            <div className="AvailableParcelsCount">
               <OutlinedParcelsIcon />
-              <Typography variant="body2">
+              <Text variant="body2">
                 {t('modal.publish_project.worlds.select_world.location.available_parcels_count', {
                   count: permissionsSet.size,
                 })}
-              </Typography>
-            </Box>
+              </Text>
+            </div>
           )
         }
         height={350}
@@ -805,12 +864,12 @@ function SelectLocation({
       />
       <div className="actions">
         {noParcelsFit && (
-          <Typography
+          <Text
             variant="body2"
-            color="#FB3B3B"
+            tone="error"
           >
             {t('modal.publish_project.worlds.select_world.location.no_parcels_fit_error')}
-          </Typography>
+          </Text>
         )}
 
         {placement && (
@@ -824,13 +883,13 @@ function SelectLocation({
           </Button>
         )}
         {placement && project.scene.parcels?.length > 0 && (
-          <Typography className="SelectedParcelInfo">
+          <Text className="SelectedParcelInfo">
             {t('modal.publish_project.worlds.select_world.location.parcels_place', {
               count: project.scene.parcels.length,
             })}
             <LocationIcon />
             {`${placement.x}, ${placement.y}`}
-          </Typography>
+          </Text>
         )}
         <Button
           size="large"
@@ -858,6 +917,8 @@ function ConfirmOverwrite({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { project } = useEditor();
+  const storage = useMultiplayerStorage(project?.path);
   const replacedScenes = useMemo(() => {
     return worldScenes.filter(scene => {
       const sceneParcels = new Set(scene.parcels);
@@ -876,21 +937,21 @@ function ConfirmOverwrite({
     <div className="ConfirmOverwrite">
       {hasReplacedScenes ? (
         <>
-          <Typography variant="h5">
+          <Text variant="h5">
             {t('modal.publish_project.worlds.select_world.confirm_overwrite.title')}
-          </Typography>
-          <Typography variant="body2">
+          </Text>
+          <Text variant="body2">
             {t('modal.publish_project.worlds.select_world.confirm_overwrite.scenes_count', {
               count: replacedScenes.length,
               b: (child: string) => <b>{child}</b>,
             })}
-          </Typography>
+          </Text>
         </>
       ) : null}
       <ul className="ScenesList">
         {replacedScenes.map((scene, index) => (
           <li key={scene.entityId}>
-            <Typography variant="body2">
+            <Text variant="body2">
               <b>
                 {scene.entity.metadata?.display?.title ||
                   t(
@@ -899,22 +960,28 @@ function ConfirmOverwrite({
                   )}{' '}
               </b>
               <span>({getBaseParcel(scene.parcels || [])?.join(', ') || ''})</span>
-            </Typography>
+            </Text>
           </li>
         ))}
       </ul>
       {hasReplacedScenes && (
-        <Typography variant="body2">
+        <Text variant="body2">
           {t('modal.publish_project.worlds.select_world.confirm_overwrite.description')}
-        </Typography>
+        </Text>
       )}
       {continuityBreak === 'merge' && (
         <PlaceContinuityWarning
           kind="world-merge"
           overlap={overlap}
+          storage={storage}
         />
       )}
-      {continuityBreak === 'replace-world' && <PlaceContinuityWarning kind="world-replace" />}
+      {continuityBreak === 'replace-world' && (
+        <PlaceContinuityWarning
+          kind="world-replace"
+          storage={storage}
+        />
+      )}
       <div className="actions">
         <Button
           color="secondary"
@@ -945,12 +1012,12 @@ function LoadingNames() {
       data-testid="publish-modal-names-loading"
     >
       <Loader />
-      <Typography
+      <Text
         variant="h6"
-        textAlign="center"
+        align="center"
       >
         {t('modal.publish_project.worlds.loading_names.title')}
-      </Typography>
+      </Text>
     </div>
   );
 }
@@ -963,18 +1030,18 @@ function NamesError({ onRetry }: { onRetry: () => void }) {
       className="NamesError"
       data-testid="publish-modal-names-error"
     >
-      <Typography
+      <Text
         variant="h6"
-        textAlign="center"
+        align="center"
       >
         {t('modal.publish_project.worlds.names_error.title')}
-      </Typography>
-      <Typography
+      </Text>
+      <Text
         variant="body2"
-        textAlign="center"
+        align="center"
       >
         {t('modal.publish_project.worlds.names_error.description')}
-      </Typography>
+      </Text>
       <Button
         data-testid="publish-modal-names-error-retry"
         onClick={onRetry}
@@ -1001,25 +1068,25 @@ function EmptyNames() {
       className="EmptyNames"
       data-testid="publish-modal-empty-names"
     >
-      <Typography
+      <Text
         variant="h6"
-        textAlign="center"
+        align="center"
       >
         {t('modal.publish_project.worlds.empty_names.title')}
-      </Typography>
+      </Text>
       <img
         className="thumbnail"
         src={EmptyWorldSVG}
       />
-      <Typography
+      <Text
         variant="body2"
-        textAlign="center"
+        align="center"
       >
         {t('modal.publish_project.worlds.empty_names.description', {
           b: (child: string) => <b>{child}</b>,
           br: () => <br />,
         })}
-      </Typography>
+      </Text>
       <div className="actions">
         <Button
           size="small"

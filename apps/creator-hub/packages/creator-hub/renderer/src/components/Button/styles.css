@@ -1,82 +1,89 @@
-.Button.MuiButton-root {
+/* Two Button classes on the disabled selector: over the disabled rule of the text and outline looks. */
+.Button.btn,
+.Button.Button.btn:disabled {
+  min-width: 64px;
   padding: 5px 20px;
-  /* TODO: Fix this color in decentraland-ui2 */
-  color: var(--white) !important;
+  color: var(--white);
   font-weight: 400;
 }
 
-.MuiButton-root + .MuiButton-root,
-.MuiButton-root + .MuiButtonGroup-root,
-.MuiButtonGroup-root + .MuiButton-root,
-.MuiButtonGroup-root + .MuiButtonGroup-root {
+.Button + .Button,
+.Button + .ButtonGroup,
+.ButtonGroup + .Button,
+.ButtonGroup + .ButtonGroup {
   margin-left: 10px;
 }
 
-.Button.MuiButton-root svg,
-.Button.MuiButton-root svg path {
+.Button.btn svg,
+.Button.btn svg path {
   color: white;
   fill: white;
 }
 
+.Button.btn[data-size='large'][data-variant='contained'][data-color='primary'] {
+  padding: 8px 22px;
+  font-weight: 600;
+}
+
 /* Color primary */
-.Button.MuiButton-colorPrimary,
-.Button.MuiButton-colorPrimary.MuiButtonGroup-grouped {
+.Button.btn[data-color='primary'] {
   background-color: var(--dcl) !important;
 }
 
-.Button.MuiButton-colorPrimary:hover,
-.Button.MuiButton-colorPrimary.MuiButtonGroup-grouped:hover {
+.Button.btn[data-color='primary']:hover:not(:disabled) {
   background-color: var(--dcl-dark) !important;
 }
 
-.Button.MuiButton-colorPrimary:disabled,
-.Button.MuiButton-colorPrimary.MuiButtonGroup-grouped:disabled {
-  opacity: 0.2 !important;
-  cursor: not-allowed !important;
-}
-
 /* Color secondary */
-.Button.MuiButton-colorSecondary,
-.Button.MuiButton-colorSecondary.MuiButtonGroup-grouped {
+.Button.btn[data-color='secondary'] {
   background-color: var(--dark-gray) !important;
-  border-color: var(--light-gray);
 }
 
-.Button.MuiButton-colorSecondary:hover,
-.Button.MuiButton-colorSecondary.MuiButtonGroup-grouped:hover {
+.Button.btn[data-color='secondary']:hover:not(:disabled) {
   background-color: var(--darker-gray) !important;
 }
 
-.Button.MuiButton-colorSecondary:disabled,
-.Button.MuiButton-colorSecondary.MuiButtonGroup-grouped:disabled {
+.Button.btn[data-color='primary']:disabled,
+.Button.btn[data-color='secondary']:disabled {
   opacity: 0.2 !important;
   cursor: not-allowed !important;
 }
 
 /* Color info */
-.Button.MuiButton-colorInfo,
-.Button.MuiButton-colorInfo.MuiButtonGroup-grouped {
-  color: var(--white);
+.Button.btn[data-color='info'] {
   background-color: initial;
   border: 1px solid var(--white);
-  font-weight: 400;
   padding: 2px 10px;
 }
 
-.Button.MuiButton-colorInfo:hover,
-.Button.MuiButton-colorInfo.MuiButtonGroup-grouped:hover {
+.Button.btn[data-color='info']:hover:not(:disabled) {
   background-color: var(--light-gray);
 }
 
-.Button.MuiButton-outlined,
-.Button.MuiButton-outlined.MuiButtonGroup-grouped {
+/* The outline is an inset shadow, so the padding takes the 1px a border had. */
+.Button.btn[data-variant='outlined'] {
+  padding: 6px 21px;
   background-color: transparent !important;
 }
 
 /* ButtonGroup */
-.Button.MuiButton-root.MuiButtonGroup-grouped:not(.extra-button) {
+.ButtonGroup {
+  display: inline-flex;
+  border-radius: var(--ctl-radius);
+}
+
+.ButtonGroup .Button.btn {
+  min-width: 40px;
+}
+
+.ButtonGroup .Button.btn:not(.extra-button) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+  border-right: 1px solid var(--dcl-hover);
+}
+
+.ButtonGroup .Button.btn[data-color='secondary']:not(.extra-button) {
+  border-right-color: var(--light-gray);
 }
 
 .Button.extra-button {

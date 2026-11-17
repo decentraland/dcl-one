@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LinearProgress } from 'decentraland-ui2';
+import ProgressBar from '@ui/atoms/ProgressBar';
 
 import type { DeployUpload } from '/@/lib/deploy';
 import type { CancelRejection } from '/@/modules/store/deployment/deploy-api';
@@ -81,9 +81,9 @@ export function DeployProgress({ upload, cancel }: Props) {
     <div className="DeployProgress">
       {upload && (
         <div className="upload">
-          <LinearProgress
+          <ProgressBar
             aria-label={t('modal.publish_project.deploy.deploying.step.uploading')}
-            variant={determinate ? 'determinate' : 'indeterminate'}
+            indeterminate={!determinate}
             value={determinate ? getPercent(upload) : undefined}
           />
           <div className="details">

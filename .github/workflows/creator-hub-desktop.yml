@@ -208,7 +208,10 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          change_path: "apps/creator-hub"
+          # The renderer bundle also holds apps/ui3/src/atoms (the `@ui` alias in apps/creator-hub/packages/creator-hub/renderer/vite.config.js)
+          # and the LAND map with its helpers (the include list of apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json),
+          # built with the ui3 package (sideEffects) and compiler settings (jsx, paths).
+          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/shop"
 
       # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
@@ -290,6 +293,17 @@ jobs:
           INPUT_PASSWORD: ${{ secrets.ES_PASSWORD }}
           INPUT_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
           INPUT_CREDENTIAL_ID: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
+
+      # Installed apps on macOS 12 must not take a build that macOS 12 cannot open: electron-updater
+      # compares this Darwin version with os.release() (scripts/after-pack.js).
+      - name: Check that the macOS update file has the minimum Darwin version
+        if: ${{ matrix.os == 'macos-latest' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        run: |
+          grep -Eq "^minimumSystemVersion: '?22\.0\.0'?$" dist/latest-mac.yml && exit 0
+          echo "::error::dist/latest-mac.yml has no minimumSystemVersion 22.0.0"
+          cat dist/latest-mac.yml
+          exit 1
 
       # Installed Windows apps check each update's signature against `publisherName`
       # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make

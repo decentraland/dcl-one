@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import type { Project } from '/shared/types/projects';
 import { en } from '/@/modules/store/translation/locales';
@@ -40,14 +40,14 @@ const project = { id: 'project-1', title: 'My Scene' } as Project;
 
 function renderModal(onClose = vi.fn()) {
   const result = render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <p>Editor behind the modal</p>
       <PublishProject
         open
         project={project}
         onClose={onClose}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { onClose, ...result };
 }
@@ -121,14 +121,14 @@ describe('PublishProject error boundary', () => {
 
       crash.enabled = false;
       const modal = (open: boolean) => (
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <p>Editor behind the modal</p>
           <PublishProject
             open={open}
             project={project}
             onClose={onClose}
           />
-        </ThemeProvider>
+        </TestProviders>
       );
       rerender(modal(false));
       rerender(modal(true));

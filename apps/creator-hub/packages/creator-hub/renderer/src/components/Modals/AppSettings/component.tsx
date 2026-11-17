@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import SettingsIcon from '@mui/icons-material/Settings';
-import equal from 'fast-deep-equal';
+import { SettingsIcon } from '/@/components/Icons/material';
+import { deepEqual as equal } from '/shared/deep-equal';
 import {
   loadEditors,
   setDefaultEditor,

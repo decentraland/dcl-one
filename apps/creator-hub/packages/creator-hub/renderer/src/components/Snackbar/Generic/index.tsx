@@ -1,37 +1,53 @@
-import { Alert, AlertTitle, CircularProgress as Loader } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/HubSpinner';
 
 import { type GenericNotification } from '/@/modules/store/snackbar/types';
 
-import { StyledAlert, StyledDescription } from './Generic.styled';
+import { SnackbarAlert } from '../Alert';
+
+import styles from './Generic.module.css';
 
 type Props = GenericNotification & { onClose?: () => void };
 
 export function Generic({ severity, message, description, onClose }: Props) {
-  const props = severity === 'loading' ? { icon: <Loader size={20} /> } : { severity };
+  const props =
+    severity === 'loading'
+      ? {
+          icon: (
+            <Spinner
+              ring="wide"
+              role="progressbar"
+              size={20}
+              color="primary"
+            />
+          ),
+        }
+      : { severity };
   // Carries the severity so a test can assert an error was surfaced, not merely some
-  // notification. The wrapping ".Snackbar" div is presentational and would break on a
+  // notification. The snackbar layer around it is presentational and would break on a
   // style refactor.
   const testId = `snackbar-generic-${severity}`;
 
   if (description) {
     return (
-      <StyledAlert
+      <SnackbarAlert
         {...props}
+        className={styles.detailed}
         data-testid={testId}
+        // The capture scenarios find the title by this class name.
+        title={<span className="MuiAlertTitle-root">{message}</span>}
         onClose={onClose}
       >
-        <AlertTitle>{message}</AlertTitle>
-        <StyledDescription>{description}</StyledDescription>
-      </StyledAlert>
+        <pre className={styles.description}>{description}</pre>
+      </SnackbarAlert>
     );
   }
 
   return (
-    <Alert
+    <SnackbarAlert
       {...props}
       data-testid={testId}
     >
       {message}
-    </Alert>
+    </SnackbarAlert>
   );
 }

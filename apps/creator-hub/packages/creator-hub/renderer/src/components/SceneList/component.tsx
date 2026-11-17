@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MenuItem, type SelectChangeEvent, Typography } from 'decentraland-ui2';
+import { SelectOption } from '@ui/atoms/Select';
+import Text from '@ui/atoms/Text';
 
 import { SortBy } from '/shared/types/projects';
 import { t } from '/@/modules/store/translation/utils';
@@ -11,6 +12,7 @@ import { Column } from '../Column';
 import { FiltersBar } from '../FiltersBar';
 import { Row } from '../Row';
 import { Select } from '../Select';
+import type { SelectChangeEvent } from '../Select/component';
 import { Projects } from './Projects';
 import type { Props } from './types';
 
@@ -41,24 +43,24 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
         value={sortBy}
         onChange={handleDropdownChange}
       >
-        <MenuItem
+        <SelectOption
           className="sort-item"
           value={SortBy.NEWEST}
         >
           {t('scene_list.sort.newest')}
-        </MenuItem>
-        <MenuItem
+        </SelectOption>
+        <SelectOption
           className="sort-item"
           value={SortBy.NAME}
         >
           {t('scene_list.sort.name')}
-        </MenuItem>
-        <MenuItem
+        </SelectOption>
+        <SelectOption
           className="sort-item"
           value={SortBy.SIZE}
         >
           {t('scene_list.sort.size')}
-        </MenuItem>
+        </SelectOption>
       </Select>
     );
   };
@@ -67,7 +69,7 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
     <div className="SceneList">
       <Column className="projects-menu">
         <Row>
-          <Typography variant="h3">{t('scene_list.my_scenes')}</Typography>
+          <Text variant="h3">{t('scene_list.my_scenes')}</Text>
           <Row className="actions">
             <Button
               className="action-button import-button"
@@ -91,9 +93,7 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
         </Row>
         {projects.length > 0 ? (
           <FiltersBar>
-            <Typography variant="h6">
-              {t('scene_list.results', { count: projects.length })}
-            </Typography>
+            <Text variant="h6">{t('scene_list.results', { count: projects.length })}</Text>
             <>
               <p>{t('scene_list.sort_by')}</p>
               {renderSortDropdown()}

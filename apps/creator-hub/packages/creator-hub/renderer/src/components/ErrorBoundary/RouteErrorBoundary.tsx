@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
 
 import { t } from '/@/modules/store/translation/utils';
 
@@ -21,8 +21,8 @@ export function RouteErrorBoundary({ children }: { children: ReactNode }) {
           testId="route-error-fallback"
         >
           <Button
-            color="secondary"
-            variant="contained"
+            variant="primary"
+            tone="neutral"
             onClick={() => {
               // When the crashed page IS /home the pathname doesn't change, so the
               // resetKeys never fire; reset explicitly.
@@ -33,8 +33,7 @@ export function RouteErrorBoundary({ children }: { children: ReactNode }) {
             {t('error_boundary.go_home')}
           </Button>
           <Button
-            color="primary"
-            variant="contained"
+            variant="primary"
             onClick={reset}
           >
             {t('error_boundary.try_again')}

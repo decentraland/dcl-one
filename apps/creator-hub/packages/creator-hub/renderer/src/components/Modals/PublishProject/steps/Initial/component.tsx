@@ -1,4 +1,6 @@
-import { Button } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/HubButton';
+
 import { OptionBox } from '/@/components/EditorPage/OptionBox';
 import { t } from '/@/modules/store/translation/utils';
 import LandPng from '/assets/images/land.png';
@@ -7,6 +9,8 @@ import WorldsPng from '/assets/images/worlds.png';
 import { useAuth } from '/@/hooks/useAuth';
 import { PublishModal } from '../../PublishModal';
 import type { Props } from '../../types';
+
+import buttons from '../../buttons.module.css';
 import './styles.css';
 
 export function Initial(props: Props) {
@@ -25,8 +29,8 @@ export function Initial(props: Props) {
           data-testid="publish-modal-initial"
         >
           <Button
-            color="primary"
-            variant="contained"
+            className={cx(buttons.contained, buttons.primary)}
+            variant="primary"
             data-testid="publish-modal-initial-sign-in-button"
             onClick={signIn}
           >

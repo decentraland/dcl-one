@@ -1,6 +1,7 @@
 import React from 'react';
-import cx from 'classnames';
-import { Box, Button, Card, CardContent, Container, Grid, Typography } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
 
 import { misc } from '#preload';
 
@@ -27,120 +28,93 @@ const HorizontalCardWithImage: React.FC<{
   image: string;
   action: () => void;
 }> = React.memo(({ className, title, description, image, action }) => (
-  <Card className={cx('HorizontalCardWithImage', className)}>
-    <Box className="CardImage">
+  <div className={cx('HorizontalCardWithImage', className)}>
+    <div className="CardImage">
       <img src={image} />
-    </Box>
-    <CardContent className="CardContent">
-      <Box p={0}>
-        <Typography
+    </div>
+    <div className="CardContent">
+      <div>
+        <Text
           variant="h6"
           className="title"
         >
           {title}
-        </Typography>
-        <Typography variant="body2">{description}</Typography>
-      </Box>
-      <Box className="CardActions">
-        <Button onClick={action}>{t('more.cards.open_in_browser')}</Button>
-      </Box>
-    </CardContent>
-  </Card>
+        </Text>
+        <Text variant="body2">{description}</Text>
+      </div>
+      <div className="CardActions">
+        <Button
+          className="CardAction"
+          variant="text"
+          onClick={action}
+        >
+          {t('more.cards.open_in_browser')}
+        </Button>
+      </div>
+    </div>
+  </div>
 ));
 
 export function MorePage() {
   return (
     <main className="MorePage">
       <Navbar active={NavbarItem.MORE} />
-      <Container>
-        <Typography
+      <div className="MoreContainer">
+        <Text
           variant="h3"
-          mb="48px"
+          className="PageTitle"
         >
           {t('more.header.title')}
-        </Typography>
-        <Typography
+        </Text>
+        <Text
           className="CardsSection"
           variant="h6"
-          mb="16px"
         >
           {t('more.cards.create.title')}
-        </Typography>
-        <Grid
-          container
-          spacing={3}
-          mb="48px"
-        >
-          <Grid
-            item
-            xs={12}
-            sm={6}
-            md={6}
-            lg={4}
-          >
+        </Text>
+        <div className="CardsGrid CardsGridSpaced">
+          <div className="CardsGridItem">
             <HorizontalCardWithImage
               title={t('more.cards.create.submit_event.title')}
               description={t('more.cards.create.submit_event.description')}
               action={() => misc.openExternal(CREATE_EVENT_URL)}
               image={NewEventPng}
             />
-          </Grid>
-          <Grid
-            item
-            xs={12}
-            sm={6}
-            md={6}
-            lg={4}
-          >
+          </div>
+          <div className="CardsGridItem">
             <HorizontalCardWithImage
               title={t('more.cards.create.collections.title')}
               description={t('more.cards.create.collections.description')}
               action={() => misc.openExternal(COLLECTIONS_URL)}
               image={CollectionsPng}
             />
-          </Grid>
-        </Grid>
-        <Typography
+          </div>
+        </div>
+        <Text
           className="CardsSection"
           variant="h6"
-          mb="16px"
         >
           {t('more.cards.manage.title')}
-        </Typography>
-        <Grid
-          container
-          spacing={3}
-        >
-          <Grid
-            item
-            xs={12}
-            sm={6}
-            md={6}
-            lg={4}
-          >
+        </Text>
+        <div className="CardsGrid">
+          <div className="CardsGridItem">
             <HorizontalCardWithImage
               title={t('more.cards.manage.names.title')}
               description={t('more.cards.manage.names.description')}
               action={() => misc.openExternal(NAMES_URL)}
               image={NamesPng}
             />
-          </Grid>
-          <Grid
-            item
-            xs={12}
-            sm={6}
-            md={6}
-            lg={4}
-          >
+          </div>
+          <div className="CardsGridItem">
             <HorizontalCardWithImage
               title={t('more.cards.manage.land.title')}
               description={t('more.cards.manage.land.description')}
               action={() => misc.openExternal(`${BUILDER_URL}/land`)}
               image={LandPng}
             />
-          </Grid>
-        </Grid>
-      </Container>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }

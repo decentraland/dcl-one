@@ -1,6 +1,7 @@
-import { forwardRef, useCallback, useImperativeHandle, useState } from 'react';
-import cx from 'classnames';
-import { Button as DclButton, ButtonGroup as DclButtonGroup, Tooltip } from 'decentraland-ui2';
+import { forwardRef, useCallback, useImperativeHandle, useState, type ForwardedRef } from 'react';
+import { cx } from '/@/lib/cx';
+import Ui3Button from '@ui/atoms/HubButton';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { ChevronDownIcon } from '../Icons';
 import { Popper } from '../Popper';
@@ -9,31 +10,57 @@ import type { ButtonGroupHandle, ButtonProps, GroupProps } from './types';
 
 import './styles.css';
 
-// forwardRef so a Button can be the direct child of a MUI Tooltip (which needs the DOM node).
+const VARIANTS = { contained: 'primary', outlined: 'outline', text: 'text' } as const;
+const SIZES = { small: 'sm', medium: 'md', large: 'lg' } as const;
+const TONES = {
+  primary: undefined,
+  secondary: undefined,
+  info: undefined,
+  inherit: 'neutral',
+  error: 'danger',
+  success: 'success',
+  warning: 'warning',
+} as const;
+
+// forwardRef so a caller can measure or focus the DOM node.
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { children, className = '', onClick, ...props },
+  { children, className = '', variant = 'text', color = 'primary', size = 'medium', ...props },
   ref,
 ) {
   return (
-    <DclButton
+    <Ui3Button
       {...props}
-      ref={ref}
+      ref={ref as ForwardedRef<HTMLButtonElement | HTMLAnchorElement>}
       className={cx('Button', className)}
-      onClick={onClick}
+      variant={VARIANTS[variant]}
+      size={SIZES[size]}
+      tone={TONES[color]}
+      data-variant={variant}
+      data-color={color}
+      data-size={size}
     >
       {children}
-    </DclButton>
+    </Ui3Button>
   );
 });
 
-// MUI refuses to attach a tooltip to a disabled button (it logs a warning and never opens),
-// so a disabled button is rendered bare.
+// A disabled button has no tooltip, so it is rendered bare.
 function withTooltip(
   title: string | undefined,
   disabled: boolean | undefined,
   button: React.ReactElement,
 ) {
-  return title && !disabled ? <Tooltip title={title}>{button}</Tooltip> : button;
+  if (!title || disabled) return button;
+  return (
+    <Tooltip
+      label={title}
+      side="bottom"
+      portal
+      labelChild
+    >
+      {button}
+    </Tooltip>
+  );
 }
 
 // forwardRef so a caller can close the "extra" popover imperatively (e.g. a one-shot action
@@ -57,43 +84,48 @@ export const ButtonGroup = forwardRef<ButtonGroupHandle, GroupProps>(function Bu
   useImperativeHandle(ref, () => ({ close: handleClose }), [handleClose]);
 
   return (
-    <>
-      <DclButtonGroup
-        variant="contained"
-        data-testid="button-group"
-      >
-        {withTooltip(tooltip, props.disabled, <Button {...props} />)}
-        {withTooltip(
-          extraTooltip,
-          props.disabled,
-          <Button
-            className="extra-button"
-            color={props.color}
-            size="small"
-            disabled={props.disabled}
-            data-testid="button-group-extra-button"
-            onClick={handleToggle}
-          >
-            <ChevronDownIcon />
-          </Button>,
-        )}
-        {open && (
-          <Popper
-            open={open}
-            onClose={handleClose}
-            anchorEl={anchorEl}
-            placement="bottom-end"
-            data-testid="button-group-popper"
-            modifiers={
-              popperOffset
-                ? [{ name: 'offset', options: { offset: [0, popperOffset] } }]
-                : undefined
-            }
-          >
-            {extra}
-          </Popper>
-        )}
-      </DclButtonGroup>
-    </>
+    <div
+      className="ButtonGroup"
+      role="group"
+      data-testid="button-group"
+    >
+      {withTooltip(
+        tooltip,
+        props.disabled,
+        <Button
+          variant="contained"
+          {...props}
+        />,
+      )}
+      {withTooltip(
+        extraTooltip,
+        props.disabled,
+        <Button
+          className="extra-button"
+          variant="contained"
+          color={props.color}
+          size="small"
+          disabled={props.disabled}
+          data-testid="button-group-extra-button"
+          onClick={handleToggle}
+        >
+          <ChevronDownIcon />
+        </Button>,
+      )}
+      {open && (
+        <Popper
+          open={open}
+          onClose={handleClose}
+          anchorEl={anchorEl}
+          placement="bottom-end"
+          data-testid="button-group-popper"
+          modifiers={
+            popperOffset ? [{ name: 'offset', options: { offset: [0, popperOffset] } }] : undefined
+          }
+        >
+          {extra}
+        </Popper>
+      )}
+    </div>
   );
 });

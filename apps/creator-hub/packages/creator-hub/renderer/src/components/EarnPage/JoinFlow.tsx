@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/HubButton';
+import Dialog from '@ui/atoms/Dialog';
+import IconButton from '@ui/atoms/IconButton';
 
 import welcomeImage from '/assets/images/earn/welcome.webp';
 
@@ -12,30 +16,11 @@ import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
 import { ContactInfoForm, type ContactInfoFormProps, type ContactValues } from './ContactInfoForm';
-import {
-  CloseButton,
-  GlowLayer,
-  ModalCta,
-  ModalText,
-  ModalTitle,
-  StatusDialog,
-  StatusGlow,
-  StatusModal,
-  WelcomeFrame,
-  WelcomePaper,
-  WelcomeRoot,
-} from './EarnModal.styled';
-import {
-  CheckingBody,
-  CtaPair,
-  ReasonLine,
-  ResultBody,
-  SupportEmail,
-  WelcomeImage,
-} from './JoinFlow.styled';
 import { CheckingSpinner } from './Spinner';
 import { TermsModal } from './TermsModal';
 import { CloseIcon } from './icons';
+import modal from './EarnModal.module.css';
+import styles from './JoinFlow.module.css';
 
 export type JoinOutcome = 'cancelled' | 'joined' | 'conflict';
 
@@ -65,6 +50,10 @@ const reasonLines = (reasons: string[]) => [
   ),
 ];
 
+/**
+ * A status step: one dialog, named by its title, with the glow behind the content. Escape calls
+ * `onDismiss` wherever focus is; a press on the backdrop does nothing.
+ */
 function StatusShell({
   labelledBy,
   describedBy,
@@ -81,30 +70,48 @@ function StatusShell({
   children: React.ReactNode;
 }) {
   return (
-    <StatusDialog
+    <Dialog
+      open
+      bare
       role={role}
-      aria-modal="true"
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      aria-busy={busy || undefined}
-      onKeyDown={event => event.key === 'Escape' && onDismiss()}
+      onClose={onDismiss}
+      closeOnBackdrop={false}
+      backdropClassName={modal.statusModal}
     >
-      <GlowLayer aria-hidden>
-        <StatusGlow />
-      </GlowLayer>
+      <StatusFrame busy={busy}>{children}</StatusFrame>
+    </Dialog>
+  );
+}
+
+/** The padding and the glow of a status step, inside its dialog. */
+function StatusFrame({ busy, children }: { busy?: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      className={modal.statusDialog}
+      aria-busy={busy || undefined}
+    >
+      <div
+        className={modal.glowLayer}
+        aria-hidden
+      >
+        <div className={modal.statusGlow} />
+      </div>
       {children}
-    </StatusDialog>
+    </div>
   );
 }
 
 function Close({ onClick }: { onClick: () => void }) {
   return (
-    <CloseButton
+    <IconButton
+      className={modal.closeButton}
       aria-label={t('earn.close')}
       onClick={onClick}
     >
       <CloseIcon />
-    </CloseButton>
+    </IconButton>
   );
 }
 
@@ -116,33 +123,44 @@ export function IneligibleModal({ reasons, onClose }: { reasons: string[]; onClo
   const titleId = useId();
   const reasonId = useId();
   return (
-    <StatusModal open>
-      <StatusShell
-        role="alertdialog"
-        labelledBy={titleId}
-        describedBy={reasonId}
-        onDismiss={onClose}
-      >
-        <Close onClick={onClose} />
-        <ResultBody>
-          <ModalTitle id={titleId}>{t('earn.not_eligible.title')}</ModalTitle>
-          <ModalText id={reasonId}>
-            {reasonLines(reasons).map(line => (
-              <ReasonLine key={line}>{line}</ReasonLine>
-            ))}
-          </ModalText>
-          <ModalCta
-            variant="contained"
-            color="primary"
-            size="large"
-            autoFocus
-            onClick={onClose}
-          >
-            {t('earn.not_eligible.got_it')}
-          </ModalCta>
-        </ResultBody>
-      </StatusShell>
-    </StatusModal>
+    <StatusShell
+      role="alertdialog"
+      labelledBy={titleId}
+      describedBy={reasonId}
+      onDismiss={onClose}
+    >
+      <Close onClick={onClose} />
+      <div className={cx(modal.statusBody, styles.resultBody)}>
+        <h2
+          className={modal.modalTitle}
+          id={titleId}
+        >
+          {t('earn.not_eligible.title')}
+        </h2>
+        <p
+          className={modal.modalText}
+          id={reasonId}
+        >
+          {reasonLines(reasons).map(line => (
+            <span
+              className={styles.reasonLine}
+              key={line}
+            >
+              {line}
+            </span>
+          ))}
+        </p>
+        <Button
+          className={modal.modalCta}
+          variant="primary"
+          size="lg"
+          autoFocus
+          onClick={onClose}
+        >
+          {t('earn.not_eligible.got_it')}
+        </Button>
+      </div>
+    </StatusShell>
   );
 }
 
@@ -150,60 +168,67 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
   const titleId = useId();
   const bodyId = useId();
   return (
-    <StatusModal open>
-      <StatusShell
-        role="alertdialog"
-        labelledBy={titleId}
-        describedBy={bodyId}
-        onDismiss={onClose}
-      >
-        <Close onClick={onClose} />
-        <ResultBody>
-          <ModalTitle id={titleId}>{t('earn.check_failed.title')}</ModalTitle>
-          <ModalText id={bodyId}>
-            {getCurrentLocale().formatMessage(
-              { id: 'earn.check_failed.body' },
-              {
-                email: (
-                  <SupportEmail
-                    key="email"
-                    href={`mailto:${SUPPORT_EMAIL}`}
-                    onClick={event => {
-                      event.preventDefault();
-                      void analytics.track('Creator Fund Contact Support', {
-                        source: 'check_failed',
-                      });
-                      void misc.openExternal(`mailto:${SUPPORT_EMAIL}`);
-                    }}
-                  >
-                    {SUPPORT_EMAIL}
-                  </SupportEmail>
-                ),
-              },
-            )}
-          </ModalText>
-          <CtaPair>
-            <ModalCta
-              variant="contained"
-              color="secondary"
-              size="large"
-              onClick={onClose}
-            >
-              {t('earn.close')}
-            </ModalCta>
-            <ModalCta
-              variant="contained"
-              color="primary"
-              size="large"
-              autoFocus
-              onClick={onRetry}
-            >
-              {t('earn.errors.retry')}
-            </ModalCta>
-          </CtaPair>
-        </ResultBody>
-      </StatusShell>
-    </StatusModal>
+    <StatusShell
+      role="alertdialog"
+      labelledBy={titleId}
+      describedBy={bodyId}
+      onDismiss={onClose}
+    >
+      <Close onClick={onClose} />
+      <div className={cx(modal.statusBody, styles.resultBody)}>
+        <h2
+          className={modal.modalTitle}
+          id={titleId}
+        >
+          {t('earn.check_failed.title')}
+        </h2>
+        <p
+          className={modal.modalText}
+          id={bodyId}
+        >
+          {getCurrentLocale().formatMessage(
+            { id: 'earn.check_failed.body' },
+            {
+              email: (
+                <a
+                  className={styles.supportEmail}
+                  key="email"
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  onClick={event => {
+                    event.preventDefault();
+                    void analytics.track('Creator Fund Contact Support', {
+                      source: 'check_failed',
+                    });
+                    void misc.openExternal(`mailto:${SUPPORT_EMAIL}`);
+                  }}
+                >
+                  {SUPPORT_EMAIL}
+                </a>
+              ),
+            },
+          )}
+        </p>
+        <div className={cx(modal.actions, styles.ctaPair)}>
+          <Button
+            className={modal.modalCta}
+            variant="secondary"
+            size="lg"
+            onClick={onClose}
+          >
+            {t('earn.close')}
+          </Button>
+          <Button
+            className={modal.modalCta}
+            variant="primary"
+            size="lg"
+            autoFocus
+            onClick={onRetry}
+          >
+            {t('earn.errors.retry')}
+          </Button>
+        </div>
+      </div>
+    </StatusShell>
   );
 }
 
@@ -317,24 +342,27 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
   switch (step.name) {
     case 'checking':
       return (
-        <StatusModal open>
-          <StatusShell
-            labelledBy={titleId}
-            busy
-            onDismiss={cancel}
-          >
-            <Close onClick={cancel} />
-            <CheckingBody>
-              <CheckingSpinner label={t('earn.checking.progress_label')} />
-              <ModalTitle id={titleId}>{t('earn.checking.title')}</ModalTitle>
-              <ModalText>
-                {t('earn.checking.body_1')}
-                <br />
-                {t('earn.checking.body_2')}
-              </ModalText>
-            </CheckingBody>
-          </StatusShell>
-        </StatusModal>
+        <StatusShell
+          labelledBy={titleId}
+          busy
+          onDismiss={cancel}
+        >
+          <Close onClick={cancel} />
+          <div className={cx(modal.statusBody, styles.checkingBody)}>
+            <CheckingSpinner label={t('earn.checking.progress_label')} />
+            <h2
+              className={modal.modalTitle}
+              id={titleId}
+            >
+              {t('earn.checking.title')}
+            </h2>
+            <p className={modal.modalText}>
+              {t('earn.checking.body_1')}
+              <br />
+              {t('earn.checking.body_2')}
+            </p>
+          </div>
+        </StatusShell>
       );
     case 'check_failed':
       return (
@@ -360,54 +388,61 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
       );
     case 'contact':
       return (
-        <StatusModal open>
-          <StatusShell
-            labelledBy={titleId}
-            onDismiss={cancel}
-          >
-            <Close onClick={cancel} />
-            <ContactInfoForm
-              titleId={titleId}
-              initialValues={draft}
-              onSubmit={submit}
-              onCancel={cancel}
-              {...submission}
-            />
-          </StatusShell>
-        </StatusModal>
+        <StatusShell
+          labelledBy={titleId}
+          onDismiss={cancel}
+        >
+          <Close onClick={cancel} />
+          <ContactInfoForm
+            titleId={titleId}
+            initialValues={draft}
+            onSubmit={submit}
+            onCancel={cancel}
+            {...submission}
+          />
+        </StatusShell>
       );
     case 'welcome':
       return (
-        <WelcomeRoot open>
-          <WelcomeFrame>
-            <WelcomeImage
-              src={welcomeImage}
-              alt=""
-              aria-hidden
-            />
-            <WelcomePaper>
-              <StatusShell
-                labelledBy={titleId}
-                onDismiss={finish}
-              >
-                <Close onClick={finish} />
-                <ResultBody>
-                  <ModalTitle id={titleId}>{t('earn.welcome.title')}</ModalTitle>
-                  <ModalText>{t('earn.welcome.body')}</ModalText>
-                  <ModalCta
-                    variant="contained"
-                    color="primary"
-                    size="large"
-                    autoFocus
-                    onClick={finish}
-                  >
-                    {t('earn.welcome.lets_go')}
-                  </ModalCta>
-                </ResultBody>
-              </StatusShell>
-            </WelcomePaper>
-          </WelcomeFrame>
-        </WelcomeRoot>
+        <Dialog
+          bare
+          open
+          aria-labelledby={titleId}
+          onClose={finish}
+          closeOnBackdrop={false}
+          className={modal.welcomeFrame}
+          backdropClassName={modal.welcomeRoot}
+        >
+          <img
+            className={styles.welcomeImage}
+            src={welcomeImage}
+            alt=""
+            aria-hidden
+          />
+          <div className={modal.welcomePaper}>
+            <StatusFrame>
+              <Close onClick={finish} />
+              <div className={cx(modal.statusBody, styles.resultBody)}>
+                <h2
+                  className={modal.modalTitle}
+                  id={titleId}
+                >
+                  {t('earn.welcome.title')}
+                </h2>
+                <p className={modal.modalText}>{t('earn.welcome.body')}</p>
+                <Button
+                  className={modal.modalCta}
+                  variant="primary"
+                  size="lg"
+                  autoFocus
+                  onClick={finish}
+                >
+                  {t('earn.welcome.lets_go')}
+                </Button>
+              </div>
+            </StatusFrame>
+          </div>
+        </Dialog>
       );
   }
 }

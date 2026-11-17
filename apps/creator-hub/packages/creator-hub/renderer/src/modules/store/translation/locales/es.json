@@ -616,6 +616,7 @@
         "code_editor": {
           "label": "Editor de código preferido",
           "choose_device": "Elegir desde tu dispositivo...",
+          "remove": "Quitar {name}",
           "errors": {
             "load": "Error al cargar los editores de código",
             "set": "Error al establecer el editor por defecto",
@@ -729,7 +730,6 @@
     },
     "install_client": {
       "title": "Para entrar, primero necesitarás instalar Decentraland",
-      "download": "Descargar",
       "download_macos": "DESCARGAR PARA MACOS",
       "download_win": "DESCARGAR PARA WINDOWS",
       "cancel": "AHORA NO"
@@ -796,8 +796,6 @@
       "delete_scene": "Borrando escena...",
       "delete_scene_failed": "Error al borrar escena",
       "dependencies_updated": "Las dependencias de la escena fueron actualizadas",
-      "multiplayer_sdk_installed": "SDK de Multiplayer Server instalado.",
-      "multiplayer_sdk_uninstalled": "SDK de Multiplayer Server quitado. Última versión del SDK instalada.",
       "updating_sdk_skills": "Instalando las últimas habilidades de IA...",
       "sdk_skills_updated": "Las habilidades de IA están al día",
       "sdk_skills_update_failed": "No se pudieron instalar las habilidades de IA",

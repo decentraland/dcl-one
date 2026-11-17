@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
-import AddIcon from '@mui/icons-material/Add';
-import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
-import { MenuItem, Tooltip } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
+import { Menu, MenuItem } from '@ui/atoms/Menu';
+import Tooltip from '@ui/atoms/Tooltip';
+import { AddIcon, FileDownloadOutlinedIcon } from '@ui/atoms/icons-material';
 
 import arrowDown from '/assets/images/arrow-down.svg';
 import { useMatchMedia } from '/@/hooks/useMatchMedia';
@@ -10,14 +11,8 @@ import { t } from '/@/modules/store/translation/utils';
 import { CreateProject } from '../Modals/CreateProject';
 
 import { ICON_ONLY_QUERY } from './breakpoints';
-import {
-  StyledButtonRow,
-  StyledLabelButton,
-  StyledLabelText,
-  StyledMenu,
-  StyledToggleButton,
-} from './component.styled';
 import type { CreateProjectValue, NewProjectPayload } from './types';
+import styles from './component.module.css';
 
 export function CreateButton() {
   const { createProject, getAvailableProject, importProject } = useWorkspace();
@@ -26,7 +21,7 @@ export function CreateButton() {
   const [newProject, setNewProject] = useState<NewProjectPayload | undefined>();
   const iconOnly = useMatchMedia(ICON_ONLY_QUERY);
 
-  const handleOpenMenu = useCallback(() => setOpen(true), []);
+  const handleToggleMenu = useCallback(() => setOpen(current => !current), []);
   const handleCloseMenu = useCallback(() => setOpen(false), []);
 
   const handleClickNewScene = useCallback(async () => {
@@ -56,30 +51,33 @@ export function CreateButton() {
 
   return (
     <>
-      <StyledButtonRow ref={anchorRef}>
+      <div
+        className={styles.row}
+        ref={anchorRef}
+      >
         <Tooltip
-          title={iconOnly ? t('navbar.create.label') : ''}
-          placement="bottom"
-          classes={{ tooltip: 'AccountTooltip' }}
+          label={t('navbar.create.label')}
+          side="bottom"
+          tipClassName="AccountTooltip"
+          portal
+          disabled={!iconOnly}
         >
-          <StyledLabelButton
-            variant="contained"
-            disableRipple
+          <Button
+            className={styles.label}
             data-testid="create-button"
-            startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+            startIcon={<AddIcon fontSize="inherit" />}
             onClick={handleClickNewScene}
           >
-            <StyledLabelText>{t('navbar.create.label')}</StyledLabelText>
-          </StyledLabelButton>
+            <span className={styles.labelText}>{t('navbar.create.label')}</span>
+          </Button>
         </Tooltip>
-        <StyledToggleButton
-          variant="contained"
-          disableRipple
+        <Button
+          className={styles.toggle}
           data-testid="create-button-toggle"
           aria-label={t('navbar.create.options')}
           aria-haspopup="menu"
           aria-expanded={open ? 'true' : undefined}
-          onClick={handleOpenMenu}
+          onClick={handleToggleMenu}
         >
           <img
             src={arrowDown}
@@ -87,30 +85,33 @@ export function CreateButton() {
             width={11}
             height={8}
           />
-        </StyledToggleButton>
-      </StyledButtonRow>
-      <StyledMenu
-        anchorEl={anchorRef.current}
+        </Button>
+      </div>
+      <Menu
+        className={styles.menu}
+        anchor={anchorRef.current}
         open={open}
         onClose={handleCloseMenu}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        placement="bottom-end"
+        offset={4}
       >
         <MenuItem
+          className={styles.item}
           data-testid="create-button-new-scene"
+          icon={<AddIcon fontSize="small" />}
           onClick={handleClickNewScene}
         >
-          <AddIcon fontSize="small" />
           {t('navbar.create.new_scene')}
         </MenuItem>
         <MenuItem
+          className={styles.item}
           data-testid="create-button-import-scene"
+          icon={<FileDownloadOutlinedIcon fontSize="small" />}
           onClick={handleClickImportScene}
         >
-          <FileDownloadOutlinedIcon fontSize="small" />
           {t('navbar.create.import_scene')}
         </MenuItem>
-      </StyledMenu>
+      </Menu>
       {newProject && (
         <CreateProject
           open

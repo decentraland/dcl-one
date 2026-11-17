@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import cx from 'classnames';
-import { TextField, Typography } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
+import styles from './RangeField.module.css';
 import './RangeField.css';
 
 export const MIXED_VALUE = '--';
@@ -148,21 +150,21 @@ const RangeField = React.forwardRef<HTMLInputElement, Props>((props, ref) => {
   const renderMessage = useCallback(() => {
     if (errorMessage) {
       return (
-        <Typography
+        <Text
           variant="body2"
-          color="var(--error)"
+          tone="error"
         >
           {errorMessage}
-        </Typography>
+        </Text>
       );
     } else if (info) {
       return (
-        <Typography
+        <Text
+          className={styles.info}
           variant="body2"
-          color="var(--info)"
         >
           {info}
-        </Typography>
+        </Text>
       );
     }
 
@@ -181,12 +183,12 @@ const RangeField = React.forwardRef<HTMLInputElement, Props>((props, ref) => {
 
   return (
     <div className="Range Field">
-      <Typography
+      <Text
+        className={styles.label}
         variant="body2"
-        color="var(--text)"
       >
         {label}
-      </Typography>
+      </Text>
       <div className={cx('RangeContainer', { error, disabled, mixed: isMixedValue(inputValue) })}>
         <div className="InputContainer">
           <input

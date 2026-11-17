@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
-import PlayCircleIcon from '@mui/icons-material/PlayCircle';
-import CodeIcon from '@mui/icons-material/Code';
-import SpeedOutlinedIcon from '@mui/icons-material/SpeedOutlined';
-import PublicIcon from '@mui/icons-material/Public';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import { CircularProgress as Loader, Tooltip } from 'decentraland-ui2';
-import { IconButton } from '@mui/material';
+import {
+  ArrowBackIosIcon,
+  PlayCircleIcon,
+  CodeIcon,
+  SpeedOutlinedIcon,
+  PublicIcon,
+  RefreshIcon,
+} from '/@/components/Icons/material';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/HubSpinner';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { isClientNotInstalledError } from '/shared/types/client';
 import { isProjectError } from '/shared/types/projects';
@@ -67,6 +70,17 @@ import type { PreviewOptionsProps } from './MenuOptions';
 
 import './styles.css';
 
+function Loader({ size = 40, color = 'primary' }: { size?: number; color?: string }) {
+  return (
+    <Spinner
+      ring="wide"
+      role="progressbar"
+      size={size}
+      color={color}
+    />
+  );
+}
+
 // The AI panel is drag-resizable like the inspector's own panels; its width persists
 // across sessions (global, not per-scene). Bounds keep both the panel and the iframe usable.
 const AI_PANEL_WIDTH_KEY = 'creator-hub:ai-panel-width';
@@ -125,7 +139,6 @@ export function EditorPage() {
     supportsMultiInstance,
     supportsMcp,
     supportsUiDesigner,
-    supportsAuthServer,
     isPreviewRunning,
     startBevyRealm,
     killBevyRealm,
@@ -648,7 +661,6 @@ export function EditorPage() {
     inspectorPort,
     useBevy,
     supportsUiDesigner,
-    supportsAuthServer,
     bevyRealm,
     project,
     userId,
@@ -741,7 +753,14 @@ export function EditorPage() {
     );
   };
 
-  const previewIcon = loadingPreview ? <Loader size={20} /> : <PlayCircleIcon />;
+  const previewIcon = loadingPreview ? (
+    <Loader
+      size={20}
+      color="inherit"
+    />
+  ) : (
+    <PlayCircleIcon />
+  );
 
   return (
     <main
@@ -762,7 +781,12 @@ export function EditorPage() {
                 <ArrowBackIosIcon />
               </div>
               <div className="title">{project.title}</div>
-              <Tooltip title={t('editor.header.actions.refresh')}>
+              <Tooltip
+                label={t('editor.header.actions.refresh')}
+                side="bottom"
+                portal
+                className="refresh-tip"
+              >
                 <div
                   className="refresh"
                   onClick={handleRefresh}
@@ -774,7 +798,11 @@ export function EditorPage() {
             </>
             <div className="actions">
               {aiChatEnabled && (
-                <Tooltip title={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}>
+                <Tooltip
+                  label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
+                  side="bottom"
+                  portal
+                >
                   <IconButton
                     className={`ai-toggle${aiOpen ? ' active' : ''}`}
                     aria-label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
@@ -784,7 +812,11 @@ export function EditorPage() {
                   </IconButton>
                 </Tooltip>
               )}
-              <Tooltip title={t('editor.header.actions.optimize')}>
+              <Tooltip
+                label={t('editor.header.actions.optimize')}
+                side="bottom"
+                portal
+              >
                 <Button
                   className="icon-only"
                   color="secondary"
@@ -794,7 +826,11 @@ export function EditorPage() {
                   <SpeedOutlinedIcon />
                 </Button>
               </Tooltip>
-              <Tooltip title={t('editor.header.actions.code')}>
+              <Tooltip
+                label={t('editor.header.actions.code')}
+                side="bottom"
+                portal
+              >
                 <Button
                   className="icon-only"
                   color="secondary"
@@ -844,7 +880,16 @@ export function EditorPage() {
                       handlePublishScene();
                     }
                   }}
-                  startIcon={isDeploying ? <Loader size={20} /> : <PublicIcon />}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
                   extra={<PublishOptions options={publishOptions} />}
                 >
                   {publishButtonText}
@@ -857,7 +902,16 @@ export function EditorPage() {
                   }
                   data-testid="editor-page-publish-button"
                   onClick={handlePublishScene}
-                  startIcon={isDeploying ? <Loader size={20} /> : <PublicIcon />}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
                 >
                   {publishButtonText}
                 </Button>

@@ -1,21 +1,25 @@
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import { Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
+
+import { InfoOutlinedIcon, WarningAmberIcon } from '/@/components/Icons/material';
 
 import { t } from '/@/modules/store/translation/utils';
 
 import './styles.css';
 
-const CONSEQUENCES = ['engagement', 'analytics', 'storage'] as const;
+const CONSEQUENCES = ['engagement', 'analytics'] as const;
 
-type Props =
+type Props = (
   | { kind: 'land' }
   | {
       kind: 'world-merge';
       /** Number of existing world scenes the new deployment overlaps (two or more). */
       overlap: number;
     }
-  | { kind: 'world-replace' };
+  | { kind: 'world-replace' }
+) & {
+  /** The scene turns `authoritativeMultiplayer` on, so it can keep data in Multiplayer Server storage. */
+  storage?: boolean;
+};
 
 const KEY = 'modal.publish_project.place_continuity';
 
@@ -51,36 +55,36 @@ export function PlaceContinuityWarning(props: Props) {
         <WarningAmberIcon fontSize="inherit" />
       </div>
       <div className="PlaceContinuityWarning-body">
-        <Typography
+        <Text
           variant="h6"
           className="PlaceContinuityWarning-title"
         >
           {t('modal.publish_project.place_continuity.title')}
-        </Typography>
-        <Typography
+        </Text>
+        <Text
           variant="body2"
           className="PlaceContinuityWarning-description"
         >
           {description(props)}
-        </Typography>
-        <Typography
+        </Text>
+        <Text
           variant="overline"
           className="PlaceContinuityWarning-subtitle"
         >
           {t('modal.publish_project.place_continuity.consequences_title')}
-        </Typography>
+        </Text>
         <ul className="PlaceContinuityWarning-list">
-          {CONSEQUENCES.map(key => (
+          {(props.storage ? [...CONSEQUENCES, 'storage' as const] : CONSEQUENCES).map(key => (
             <li key={key}>
-              <Typography variant="body2">
+              <Text variant="body2">
                 {t(`modal.publish_project.place_continuity.consequences.${key}`)}
-              </Typography>
+              </Text>
             </li>
           ))}
         </ul>
         <div className="PlaceContinuityWarning-tip">
           <InfoOutlinedIcon fontSize="inherit" />
-          <Typography variant="body2">{t(TIP[props.kind])}</Typography>
+          <Text variant="body2">{t(TIP[props.kind])}</Text>
         </div>
       </div>
     </div>

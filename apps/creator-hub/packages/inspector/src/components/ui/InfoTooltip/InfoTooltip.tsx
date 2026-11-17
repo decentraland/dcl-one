@@ -2,41 +2,56 @@ import React, { useCallback, useState } from 'react';
 import { VscQuestion as QuestionIcon } from 'react-icons/vsc';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
-import cx from 'classnames';
-import { Popup } from 'decentraland-ui/dist/components/Popup/Popup';
+import { cx } from '../../../lib/utils/cx';
+import Tooltip from '@ui/atoms/Tooltip';
 
-import type { Props } from './types';
+import type { Position, Props } from './types';
 
 import './InfoTooltip.css';
 
-// TODO: Fix tooltip re-opening each scroll with hideOnScroll={true}
+type Side = 'top' | 'bottom' | 'left' | 'right';
+
+const MAX_WIDTH = 250;
+
+const getSide = (position: Position): Side => position.split(' ')[0] as Side;
+
 const InfoTooltip: React.FC<Props> = ({
   className,
   text,
   link,
   trigger,
   type = 'info',
+  position = 'right center',
+  open,
+  disabled = false,
+  hoverable = true,
+  hideOnScroll = true,
+  openOnTriggerMouseEnter = true,
+  closeOnTriggerClick = false,
   onOpen,
   onClose,
-  ...rest
 }) => {
+  // The trigger is the anchor, so no wrapper element is added around it.
+  const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [isClosedByClick, setIsClosedByClick] = useState(false);
 
-  const handleOpen = useCallback(
-    (event: React.MouseEvent<HTMLElement>, data: Props['data']) => {
-      setIsHovered(true);
-      onOpen && onOpen(event, data);
+  const handleOpenChange = useCallback(
+    (isOpen: boolean) => {
+      setIsHovered(isOpen);
+      if (isOpen) {
+        onOpen && onOpen();
+      } else {
+        setIsClosedByClick(false);
+        onClose && onClose();
+      }
     },
-    [setIsHovered, onOpen],
+    [onOpen, onClose],
   );
 
-  const handleClose = useCallback(
-    (event: React.MouseEvent<HTMLElement>, data: Props['data']) => {
-      setIsHovered(false);
-      onClose && onClose(event, data);
-    },
-    [setIsHovered, onClose],
-  );
+  const handleTriggerClick = useCallback(() => {
+    if (closeOnTriggerClick && isHovered) setIsClosedByClick(true);
+  }, [closeOnTriggerClick, isHovered]);
 
   const renderIconTrigger = useCallback(() => {
     switch (type) {
@@ -48,14 +63,6 @@ const InfoTooltip: React.FC<Props> = ({
         return <QuestionIcon size={16} />;
     }
   }, [type]);
-
-  const renderTrigger = useCallback(() => {
-    return (
-      <span className={cx('InfoTooltipTrigger', { hovered: isHovered })}>
-        {trigger ?? renderIconTrigger()}
-      </span>
-    );
-  }, [trigger, isHovered, renderIconTrigger]);
 
   const renderContent = useCallback(() => {
     return (
@@ -74,24 +81,28 @@ const InfoTooltip: React.FC<Props> = ({
   }, [text, link]);
 
   return (
-    <Popup
-      className={cx('InfoTooltip', className)}
-      content={renderContent()}
-      trigger={renderTrigger()}
-      position="right center"
-      on="hover"
-      hideOnScroll
-      hoverable
-      onOpen={handleOpen}
-      onClose={handleClose}
-      popperModifiers={[
-        {
-          name: 'preventOverflow',
-          enabled: true,
-        },
-      ]}
-      {...rest}
-    />
+    <>
+      <span
+        ref={setAnchor}
+        className={cx('InfoTooltipTrigger', { hovered: isHovered })}
+        onClick={handleTriggerClick}
+      >
+        {trigger ?? renderIconTrigger()}
+      </span>
+      <Tooltip
+        anchor={anchor}
+        content={renderContent()}
+        tipClassName={cx('InfoTooltip', className)}
+        side={getSide(position)}
+        open={open}
+        onOpenChange={handleOpenChange}
+        disabled={disabled || !openOnTriggerMouseEnter || isClosedByClick}
+        interactive={hoverable}
+        closeOnScroll={hideOnScroll}
+        maxWidth={MAX_WIDTH}
+        keepInViewport
+      />
+    </>
   );
 };
 

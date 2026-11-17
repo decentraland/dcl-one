@@ -1,8 +1,9 @@
-import classNames from 'classnames';
-import { Badge } from 'decentraland-ui2';
+import { cx as classNames } from '/@/lib/cx';
 
 import { useVideo } from '/@/hooks/useVideo';
 import type { Props } from './types';
+
+import styles from './component.module.css';
 
 import './styles.css';
 
@@ -53,7 +54,7 @@ export function SceneCard({
             <span className="title">{title}</span>
             {subtitle && <span className="subtitle">{subtitle}</span>}
           </div>
-          {tag ? <Badge className="badge">{tag.label}</Badge> : null}
+          {tag ? <span className={classNames(styles.badge, 'badge')}>{tag.label}</span> : null}
         </div>
         {hovered && <span className="info">{description}</span>}
       </div>

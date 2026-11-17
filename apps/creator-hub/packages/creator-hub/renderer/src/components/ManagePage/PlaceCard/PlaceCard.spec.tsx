@@ -1,14 +1,14 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { PublicIcon } from '../../Icons';
 import { PlaceCard } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 type CardProps = Parameters<typeof PlaceCard>[0];
 
@@ -16,7 +16,7 @@ function renderCard(props: Partial<CardProps> = {}) {
   const onViewScenes = vi.fn();
   render(
     <MemoryRouter>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <Routes>
           <Route
             path="/"
@@ -38,7 +38,7 @@ function renderCard(props: Partial<CardProps> = {}) {
             element={<p>Detail page</p>}
           />
         </Routes>
-      </ThemeProvider>
+      </TestProviders>
     </MemoryRouter>,
   );
   return { onViewScenes };
@@ -129,8 +129,8 @@ describe('PlaceCard', () => {
           '\n',
         );
 
-        expect(css).toContain('MuiIconButton-root:hover');
-        expect(css).not.toMatch(/:(hover|focus-within)\s+\.MuiIconButton-root/);
+        expect(css).toMatch(/trigger[^{]*:hover/);
+        expect(css).not.toMatch(/:(hover|focus-within)\s+\.(MuiIconButton-root|[\w-]*trigger)/);
       });
     });
 

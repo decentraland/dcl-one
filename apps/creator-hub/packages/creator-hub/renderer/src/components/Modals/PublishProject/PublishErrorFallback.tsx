@@ -1,9 +1,12 @@
-import { Button } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Button from '@ui/atoms/HubButton';
 
 import { Actions, Description } from '/@/components/ErrorBoundary';
 import { t } from '/@/modules/store/translation/utils';
 
 import { PublishModal } from './PublishModal';
+
+import styles from './buttons.module.css';
 
 type Props = {
   open: boolean;
@@ -28,15 +31,16 @@ export function PublishErrorFallback({ open, onClose, onRetry }: Props) {
       </Description>
       <Actions>
         <Button
-          color="secondary"
-          variant="contained"
+          className={styles.contained}
+          variant="primary"
+          tone="neutral"
           onClick={onClose}
         >
           {t('error_boundary.close')}
         </Button>
         <Button
-          color="primary"
-          variant="contained"
+          className={cx(styles.contained, styles.primary)}
+          variant="primary"
           onClick={onRetry}
         >
           {t('error_boundary.try_again')}

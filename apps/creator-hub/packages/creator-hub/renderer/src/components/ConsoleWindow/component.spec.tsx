@@ -1,10 +1,10 @@
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 
 import { ConsoleWindow } from './component';
 
@@ -39,9 +39,9 @@ describe('ConsoleWindow', () => {
       'http://localhost:3000/?path=/scene',
     );
     ({ container } = render(
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <ConsoleWindow />
-      </ThemeProvider>,
+      </TestProviders>,
     ));
     await vi.waitFor(() => expect(mocks.pushLines).toBeDefined());
   });

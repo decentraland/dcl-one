@@ -1,5 +1,5 @@
-import { LocalFileSystem } from './utils/local';
-import { writeFile } from './utils/fs';
+import { LocalFileSystem } from './utils/local.ts';
+import { writeFile } from './utils/fs.ts';
 
 async function main() {
   const local = new LocalFileSystem('./packs');

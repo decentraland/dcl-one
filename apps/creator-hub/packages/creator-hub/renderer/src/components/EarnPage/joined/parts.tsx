@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { MenuItem, Select, Tooltip } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+
+import Button from '@ui/atoms/HubButton';
+import { Select, SelectOption } from '@ui/atoms/Select';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import type { CreatorFundPlace, PlaceReason } from '/shared/types/creator-fund';
 
@@ -8,7 +12,6 @@ import { getSceneJumpInDeeplink } from '/@/modules/utils';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { ModalCta, VisuallyHidden } from '../EarnModal.styled';
 import {
   ArrowDownIcon,
   CheckmarkIcon,
@@ -17,27 +20,13 @@ import {
   MetricInfoIcon,
   NotEligibleIcon,
 } from '../icons';
-import { StatusLine } from '../Landing.styled';
 import { Spinner } from '../Spinner';
-import { fontFace } from '../tokens';
+
+import modal from '../EarnModal.module.css';
+import landing from '../Landing.module.css';
 
 import { jumpInLocation, placeTitle } from './format';
-import {
-  Chip,
-  CycleSelectBox,
-  ErrorLine,
-  FilterGroup,
-  FilterLabel,
-  JumpIn,
-  Metric,
-  MetricInfoButton,
-  MetricLabel,
-  MetricLabelText,
-  MetricSkeleton,
-  MetricValue,
-  StateBox,
-  TooltipLine,
-} from './parts.styled';
+import styles from './parts.module.css';
 
 const REASONS: Record<PlaceReason, TranslationPath> = {
   content_policy: 'earn.joined.my_places.reasons.content_policy',
@@ -55,24 +44,18 @@ const reasonLines = (reasons: string[]) => [
   ),
 ];
 
-/** The design-system Tooltip's look for EARN tooltips. */
-export const TOOLTIP_SLOTS = {
-  tooltip: {
-    sx: {
-      ...fontFace,
-      backgroundColor: 'var(--onyx)',
-      borderRadius: 'var(--shape-borderRadiusLarge)',
-      padding: '16px 20px',
-      maxWidth: 340,
-      fontSize: 'var(--type-h7-regular-size)',
-      fontWeight: 'var(--type-h7-regular-weight)',
-      lineHeight: 'normal',
-      color: 'var(--gray)',
-      boxShadow: 'var(--shadow-tooltip)',
-    },
-  },
-  arrow: { sx: { color: 'var(--onyx)' } },
-};
+/**
+ * The look and place of EARN tooltips: over the anchor, with an arrow. Give the tooltip its anchor
+ * element: it then describes that element while it is open, and adds no element around it.
+ */
+export const EARN_TOOLTIP = {
+  side: 'top',
+  arrow: true,
+  keepInViewport: true,
+  maxWidth: 340,
+  enterDelay: 100,
+  tipClassName: styles.tooltip,
+} as const;
 
 export type ChipProps =
   | { status: 'in_program' }
@@ -88,21 +71,22 @@ function ExplainedChip({
   icon?: React.ReactNode;
   title: React.ReactNode;
 }) {
+  const [chip, setChip] = useState<HTMLSpanElement | null>(null);
   return (
     <Tooltip
-      title={title}
-      placement="top"
-      arrow
-      describeChild
-      slotProps={TOOLTIP_SLOTS}
+      {...EARN_TOOLTIP}
+      content={title}
+      anchor={chip}
     >
-      <Chip
+      <span
+        ref={setChip}
+        className={styles.chip}
         data-status={status}
         tabIndex={0}
       >
         {icon}
         {t(`earn.joined.my_places.status.${status}`)}
-      </Chip>
+      </span>
     </Tooltip>
   );
 }
@@ -111,10 +95,13 @@ function ExplainedChip({
 export function StatusChip(props: ChipProps) {
   if (props.status === 'in_program') {
     return (
-      <Chip data-status="in_program">
+      <span
+        className={styles.chip}
+        data-status="in_program"
+      >
         <InProgramIcon />
         {t('earn.joined.my_places.status.in_program')}
-      </Chip>
+      </span>
     );
   }
   if (props.status === 'replaced') {
@@ -130,7 +117,12 @@ export function StatusChip(props: ChipProps) {
       status="not_eligible"
       icon={<NotEligibleIcon />}
       title={reasonLines(props.reasons).map(reason => (
-        <TooltipLine key={reason}>{t(reason)}</TooltipLine>
+        <span
+          key={reason}
+          className={styles.tooltipLine}
+        >
+          {t(reason)}
+        </span>
       ))}
     />
   );
@@ -141,41 +133,48 @@ export type MetricReading = { status: 'loading' } | { status: 'ready'; value: st
 function MetricReadingValue({ reading }: { reading: MetricReading }) {
   if (reading.status === 'loading') {
     return (
-      <MetricValue aria-busy="true">
-        <MetricSkeleton aria-hidden />
-        <VisuallyHidden>{t('earn.loading')}</VisuallyHidden>
-      </MetricValue>
+      <dd
+        className={styles.metricValue}
+        aria-busy="true"
+      >
+        <span
+          className={styles.metricSkeleton}
+          aria-hidden
+        />
+        <span className={modal.visuallyHidden}>{t('earn.loading')}</span>
+      </dd>
     );
   }
   return (
-    <MetricValue>
+    <dd className={styles.metricValue}>
       {reading.value ?? (
         <>
           <span aria-hidden>-</span>
-          <VisuallyHidden>{t('earn.joined.my_places.metrics.no_data')}</VisuallyHidden>
+          <span className={modal.visuallyHidden}>{t('earn.joined.my_places.metrics.no_data')}</span>
         </>
       )}
-    </MetricValue>
+    </dd>
   );
 }
 
 export type MetricExplanation = { name: string; tooltip: string };
 
 function MetricInfo({ name, tooltip }: MetricExplanation) {
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
   return (
     <Tooltip
-      title={tooltip}
-      placement="top"
-      arrow
-      describeChild
-      slotProps={TOOLTIP_SLOTS}
+      {...EARN_TOOLTIP}
+      content={tooltip}
+      anchor={button}
     >
-      <MetricInfoButton
+      <button
+        ref={setButton}
+        className={cx(styles.infoButton, styles.metricInfoButton)}
         type="button"
         aria-label={name}
       >
         <MetricInfoIcon />
-      </MetricInfoButton>
+      </button>
     </Tooltip>
   );
 }
@@ -196,14 +195,19 @@ export function MetricStat({
   reading: MetricReading;
 }) {
   return (
-    <Metric>
-      <MetricLabel>
+    <div className={styles.metric}>
+      <dt className={styles.metricLabel}>
         {icon}
-        <MetricLabelText title={label}>{label}</MetricLabelText>
+        <span
+          className={styles.metricLabelText}
+          title={label}
+        >
+          {label}
+        </span>
         {info && <MetricInfo {...info} />}
-      </MetricLabel>
+      </dt>
       <MetricReadingValue reading={reading} />
-    </Metric>
+    </div>
   );
 }
 
@@ -222,9 +226,8 @@ export function JumpInButton({
   onJumpIn?: () => void;
 }) {
   return (
-    <JumpIn
-      variant="contained"
-      disableRipple
+    <Button
+      className={styles.jumpIn}
       aria-label={t('earn.joined.leaderboard.jump_in_label', { place: placeTitle(place) })}
       onClick={() => {
         onJumpIn?.();
@@ -235,7 +238,7 @@ export function JumpInButton({
     >
       {t('earn.joined.leaderboard.jump_in')}
       <JumpInIcon />
-    </JumpIn>
+    </Button>
   );
 }
 
@@ -247,75 +250,45 @@ export type ListStateProps =
 /** A list's loading, empty or error state, centred where the rows would be. */
 export function ListState(props: ListStateProps) {
   return (
-    <StateBox data-kind={props.kind}>
+    <div
+      className={styles.stateBox}
+      data-kind={props.kind}
+    >
       {props.kind === 'loading' && (
         <Spinner
           label={t('earn.loading')}
           size={48}
         />
       )}
-      {props.kind === 'empty' && <StatusLine role="status">{props.message}</StatusLine>}
+      {props.kind === 'empty' && (
+        <p
+          className={landing.statusLine}
+          role="status"
+        >
+          {props.message}
+        </p>
+      )}
       {props.kind === 'error' && (
         <>
-          <ErrorLine role="alert">{props.message}</ErrorLine>
-          <ModalCta
-            variant="contained"
-            color="secondary"
-            size="large"
+          <p
+            className={styles.errorLine}
+            role="alert"
+          >
+            {props.message}
+          </p>
+          <Button
+            className={styles.retryButton}
+            variant="secondary"
+            size="lg"
             onClick={props.onRetry}
           >
             {t('earn.errors.retry')}
-          </ModalCta>
+          </Button>
         </>
       )}
-    </StateBox>
+    </div>
   );
 }
-
-const cycleMenuProps = (keyboard: boolean) =>
-  ({
-    disableScrollLock: true,
-    anchorOrigin: { vertical: 'bottom', horizontal: 'right' },
-    transformOrigin: { vertical: 'top', horizontal: 'right' },
-    slotProps: {
-      paper: {
-        'data-keyboard': keyboard ? 'true' : undefined,
-        sx: {
-          minWidth: 200,
-          marginTop: '10px',
-          padding: '10px 0',
-          backgroundColor: 'var(--menu-bg)',
-          backgroundImage: 'none',
-          border: '1px solid var(--palette-whiteTransparent-subtle)',
-          borderRadius: 'var(--shape-borderRadiusLarge)',
-          boxShadow: 'var(--menu-shadow)',
-          '& .MuiList-root': { padding: '0 10px' },
-          '& .MuiMenuItem-root': {
-            ...fontFace,
-            display: 'flex',
-            alignItems: 'center',
-            minHeight: 38,
-            padding: '0 10px',
-            gap: '10px',
-            borderRadius: 'var(--shape-borderRadiusMedium)',
-            fontSize: 'var(--type-h6-regular-size)',
-            fontWeight: 'var(--type-h6-regular-weight)',
-            lineHeight: 1.5,
-            letterSpacing: '0.15px',
-            color: 'var(--palette-neutral-softWhite)',
-          },
-          '& .MuiMenuItem-root svg': { flexShrink: 0, color: 'var(--palette-neutral-softWhite)' },
-          '&& .MuiMenuItem-root.Mui-focusVisible': { backgroundColor: 'transparent' },
-          '&& .MuiMenuItem-root:hover, && .MuiMenuItem-root.Mui-selected, && .MuiMenuItem-root.Mui-selected:hover, &&[data-keyboard="true"] .MuiMenuItem-root.Mui-focusVisible':
-            { backgroundColor: 'var(--dark-gray)' },
-          '&&[data-keyboard="true"] .MuiMenuItem-root.Mui-focusVisible': {
-            outline: '2px solid var(--palette-info-light)',
-            outlineOffset: -2,
-          },
-        },
-      },
-    },
-  }) as const;
 
 export type CycleOption = { value: string; label: string };
 
@@ -331,33 +304,40 @@ export function CycleSelect({
 }) {
   const [keyboard, setKeyboard] = useState(false);
   return (
-    <FilterGroup>
-      <FilterLabel aria-hidden>{t('earn.joined.filter.cycle')}</FilterLabel>
-      <CycleSelectBox
+    <div className={styles.filterGroup}>
+      <span
+        className={styles.filterLabel}
+        aria-hidden
+      >
+        {t('earn.joined.filter.cycle')}
+      </span>
+      <div
         onKeyDownCapture={() => setKeyboard(true)}
         onPointerDownCapture={() => setKeyboard(false)}
       >
         <Select
-          variant="standard"
+          className={styles.cycleSelect}
+          menuClassName={cx(styles.cycleMenu, keyboard && styles.keyboardMenu)}
+          variant="plain"
           value={value}
-          onChange={event => onChange(event.target.value as string)}
+          onChange={onChange}
           renderValue={selected => options.find(option => option.value === selected)?.label}
-          IconComponent={ArrowDownIcon}
-          autoWidth
-          MenuProps={cycleMenuProps(keyboard)}
-          inputProps={{ 'aria-label': t('earn.joined.filter.cycle') }}
+          icon={<ArrowDownIcon />}
+          placement="bottom-end"
+          aria-label={t('earn.joined.filter.cycle')}
         >
           {options.map(option => (
-            <MenuItem
+            <SelectOption
               key={option.value}
               value={option.value}
+              label={option.label}
             >
               {option.value === value && <CheckmarkIcon />}
               {option.label}
-            </MenuItem>
+            </SelectOption>
           ))}
         </Select>
-      </CycleSelectBox>
-    </FilterGroup>
+      </div>
+    </div>
   );
 }

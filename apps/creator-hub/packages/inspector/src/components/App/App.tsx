@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { useSelectedEntity } from '../../hooks/sdk/useSelectedEntity';
 import { useInspectorUIState } from '../../hooks/sdk/useInspectorUIState';

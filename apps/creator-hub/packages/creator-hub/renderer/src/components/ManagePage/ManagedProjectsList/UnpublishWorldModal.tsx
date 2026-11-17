@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { useDispatch } from '#store';
 import { unpublishEntireWorld } from '/@/modules/store/management';
@@ -54,12 +54,12 @@ export function UnpublishWorldModal({
         </>
       }
     >
-      <Typography variant="h5">
+      <Text variant="h5">
         {t('manage.unpublish_world_confirmation.title', {
           worldName,
           b: (chunks: string) => <b>{chunks}</b>,
         })}
-      </Typography>
+      </Text>
     </Modal>
   );
 }

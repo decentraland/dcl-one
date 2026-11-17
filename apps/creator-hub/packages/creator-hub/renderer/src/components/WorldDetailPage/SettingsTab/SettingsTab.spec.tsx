@@ -2,9 +2,8 @@ import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import type { WorldSettings } from '/@/lib/worlds';
@@ -13,6 +12,7 @@ import { fetchWorldSettings as refetchWorldSettings } from '/@/modules/store/man
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { DetailShell } from '../../DetailShell';
 import { SettingsTab } from '.';
@@ -95,7 +95,7 @@ async function renderTab(
   render(
     <Provider store={store as never}>
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <DetailShell
             title="Manage - Plaza"
             basePath="/manage/world/plaza.dcl.eth"
@@ -108,7 +108,7 @@ async function renderTab(
               access={access}
             />
           </DetailShell>
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );
@@ -309,7 +309,7 @@ describe('World SettingsTab', () => {
     it('should write it at once and leave CANCEL and SAVE hidden', async () => {
       await renderTab();
 
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Access' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'Access' }));
       fireEvent.click(
         within(screen.getByRole('listbox')).getByRole('option', { name: /^Invitation Only/ }),
       );

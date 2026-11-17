@@ -1,0 +1,21 @@
+.root {
+  animation: none;
+}
+
+.paper {
+  --overlay-text-dim: var(--dcl-silver);
+}
+
+.paper.large {
+  --dialog-width: 980px;
+}
+
+.paper > div > button[aria-label="close"],
+.paper > div > button[aria-label="back"] {
+  color: var(--icon-btn-ink);
+}
+
+.noBack [aria-label="back"] {
+  opacity: 0;
+  cursor: default;
+}

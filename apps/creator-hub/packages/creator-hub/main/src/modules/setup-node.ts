@@ -2,8 +2,8 @@ import path from 'path';
 import fs from 'fs';
 import { platform } from 'os';
 import { app } from 'electron';
-import cmdShim from 'cmd-shim';
 import log from 'electron-log/main';
+import { writeCmdShim } from './cmd-shim';
 import { getBinPath } from './path';
 
 const APP_UNPACKED_PATH = path.join(
@@ -66,10 +66,9 @@ export function setupNodeBinary() {
   log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
   // on windows we use a cmd file
   if (platform() === 'win32') {
-    cmdShim(
-      nodeBinPath,
-      // remove the .cmd part if present, since it will get added by cmdShim
-      nodeCmdPath.endsWith('.cmd') ? nodeCmdPath.replace(/\.cmd$/, '') : nodeCmdPath,
+    // remove the .cmd part: writeCmdShim adds it
+    writeCmdShim(nodeBinPath, nodeCmdPath.replace(/\.cmd$/, '')).catch(error =>
+      log.error('[Install] Could not write the node launchers:', error),
     );
   } else {
     // otherwise we use a symlink

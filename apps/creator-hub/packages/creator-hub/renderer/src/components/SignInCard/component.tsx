@@ -1,5 +1,6 @@
 import React from 'react';
-import { Button, Card, CardContent, Typography } from 'decentraland-ui2';
+import Button from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 import './styles.css';
 
@@ -11,23 +12,23 @@ type Props = {
 
 const SignInCard: React.FC<Props> = ({ onClickSignIn, title }) => {
   return (
-    <Card className="Card SignInCard">
-      <CardContent className="CardContent CenteredContent">
-        <Typography
+    <div className="Card SignInCard">
+      <div className="CardContent CenteredContent">
+        <Text
           className="CardTitle"
           variant="h6"
         >
           {title}
-        </Typography>
+        </Text>
         <Button
           className="SignInButton"
-          variant="contained"
+          variant="primary"
           onClick={onClickSignIn}
         >
           {t('manage.sign_in.action')}
         </Button>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 

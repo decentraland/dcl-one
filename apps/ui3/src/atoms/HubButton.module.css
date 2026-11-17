@@ -1,0 +1,33 @@
+/* What HubButton adds to button.css. Its element carries the classes of button.css and these beside them.
+   A rule that sets a property button.css also sets names the class of button.css too, so it wins in any
+   load order. */
+
+/* Label sizes. A host sets --ctl-fs-*; without them the sizes of button.css stay. */
+:global(.btn--sm).root { font-size: var(--ctl-fs-sm, var(--fs-12)); }
+:global(.btn--md).root { font-size: var(--ctl-fs-md, var(--fs-13)); }
+:global(.btn--lg).root { font-size: var(--ctl-fs-lg, var(--fs-15)); }
+
+:global(.btn).block { display: flex; width: 100%; }
+
+/* The icon slot. A host fits it with --btn-icon-size and --btn-icon-margin. */
+.icon { display: inline-flex; flex: 0 0 auto; margin: var(--btn-icon-margin, 0); font-size: var(--btn-icon-size, 1.25em); }
+
+.text { background: transparent; color: var(--btn-tone, var(--brand)); }
+.text:not(:disabled):not(:global(.is-disabled)):hover { background: color-mix(in srgb, var(--btn-tone, var(--brand)) 8%, transparent); }
+.outline { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--btn-tone, var(--brand)) 50%, transparent); color: var(--btn-tone, var(--brand)); }
+.outline:not(:disabled):not(:global(.is-disabled)):hover { background: color-mix(in srgb, var(--btn-tone, var(--brand)) 8%, transparent); box-shadow: inset 0 0 0 1px var(--btn-tone, var(--brand)); }
+:global(.btn).text:disabled, :global(.btn).text:global(.is-disabled),
+:global(.btn).outline:disabled, :global(.btn).outline:global(.is-disabled) { background: transparent; color: var(--btn-off-ink, var(--ctl-disabled-ink, var(--ink-45))); }
+:global(.btn).outline:disabled, :global(.btn).outline:global(.is-disabled) { box-shadow: inset 0 0 0 1px var(--fill-5); }
+
+.root[data-tone="neutral"] { --btn-tone: var(--btn-neutral, var(--text)); }
+:global(.btn--primary).root[data-tone="neutral"] { color: var(--btn-neutral-ink, var(--bg, #161518)); }
+:global(.btn--primary).root[data-tone="neutral"]:not(:disabled):not(:global(.is-disabled)):hover { background: var(--btn-neutral-hover, color-mix(in srgb, var(--btn-tone) 85%, #000)); }
+/* The neutral text and outline looks keep their colour when the button is disabled: --btn-off-ink. */
+.text[data-tone="neutral"],
+.outline[data-tone="neutral"] { --btn-off-ink: var(--btn-neutral-text, var(--btn-tone)); color: var(--btn-neutral-text, var(--btn-tone)); }
+
+/* A host that sets --ctl-caps: 1 gets upper-case labels on a 24px line. Without the token nothing changes. */
+@container style(--ctl-caps: 1) {
+  .root { line-height: 24px; text-transform: uppercase; }
+}

@@ -1,0 +1,18 @@
+diff --git a/dist/logic/bundle.js b/dist/logic/bundle.js
+--- a/dist/logic/bundle.js
++++ b/dist/logic/bundle.js
+@@ -281,7 +281,13 @@
+     await runTypeChecker(components, options);
+ }
+ function runTypeChecker(components, options) {
+-    const tsBin = require.resolve('typescript/lib/tsc');
++    let tsBin;
++    try {
++        tsBin = require.resolve('typescript/lib/tsc');
++    }
++    catch {
++        tsBin = path_1.default.join(path_1.default.dirname(require.resolve('typescript/package.json')), 'lib', 'tsc.js');
++    }
+     const args = [
+         '-p',
+         'tsconfig.json',

@@ -1,0 +1,31 @@
+.detailed.detailed.detailed {
+  align-items: flex-start;
+  max-width: 700px;
+}
+
+.detailed > span {
+  margin-top: 2px;
+}
+
+.detailed > div:first-of-type {
+  overflow: hidden;
+}
+
+.detailed > div + div {
+  padding-top: 0;
+}
+
+/* The title is 16px text with its own space between letters, not the space of the 14px notice text. */
+.detailed [class~="MuiAlertTitle-root"] {
+  letter-spacing: 0.00938em;
+}
+
+.description {
+  max-height: 120px;
+  margin: 0;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.9;
+}

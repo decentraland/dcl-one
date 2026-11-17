@@ -8,14 +8,162 @@
   overflow-y: auto;
 }
 
-/* Input Styles */
-.AppSettingsModal .MuiInputBase-root .MuiOutlinedInput-notchedOutline {
-  /* TODO: Fix styles in the ui2 library */
-  border-color: #ffffff3b;
+/* A field group: a column of a title and its controls. */
+.AppSettingsModal .FormGroup {
+  display: flex;
+  flex-direction: column;
 }
 
-.AppSettingsModal .ApplyButton.Mui-disabled {
-  /* TODO: Fix styles in the ui2 library */
-  background-color: #f8919d;
-  color: #fee9ec;
+/* A checkbox row: 42px high, the 18px box drawn in a 24px area, the text 31px from the left. */
+.AppSettingsModal .SettingsCheckbox {
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  margin-left: -2px;
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+  color: var(--text-tone-primary);
+}
+
+/* The box has the shape it had before: a 2px line, 2px corners, the mark cut out of the fill. */
+.AppSettingsModal .SettingsCheckbox .checkbox__box {
+  position: relative;
+  z-index: 0;
+  margin: 3px;
+  border: 2px solid var(--text-tone-secondary);
+  border-radius: 2px;
+}
+
+.AppSettingsModal .SettingsCheckbox .checkbox__box.is-checked {
+  border-color: transparent;
+  background: transparent;
+}
+
+.AppSettingsModal .SettingsCheckbox .checkbox__box.is-checked::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  background: var(--brand);
+  mask: var(--checkbox-checked-mask) center / 18px 18px no-repeat;
+}
+
+.AppSettingsModal .SettingsCheckbox .checkbox__box.is-checked svg {
+  display: none;
+}
+
+/* The 42px disc that shows behind the box while the pointer is on it. */
+.AppSettingsModal .SettingsCheckbox .checkbox__box::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -14px;
+  border-radius: 50%;
+}
+
+@media (hover: hover) {
+  .AppSettingsModal .SettingsCheckbox:not(.is-disabled) .checkbox__box:hover::after {
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
+  }
+}
+
+.AppSettingsModal .SettingsCheckbox .checkbox__label {
+  line-height: 1.5;
+}
+
+.AppSettingsModal .SettingsRadioGroup {
+  gap: 0;
+}
+
+.AppSettingsModal .SettingsRadio {
+  gap: 11px;
+  min-height: 42px;
+  letter-spacing: 0.00938em;
+}
+
+/* A switch row: 38px high, the track 1px and the text 47px from the left, as before. */
+.AppSettingsModal .SettingsToggleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  cursor: pointer;
+}
+
+/* The switch has the shape it had before: a 34x14 track, a 20px thumb that goes 3px past each end. */
+.AppSettingsModal .SettingsToggleRow .toggle {
+  --w: 34px;
+  --h: 14px;
+  margin-left: 1px;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.AppSettingsModal .SettingsToggleRow .toggle.is-on {
+  background: color-mix(in srgb, var(--brand) 50%, transparent);
+}
+
+.AppSettingsModal .SettingsToggleRow .toggle__knob {
+  top: -3px;
+  left: -3px;
+  width: 20px;
+  height: 20px;
+  box-shadow:
+    0px 2px 1px -1px rgba(0, 0, 0, 0.2),
+    0px 1px 1px 0px rgba(0, 0, 0, 0.14),
+    0px 1px 3px 0px rgba(0, 0, 0, 0.12);
+}
+
+.AppSettingsModal .SettingsToggleRow .toggle.is-on .toggle__knob {
+  background: var(--brand);
+  transform: translateX(20px);
+}
+
+/* The 38px disc that shows behind the thumb while the pointer is on the switch. */
+@media (hover: hover) {
+  .AppSettingsModal .SettingsToggleRow .toggle:hover .toggle__knob {
+    box-shadow:
+      0px 2px 1px -1px rgba(0, 0, 0, 0.2),
+      0px 1px 1px 0px rgba(0, 0, 0, 0.14),
+      0px 1px 3px 0px rgba(0, 0, 0, 0.12),
+      0 0 0 9px rgba(255, 255, 255, 0.08);
+  }
+
+  .AppSettingsModal .SettingsToggleRow .toggle.is-on:hover .toggle__knob {
+    box-shadow:
+      0px 2px 1px -1px rgba(0, 0, 0, 0.2),
+      0px 1px 1px 0px rgba(0, 0, 0, 0.14),
+      0px 1px 3px 0px rgba(0, 0, 0, 0.12),
+      0 0 0 9px color-mix(in srgb, var(--brand) 8%, transparent);
+  }
+}
+
+/* The tooltip wrapper takes the place of the sign-out link in the header row. */
+.AppSettingsModal .AgentSignTip {
+  margin-left: auto;
+}
+
+.AppSettingsModal .AiCopyButton.btn {
+  --btn-icon-margin: 0 0 0 -2px;
+
+  background: var(--dark-gray);
+  color: var(--white);
+}
+
+/* The icon of a small button is 18px and starts 2px before the content box (--btn-icon-margin), as before. */
+.AppSettingsModal .AiCopyButton.btn svg {
+  font-size: 18px;
+}
+
+.AppSettingsModal .AiCopyButton.btn:hover:not(:disabled) {
+  background: var(--light-gray);
+}
+
+.AppSettingsModal .AboutChangelogLink {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
 }

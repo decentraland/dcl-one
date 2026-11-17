@@ -1,9 +1,12 @@
 import React, { useMemo } from 'react';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import InfoIcon from '@mui/icons-material/InfoOutlined';
-import { Typography } from 'decentraland-ui2';
-import { Button as ButtonText } from 'decentraland-ui2';
+import ButtonText from '@ui/atoms/HubButton';
+import Text from '@ui/atoms/Text';
+
+import {
+  CheckCircleIcon,
+  OpenInNewIcon,
+  InfoOutlinedIcon as InfoIcon,
+} from '/@/components/Icons/material';
 import { t } from '/@/modules/store/translation/utils';
 import type { WorldsWalletStats } from '/@/lib/worlds';
 import { formatSize } from '/@/modules/file';
@@ -60,12 +63,12 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
         size="small"
         className="WorldsYourStorageModal"
       >
-        <Typography className="TotalStorage">
+        <Text className="TotalStorage">
           <span>{t('modal.worlds_storage.total_available_storage')}</span>
           <span className="Mbs">
             {formatSize(Number(stats.maxAllowedSpace) - Number(stats.usedSpace))}
           </span>
-        </Typography>
+        </Text>
         <div className="Asset">
           <div className="Texts">
             <span className="Name">{t('modal.worlds_storage.mana')}</span>
@@ -128,10 +131,11 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
             trackingAction="Click Buy NAME"
           />
         </div>
-        <Typography className="Proposal">
+        <Text className="Proposal">
           <InfoIcon className="InfoIcon" />
           <span>{t('modal.worlds_storage.proposal')}</span>{' '}
           <ButtonText
+            className="LearnMore"
             variant="text"
             onClick={() => {
               analytics.track('Worlds Your Storage Modal Action', { action: 'Click Learn More' });
@@ -140,7 +144,7 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
           >
             {t('modal.worlds_storage.learn_more')}
           </ButtonText>
-        </Typography>
+        </Text>
       </Modal>
     );
   },

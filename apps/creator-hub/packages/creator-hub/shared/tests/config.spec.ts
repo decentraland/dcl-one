@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CONFIG,
   dropCompressAssetsSettings,
   dropGuiEditorSetting,
+  mergeConfig,
   promoteAiAssistantSetting,
 } from '../types/config';
+import type { Config } from '../types/config';
 import type { AppSettings } from '../types/settings';
 
 type LegacySettings = Partial<AppSettings> & { guiEditor?: boolean };
@@ -164,5 +166,84 @@ describe('promoteAiAssistantSetting', () => {
 describe('DEFAULT_CONFIG', () => {
   it('should keep AI agents outside Creator Hub opt-in', () => {
     expect(DEFAULT_CONFIG.settings.exposeMcpServer).toBe(false);
+  });
+});
+
+describe('mergeConfig', () => {
+  let defaults: Config;
+
+  beforeEach(() => {
+    defaults = structuredClone(DEFAULT_CONFIG);
+    defaults.settings.scenesPath = '/home/creator/scenes';
+    defaults.workspace.paths = ['/default/scene'];
+  });
+
+  describe('when the stored config has only some of the keys', () => {
+    let merged: Config;
+
+    beforeEach(() => {
+      merged = mergeConfig(
+        {
+          workspace: { paths: ['/scenes/a', '/scenes/b'] },
+          settings: { previewOptions: { debugger: false } },
+        } as unknown as Partial<Config>,
+        defaults,
+      );
+    });
+
+    it('should keep the stored values', () => {
+      expect(merged.settings.previewOptions.debugger).toBe(false);
+    });
+
+    it('should take the other values from the defaults, at each depth', () => {
+      expect(merged.version).toBe(defaults.version);
+      expect(merged.settings.scenesPath).toBe('/home/creator/scenes');
+      expect(merged.settings.previewOptions.skipAuthScreen).toBe(true);
+    });
+
+    it('should replace a default array with the stored array, not join them', () => {
+      expect(merged.workspace.paths).toEqual(['/scenes/a', '/scenes/b']);
+    });
+
+    it('should not share an object with the defaults', () => {
+      merged.settings.previewOptions.showWarnings = false;
+
+      expect(defaults.settings.previewOptions.showWarnings).toBe(true);
+    });
+  });
+
+  describe('when the stored config has keys that the defaults do not have', () => {
+    it('should keep them after the keys of the defaults', () => {
+      const merged = mergeConfig({ userId: 'user', version: 1 }, defaults);
+
+      expect(merged.userId).toBe('user');
+      expect(Object.keys(merged)).toEqual([...Object.keys(defaults), 'userId']);
+    });
+  });
+
+  describe('when a stored value is of another type than the default', () => {
+    it('should keep the stored value', () => {
+      const merged = mergeConfig(
+        { editors: null, workspace: [] } as unknown as Partial<Config>,
+        defaults,
+      );
+
+      expect(merged.editors).toBeNull();
+      expect(merged.workspace).toEqual([]);
+    });
+  });
+
+  describe('when the stored config has a __proto__ key', () => {
+    it('should not change the prototype of the result', () => {
+      const stored = JSON.parse(
+        '{"__proto__":{"polluted":true},"settings":{"__proto__":{"polluted":true}}}',
+      );
+
+      const merged = mergeConfig(stored, defaults) as Config & { polluted?: boolean };
+
+      expect(merged.polluted).toBeUndefined();
+      expect((merged.settings as AppSettings & { polluted?: boolean }).polluted).toBeUndefined();
+      expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    });
   });
 });

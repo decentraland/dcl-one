@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
-import ArrowRightIcon from '@mui/icons-material/ArrowRight';
-import { Menu, MenuItem, Tooltip } from 'decentraland-ui2';
+import { useCallback, useRef, useState, type MouseEvent } from 'react';
+import { Menu, MenuItem } from '@ui/atoms/Menu';
+import Tooltip from '@ui/atoms/Tooltip';
+import { ArrowRightIcon } from '/@/components/Icons/material';
 
 import { misc } from '#preload';
 import logo from '/assets/images/logo-editor.png';
@@ -15,14 +16,17 @@ import './styles.css';
 
 export function LogoMenu({ onClickAbout, onClickSettings, onClickCheckForUpdates }: Props) {
   const logoRef = useRef<HTMLButtonElement>(null);
-  const helpRef = useRef<HTMLLIElement>(null);
   const [open, setOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpAnchor, setHelpAnchor] = useState<HTMLElement | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
 
   const close = useCallback(() => {
-    setHelpOpen(false);
+    setHelpAnchor(null);
     setOpen(false);
+  }, []);
+
+  const openHelp = useCallback((event: MouseEvent<HTMLElement>) => {
+    setHelpAnchor(event.currentTarget);
   }, []);
 
   const handleClickAbout = useCallback(() => {
@@ -56,17 +60,20 @@ export function LogoMenu({ onClickAbout, onClickSettings, onClickCheckForUpdates
   return (
     <>
       <Tooltip
-        title={t('navbar.logo_menu.main_menu_tooltip')}
-        placement="bottom"
-        classes={{ tooltip: 'MainMenuTooltip' }}
+        label={t('navbar.logo_menu.main_menu_tooltip')}
+        side="bottom"
+        tipClassName="MainMenuTooltip"
+        portal
+        labelChild
       >
         <button
+          type="button"
           className="LogoButton"
           ref={logoRef}
           data-testid="logo-menu-button"
           aria-haspopup="menu"
           aria-expanded={open ? 'true' : undefined}
-          onClick={() => setOpen(true)}
+          onClick={() => (open ? close() : setOpen(true))}
         >
           <img
             src={logo}
@@ -76,64 +83,70 @@ export function LogoMenu({ onClickAbout, onClickSettings, onClickCheckForUpdates
       </Tooltip>
       <Menu
         className="LogoMenu"
-        anchorEl={logoRef.current}
+        anchor={logoRef.current}
         open={open}
         onClose={close}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        placement="bottom-start"
+        modal
       >
-        <MenuItem
-          data-testid="logo-menu-about"
-          onClick={handleClickAbout}
-        >
-          {t('navbar.logo_menu.about')}
-        </MenuItem>
-        <MenuItem
-          data-testid="logo-menu-check-updates"
-          onClick={handleClickCheckForUpdates}
-        >
-          {t('navbar.logo_menu.check_for_updates')}
-        </MenuItem>
-        <MenuItem
-          data-testid="logo-menu-settings"
-          onClick={handleClickSettings}
-        >
-          {t('navbar.logo_menu.settings')}
-        </MenuItem>
-        <MenuItem
-          data-testid="logo-menu-report-bug"
-          onClick={handleClickReport}
-        >
-          {t('navbar.logo_menu.report_bug')}
-        </MenuItem>
-        <MenuItem
-          className="LogoMenuSubmenuItem"
-          ref={helpRef}
-          data-testid="logo-menu-help"
-          onClick={() => setHelpOpen(true)}
-          onMouseEnter={() => setHelpOpen(true)}
-        >
-          {t('navbar.logo_menu.help.label')}
-          <ArrowRightIcon fontSize="small" />
-        </MenuItem>
+        <div className="MuiPaper-root">
+          <MenuItem
+            data-testid="logo-menu-about"
+            onClick={handleClickAbout}
+          >
+            {t('navbar.logo_menu.about')}
+          </MenuItem>
+          <MenuItem
+            data-testid="logo-menu-check-updates"
+            onClick={handleClickCheckForUpdates}
+          >
+            {t('navbar.logo_menu.check_for_updates')}
+          </MenuItem>
+          <MenuItem
+            data-testid="logo-menu-settings"
+            onClick={handleClickSettings}
+          >
+            {t('navbar.logo_menu.settings')}
+          </MenuItem>
+          <MenuItem
+            data-testid="logo-menu-report-bug"
+            onClick={handleClickReport}
+          >
+            {t('navbar.logo_menu.report_bug')}
+          </MenuItem>
+          <MenuItem
+            className="LogoMenuSubmenuItem"
+            data-testid="logo-menu-help"
+            aria-haspopup="menu"
+            aria-expanded={helpAnchor ? 'true' : undefined}
+            onClick={openHelp}
+            onMouseEnter={openHelp}
+          >
+            {t('navbar.logo_menu.help.label')}
+            <ArrowRightIcon fontSize="small" />
+          </MenuItem>
+        </div>
       </Menu>
       <Menu
         className="LogoMenu LogoSubmenu"
-        anchorEl={helpRef.current}
-        open={helpOpen}
-        onClose={() => setHelpOpen(false)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        anchor={helpAnchor}
+        open={open && Boolean(helpAnchor)}
+        onClose={() => setHelpAnchor(null)}
+        placement="right-start"
+        // The ui2 submenu was 4px under the top of its item.
+        crossOffset={4}
       >
-        <MenuItem onClick={handleClickExternal(HELP_FAQ_URL)}>
-          {t('navbar.logo_menu.help.faq')}
-        </MenuItem>
-        <MenuItem onClick={handleClickExternal(CONTACT_SUPPORT_URL)}>
-          {t('navbar.logo_menu.help.contact_support')}
-        </MenuItem>
-        <MenuItem onClick={handleClickExternal(DISCORD_URL)}>
-          {t('navbar.logo_menu.help.discord')}
-        </MenuItem>
+        <div className="MuiPaper-root">
+          <MenuItem onClick={handleClickExternal(HELP_FAQ_URL)}>
+            {t('navbar.logo_menu.help.faq')}
+          </MenuItem>
+          <MenuItem onClick={handleClickExternal(CONTACT_SUPPORT_URL)}>
+            {t('navbar.logo_menu.help.contact_support')}
+          </MenuItem>
+          <MenuItem onClick={handleClickExternal(DISCORD_URL)}>
+            {t('navbar.logo_menu.help.discord')}
+          </MenuItem>
+        </div>
       </Menu>
       <ReportIssue
         open={reportOpen}

@@ -1,5 +1,5 @@
-import cx from 'classnames';
-import { Box, ManaMaticIcon } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import ManaMark from '@ui/atoms/ManaMark';
 
 import './styles.css';
 
@@ -9,16 +9,15 @@ type Props = {
   className?: string;
 };
 
-/**
- * A MANA amount with its icon. Deliberately not decentraland-ui2's `Mana`:
- * that renders a ButtonBase, which puts a focusable, dead button in read-only
- * places like table cells and metric cards.
- */
+/** A MANA amount with its icon. Read-only: it has no button and takes no focus. */
 export function ManaValue({ children, className }: Props) {
   return (
-    <Box className={cx('ManaValue', className)}>
-      <ManaMaticIcon fontSize="small" />
+    <div className={cx('ManaValue', className)}>
+      <ManaMark
+        network="polygon"
+        size={20}
+      />
       {children}
-    </Box>
+    </div>
   );
 }

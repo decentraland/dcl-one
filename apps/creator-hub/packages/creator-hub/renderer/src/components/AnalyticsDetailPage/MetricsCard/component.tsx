@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import { type Metric, MetricDisplay } from '../MetricDisplay';
 
 import './styles.css';
@@ -13,16 +11,16 @@ type Props = {
 
 export function MetricsCard({ headline, metrics }: Props) {
   return (
-    <Box className="MetricsCard">
+    <div className="MetricsCard">
       {headline && <MetricDisplay {...headline} />}
-      <Box className="MetricsGrid">
+      <div className="MetricsGrid">
         {metrics.map(metric => (
           <MetricDisplay
             key={metric.label}
             {...metric}
           />
         ))}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

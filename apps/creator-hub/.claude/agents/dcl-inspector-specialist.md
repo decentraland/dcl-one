@@ -40,8 +40,8 @@ Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
 make build-inspector
-(cd packages/inspector && pnpm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm test)
-pnpm exec eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
+(cd packages/inspector && pnpm run typecheck && VITEST_MAX_WORKERS=2 pnpm test)
+node scripts/rolldown.js oxlint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
 ```
 
 For any behavior or UI change, verify it in a browser with Playwright against the standalone inspector (`pnpm run start` with `VITE_INSPECTOR_PORT` set; see `docs/UIDesigner.md` and `docs/testing-standards.md`). Screenshot each surface you'll touch before you edit it, and again after; include the pairs in your reply, compared against the Figma frame for UI work. They go in the PR's Screenshots section, never into the repo, and carry fixture data only: never a signed-in profile's wallet, email, or scene names.
