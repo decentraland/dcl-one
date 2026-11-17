@@ -185,6 +185,15 @@ describe("legalDocToMarkdown", () => {
     expect(md).toContain("[the DAO](https://dao.decentraland.org)");
     expect(md).not.toMatch(NO_HTML);
   });
+
+  it("numbers an ordered list by position, skipping empty items", () => {
+    const md = legalDocToMarkdown({
+      title: "Creator Fund",
+      sections: [{ heading: "3. Eligibility", body: [{ type: "ol", items: ["be 18", " ", "own the LAND"] }] }],
+    });
+    expect(md).toContain("1. be 18\n3. own the LAND");
+    expect(md).not.toContain("- be 18");
+  });
 });
 
 function makePlace(overrides: Partial<Place>): Place {

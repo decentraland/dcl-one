@@ -3,7 +3,7 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: -22px clamp(-120px, -6vw, -20px) -22px;
+  margin: -22px calc(-1 * var(--menu-gutter, 0px)) -22px;
   overflow: hidden;
   background: var(--map-bg);
 }

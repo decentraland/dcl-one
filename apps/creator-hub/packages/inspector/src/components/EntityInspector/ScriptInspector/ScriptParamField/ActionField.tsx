@@ -12,10 +12,11 @@ import './ActionField.css';
 type Props = {
   label: React.ReactNode;
   value: ActionRef;
+  disabled?: boolean;
   onChange: (value: ActionRef) => void;
 };
 
-const ActionField: React.FC<WithSdkProps & Props> = ({ sdk, label, value, onChange }) => {
+const ActionField: React.FC<WithSdkProps & Props> = ({ sdk, label, value, disabled, onChange }) => {
   const [_entitiesWithAction, _getActionEntity, getActionValue] = useComponentsWith(
     components => components.Actions,
   );
@@ -58,11 +59,12 @@ const ActionField: React.FC<WithSdkProps & Props> = ({ sdk, label, value, onChan
         <EntityField
           components={[sdk.components.Actions] as Component[]}
           value={value.entity}
+          disabled={disabled}
           onChange={handleEntityChange}
         />
         <Dropdown
           placeholder="Select an Action"
-          disabled={!value.entity || availableActions.length === 0}
+          disabled={disabled || !value.entity || availableActions.length === 0}
           options={availableActions}
           value={value.action}
           searchable

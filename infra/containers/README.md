@@ -116,10 +116,13 @@ python3 tooling/image-smoke.py
   Unrelated cache families are excluded from image retention.
 - The Rust test and release-proof jobs cache dependency artifacts only
   (`Swatinem/rust-cache`): first attempts on main save, pull requests read, and the
-  workspace crates rebuild on each run. The Explorer's native jobs key their pruned
-  `target` trees on the compiler, the tool environment and the Cargo inputs
-  (`tooling/bevy-target-cache.py`), fall back to the newest cache of the same compiler
-  and save from main's first attempts. The smoke job keeps its full `target` snapshot.
+  workspace crates rebuild on each run. The Explorer's native jobs key their
+  `target` trees on the compiler, the tool environment, the Cargo inputs and the
+  workspace tree (`tooling/bevy-target-cache.py`). The trees hold the workspace crates,
+  so a job compiles only what a change reaches. The jobs fall back to the newest cache
+  of the same dependencies, then of the same compiler. First attempts on main save an
+  entry for each change of the workspace; a pull request of this repository saves one
+  entry only when main has none for its dependencies. The smoke job keeps its full `target` snapshot.
   Cache pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`. GitHub cache scopes are shared across workflows;
   exact keys limit fallback but do not authenticate the writer. Publishing refs
@@ -135,6 +138,7 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - Publication is not atomic: deploy APIs and Sites from one verified SHA or recorded digests.
 - APIs and Sites set `COMMIT_HASH` to the build revision (`unversioned` outside git): APIs report it in `/about` and the status routes, Sites in `window.__DCL_PUBLIC__.commitHash`, which `/play`'s sign-in screens show as their build when the Vite build recorded none. A deployment's own `COMMIT_HASH` overrides it.
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets, and, behind the gateway, `HTTP_TRUSTED_PROXY_CIDRS` with the gateway's network ([gateway](../gateway/README.md)); Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
+- Sites' `/download` takes two addresses from the deployment: `EXPLORER_INSTALLERS_URL` is the host of the Explorer launcher installers (unset, the page offers no installer, the home page's download call leads to `/download` and `/download_success` answers 404: the node serves none), and `DOWNLOAD_COUNTS_URL` is the JSON of the download counts per platform (unset or unreachable, the page shows no total and the home page shows "+400K").
 - Sites' blog (`/blog`) reads cms-server, the Contentful cache decentraland/sites reads: `BLOG_CMS_URL` is its full `<origin>/spaces/<space>/environments/<environment>` base. Unset, or with the CMS unreachable, the blog pages answer 503. TODO(cms-migration): point `BLOG_CMS_URL` at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
 - Sites serves the email confirmation links under `/account` (`confirm-email-challenge`, `confirm-email`, `credits-email-confirmed`), so the node's `ACCOUNT_BASE_URL` is `<origin>/account`; a request on `account.<domain>` redirects there. `TURNSTILE_SITE_KEY` (Cloudflare Turnstile's public site key) shows the challenge and must pair with the node's `TURNSTILE_SECRET_KEY`; unset, the links confirm without one.

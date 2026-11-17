@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
@@ -33,7 +32,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 
   const { sid, wrap } = await pageLoader(request, context, FALLBACK);
 
-  // Only the requested document reaches the client, not all nine.
+  // Only the requested document reaches the client, not every one.
   const payload = { doc: key, legal: LEGAL_DOCS[key], sid };
   return wrap(payload);
 }

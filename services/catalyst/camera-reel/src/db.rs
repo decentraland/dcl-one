@@ -883,6 +883,7 @@ mod tests {
     #[tokio::test]
     async fn world_lookup_cache_obeys_configured_capacity_after_maintenance() {
         let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(500))
             .connect_lazy("postgres://localhost/camera_cache_test")
             .unwrap();
         let db = Database::new(pool, "https://camera.example", 300, 2);

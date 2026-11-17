@@ -22,8 +22,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 44px;
-  padding: 4px 18px 4px 6px;
+  min-width: 162px;
+  height: 46px;
+  padding: 1px 18px 1px 1px;
   border: 1px solid var(--white-10);
   border-radius: var(--r-pill);
   background: rgba(255, 255, 255, 0.04);
@@ -36,7 +37,9 @@
   background: var(--white-10);
 }
 .chipName {
-  font-size: 15px;
+  flex: 1;
+  text-align: center;
+  font-size: 16px;
   font-weight: 700;
 }
 

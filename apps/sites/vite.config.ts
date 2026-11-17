@@ -121,6 +121,9 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
+    // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
+    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -292,7 +295,6 @@ export default defineConfig({
         ws: platformWebSocket,
       }).map(([find, replacement]) => ({ find, replacement })),
       { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
-      { find: /^@dcl\/one-ui\/foundations\.css$/, replacement: join(oneUi, "foundations", "foundations.css") },
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],

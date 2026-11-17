@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { EmptyState, Icon, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PhotoDetail } from './PhotoDetail'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
@@ -68,18 +69,20 @@ export function GalleryPage({
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
       onClose={gallery.toggle}
-      flushBody
+      transparentBody
     >
+      <div className={styles.page}>
+      <MenuBackdrop />
       <div className={styles.head}>
         <h1 className={styles.title}>Gallery</h1>
         {list.loaded && list.max > 0 && (
           <div className={styles.storage} title={`${list.total} of ${list.max} photos used`}>
-            <div className={styles.storageBar}>
-              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
-            </div>
             <span className={styles.storageText}>
               Storage {list.total}/{list.max} photos taken
             </span>
+            <div className={styles.storageBar}>
+              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
+            </div>
           </div>
         )}
       </div>
@@ -119,6 +122,7 @@ export function GalleryPage({
           aria-label="Photos"
         />
       )}
+      </div>
 
       {selected && index != null && (
         <PhotoDetail

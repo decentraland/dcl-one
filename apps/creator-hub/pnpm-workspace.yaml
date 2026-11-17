@@ -39,3 +39,5 @@ minimumReleaseAgeExclude:
   - '@dcl/inspector'
   # The desktop build's upload step runs whatever the SDK team last tagged "next".
   - '@dcl/cdn-uploader'
+  # Built and published from this repository's Explorer (bevy-explorer-ci.yml).
+  - '@dcl-regenesislabs/bevy-explorer-web'

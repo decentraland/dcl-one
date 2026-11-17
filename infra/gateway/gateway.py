@@ -102,14 +102,23 @@ def upstream(value):
     return f"{host}:{int(port)}"
 
 
+ESCAPE_LITERAL = str.maketrans({".": "\0", "_": "\1", "$": "\2"})
+RESTORE_LITERAL = str.maketrans({"\0": ".", "\1": "_", "\2": "$"})
+
+
 def site_prefixes(files):
     prefixes = set()
     for name in files:
-        parts = re.sub(r"\.tsx?$", "", name).split(".")
+        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its ".", "_" and "$"
+        # neither split segments nor end the prefix.
+        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).translate(ESCAPE_LITERAL),
+                      re.sub(r"\.tsx?$", "", name))
+        parts = stem.split(".")
         if parts[0].startswith(("$", "_")):
             continue
         parts = parts[:2] if parts[0] == "api" else parts[:1]
-        parts = [re.split(r"[_$]", part)[0] for part in parts]
+        # A "$" starts a parameter; a "_" at the end of a segment is a layout marker, inside it is part of the path.
+        parts = [part.split("$")[0].removesuffix("_").translate(RESTORE_LITERAL) for part in parts]
         if all(parts):
             prefixes.add("/" + "/".join(parts))
     return sorted(prefixes)
@@ -166,6 +175,12 @@ WORLDS_LIMIT = "limit_req zone=worlds burst=60 nodelay;"
 BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 
 
+# Sites pages under a prefix that an API alias serves (root-aliases.nix): Sites has the
+# exact page and the alias keeps the one prefix location. /cast is the Cast not-found
+# page; /cast/... is the gatekeeper's, except the stream and watch links below.
+SITES_EXACT_PAGES = ("/cast",)
+
+
 def render(table, cfg, mime):
     if not cfg["apis"] or not cfg["sites"]:
         raise ValueError("Both API and Sites upstreams are required")
@@ -205,7 +220,15 @@ def render(table, cfg, mime):
         servers = "\n".join(f"server {host} resolve max_fails=2 fail_timeout=10s;" for host in cfg[name])
         upstreams += f"upstream {name} {{ zone {name} 64k; {servers} keepalive 32; }}\n"
 
+    names = set()
+
     def location(key, body):
+        # nginx refuses a configuration that names one location twice; `^~` is a
+        # modifier of a prefix location, not a part of its name.
+        name = key.removeprefix("^~ ")
+        if name in names:
+            raise ValueError(f"Two locations have the name {name}")
+        names.add(name)
         return f"location {key} {{\n{body}\n}}\n"
 
     def proxy(target, extra=""):
@@ -319,11 +342,19 @@ def render(table, cfg, mime):
     for prefix in prefixes:
         if prefix in ("/admin", "/server"):
             continue
-        # The Cast not-found page is the exact /cast; /cast/ stays the gatekeeper's (root-aliases.nix).
-        locations += location("= /cast", proxy("sites")) if prefix == "/cast" else pair(prefix, "sites")
+        if prefix in SITES_EXACT_PAGES:
+            locations += location("= " + prefix, proxy("sites"))
+        else:
+            locations += pair(prefix, "sites")
+        # The Cast stream and watch links (/cast/s/, /cast/w/) are longer than the gatekeeper's
+        # ^~ /cast/, so Sites serves them; the rest of /cast/ stays the gatekeeper's (root-aliases.nix).
+        if prefix == "/cast":
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
+                 "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
+                 "/brand"):
         locations += location("= " + path, proxy("sites"))
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.
