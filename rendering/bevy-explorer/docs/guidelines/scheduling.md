@@ -130,6 +130,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
+  The input manager's readers (bindings, the system-action stream, native input) run after
+  bevy's `InputSystem`, so each reads the frame's input once.
 - **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
   - `slice_scene_spawning` sets this frame's instantiation slice: a quarter of the target frame
     (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, less what

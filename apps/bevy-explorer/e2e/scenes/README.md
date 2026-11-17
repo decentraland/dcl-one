@@ -12,8 +12,10 @@ The scenes were authored for one host scene that swapped bundles. Here every sce
 spans three parcels, so none can see another), with the host's `skyboxConfig.fixedTime` of 43200
 (noon). Positions in a scene's source are scene-relative, so nothing else changed but each scene's
 `tsconfig.json`, which extends the vendored SDK's `@dcl/sdk/types/tsconfig.ecs7.json` as
-`dcl-scene-cli init` writes it (the host's shared base file did not come along). The visual spec
-(`../specs/visual`) teleports to each scene's base parcel.
+`dcl-scene-cli init` writes it (the host's shared base file did not come along), and
+`gltf-materials`' grid and camera, centred on its two parcels (x 16 instead of 8): the 18 m grid
+crossed the scene's west edge, where the engine dissolves geometry with a noise that moves with
+time. The visual spec (`../specs/visual`) teleports to each scene's base parcel.
 
 `smart-wearable` is the last member and no visual scene: a smart-wearable project
 (`wearable.json`, a `hat` whose `model.glb` is `swap_material`'s cube, and `scene.json` with

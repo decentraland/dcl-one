@@ -197,12 +197,15 @@ jobs:
       # and Cargo.lock must be the one a source.toml records.
       - name: Check the pinned revisions of the patched sources
         run: python3 tooling/patched-sources.py pins
-      # Read-only. Cargo fetches each `rev` from this repository: without its ref every build fails
-      # at the fetch. A maintainer publishes the refs by hand; no workflow writes them.
-      - name: Check that this repository has a ref for each pinned revision
+      # Read-only. Cargo fetches each `rev` from this repository by id: without it every build fails at the
+      # fetch. GitHub serves through this repository the commits of each of its forks, so a `rev` that a
+      # contributor pushed to their fork passes without a ref. The publish-sources workflow pushes the ref after
+      # the merge; the daily drift run fails when a ref is still missing. A fetch with no answer fails with
+      # `cannot check`: a rerun, not a push, is the remedy for that.
+      - name: Check that this repository serves each pinned revision
         run: |
-          python3 tooling/patched-sources.py publish --check || {
-            echo '::error::A pinned revision has no ref in this repository. A maintainer with push rights runs `python3 tooling/patched-sources.py publish`.'
+          python3 tooling/patched-sources.py publish --check --fetchable || {
+            echo '::error::A revision listed as missing is in neither this repository nor its forks. Push it to your fork: `python3 tooling/patched-sources.py publish --remote https://github.com/<you>/dcl-one`.'
             exit 1
           }
       - name: Select engine builds from their inputs
@@ -516,11 +519,22 @@ jobs:
             rendering/bevy-explorer/source/target/sccache-stats.json
           if-no-files-found: ignore
           retention-days: 7
+      # Main saves an entry for each change of the workspace. A pull request of this repository
+      # saves one only when the restored entry was not built for its dependencies: its later
+      # pushes restore that one. A pull request from a fork saves none.
       - name: Prune the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
       - name: Save the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -660,11 +674,22 @@ jobs:
           path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
           if-no-files-found: error
           retention-days: 14
+      # Main saves an entry for each change of the workspace. A pull request of this repository
+      # saves one only when the restored entry was not built for its dependencies: its later
+      # pushes restore that one. A pull request from a fork saves none.
       - name: Prune the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
       - name: Save the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -765,11 +790,22 @@ jobs:
         shell: bash
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      # Main saves an entry for each change of the workspace. A pull request of this repository
+      # saves one only when the restored entry was not built for its dependencies: its later
+      # pushes restore that one. A pull request from a fork saves none.
       - name: Prune the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
       - name: Save the native build cache
-        if: github.ref == 'refs/heads/main' && github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true'
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -871,8 +907,42 @@ jobs:
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
-      # Main saves optimised builds (codegen-units 1). An unoptimised PR build compiles at 16
-      # units, which changes every crate's hash, so that cache would serve it nothing.
+      # Main's published build compiles at 1 codegen unit and an unoptimised PR build at 16, which
+      # changes every crate's hash, so each has its own target cache. Main fills the PR one in the
+      # job web-pr-target. A PR restores main's entry for its dependencies; with none, it restores
+      # its own entry or main's newest and saves one of its own, once per set of dependencies.
+      - name: Identify the wasm dependencies
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized'
+        id: wasm-deps
+        run: echo "hash=${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/vendor/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the pull request wasm target cache
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized'
+        id: wasm-pr-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          # Main's entries only, in a step of their own: GitHub searches the PR's scope with every
+          # key of a step before it searches main's, so a PR entry named here would win over a
+          # newer entry of main for the same dependencies.
+          key: bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-${{ steps.engine-inputs.outputs.key }}
+          restore-keys: bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-
+      - name: Restore the pull request's own wasm target cache
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized' && steps.wasm-pr-cache.outputs.cache-matched-key == ''
+        id: wasm-own-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: bevy-web-unopt-v1-pr-${{ steps.wasm-deps.outputs.hash }}
+          restore-keys: bevy-web-unopt-v1-main-
       - name: Restore wasm target cache
         if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         id: wasm-cache
@@ -887,7 +957,7 @@ jobs:
             'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/vendor/**') }}
           restore-keys: bevy-explorer-web-
       - name: Restore the path dependencies' cached file times
-        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
+        if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
@@ -919,8 +989,24 @@ jobs:
       - name: Test the checked shared-input generator
         run: cd react-web && pnpm run test:shared-inputs
       - name: Record the path dependencies' file times for the cache
-        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
+        if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      - name: Save the pull request wasm target cache
+        # Only when main had no entry for these dependencies, and once: GitHub keeps the entry in
+        # the PR's own scope and the hourly cleanup removes it when the PR closes. A PR from a
+        # fork saves none: the repository cache is shared and has a size limit.
+        if: >-
+          steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized' &&
+          steps.wasm-pr-cache.outputs.cache-matched-key == '' && steps.wasm-own-cache.outputs.cache-hit != 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.wasm-own-cache.outputs.cache-primary-key }}
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -936,7 +1022,9 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # Small finished outputs may be saved on PRs; GitHub isolates their ref.
-          # Multi-GB Cargo/Nix caches retain their main-only save policy.
+          # Multi-GB Cargo/Nix caches retain their main-only save policy; the one exception is the
+          # PR wasm target above, saved once by a PR of this repository when main has no entry for
+          # the PR's dependencies.
           path: .cache/bevy-engine
           key: ${{ steps.engine-cache.outputs.cache-primary-key }}
       - name: Upload the complete web app
@@ -1193,6 +1281,113 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/apis-sites-images.yml
+  web-pr-target:
+    # Compiles the web engine as a pull request does (16 codegen units, no wasm-opt) and saves the
+    # target, so a PR's web build compiles only what the PR changes. No job waits for this one; the
+    # next run on main starts when this run ends, so the job has a short time limit. It runs on
+    # the runner of the web job and with its environment, because Cargo reuses a target only for
+    # the same paths, toolchain and variables. Only a first attempt runs: the hourly cleanup keeps
+    # the newest entry, and a later attempt of an older run would save a newer one.
+    if: >-
+      needs.changes.outputs.web == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.BENCHMARK_ENABLED_RUNNERS == 'none' && github.run_attempt == '1'
+    name: Web target cache for pull requests
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04_16CORE || 'ubuntu-24.04-16core' }}
+    env:
+      BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Identify compiled engine inputs
+        id: engine-inputs
+        working-directory: .
+        run: |
+          key=$(python3 tooling/play-artifact.py engine-cache-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Identify the wasm dependencies
+        id: wasm-deps
+        run: echo "hash=${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/vendor/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Look for the pull request wasm target cache
+        id: wasm-pr-probe
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          # One entry for each set of engine inputs: a push that changes none of them finds its
+          # entry here, downloads nothing and saves nothing.
+          lookup-only: true
+          key: bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-${{ steps.engine-inputs.outputs.key }}
+      - name: Reserve disk space on the hosted Linux runner
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true' && runner.environment == 'github-hosted'
+        working-directory: .
+        run: |-
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 100 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        with:
+          toolchain: nightly-2026-04-15
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - name: Stamp rust-src with the toolchain date so cached build-std artifacts stay fresh
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        run: |
+          d=$(rustc -vV | sed -n 's/^commit-date: //p')
+          find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      - name: Restore the pull request wasm target cache
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        id: wasm-pr-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-${{ steps.engine-inputs.outputs.key }}
+          # Entries of the same dependencies only. An entry of other dependencies would bring their
+          # artifacts with it, and each save would add to them: with no such entry the job
+          # compiles from nothing and the entry holds one set of dependencies.
+          restore-keys: bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-
+      - name: Restore the path dependencies' cached file times
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install the web build tools from the flake
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        uses: ./.github/actions/bevy-explorer-tools
+        with:
+          package: bevy-web-tools
+      - name: Compile the web engine as a pull request does
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        run: python3 ../../../apps/bevy-explorer/build-web.py --no-opt --target-only
+      - name: Record the path dependencies' file times for the cache
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      - name: Save the pull request wasm target cache
+        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.wasm-pr-cache.outputs.cache-primary-key }}
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 45
+    needs:
+      - changes
   preview-cleanup:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     name: Remove the PR preview tag

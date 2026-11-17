@@ -21,7 +21,7 @@ use crate::{
     sky_envmap::{SkyAmbient, SkyEnvmapSettings},
     trees::Tree,
     upscale::{Compositor, SceneTarget},
-    CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
+    user_cover, CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
 /// The Lighting section's action that puts the fog density back to the sky preset's.
@@ -397,7 +397,7 @@ struct SkyState;
 
 fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Res<CloudCover>) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"hour":time.time / 3600., "cover":(clouds.cover - 0.2) / 0.5, "density":clouds.density_cap,
+        cmd.reply_ok(json!({"hour":time.time / 3600., "cover":user_cover(clouds.cover), "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());
     }
 }
