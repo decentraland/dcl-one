@@ -30,6 +30,9 @@
 //! `participant_joined` webhook removes one that connects later with a token
 //! still inside its five-minute lifetime.
 //!
+//! A display name is shown as asked, without invisible characters and never
+//! carrying another wallet's address (`shown_name`).
+//!
 //! Errors answer upstream's `{"error": msg}` with its statuses; a signature
 //! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
 //! body refusal `@dcl/schema-validator-component`'s. Local preview realms are
@@ -330,6 +333,54 @@ struct Grant<'a> {
     metadata: ParticipantMetadata<'a>,
 }
 
+/// The display name a streamer or watcher asked for, as the room shows it.
+/// Upstream shows it verbatim; here invisible characters (controls,
+/// direction overrides, zero-width marks) are dropped and runs of whitespace
+/// become one space, and a name that carries a wallet address other than
+/// the caller's own is replaced by the default, so no one can display as
+/// another wallet. The default is the client's own (`Guest#<last 4>` for a
+/// watcher, `Streamer` for a key holder, who has no wallet here).
+pub(crate) fn shown_name(requested: &str, wallet: Option<&Address>) -> String {
+    let fallback = || match wallet {
+        Some(wallet) => {
+            let hex = wallet.as_str();
+            format!("Guest#{}", &hex[hex.len().saturating_sub(4)..])
+        }
+        None => "Streamer".to_owned(),
+    };
+    let visible: String = requested
+        .chars()
+        .filter(|c| !c.is_control() && !is_invisible_format(*c))
+        .collect();
+    let name = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    let foreign_address = wallet_addresses(&name)
+        .any(|address| wallet.is_none_or(|own| !own.as_str().eq_ignore_ascii_case(address)));
+    if name.is_empty() || foreign_address {
+        fallback()
+    } else {
+        name
+    }
+}
+
+/// Unicode format characters that change how text renders without showing:
+/// bidirectional overrides and isolates, zero-width marks, the BOM.
+fn is_invisible_format(c: char) -> bool {
+    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}'
+        | '\u{2066}'..='\u{206f}' | '\u{feff}' | '\u{00ad}' | '\u{061c}' | '\u{180e}')
+}
+
+/// Every `0x` followed by 40 hex digits in `text`.
+fn wallet_addresses(text: &str) -> impl Iterator<Item = &str> {
+    let bytes = text.as_bytes();
+    (0..bytes.len().saturating_sub(41)).filter_map(move |i| {
+        let candidate = &bytes[i..i + 42];
+        (candidate[0] == b'0'
+            && (candidate[1] | 0x20) == b'x'
+            && candidate[2..].iter().all(u8::is_ascii_hexdigit))
+        .then(|| &text[i..i + 42])
+    })
+}
+
 fn mint(state: &CommsState, grant: Grant<'_>) -> Result<String, ApiError> {
     let grants = VideoGrants {
         room_join: true,
@@ -381,6 +432,96 @@ async fn add_presenter(state: &CommsState, room: &str, identity: &str) -> Result
 }
 
 const PRESENTERS_FIELD: &str = "presenters";
+
+/// How many streamer ids of one place `presenters` keeps. Each streamer token
+/// adds one, connected or not; past this, the oldest that are not in the
+/// room make way for the new one.
+const STREAMER_PRESENTERS_MAX: usize = 32;
+
+/// The room's `presenters`, in the order they were added; empty when the
+/// room or its metadata is missing.
+async fn presenter_ids(state: &CommsState, room: &str) -> Result<Vec<String>, ApiError> {
+    let info = match state.room_service().get_room_info(room).await {
+        Ok(info) => info,
+        Err(crate::shared::livekit::RoomServiceError::NotFound) => None,
+        Err(e) => return Err(ApiError::internal(format!("cast presenters: {e}"))),
+    };
+    let metadata = crate::shared::livekit::parse_room_metadata(
+        info.as_ref()
+            .and_then(|i| i.get("metadata"))
+            .and_then(Value::as_str),
+    );
+    Ok(metadata
+        .get(PRESENTERS_FIELD)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Keeps `presenters` under `STREAMER_PRESENTERS_MAX` streamer ids of the
+/// place before a new one is added: tokens that were requested and never
+/// connected would otherwise pile up in the metadata that ban and admin
+/// writes rewrite. Best-effort; a failure only skips the pruning.
+async fn make_room_for_streamer(state: &CommsState, room: &str, place_id: &str) {
+    let prefix = format!("stream:{place_id}:");
+    let result = async {
+        let streamers: Vec<String> = presenter_ids(state, room)
+            .await?
+            .into_iter()
+            .filter(|id| id.starts_with(&prefix))
+            .collect();
+        let excess = (streamers.len() + 1).saturating_sub(STREAMER_PRESENTERS_MAX);
+        if excess == 0 {
+            return Ok(());
+        }
+        let rooms = state.room_service();
+        let connected: std::collections::HashSet<String> = match rooms.list_participants(room).await
+        {
+            Ok(participants) => participants.into_iter().map(|p| p.identity).collect(),
+            Err(crate::shared::livekit::RoomServiceError::NotFound) => Default::default(),
+            Err(e) => return Err(ApiError::internal(format!("cast presenters: {e}"))),
+        };
+        for id in streamers
+            .iter()
+            .filter(|id| !connected.contains(*id))
+            .take(excess)
+        {
+            rooms
+                .remove_from_room_metadata_array(room, PRESENTERS_FIELD, id)
+                .await
+                .map_err(|e| ApiError::internal(format!("cast presenters: {e}")))?;
+        }
+        Ok::<_, ApiError>(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(room, ?error, "cast: pruning streamer presenters failed");
+    }
+}
+
+/// The `participant_left` webhook: a streamer that left its room leaves
+/// `presenters`. A leave is final (a reconnect keeps the participant), and a
+/// streamer that comes back asks for a new token, with a new identity.
+/// Returns whether the participant was a Cast streamer.
+pub async fn forget_departed_streamer(
+    state: &CommsState,
+    room: &str,
+    identity: &str,
+) -> Result<bool, ApiError> {
+    if !state.livekit.configured || !identity.starts_with("stream:") {
+        return Ok(false);
+    }
+    state
+        .room_service()
+        .remove_from_room_metadata_array(room, PRESENTERS_FIELD, identity)
+        .await
+        .map_err(|e| ApiError::internal(format!("cast presenters: {e}")))?;
+    Ok(true)
+}
 
 // ── request bodies ──
 
@@ -745,7 +886,8 @@ pub async fn streamer_token(
         Err(refusal) => return Ok(refusal),
     };
     let key = text(&body, "token").unwrap_or_default();
-    let display_name = text(&body, "identity").unwrap_or_default();
+    let display_name = shown_name(text(&body, "identity").unwrap_or_default(), None);
+    let display_name = display_name.as_str();
     let (place_id, room, access_id) = publishing_access(&state.pool, key).await?;
     // The streamer is registered as a presenter in the room's metadata.
     require_livekit(&state)?;
@@ -768,6 +910,7 @@ pub async fn streamer_token(
             },
         },
     )?;
+    make_room_for_streamer(&state, &room, &place_id).await;
     add_presenter(&state, &room, &identity).await?;
     tracing::info!(room, place_id, "cast streamer token issued");
     Ok(Json(Credentials {
@@ -801,8 +944,9 @@ pub async fn watcher_token(
         Err(refusal) => return Ok(refusal),
     };
     let location = text(&body, "location").unwrap_or_default();
-    let display_name = text(&body, "identity").unwrap_or_default();
     let watcher = &sf.signer;
+    let display_name = shown_name(text(&body, "identity").unwrap_or_default(), Some(watcher));
+    let display_name = display_name.as_str();
     // Before the location, so an unresolvable place still refuses.
     let device_id = device_identifier(&sf.metadata);
     refuse_if_platform_banned(&state, watcher, device_id.as_deref()).await?;

@@ -565,6 +565,17 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
             }
         }
         EventKind::ParticipantLeft(participant, reason) => {
+            // A Cast streamer that left drops out of the room's presenters.
+            // Logged, never a webhook failure.
+            if let Err(error) = super::streaming::cast::forget_departed_streamer(
+                state,
+                &participant.room,
+                &participant.identity,
+            )
+            .await
+            {
+                tracing::warn!(room = %participant.room, ?error, "cast presenter cleanup failed");
+            }
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_left(
                     state,

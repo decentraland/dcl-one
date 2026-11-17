@@ -222,16 +222,15 @@ async fn issue_access(
             Renewal::Replace => {
                 // The replacement's ingress first: a LiveKit failure keeps the old credential.
                 let info = mint_ingress(ingress, room).await?;
-                if !jobs::enqueue(state, existing.id, jobs::CleanupCommand::IdleReplacement).await?
-                {
-                    discard_ingress(ingress, &info, place_id).await;
-                    return Err(concurrent_change());
-                }
-                let response =
-                    store_replacement(state, ingress, place_id, room, signer, info, existing.id)
-                        .await?;
-                settle_cleanup(state, existing.id, place_id).await;
-                return Ok(response);
+                return replace_access(
+                    state,
+                    ingress,
+                    existing.id,
+                    jobs::CleanupCommand::IdleReplacement,
+                    (place_id, room, signer),
+                    info,
+                )
+                .await;
             }
         }
     }
@@ -338,28 +337,44 @@ async fn mint_ingress(
     Ok(info)
 }
 
-/// Stores the credential that replaces `replaced`, whose cleanup intent is
-/// already committed (`jobs::enqueue` deactivated it). When the store fails,
-/// the new ingress is deleted, and a pending Reset intent becomes a Revoke:
-/// no replacement will exist, so the reset's "awaiting replacement" retry
-/// would otherwise never end.
-async fn store_replacement(
+/// Replaces credential `old` with one for the freshly minted `info`: the old
+/// row's deactivation, its cleanup intent and the new row are one
+/// transaction, so any failure (a concurrent change included) leaves the old
+/// credential in force and deletes the new ingress.
+async fn replace_access(
     state: &CommsState,
     ingress: &IngressClient<'_>,
-    place_id: &str,
-    room: &str,
-    signer: &Address,
+    old: Uuid,
+    command: jobs::CleanupCommand,
+    (place_id, room, signer): (&str, &str, &Address),
     info: crate::shared::livekit::IngressInfo,
-    replaced: Uuid,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
-    let minted = info.clone();
-    match store_access(&state.pool, ingress, place_id, room, signer, info).await {
-        Ok(response) => Ok(response),
+    let stored = async {
+        let Some(prepared) = jobs::prepare(state, old, command).await? else {
+            return Ok(None);
+        };
+        let mut tx = state.pool.begin().await?;
+        if !prepared.record(&mut *tx).await? {
+            return Ok(None);
+        }
+        let Some(row) = insert_access(&mut *tx, place_id, room, signer, &info).await? else {
+            return Ok(None);
+        };
+        tx.commit().await?;
+        Ok::<_, ApiError>(Some(row))
+    }
+    .await;
+    match stored {
+        Ok(Some(row)) => {
+            settle_cleanup(state, old, place_id).await;
+            Ok(row.response())
+        }
+        Ok(None) => {
+            discard_ingress(ingress, &info, place_id).await;
+            Err(concurrent_change())
+        }
         Err(error) => {
-            discard_ingress(ingress, &minted, place_id).await;
-            if let Err(e) = jobs::downgrade_reset_to_revoke(&state.pool, replaced).await {
-                tracing::warn!(place_id, access_id = %replaced, error = %e, "reset intent left awaiting a replacement");
-            }
+            discard_ingress(ingress, &info, place_id).await;
             Err(error)
         }
     }
@@ -386,21 +401,21 @@ async fn discard_ingress(
     }
 }
 
-async fn store_access(
-    pool: &PgPool,
-    ingress: &IngressClient<'_>,
+/// Inserts the place's active credential for `info`'s ingress; `None` when
+/// the place already has one.
+async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     place_id: &str,
     room: &str,
     signer: &Address,
-    info: crate::shared::livekit::IngressInfo,
-) -> Result<SceneStreamAccessResponse, ApiError> {
+    info: &crate::shared::livekit::IngressInfo,
+) -> Result<Option<AccessRow>, ApiError> {
     let (Some(url), Some(stream_key)) = (info.url.as_deref(), info.stream_key.as_deref()) else {
         return Err(ApiError::internal(
             "livekit ingress response missing url or stream key",
         ));
     };
-    let now = now_utc();
-    let inserted: Option<AccessRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO social.scene_stream_access \
              (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $7 + make_interval(secs => $8::double precision / 1000), true) \
@@ -413,10 +428,21 @@ async fn store_access(
     .bind(&info.ingress_id)
     .bind(room)
     .bind(signer)
-    .bind(now)
+    .bind(now_utc())
     .bind(FOUR_DAYS_MS)
-    .fetch_optional(pool)
-    .await?;
+    .fetch_optional(executor)
+    .await?)
+}
+
+async fn store_access(
+    pool: &PgPool,
+    ingress: &IngressClient<'_>,
+    place_id: &str,
+    room: &str,
+    signer: &Address,
+    info: crate::shared::livekit::IngressInfo,
+) -> Result<SceneStreamAccessResponse, ApiError> {
+    let inserted = insert_access(pool, place_id, room, signer, &info).await?;
     if let Some(row) = inserted {
         return Ok(row.response());
     }
@@ -484,17 +510,18 @@ async fn reset_access(
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
         // The replacement's ingress first: a LiveKit failure keeps the old credential.
-        let info = mint_ingress(ingress, room).await?;
-        if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Reset).await? {
-            discard_ingress(ingress, &info, place_id).await;
-            return Err(concurrent_change());
-        }
         // The durable intent owns the old ingress's deletion and the reset notification,
-        // delivered only once the replacement credential exists; it also covers a crash here.
-        let response =
-            store_replacement(state, ingress, place_id, room, signer, info, row.id).await?;
-        settle_cleanup(state, row.id, place_id).await;
-        Ok(response)
+        // delivered only once the replacement credential exists; it also covers a crash.
+        let info = mint_ingress(ingress, room).await?;
+        replace_access(
+            state,
+            ingress,
+            row.id,
+            jobs::CleanupCommand::Reset,
+            (place_id, room, signer),
+            info,
+        )
+        .await
     }
     .await;
     result.map_err(|error: ApiError| {

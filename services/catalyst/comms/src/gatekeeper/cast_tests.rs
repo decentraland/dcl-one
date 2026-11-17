@@ -12,7 +12,7 @@ use super::*;
 use crate::access::Ban;
 use crate::gatekeeper::moderation::test_support::StubBanStatus;
 use crate::gatekeeper::streaming::cast::{
-    build_stream_links, is_valid_presenter_identity, watcher_wallet,
+    build_stream_links, is_valid_presenter_identity, shown_name, watcher_wallet,
 };
 use crate::rooms::{ActiveDeployment, ResolvedRoom};
 use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
@@ -1809,6 +1809,73 @@ async fn an_expired_credential_does_not_promote_admins_on_join() {
     assert!(!promoted);
 }
 
+/// A reset whose new credential cannot be stored: the old key stays in
+/// force, no cleanup is recorded for it, and the new ingress is deleted.
+#[tokio::test]
+async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, first) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let active = || async {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+        )
+        .bind(&scene.place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let old_access = active().await;
+    // Refuses this place's next insert only, inside the replacement's transaction.
+    let function = format!("cast_refuse_{}", tag());
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.place_id = '{place}' THEN RAISE EXCEPTION 'refused by test'; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {function} BEFORE INSERT ON social.scene_stream_access \
+         FOR EACH ROW EXECUTE FUNCTION social.{function}();",
+        place = scene.place_id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, _) = h
+        .signed(KEY, "PUT", "/scene-stream-access", &metadata, None)
+        .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {function} ON social.scene_stream_access; DROP FUNCTION social.{function}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(active().await, old_access);
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id = $1)",
+    )
+    .bind(old_access)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!pending);
+    // The new ingress was minted and then deleted; the old key still admits a streamer.
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    let (status, _) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": first["streamingKey"], "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 /// Upstream mints the replacement's ingress before revoking the old one: a
 /// LiveKit failure while replacing an expired key leaves that key in place.
 #[tokio::test]
@@ -2044,4 +2111,96 @@ async fn the_scene_adapter_adds_a_joining_admin_to_the_presenters() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert_eq!(presenters, json!([admin]));
+}
+
+#[test]
+fn display_names_drop_invisible_characters_and_never_carry_another_wallet() {
+    let own = Address::parse(&address_of(KEY)).unwrap();
+    let other = address_of(OUTSIDER_KEY);
+    let guest = format!("Guest#{}", &own.as_str()[38..]);
+    assert_eq!(shown_name("  Ada \t Lovelace ", Some(&own)), "Ada Lovelace");
+    // Direction overrides and zero-width marks render nothing.
+    assert_eq!(
+        shown_name("Mod\u{202e}rotareD\u{200b}", Some(&own)),
+        "ModrotareD"
+    );
+    assert_eq!(shown_name("\u{200b}\u{feff}", Some(&own)), guest);
+    // Another wallet's address, bare or inside a name, is not shown.
+    assert_eq!(shown_name(&other, Some(&own)), guest);
+    assert_eq!(
+        shown_name(
+            &format!("admin {}", other.to_uppercase().replace("0X", "0x")),
+            Some(&own)
+        ),
+        guest
+    );
+    assert_eq!(shown_name(&other, None), "Streamer");
+    // The caller's own address is theirs to show.
+    assert_eq!(shown_name(own.as_str(), Some(&own)), own.as_str());
+    assert_eq!(shown_name("Viewer #1", Some(&own)), "Viewer #1");
+}
+
+#[tokio::test]
+async fn streamer_presenters_stay_bounded_and_leave_with_their_streamer() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let key = seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    // 32 streamer ids already listed, the first one connected, plus a wallet.
+    let stale: Vec<String> = (0..32)
+        .map(|_| {
+            format!(
+                "stream:{}:{}:{}",
+                scene.place_id,
+                Uuid::new_v4(),
+                Uuid::new_v4()
+            )
+        })
+        .collect();
+    let admin = address_of(KEY);
+    let mut listed: Vec<Value> = stale.iter().map(|id| json!(id)).collect();
+    listed.push(json!(admin));
+    h.livekit
+        .set_metadata(&scene.room, json!({ "presenters": listed }));
+    h.livekit
+        .join(&scene.room, &stale[0], chrono::Utc::now().timestamp());
+
+    let (status, body) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": address_of(OUTSIDER_KEY)}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let streamer = body["identity"].as_str().unwrap().to_owned();
+    // An address is not a streamer's name to show.
+    assert_eq!(claims(&body["token"])["name"], "Streamer");
+    let presenters: Vec<String> =
+        serde_json::from_value(h.livekit.metadata(&scene.room)["presenters"].clone()).unwrap();
+    let streamers: Vec<&String> = presenters
+        .iter()
+        .filter(|id| id.starts_with("stream:"))
+        .collect();
+    assert_eq!(streamers.len(), 32);
+    // The oldest that is not in the room made way; the connected one stays.
+    assert!(presenters.contains(&stale[0]));
+    assert!(!presenters.contains(&stale[1]));
+    assert!(presenters.contains(&streamer));
+    assert!(presenters.contains(&admin));
+
+    // A streamer that leaves the room leaves the presenters; a wallet is untouched.
+    let forget = crate::gatekeeper::streaming::cast::forget_departed_streamer;
+    assert!(forget(&h.state, &scene.room, &streamer).await.unwrap());
+    assert!(!forget(&h.state, &scene.room, &admin).await.unwrap());
+    let presenters = h.livekit.metadata(&scene.room)["presenters"].clone();
+    assert!(!presenters.as_array().unwrap().contains(&json!(streamer)));
+    assert!(presenters.as_array().unwrap().contains(&json!(admin)));
 }
