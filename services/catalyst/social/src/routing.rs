@@ -117,4 +117,62 @@ mod tests {
             StatusCode::PAYLOAD_TOO_LARGE
         );
     }
+
+    /// CI runs no clippy over this crate, so this scan keeps production routes on
+    /// `crate::routing`: code after a file's first `#[cfg(test)]`, files named
+    /// `*test*` and `tests/` folders are test code and exempt.
+    #[test]
+    fn production_routes_do_not_use_axum_methods_directly() {
+        const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
+        fn names_a_method(after: &str) -> bool {
+            let names = match after.strip_prefix('{') {
+                Some(group) => group.split('}').next().unwrap_or(""),
+                None => after,
+            };
+            names
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .take(if after.starts_with('{') {
+                    usize::MAX
+                } else {
+                    1
+                })
+                .any(|name| METHODS.contains(&name))
+        }
+        fn visit(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if name != "tests" {
+                        visit(&path, found);
+                    }
+                    continue;
+                }
+                if !name.ends_with(".rs") || name.contains("test") || name == "routing.rs" {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (number, line) in text.lines().enumerate() {
+                    if line.trim() == "#[cfg(test)]" {
+                        break;
+                    }
+                    if line
+                        .split_once("axum::routing::")
+                        .is_some_and(|(_, after)| names_a_method(after))
+                    {
+                        found.push(format!("{}:{}", path.display(), number + 1));
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(
+            found.is_empty(),
+            "use crate::routing instead of axum::routing at {found:?}"
+        );
+    }
 }
