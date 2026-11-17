@@ -29,6 +29,9 @@ scene and world administration and moderation.
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
 | Signed fetch: crypto-middleware 6.x payload, legacy form only with canonical metadata keys (37776fc, 315f59d) | `GK/logic/utils.ts:23-48` | `G/auth.rs:196-258`, keys `:53-63` | MATCH | `either_shape_with_mixed_case_metadata_verifies_through_the_allowlist` |
+| Freshness window: 60 s back and ahead on every route, `/get-server-scene-adapter` and the moderator gate included | crypto-middleware `DEFAULT_EXPIRATION`, no route overrides it | `SIGNED_FETCH_WINDOW_SECS` (`library/dcl-auth/src/signed_fetch.rs`), aliased as `DEFAULT_EXPIRATION_SECS` (`G/auth.rs:47`), whole seconds | MATCH | `a_present_but_empty_timestamp_expires_and_a_stale_one_is_refused` |
+| Malformed chain (link order, unsigned link, unknown type, bad ephemeral payload) | 401 | 400 "Invalid chain format" | DIVERGENCE (status only) | – |
+| Absent `x-identity-metadata` | signed over an empty string | signed over `{}` (`G/auth.rs`) | DIVERGENCE (both clients always send the header) | – |
 | Re-spelled `signer` key refused (637d2a4) | crypto-middleware 6.3.0 | `G/auth.rs:117-119,219-226` | MATCH | `the_signer_allowlist_refuses_missing_respelled_and_unlisted_signers` |
 | Signer gate on the adapter routes | none (`utils.ts:34-103`) | `/get-scene-adapter` refuses the scene signer, a re-spelled key too (`verify_wallet_signed_fetch`, `G/auth.rs`); `/get-server-scene-adapter` has no gate | DIVERGENCE (stricter) | `the_scene_adapter_refuses_the_scene_signer` |
 | Any verify failure answers 401 | `utils.ts:46-48` | `handlers.rs:106,231` | MATCH | captures `get-scene-adapter-unauth`, `get-server-scene-adapter-unauth`, replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
@@ -98,6 +101,7 @@ scene and world administration and moderation.
 
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
+| Moderator signed fetch: current payload only, scene signer refused | `signedFetch` without canonical keys (`routes.ts:255-262`) | `authorize_moderator` (`G/auth.rs`) | MATCH | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
 | Moderator: `MODERATOR_TOKEN` or a wallet in the `platform_user_moderators` feature flag | `logic/moderator/component.ts:19-102` | token or static `PLATFORM_USER_MODERATORS` (`G/auth.rs:411-452`) | DIVERGENCE (static list) | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
 | Ban create: 409 duplicate, advisory lock (defb3ad), device snapshot, kick everywhere | `user-moderation/component.ts:60-97` | `handlers.rs:704-747`, `store.rs:472-536` | MATCH | `concurrent_create_ban_yields_single_active_ban` |
 | `GET /users/{a}/bans`: device id stripped (70054bf) | `ban-status-handler.ts:23-48` | `store.rs:434-453,687-773` | MATCH | `the_public_status_shape_never_carries_the_device_id_and_the_moderator_list_keeps_it` |
@@ -143,6 +147,5 @@ scene and world administration and moderation.
 15. **GAP-AU-15: Small shape differences.** Severity P2. Ban listing offset rounding, `/mute` body, add/remove admin error texts.
 16. **GAP-AU-16: The gateway publishes the retired `/auth/challenge` and `/auth/livekit-token`.** Severity P2. Remove the two rows from `infra/gateway/routes.nix`; nothing reads their probes.
 
-Not verified: the upstream signed-fetch freshness window (crypto-middleware is not installed in the
-checkout); whether explorers write their own metadata in island rooms; preview-realm event
+Not verified: whether explorers write their own metadata in island rooms; preview-realm event
 suppression (dd34391).
